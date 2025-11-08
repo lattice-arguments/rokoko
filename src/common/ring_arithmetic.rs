@@ -43,7 +43,7 @@ impl RingElement {
     }
 
     pub fn from_even_odd_coefficients_to_incomplete_ntt_representation(&mut self) {
-        assert!(self.representation == Representation::EvenOddCoefficients, "Already in Incomplete NTT representation");
+        debug_assert!(self.representation == Representation::EvenOddCoefficients, "Already in Incomplete NTT representation");
 
         unsafe {
             ntt_forward_in_place(self.v.as_mut_ptr(), HALF_DEGREE, MOD_Q);
@@ -54,7 +54,7 @@ impl RingElement {
     }
 
     pub fn from_incomplete_ntt_to_even_odd_coefficients(&mut self) {
-        assert!(self.representation == Representation::IncompleteNTT, "Not in Incomplete NTT representation");
+        debug_assert!(self.representation == Representation::IncompleteNTT, "Not in Incomplete NTT representation");
 
         unsafe {
             ntt_inverse_in_place(self.v.as_mut_ptr(), HALF_DEGREE, MOD_Q);
@@ -65,7 +65,7 @@ impl RingElement {
     }
 
     pub fn from_coefficients_to_even_odd_coefficients(&mut self) {
-        assert!(self.representation == Representation::Coefficients, "Not in Coefficients representation");
+        debug_assert!(self.representation == Representation::Coefficients, "Not in Coefficients representation");
 
         let mut temp = [0u64; DEGREE];
 
@@ -79,7 +79,7 @@ impl RingElement {
     }
 
     pub fn from_even_odd_coefficients_to_coefficients(&mut self) {
-        assert!(self.representation == Representation::EvenOddCoefficients, "Not in Even-Odd Coefficients representation");
+        debug_assert!(self.representation == Representation::EvenOddCoefficients, "Not in Even-Odd Coefficients representation");
 
         let mut temp = [0u64; DEGREE];
 
@@ -120,9 +120,9 @@ pub fn incomplete_ntt_multiplication(
     operand2: &RingElement,
 ) {
 
-    assert!(operand1.representation == Representation::IncompleteNTT, "Operand1 not in Incomplete NTT representation");
-    assert!(operand2.representation == Representation::IncompleteNTT, "Operand2 not in Incomplete NTT representation");
-    assert!(result.representation == Representation::IncompleteNTT, "Result not in Incomplete NTT representation");
+    debug_assert!(operand1.representation == Representation::IncompleteNTT, "Operand1 not in Incomplete NTT representation");
+    debug_assert!(operand2.representation == Representation::IncompleteNTT, "Operand2 not in Incomplete NTT representation");
+    debug_assert!(result.representation == Representation::IncompleteNTT, "Result not in Incomplete NTT representation");
 
     let mut temp = get_temp_buffer();
 
@@ -200,9 +200,9 @@ pub fn naive_polynomial_multiplication(
     operand1: &RingElement,
     operand2: &RingElement,
 ) {
-    assert!(operand1.representation == Representation::Coefficients, "Operand1 not in Coefficients representation");
-    assert!(operand2.representation == Representation::Coefficients, "Operand2 not in Coefficients representation");
-    assert!(result.representation == Representation::Coefficients, "Result not in Coefficients representation");
+    debug_assert!(operand1.representation == Representation::Coefficients, "Operand1 not in Coefficients representation");
+    debug_assert!(operand2.representation == Representation::Coefficients, "Operand2 not in Coefficients representation");
+    debug_assert!(result.representation == Representation::Coefficients, "Result not in Coefficients representation");
 
     for i in 0..DEGREE {
         result.v[i] = 0;
