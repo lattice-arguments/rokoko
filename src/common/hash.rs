@@ -178,6 +178,15 @@ mod tests {
     }
 
     #[test]
+    fn same_transcript_sampled_twice_yield_different_outputs() {
+        let mut t1 = HashWrapper::new();
+
+        let challenge1 = t1.sample_biased_ternary_ring_element();
+        let challenge2 = t1.sample_biased_ternary_ring_element();
+        assert_ne!(challenge1, challenge2);
+    }
+
+    #[test]
     fn transcript_update_changes_output() {
         let mut t1 = HashWrapper::new();
         let mut t2 = HashWrapper::new();
