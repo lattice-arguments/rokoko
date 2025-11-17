@@ -16,10 +16,11 @@ impl Default for HashWrapper {
     }
 }
 
+static SEED: &[u8] = b"Smutno mi, Boze";
 impl HashWrapper {
     pub fn new() -> Self {
         let mut transcript = Hasher::new();
-        transcript.update(b"cowboys-and-aliens/fs-transcript/v1");
+        transcript.update(SEED);
         Self {
             transcript,
             sample_counter: 0,
