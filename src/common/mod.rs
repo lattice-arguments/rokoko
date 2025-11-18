@@ -3,6 +3,7 @@ use std::sync::LazyLock;
 pub mod ring_arithmetic;
 pub mod config;
 pub mod hash;
+pub mod matrix;
 use crate::common::ring_arithmetic::*;
 
 pub fn init_common() {

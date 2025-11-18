@@ -24,7 +24,7 @@ hexl: hexl/build
 	cmake --build ./hexl-bindings/hexl/build
 
 hexl/build:
-	cmake -S ./hexl-bindings/hexl/ -B ./hexl-bindings/hexl/build #-DCMAKE_POLICY_VERSION_MINIMUM=3.5
+	cmake -S ./hexl-bindings/hexl/ -B ./hexl-bindings/hexl/build -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 
 hexl-triton: hexl/build-triton
 	cmake --build ./hexl-bindings/hexl/build
