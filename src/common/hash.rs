@@ -1,5 +1,5 @@
-use crate::common::ring_arithmetic::*;
 use crate::common::config::{DEGREE, MOD_Q};
+use crate::common::ring_arithmetic::*;
 use blake3::Hasher;
 
 /// Incremental transcript hash suitable for Fiat–Shamir style challenges.
@@ -83,7 +83,7 @@ impl HashWrapper {
         for i in 0..DEGREE / 8 {
             let b = buf[i];
             for j in 0..8 {
-                element.v[i * 8 + j] =  ((b >> j) & 1) as u64;
+                element.v[i * 8 + j] = ((b >> j) & 1) as u64;
             }
         }
         element
@@ -98,7 +98,7 @@ impl HashWrapper {
     }
 
     fn sample_ternary_ring_element(&mut self) -> RingElement {
-        // we need 2 bits per coefficient to sample uniformly from {-1, 0, 1} 
+        // we need 2 bits per coefficient to sample uniformly from {-1, 0, 1}
         // 0b11 is discarded so we take (two times) more bytes to account for the rejections
         let mut buf = [0u8; DEGREE / 2];
         self.fill_from_xof(b"ternary-ring-element", &mut buf);
@@ -126,7 +126,7 @@ impl HashWrapper {
         }
         if coeff_index < DEGREE {
             // we didn't fill all coefficients due to rejections, sample recursively
-            // practically this will almost never recurse 
+            // practically this will almost never recurse
             return self.sample_ternary_ring_element();
         }
         element
@@ -157,7 +157,7 @@ mod tests {
     }
 
     #[test]
-   fn deterministic_given_different_transcript_order() {
+    fn deterministic_given_different_transcript_order() {
         let mut t1 = HashWrapper::new();
         let mut t2 = HashWrapper::new();
 

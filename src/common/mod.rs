@@ -1,13 +1,14 @@
 use std::sync::LazyLock;
 
-pub mod ring_arithmetic;
 pub mod config;
 pub mod hash;
 pub mod matrix;
+pub mod power_series;
+pub mod ring_arithmetic;
+pub mod sampling;
 use crate::common::ring_arithmetic::*;
 
 pub fn init_common() {
-
     LazyLock::force(&SHIFT_FACTORS);
     LazyLock::force(&NORMALIZE_INCOMPLETE_NTT_FACTORS);
     LazyLock::force(&NORMALIZE_INCOMPLETE_NTT_FACTORS_INVERSE);

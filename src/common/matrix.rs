@@ -1,9 +1,10 @@
 use std::ops::{Index, IndexMut};
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Matrix<T> {
     pub data: Vec<T>,
     pub width: usize,
-    pub height: usize
+    pub height: usize,
 }
 
 impl<T> Index<(usize, usize)> for Matrix<T> {
@@ -11,7 +12,6 @@ impl<T> Index<(usize, usize)> for Matrix<T> {
 
     fn index(&self, index: (usize, usize)) -> &Self::Output {
         let (r, c) = index;
-        assert!(r < self.width && c < self.height);
         &self.data[r * self.width + c]
     }
 }
@@ -30,19 +30,42 @@ pub struct Row<T> {
 }
 
 impl<T> Matrix<T> {
+    pub fn empty() -> Self {
+        Matrix {
+            data: Vec::new(),
+            width: 0,
+            height: 0,
+        }
+    }
+    pub fn new(width: usize, height: usize) -> Self {
+        let mut data: Vec<T> = Vec::with_capacity(width * height);
+        unsafe {
+            data.set_len(width * height);
+        }
+        Matrix {
+            data,
+            width,
+            height,
+        }
+    }
+
+    pub fn push_row(&mut self, row: &mut Vec<T>) {
+        self.height += 1;
+        self.data.append(row);
+    }
 
     pub fn get_index(&self, x: usize, y: usize) -> usize {
-        return y*self.width+x; 
+        return y * self.width + x;
     }
 
     pub fn get(&self, r: usize, c: usize) -> Option<&T> {
-       let index = self.get_index(r, c); 
-       return self.data.get(index);
+        let index = self.get_index(r, c);
+        return self.data.get(index);
     }
 
     pub fn get_mut(&mut self, r: usize, c: usize) -> Option<&mut T> {
-        let index = self.get_index(r, c); 
-        return self.data.get_mut(index);        
+        let index = self.get_index(r, c);
+        return self.data.get_mut(index);
     }
     pub fn row(&self, r: usize) -> Row<T> {
         Row {
