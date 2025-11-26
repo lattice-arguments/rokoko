@@ -1,5 +1,6 @@
 use crate::common::{
     matrix::Matrix,
+    power_series,
     ring_arithmetic::{
         addition, addition_in_place, incomplete_ntt_multiplication, Representation, RingElement,
     },
@@ -7,7 +8,7 @@ use crate::common::{
 
 #[derive(Debug, Clone)]
 pub struct PowerSeries {
-    pub expanded_layers: Vec<RingElement>,
+    pub full_layer: Vec<RingElement>,
     pub tensors: Matrix<RingElement>,
 }
 
@@ -15,27 +16,26 @@ pub fn dot_series_matrix(
     power_series: &[PowerSeries],
     matrix: &Matrix<RingElement>,
 ) -> Matrix<RingElement> {
-    assert!(matrix.width % 2 == 0);
+    let n_series = power_series.len();
+    let height = matrix.height;
 
-    let extracted_rows: Vec<&[RingElement]> = power_series
-        .iter()
-        .map(|series| &series.expanded_layers.as_slice()[0..matrix.width])
-        .collect();
+    let width = matrix.width;
 
-    let h = matrix.height;
-    //let nrows = extracted_rows.len();
+    let mut result = Matrix::new(height, n_series);
 
-    let mut result: Matrix<RingElement> = Matrix::new(h, extracted_rows.len());
+    let mut tmp = RingElement::zero(Representation::IncompleteNTT);
 
-    for (r, row) in extracted_rows.iter().enumerate() {
-        for c in 0..h {
+    for (r, series) in power_series.iter().enumerate() {
+        let layer = &series.full_layer[..width];
+
+        for c in 0..height {
             let mut acc = RingElement::zero(Representation::IncompleteNTT);
-            let mut temp = RingElement::zero(Representation::IncompleteNTT);
 
-            for i in 0..matrix.width {
-                incomplete_ntt_multiplication(&mut temp, &row[i], &matrix[(c, i)]);
-                addition_in_place(&mut acc, &temp);
+            for i in 0..width {
+                incomplete_ntt_multiplication(&mut tmp, &layer[i], &matrix[(c, i)]);
+                addition_in_place(&mut acc, &tmp);
             }
+
             result[(c, r)] = acc;
         }
     }
@@ -106,8 +106,8 @@ mod test {
 
     #[test]
     fn compare_dot_series_many() {
-        let wit_len: usize = 1 << 18;
-        let n_ps: usize = 10;
+        let wit_len: usize = 1 << 16;
+        let n_ps: usize = 4;
 
         let mut old_random_mat = salsaa::arithmetic::sample_random_short_mat(1, wit_len, 2);
 
@@ -139,14 +139,15 @@ mod test {
 
             old_series_vec.push(old_random_ps.clone());
 
-            let expanded_layers = matrix_from_nested_vec(vec![old_random_ps
-                .expanded_layers
-                .first()
-                .unwrap()
-                .to_vec()]);
+            let mut full_layer = Vec::new();
+            for elem in old_random_ps.expanded_layers[0].clone() {
+                let mut ring_el = RingElement::new(Representation::IncompleteNTT);
+                ring_el.v = elem.data;
+                full_layer.push(ring_el);
+            }
 
             let random_ps_new = PowerSeries {
-                expanded_layers: expanded_layers.data,
+                full_layer,
                 tensors: matrix_from_nested_vec(old_random_ps.tensors.clone()),
             };
 

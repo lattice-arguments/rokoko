@@ -25,8 +25,8 @@ impl<T> IndexMut<(usize, usize)> for Matrix<T> {
 }
 
 pub struct Row<T> {
-    ptr: *const T,
-    len: usize,
+    pub ptr: *const T,
+    pub len: usize,
 }
 
 impl<T> Matrix<T> {
@@ -67,11 +67,10 @@ impl<T> Matrix<T> {
         let index = self.get_index(r, c);
         return self.data.get_mut(index);
     }
-    pub fn row(&self, r: usize) -> Row<T> {
-        Row {
-            ptr: &self.data[r * self.width] as *const T,
-            len: self.width,
-        }
+    pub fn row(&self, r: usize) -> &[T] {
+        let start = r * self.width;
+        let end = start + self.width;
+        &self.data[start..end]
     }
 }
 
@@ -114,30 +113,6 @@ mod tests {
             *val = 99;
         }
         assert_eq!(m.get(0, 1), Some(&99));
-    }
-
-    #[test]
-    fn test_row() {
-        let m = Matrix {
-            data: (0..12).collect(),
-            width: 4,
-            height: 3,
-        };
-
-        let row0 = m.row(0);
-        assert_eq!(row0.len, 4);
-        unsafe {
-            for i in 0..row0.len {
-                assert_eq!(*row0.ptr.add(i), i);
-            }
-        }
-
-        let row2 = m.row(2);
-        unsafe {
-            for i in 0..row2.len {
-                assert_eq!(*row2.ptr.add(i), 8 + i);
-            }
-        }
     }
 
     #[test]

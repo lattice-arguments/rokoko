@@ -49,7 +49,7 @@ pub fn compute_commitment_keys(module: Vec<RingElement>, wit_dim: usize) -> Vec<
                 row.push(power.clone());
             }
             let mut ps = PowerSeries {
-                expanded_layers: row.clone(),
+                full_layer: row.clone(),
                 tensors: Matrix::new((wit_dim / 2) - 1, 0),
             };
             let mut current_dim = wit_dim;
