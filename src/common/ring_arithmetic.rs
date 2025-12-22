@@ -354,7 +354,8 @@ pub fn incomplete_ntt_multiplication_inner(
     operand2: &RingElement,
     homogenized: bool,
 ) {
-    let mut temp = get_temp_buffer();
+    // Local buffer avoids sharing mutable state across threads during tests. I cannot understand it now.
+    let mut temp = [0u64; DEGREE];
 
     let op1_data = &operand1.v;
     let op2_data = &operand2.v;
