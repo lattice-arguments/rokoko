@@ -1,5 +1,6 @@
 use crate::common::config::*;
 use crate::hexl::bindings::*;
+use num::pow::Pow;
 use rand::Rng;
 use std::cell::RefCell;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
@@ -11,7 +12,7 @@ pub enum Representation {
     EvenOddCoefficients, // In this representation, coefficients are stored as even part followed by odd part. This is so that NTT can be applied more easily.
     IncompleteNTT, // Incomplete NTT representation, where even and odd parts are separately transformed.
     HomogenizedFieldExtensions, // We use that reprentation so that "Incomplete NTT slots" are homogenized, i.e. they are all of
-                                // the structure Zq[X] / <X^2 + \alpha>, i.e. \alpha is the same for each slot.
+                                      // the structure Zq[X] / <X^2 + \alpha>, i.e. \alpha is the same for each slot.
 }
 
 // DO NOT derive Copy here, as RingElement is large.
@@ -50,12 +51,14 @@ impl RingElement {
         element
     }
 
-    pub fn one() -> Self {
+    pub fn one(representation: Representation) -> Self {
         let mut element = Self {
             v: [0; DEGREE],
-            representation: Representation::EvenOddCoefficients,
+            representation: Representation::EvenOddCoefficients
         };
         element.v[0] = 1;
+
+        element.to_representation(representation);
 
         element
     }
@@ -69,6 +72,21 @@ impl RingElement {
 
         element
     }
+
+    pub fn constant(value: u64, representation: Representation) -> Self {
+        let mut element = Self {
+            v: [0; DEGREE],
+            representation: Representation::EvenOddCoefficients
+        };
+
+        element.v[0] = value;
+
+        element.to_representation(representation);
+
+        element
+    }
+
+    
 
     pub fn random_bounded(representation: Representation, bound: u64) -> Self {
         let mut element = Self {
@@ -195,6 +213,59 @@ impl RingElement {
         self.representation = Representation::IncompleteNTT;
     }
 
+    pub fn to_representation(&mut self, representation: Representation) {
+        match (self.representation, representation) {
+            (Representation::Coefficients, Representation::EvenOddCoefficients) => {
+                self.from_coefficients_to_even_odd_coefficients()
+            }
+            (Representation::Coefficients, Representation::IncompleteNTT) => {
+                self.from_coefficients_to_even_odd_coefficients();
+                self.from_even_odd_coefficients_to_incomplete_ntt_representation();
+            }
+            (Representation::Coefficients, Representation::HomogenizedFieldExtensions) => {
+                self.from_coefficients_to_even_odd_coefficients();
+                self.from_even_odd_coefficients_to_incomplete_ntt_representation();
+                self.from_incomplete_ntt_to_homogenized_field_extensions();
+            }
+            (Representation::EvenOddCoefficients, Representation::IncompleteNTT) => {
+                self.from_even_odd_coefficients_to_incomplete_ntt_representation()
+            }
+            (Representation::EvenOddCoefficients, Representation::HomogenizedFieldExtensions) => {
+                self.from_even_odd_coefficients_to_incomplete_ntt_representation();
+                self.from_incomplete_ntt_to_homogenized_field_extensions();
+            }
+            (Representation::IncompleteNTT, Representation::HomogenizedFieldExtensions) => {
+                self.from_incomplete_ntt_to_homogenized_field_extensions()
+            }
+            (Representation::HomogenizedFieldExtensions, Representation::IncompleteNTT) => {
+                self.from_homogenized_field_extensions_to_incomplete_ntt()
+            }
+            (Representation::HomogenizedFieldExtensions, Representation::EvenOddCoefficients) => {
+                self.from_homogenized_field_extensions_to_incomplete_ntt();
+                self.from_incomplete_ntt_to_even_odd_coefficients();
+            }
+            (Representation::HomogenizedFieldExtensions, Representation::Coefficients) => {
+                self.from_homogenized_field_extensions_to_incomplete_ntt();
+                self.from_incomplete_ntt_to_even_odd_coefficients();
+                self.from_even_odd_coefficients_to_coefficients();
+            }
+            (Representation::IncompleteNTT, Representation::EvenOddCoefficients) => {
+                self.from_incomplete_ntt_to_even_odd_coefficients();
+            }
+            (Representation::IncompleteNTT, Representation::Coefficients) => {
+                self.from_incomplete_ntt_to_even_odd_coefficients();
+                self.from_even_odd_coefficients_to_coefficients();
+            }
+            (Representation::EvenOddCoefficients, Representation::Coefficients) => {
+                self.from_even_odd_coefficients_to_coefficients();
+            }
+            _ => {
+                // nothing to do
+            }
+        }
+        
+    }
+
     // Probably should never be used
     pub fn split_into_quadratic_extensions(&self) -> [QuadraticExtension; HALF_DEGREE] {
         assert!(
@@ -306,6 +377,23 @@ pub fn subtraction(result: &mut RingElement, operand1: &RingElement, operand2: &
     }
 }
 
+pub fn subtraction_in_place(result_op1: &mut RingElement, operand2: &RingElement) {
+    assert!(
+        result_op1.representation == operand2.representation,
+        "Operands have different representations"
+    );
+
+    unsafe {
+        eltwise_sub_mod(
+            result_op1.v.as_mut_ptr(),
+            result_op1.v.as_ptr(),
+            operand2.v.as_ptr(),
+            DEGREE as u64,
+            MOD_Q,
+        );
+    }
+}
+
 pub fn incomplete_ntt_multiplication(
     result: &mut RingElement,
     operand1: &RingElement,
@@ -327,6 +415,25 @@ pub fn incomplete_ntt_multiplication(
     incomplete_ntt_multiplication_inner(result, operand1, operand2, false);
 }
 
+
+pub fn incomplete_ntt_multiplication_in_place(
+    result: &mut RingElement,
+    operand: &RingElement,
+) {
+    assert!(
+        operand.representation == Representation::IncompleteNTT,
+        "Operand not in Incomplete NTT representation"
+    );
+    assert!(
+        result.representation == Representation::IncompleteNTT,
+        "Result not in Incomplete NTT representation"
+    );
+
+    // TODO: figure out if the cloning is needed 
+    incomplete_ntt_multiplication_in_place_inner(result, operand, false);
+}
+
+
 pub fn incomplete_ntt_multiplication_homogenized(
     result: &mut RingElement,
     operand1: &RingElement,
@@ -346,6 +453,7 @@ pub fn incomplete_ntt_multiplication_homogenized(
     );
     incomplete_ntt_multiplication_inner(result, operand1, operand2, true);
 }
+
 
 #[inline]
 pub fn incomplete_ntt_multiplication_inner(
@@ -437,6 +545,97 @@ pub fn incomplete_ntt_multiplication_inner(
     }
 }
 
+
+#[inline]
+pub fn incomplete_ntt_multiplication_in_place_inner(
+    result: &mut RingElement,
+    operand1: &RingElement,
+    homogenized: bool,
+) {
+    let mut temp = get_temp_buffer();
+
+    let op1_data = &operand1.v;
+
+    unsafe {
+        // result_even = op1_even * op2_even
+        eltwise_mult_mod(
+            result.v.as_mut_ptr(),
+            op1_data.as_ptr(),
+            result.v.as_ptr(),
+            HALF_DEGREE as u64,
+            MOD_Q,
+        );
+
+        // result_odd = op1_odd * op2_even
+        eltwise_mult_mod(
+            result.v.as_mut_ptr().add(HALF_DEGREE),
+            op1_data.as_ptr().add(HALF_DEGREE),
+            result.v.as_ptr(),
+            HALF_DEGREE as u64,
+            MOD_Q,
+        );
+
+        // temp = op1_odd * op2_odd
+        eltwise_mult_mod(
+            temp.as_mut_ptr(),
+            op1_data.as_ptr().add(HALF_DEGREE),
+            result.v.as_ptr().add(HALF_DEGREE),
+            HALF_DEGREE as u64,
+            MOD_Q,
+        );
+
+        if homogenized {
+            // result_even += temp * SHIFT_FACTORS[0]
+            eltwise_fma_mod(
+                result.v.as_mut_ptr(),
+                temp.as_ptr(),
+                SHIFT_FACTORS[0],
+                result.v.as_ptr(),
+                HALF_DEGREE as u64,
+                MOD_Q,
+            );
+        } else {
+            // Apply shift factors
+            eltwise_mult_mod(
+                temp.as_mut_ptr(),
+                temp.as_ptr(),
+                SHIFT_FACTORS.as_ptr(),
+                HALF_DEGREE as u64,
+                MOD_Q,
+            );
+
+            // result_even += temp
+            eltwise_add_mod(
+                result.v.as_mut_ptr(),
+                result.v.as_ptr(),
+                temp.as_ptr(),
+                HALF_DEGREE as u64,
+                MOD_Q,
+            );
+        }
+
+        // Reuse temp for op1_even * op2_odd
+        eltwise_mult_mod(
+            temp.as_mut_ptr(),
+            op1_data.as_ptr(),
+            result.v.as_ptr().add(HALF_DEGREE),
+            HALF_DEGREE as u64,
+            MOD_Q,
+        );
+
+        // result_odd += temp
+        eltwise_add_mod(
+            result.v.as_mut_ptr().add(HALF_DEGREE),
+            result.v.as_ptr().add(HALF_DEGREE),
+            temp.as_ptr(),
+            HALF_DEGREE as u64,
+            MOD_Q,
+        );
+    }
+}
+
+
+
 pub fn naive_polynomial_multiplication(
     result: &mut RingElement,
     operand1: &RingElement,
@@ -507,6 +706,79 @@ pub fn get_roots_of_unity_trans() -> ([u64; HALF_DEGREE], [u64; HALF_DEGREE]) {
     }
 
     (roots_translations, roots_translations_inv)
+}
+
+impl Add for &RingElement {
+    type Output = RingElement;
+
+    fn add(self, other: Self) -> Self::Output {
+        let mut result = RingElement::new(self.representation);
+        addition(&mut result, &self, &other);
+        result
+    }
+}
+
+impl AddAssign<&RingElement> for RingElement {
+    fn add_assign(&mut self, other: &Self) {
+        addition_in_place(self, other);
+    }
+}
+
+impl Mul for &RingElement {
+    type Output = RingElement;
+
+    fn mul(self, other: Self) -> Self::Output {
+        let mut result = RingElement::new(self.representation);
+        incomplete_ntt_multiplication(&mut result, self, other);
+        result
+    }
+}
+
+impl MulAssign<&RingElement> for RingElement {
+    fn mul_assign(&mut self, other: &Self) {
+        incomplete_ntt_multiplication_in_place(self, other);
+    }
+}
+
+impl Sub for &RingElement {
+    type Output = RingElement;
+
+    fn sub(self, other: Self) -> Self::Output {
+        let mut result = RingElement::new(self.representation);
+        subtraction(&mut result, self, other);
+        result
+    }
+}
+
+impl SubAssign<&RingElement> for RingElement {
+    fn sub_assign(&mut self, other: &Self) {
+        subtraction_in_place(self, other);
+    }
+}
+
+// Methods below are a bit unorthodox, but they allow to avoid cloning when using
+// addition with references.
+// In this case, a += (&b, &c) means a = b + c, but without cloning b and c.
+
+impl AddAssign<(&RingElement, &RingElement)> for RingElement {
+    fn add_assign(&mut self, other: (&RingElement, &RingElement)) {
+        let (op1, op2) = other;
+        addition(self, op1, op2);
+    }
+}
+
+impl SubAssign<(&RingElement, &RingElement)> for RingElement {
+    fn sub_assign(&mut self, other: (&RingElement, &RingElement)) {
+        let (op1, op2) = other;
+        subtraction(self, op1, op2);
+    }
+}
+
+impl MulAssign<(&RingElement, &RingElement)> for RingElement {
+    fn mul_assign(&mut self, other: (&RingElement, &RingElement)) {
+        let (op1, op2) = other;
+        incomplete_ntt_multiplication(self, op1, op2);
+    }
 }
 
 // They are small so we can store them on stack.

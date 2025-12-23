@@ -1,14 +1,13 @@
 use super::ring_arithmetic::Representation;
 use crate::common::{ring_arithmetic::RingElement, witness::WitnessMatrix};
 
-pub fn sample_random_vector(size: usize) -> Vec<RingElement> {
+pub fn sample_random_vector(size: usize, representation: Representation) -> Vec<RingElement> {
     let mut vec = Vec::with_capacity(size);
     unsafe {
         vec.set_len(size);
     }
     for i in 0..size {
-        vec[i] = RingElement::random(Representation::EvenOddCoefficients);
-        vec[i].from_even_odd_coefficients_to_incomplete_ntt_representation();
+        vec[i] = RingElement::random(representation);
     }
     vec
 }

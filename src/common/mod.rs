@@ -2,7 +2,7 @@ use std::sync::LazyLock;
 
 pub mod config;
 pub mod hash;
-pub mod power_series;
+pub mod structured_row;
 pub mod ring_arithmetic;
 pub mod sampling;
 pub mod witness;
