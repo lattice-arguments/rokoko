@@ -1,13 +1,15 @@
 use std::ops::{Index, IndexMut};
 
+use num::Zero;
+
 #[derive(Clone, Debug, PartialEq)]
-pub struct WitnessMatrix<T> {
+pub struct VerticallyAlignedMatrix<T> {
     pub data: Vec<T>,
     pub width: usize,  // number of cols
     pub height: usize, // number of rows
 }
 
-impl<T> Index<(usize, usize)> for WitnessMatrix<T> {
+impl<T> Index<(usize, usize)> for VerticallyAlignedMatrix<T> {
     type Output = T;
 
     fn index(&self, index: (usize, usize)) -> &Self::Output {
@@ -24,7 +26,7 @@ impl<T> Index<(usize, usize)> for WitnessMatrix<T> {
     }
 }
 
-impl<T> IndexMut<(usize, usize)> for WitnessMatrix<T> {
+impl<T> IndexMut<(usize, usize)> for VerticallyAlignedMatrix<T> {
     fn index_mut(&mut self, index: (usize, usize)) -> &mut Self::Output {
         let (row, col) = index;
         assert!(
@@ -44,20 +46,25 @@ pub struct Row<T> {
     pub len: usize,
 }
 
-impl<T> WitnessMatrix<T> {
+impl<T> VerticallyAlignedMatrix<T>
+where
+    T: Clone,
+{
     pub fn empty() -> Self {
-        WitnessMatrix {
+        VerticallyAlignedMatrix {
             data: Vec::new(),
             width: 0,
             height: 0,
         }
     }
-    pub fn new(width: usize, height: usize) -> Self {
-        let mut data: Vec<T> = Vec::with_capacity(width * height);
-        unsafe {
-            data.set_len(width * height);
-        }
-        WitnessMatrix {
+
+    // TODO: maybe it's a bit weird that we cannot
+    // implement ::zero for RingElement (many reps)?
+    // How to fix that?
+    pub fn new(height: usize, width: usize, zero: &T) -> Self {
+        let mut data: Vec<T> = vec![zero.clone(); height * width];
+
+        VerticallyAlignedMatrix {
             data,
             width,
             height,
@@ -104,7 +111,7 @@ mod tests {
 
     #[test]
     fn test_indexing() {
-        let mut m = WitnessMatrix {
+        let mut m = VerticallyAlignedMatrix {
             data: Vec::from([0, 3, 6, 1, 4, 7, 2, 5, 8]),
             width: 3,
             height: 3,
@@ -122,7 +129,7 @@ mod tests {
 
     #[test]
     fn test_get_methods() {
-        let mut m = WitnessMatrix {
+        let mut m = VerticallyAlignedMatrix {
             data: Vec::from([0, 3, 1, 4, 2, 5]),
             width: 3,
             height: 2,
@@ -143,7 +150,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_index_out_of_bounds() {
-        let m = WitnessMatrix {
+        let m = VerticallyAlignedMatrix {
             data: vec![0; 4],
             width: 2,
             height: 2,

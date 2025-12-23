@@ -6,7 +6,7 @@ pub mod hash;
 pub mod ring_arithmetic;
 pub mod sampling;
 pub mod structured_row;
-pub mod witness;
+pub mod vertically_aligned_matrix;
 use crate::common::ring_arithmetic::*;
 
 pub fn init_common() {
