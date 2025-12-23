@@ -1,12 +1,12 @@
 use crate::common::{
     ring_arithmetic::{Representation, RingElement},
     sampling::sample_random_vector,
-    structured_row::StructuredRow,
+    structured_row::{PreprocessedRow, StructuredRow},
 };
 
 /// Struct representing the Common Reference String (CRS) for cryptographic operations.
 pub struct CRS {
-    pub(crate) ck: Vec<StructuredRow>,
+    pub(crate) ck: Vec<PreprocessedRow>,
 }
 
 /// Generates a Common Reference String (CRS).
@@ -35,7 +35,8 @@ impl CRS {
                     elem_power *= &elem_power.clone();
                     tensor_layers.push(layer);
                 }
-                StructuredRow { tensor_layers }
+                let row = StructuredRow { tensor_layers };
+                PreprocessedRow::from_structured_row(row)
             })
             .collect();
 
