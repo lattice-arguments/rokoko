@@ -6,10 +6,10 @@ use crate::{
         structured_row::{PreprocessedRow, StructuredRow},
         vertically_aligned_matrix::VerticallyAlignedMatrix,
     },
-    subroutines::crs::CRS,
+    protocol::crs::CRS,
 };
 
-struct Commitment {
+pub struct Commitment {
     // TODO: add recursive layers of commitments
     pub(crate) commitment: VerticallyAlignedMatrix<RingElement>,
 }

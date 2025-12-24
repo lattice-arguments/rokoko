@@ -5,25 +5,21 @@ use crate::common::{
 
 pub fn sample_random_vector(size: usize, representation: Representation) -> Vec<RingElement> {
     let mut vec = Vec::with_capacity(size);
-    unsafe {
-        vec.set_len(size);
-    }
     for i in 0..size {
-        vec[i] = RingElement::random(representation);
+        vec.push(RingElement::random(representation));
     }
     vec
 }
 
-// pub fn sample_random_short_mat(
-//     n: usize,
-//     m: usize,
-//     bound: u64,
-// ) -> VerticallyAlignedMatrix<RingElement> {
-//     let mut m = VerticallyAlignedMatrix::new(m, n, in);
-//     for i in m.data.iter_mut() {
-//         *i = RingElement::random_bounded(Representation::EvenOddCoefficients, bound);
+pub fn sample_random_short_vector(
+    size: usize,
+    bound: u64,
+    representation: Representation,
+) -> Vec<RingElement> {
+    let mut vec = Vec::with_capacity(size);
 
-//         i.from_even_odd_coefficients_to_incomplete_ntt_representation();
-//     }
-//     m
-// }
+    for i in 0..size {
+        vec.push(RingElement::random_bounded(representation, bound)); // Sample from {-1, 0, 1}
+    }
+    vec
+}
