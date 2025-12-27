@@ -18,22 +18,22 @@ pub struct Opening {
 
 pub fn open_at(
     witness: &VerticallyAlignedMatrix<RingElement>,
-    evaluation_point_inner: &Vec<Vec<RingElement>>,
-    evaluation_point_outer: &Vec<Vec<RingElement>>,
+    evaluation_points_inner: &Vec<Vec<RingElement>>,
+    evaluation_points_outer: &Vec<Vec<RingElement>>,
 ) -> Opening {
     assert_eq!(
-        evaluation_point_inner[0].len(),
+        evaluation_points_inner[0].len(),
         witness.height.ilog2() as usize
     );
     assert_eq!(
-        evaluation_point_outer[0].len(),
+        evaluation_points_outer[0].len(),
         witness.width.ilog2() as usize
     );
 
-    let nof_evaluation_points = evaluation_point_inner.len();
-    assert_eq!(evaluation_point_outer.len(), nof_evaluation_points);
+    let nof_evaluation_points = evaluation_points_inner.len();
+    assert_eq!(evaluation_points_outer.len(), nof_evaluation_points);
 
-    let structured_points_inner = evaluation_point_inner
+    let structured_points_inner = evaluation_points_inner
         .iter()
         .map(|ep| evaluation_point_to_structured_row(ep))
         .collect::<Vec<StructuredRow>>();
@@ -43,7 +43,7 @@ pub fn open_at(
         .map(|sr| PreprocessedRow::from_structured_row(sr))
         .collect::<Vec<PreprocessedRow>>();
 
-    let structured_points_outer = evaluation_point_outer
+    let structured_points_outer = evaluation_points_outer
         .iter()
         .map(|ep| evaluation_point_to_structured_row(ep))
         .collect::<Vec<StructuredRow>>();

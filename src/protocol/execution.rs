@@ -1,7 +1,9 @@
+use blake3::Hash;
 use num::range;
 
 use crate::{
     common::{
+        hash::HashWrapper,
         matrix::VerticallyAlignedMatrix,
         ring_arithmetic::{Representation, RingElement},
         sampling::sample_random_short_vector,
@@ -15,6 +17,7 @@ use crate::{
 
 pub fn execute() {
     let crs = CRS::gen_crs(256, 2);
+    let mut hash_wrapper = HashWrapper::new();
 
     let witness = VerticallyAlignedMatrix {
         height: 256,
@@ -33,4 +36,6 @@ pub fn execute() {
         .collect::<Vec<RingElement>>()];
 
     let opening = open_at(&witness, &evaluation_points_inner, &evaluation_points_outer);
+
+    hash_wrapper.update_with_ring_element_slice(&opening.rhs.data);
 }

@@ -36,6 +36,12 @@ impl HashWrapper {
         self.transcript.update(bytes);
     }
 
+    pub fn update_with_ring_element_slice(&mut self, elements: &[RingElement]) {
+        for element in elements {
+            self.update_with_ring_element(element);
+        }
+    }
+
     pub fn update_with_quadratic_extension_element(&mut self, element: &QuadraticExtension) {
         // hack: treat the coeffs slice as raw bytes (native endianness)
         let ptr = element.coeffs.as_ptr() as *const u8;
@@ -66,7 +72,7 @@ impl HashWrapper {
         u64::from_le_bytes(buf)
     }
 
-    fn fill_from_xof(&mut self, label: &[u8], out: &mut [u8]) {
+    pub fn fill_from_xof(&mut self, label: &[u8], out: &mut [u8]) {
         let mut state = self.transcript.clone();
         state.update(&self.sample_counter.to_le_bytes());
         state.update(label);

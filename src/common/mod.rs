@@ -4,6 +4,7 @@ pub mod arithmetic;
 pub mod config;
 pub mod hash;
 pub mod matrix;
+pub mod projection_matrix;
 pub mod ring_arithmetic;
 pub mod sampling;
 pub mod structured_row;
