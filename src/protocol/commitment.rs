@@ -9,31 +9,38 @@ use crate::{
     protocol::crs::CRS,
 };
 
-pub struct Commitment {
+pub struct ProverCommitment {
     // TODO: add recursive layers of commitments
     pub(crate) commitment: HorizontallyAlignedMatrix<RingElement>,
 }
 
+pub fn init_prover_commitment(height: usize, width: usize) -> ProverCommitment {
+    ProverCommitment {
+        commitment: HorizontallyAlignedMatrix::new_zero(
+            height,
+            width,
+            &RingElement::zero(Representation::IncompleteNTT),
+        ),
+    }
+}
+
 // TODO: allow commitment to the prefix of the CK
-pub fn commit(crs: &CRS, witness: &VerticallyAlignedMatrix<RingElement>) -> Commitment {
+pub fn commit(
+    commitment: &mut ProverCommitment,
+    crs: &CRS,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+) {
     assert_eq!(crs.ck[0].preprocessed_row.len(), witness.height);
-    let mut commitment = HorizontallyAlignedMatrix::<RingElement>::new_zero(
-        crs.ck[0].preprocessed_row.len(),
-        witness.width,
-        &RingElement::zero(Representation::IncompleteNTT),
-    );
 
     for (i, row) in crs.ck.iter().enumerate() {
         let mut temp = RingElement::zero(Representation::IncompleteNTT);
         for col in 0..witness.width {
             for (elem, w_elem) in row.preprocessed_row.iter().zip(witness.col(col).iter()) {
                 temp *= (elem, w_elem);
-                *commitment.index_mut((i, col)) += &temp;
+                *commitment.commitment.index_mut((i, col)) += &temp;
             }
         }
     }
-
-    Commitment { commitment }
 }
 
 #[test]
@@ -96,7 +103,9 @@ fn test_commitment_computation() {
         height: 8,
     };
 
-    let commitment = commit(&crs, &witness);
+    let mut commitment = init_prover_commitment(crs.ck.len(), witness.width);
+
+    commit(&mut commitment, &crs, &witness);
 
     assert_eq!(
         &commitment.commitment[(0, 0)],

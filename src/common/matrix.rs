@@ -65,6 +65,18 @@ impl<T> VerticallyAlignedMatrix<T> {
         let end = start + self.height;
         &self.data[start..end]
     }
+
+    pub fn col_slice(&self, c: usize, start_row: usize, end_row: usize) -> &[T] {
+        let col_start = c * self.height + start_row;
+        let col_end = c * self.height + end_row;
+        &self.data[col_start..col_end]
+    }
+
+    pub fn col_slice_mut(&mut self, c: usize, start_row: usize, end_row: usize) -> &mut [T] {
+        let col_start = c * self.height + start_row;
+        let col_end = c * self.height + end_row;
+        &mut self.data[col_start..col_end]
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
