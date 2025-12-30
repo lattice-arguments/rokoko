@@ -206,6 +206,10 @@ void ntt_forward(uint64_t* data, size_t n, uint64_t modulus) {
         }
         t >>= 1;
     }
+    // make sure that the output is reduced mod modulus
+    for (size_t i = 0; i < n; ++i) {
+        data[i] %= modulus;
+    }
 }
 
 void ntt_inverse(uint64_t* data, size_t n, uint64_t modulus) {
