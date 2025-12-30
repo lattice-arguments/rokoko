@@ -91,14 +91,14 @@ impl VerticallyAlignedMatrix<RingElement> {
             height,
         }
     }
+}
 
-    pub fn preallocate_zero_matrices(height: usize, width: usize, count: usize) {
-        let mut pool = PREALLOCATED_MATRICES.lock().expect("pool poisoned");
-        let entry = pool.entry((height, width)).or_insert_with(Vec::new);
-        entry.reserve(count);
-        for _ in 0..count {
-            entry.push(vec![ZERO_REP_INCOMPLETE_NTT.clone(); height * width]);
-        }
+pub fn preallocate_zero_matrices(height: usize, width: usize, count: usize) {
+    let mut pool = PREALLOCATED_MATRICES.lock().expect("pool poisoned");
+    let entry = pool.entry((height, width)).or_insert_with(Vec::new);
+    entry.reserve(count);
+    for _ in 0..count {
+        entry.push(vec![ZERO_REP_INCOMPLETE_NTT.clone(); height * width]);
     }
 }
 
@@ -122,17 +122,23 @@ impl HorizontallyAlignedMatrix<RingElement> {
             height,
         }
     }
-
-    pub fn preallocate_zero_matrices(height: usize, width: usize, count: usize) {
-        let mut pool = PREALLOCATED_MATRICES.lock().expect("pool poisoned");
-        let entry = pool.entry((height, width)).or_insert_with(Vec::new);
-        entry.reserve(count);
-        for _ in 0..count {
-            entry.push(vec![ZERO_REP_INCOMPLETE_NTT.clone(); height * width]);
-        }
-    }
 }
 
+pub fn new_vec_zero_preallocated(count: usize) -> Vec<RingElement> {
+    let mut pool = PREALLOCATED_MATRICES.lock().expect("pool poisoned");
+    let data = pool
+        .get_mut(&(1, count))
+        .and_then(|v| v.pop())
+        .unwrap_or_else(|| {
+            println!(
+                "Preallocated vector pool miss for size {}, allocating new",
+                count
+            );
+            vec![ZERO_REP_INCOMPLETE_NTT.clone(); count]
+        });
+
+    data
+}
 impl<T> VerticallyAlignedMatrix<T> {
     pub fn col(&self, c: usize) -> &[T] {
         let start = c * self.height;

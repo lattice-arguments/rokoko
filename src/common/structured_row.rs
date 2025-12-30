@@ -1,3 +1,5 @@
+use std::ops::Index;
+
 use crate::common::{
     config::MOD_Q,
     ring_arithmetic::{Representation, RingElement},
@@ -37,6 +39,14 @@ impl StructuredRow {
         result
     }
 }
+
+// impl Index<usize> for StructuredRow {
+//     type Output = RingElement;
+
+//     fn index(&self, index: usize) -> &Self::Output {
+//         panic!("Indexing StructuredRow directly is not supported. Use the `at` method instead.");
+//     }
+// }
 
 pub struct PreprocessedRow {
     pub structured_row: StructuredRow,

@@ -1,23 +1,19 @@
-use std::ops::IndexMut;
-
-use blake3::Hash;
 use num::range;
 
 use crate::{
     common::{
         hash::HashWrapper,
-        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, ZeroNew},
+        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
         sampling::sample_random_short_vector,
     },
     protocol::{
-        commitment::{self, commit, Commitment},
-        crs::{self, CRS},
+        commitment::{commit, Commitment},
+        crs::CRS,
         fold::fold,
         open::{open_at, Opening},
         project::project,
-        verifier,
     },
 };
 
@@ -25,24 +21,17 @@ pub struct RoundOutput {
     folded_witness: VerticallyAlignedMatrix<RingElement>,
     projection_image: VerticallyAlignedMatrix<RingElement>,
     opening: Opening,
-    _fold_challenge: Vec<RingElement>,
 }
 
 pub fn prover_simple_round(
     commitment: &Commitment,
     witness: &VerticallyAlignedMatrix<RingElement>,
+    evaluation_points_inner: &Vec<Vec<RingElement>>,
+    evaluation_points_outer: &Vec<Vec<RingElement>>,
 ) -> RoundOutput {
     let mut hash_wrapper = HashWrapper::new();
 
     hash_wrapper.update_with_ring_element_slice(&commitment.commitment.data);
-
-    let evaluation_points_inner = vec![range(0, witness.height.ilog2() as usize)
-        .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 2))
-        .collect::<Vec<RingElement>>()];
-
-    let evaluation_points_outer = vec![range(0, witness.width.ilog2() as usize)
-        .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 2))
-        .collect::<Vec<RingElement>>()];
 
     let opening = open_at(&witness, &evaluation_points_inner, &evaluation_points_outer);
 
@@ -66,11 +55,16 @@ pub fn prover_simple_round(
         folded_witness,
         projection_image,
         opening,
-        _fold_challenge: fold_challenge,
     }
 }
 
-pub fn verifier_simple_round(crs: &CRS, commitment: &Commitment, round_output: &RoundOutput) {
+pub fn verifier_simple_round(
+    crs: &CRS,
+    commitment: &Commitment,
+    round_output: &RoundOutput,
+    evaluation_points_inner: &Vec<Vec<RingElement>>,
+    evaluation_points_outer: &Vec<Vec<RingElement>>,
+) {
     // We check if:
     // folded commitment == commit(folded witness)
     // projection_image is correct projection of witness
@@ -79,14 +73,13 @@ pub fn verifier_simple_round(crs: &CRS, commitment: &Commitment, round_output: &
     let mut hash_wrapper = HashWrapper::new();
     hash_wrapper.update_with_ring_element_slice(&commitment.commitment.data);
     hash_wrapper.update_with_ring_element_slice(&round_output.opening.rhs.data);
+
     let mut projection_matrix = ProjectionMatrix::new(8);
     projection_matrix.sample(&mut hash_wrapper);
     hash_wrapper.update_with_ring_element_slice(&round_output.projection_image.data);
     let mut fold_challenge =
         vec![RingElement::zero(Representation::IncompleteNTT); commitment.commitment.width];
     hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut fold_challenge);
-
-    assert_eq!(fold_challenge, round_output._fold_challenge);
 
     let commitment_of_folded_witness = commit(crs, &round_output.folded_witness);
     let mut folded_commitment = HorizontallyAlignedMatrix::new_zero_preallocated(crs.ck.len(), 1);
@@ -100,6 +93,63 @@ pub fn verifier_simple_round(crs: &CRS, commitment: &Commitment, round_output: &
     }
 
     assert_eq!(commitment_of_folded_witness.commitment, folded_commitment);
+
+    let opening_to_folded_witness = open_at(
+        &round_output.folded_witness,
+        evaluation_points_inner,
+        &vec![],
+    );
+
+    let mut folded_opening =
+        HorizontallyAlignedMatrix::new_zero_preallocated(round_output.opening.rhs.height, 1);
+
+    for i in 0..round_output.opening.rhs.height {
+        let mut temp = RingElement::zero(Representation::IncompleteNTT);
+        for col in 0..commitment.commitment.width {
+            temp *= (&round_output.opening.rhs[(i, col)], &fold_challenge[col]);
+            folded_opening[(i, 0)] += &temp;
+        }
+    }
+
+    assert_eq!(opening_to_folded_witness.rhs, folded_opening);
+
+    let projection_of_folded_witness = project(&round_output.folded_witness, &projection_matrix);
+
+    let mut folded_projection_image =
+        VerticallyAlignedMatrix::new_zero_preallocated(round_output.projection_image.height, 1);
+
+    for i in 0..folded_projection_image.height {
+        let mut temp = RingElement::zero(Representation::IncompleteNTT);
+        for col in 0..round_output.projection_image.width {
+            temp *= (
+                &round_output.projection_image[(i, col)],
+                &fold_challenge[col],
+            );
+            folded_projection_image[(i, 0)] += &temp;
+        }
+    }
+
+    assert_eq!(projection_of_folded_witness, folded_projection_image);
+
+    let mut evaluation = new_vec_zero_preallocated(round_output.opening.evaluations.len());
+
+    for (i, preprocessed_row_outer) in round_output
+        .opening
+        .evaluation_points_outer
+        .iter()
+        .enumerate()
+    {
+        let mut temp = RingElement::zero(Representation::IncompleteNTT);
+        for col in 0..round_output.opening.rhs.width {
+            temp *= (
+                &round_output.opening.rhs[(i, col)],
+                &preprocessed_row_outer.preprocessed_row[col],
+            );
+            evaluation[i] += &temp;
+        }
+    }
+
+    assert_eq!(round_output.opening.evaluations, evaluation);
 }
 
 pub fn execute() {
@@ -113,6 +163,26 @@ pub fn execute() {
 
     let commitment = commit(&crs, &witness);
 
-    let round_output = prover_simple_round(&commitment, &witness);
-    verifier_simple_round(&crs, &commitment, &round_output);
+    let evaluation_points_inner = vec![range(0, witness.height.ilog2() as usize)
+        .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 2))
+        .collect::<Vec<RingElement>>()];
+
+    let evaluation_points_outer = vec![range(0, witness.width.ilog2() as usize)
+        .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 2))
+        .collect::<Vec<RingElement>>()];
+
+    let round_output = prover_simple_round(
+        &commitment,
+        &witness,
+        &evaluation_points_inner,
+        &evaluation_points_outer,
+    );
+
+    verifier_simple_round(
+        &crs,
+        &commitment,
+        &round_output,
+        &evaluation_points_inner,
+        &evaluation_points_outer,
+    );
 }

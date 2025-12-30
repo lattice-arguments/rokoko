@@ -30,13 +30,8 @@ pub fn open_at(
         evaluation_points_inner[0].len(),
         witness.height.ilog2() as usize
     );
-    assert_eq!(
-        evaluation_points_outer[0].len(),
-        witness.width.ilog2() as usize
-    );
 
     let nof_evaluation_points = evaluation_points_inner.len();
-    assert_eq!(evaluation_points_outer.len(), nof_evaluation_points);
 
     let structured_points_inner = evaluation_points_inner
         .iter()
