@@ -76,7 +76,10 @@ pub fn open_at(
     for (i, preprocessed_row_outer) in preprocessed_points_outer.iter().enumerate() {
         let mut temp = RingElement::zero(Representation::IncompleteNTT);
         for col in 0..rhs.width {
-            temp *= (&rhs[(i, col)], &preprocessed_row_outer.preprocessed_row[col]);
+            temp *= (
+                &rhs[(i, col)],
+                &preprocessed_row_outer.preprocessed_row[col],
+            );
             evaluations[i] += &temp;
         }
     }

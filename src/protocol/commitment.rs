@@ -16,7 +16,7 @@ pub struct Commitment {
 
 pub fn init_prover_commitment(height: usize, width: usize) -> Commitment {
     Commitment {
-        // TODO: /think/check which is more efficient
+        // TODO: think/check which alignment is more efficient
         commitment: VerticallyAlignedMatrix::new_zero_preallocated(height, width),
     }
 }
