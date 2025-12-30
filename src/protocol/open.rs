@@ -1,7 +1,6 @@
 use std::ops::IndexMut;
 
 use crate::common::{
-    arithmetic::evaluation_point_to_structured_row,
     config::MOD_Q,
     matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, ZeroNew},
     ring_arithmetic::{Representation, RingElement},
@@ -14,6 +13,12 @@ pub struct Opening {
     pub evaluations: Vec<RingElement>,
     pub evaluation_points_inner: Vec<PreprocessedRow>,
     pub evaluation_points_outer: Vec<PreprocessedRow>,
+}
+
+fn evaluation_point_to_structured_row(evaluation_point: &Vec<RingElement>) -> StructuredRow {
+    StructuredRow {
+        tensor_layers: evaluation_point.clone(),
+    }
 }
 
 pub fn open_at(
@@ -35,7 +40,7 @@ pub fn open_at(
 
     let structured_points_inner = evaluation_points_inner
         .iter()
-        .map(|ep| evaluation_point_to_structured_row(ep))
+        .map(evaluation_point_to_structured_row)
         .collect::<Vec<StructuredRow>>();
 
     let preprocessed_points_inner = structured_points_inner
@@ -45,7 +50,7 @@ pub fn open_at(
 
     let structured_points_outer = evaluation_points_outer
         .iter()
-        .map(|ep| evaluation_point_to_structured_row(ep))
+        .map(evaluation_point_to_structured_row)
         .collect::<Vec<StructuredRow>>();
 
     let preprocessed_points_outer = structured_points_outer

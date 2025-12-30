@@ -13,13 +13,3 @@ pub fn inner_product(a: &Vec<RingElement>, b: &Vec<RingElement>) -> RingElement 
     }
     result
 }
-
-pub fn evaluation_point_to_structured_row(point: &Vec<RingElement>) -> StructuredRow {
-    let mut tensor_layers: Vec<[RingElement; 2]> =
-        Vec::with_capacity(point.len().trailing_zeros() as usize);
-    let one = RingElement::one(Representation::IncompleteNTT);
-    for elem in point {
-        tensor_layers.push([&one - elem, elem.clone()]);
-    }
-    StructuredRow { tensor_layers }
-}

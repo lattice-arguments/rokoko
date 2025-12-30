@@ -1,20 +1,24 @@
-use crate::common::ring_arithmetic::{Representation, RingElement};
+use crate::common::{
+    config::MOD_Q,
+    ring_arithmetic::{Representation, RingElement},
+};
 
 #[derive(Debug, Clone)]
 pub struct StructuredRow {
     // Each layer corresponds to one dimension in the tensor product structure.
-    // Each layer has two elements, corresponding to the two choices (0 or 1) at that dimension.
+    // Each layer has two correlated elements, corresponding to the two choices (0 or 1) at that dimension.
+    // Each layer is of the form [1 - a, a] for some a which is similar to the evaluation point.
     // For example, for a 3-layer structured row, the tensor_layers might look like:
     // [
-    //   [a0, a1],  // Layer 0
-    //   [b0, b1],  // Layer 1
-    //   [c0, c1],  // Layer 2
+    //   [1 - a, a],  // Layer 0
+    //   [1 - b, b],  // Layer 1
+    //   [1 - c, c],  // Layer 2
     // ]
     // Then, the entry at position 5 (binary 100) would be computed as:
-    // a0 * b0 * c1.
+    // (1 - a) * (1 - b) * c.
     // Notably, the order of layers corresponds to the inverse order of bits in the index,
     // (i.e. with the first layer corresponding to the least significant bit.)
-    pub tensor_layers: Vec<[RingElement; 2]>,
+    pub tensor_layers: Vec<RingElement>,
 }
 
 impl StructuredRow {
@@ -24,7 +28,11 @@ impl StructuredRow {
         for layer in &self.tensor_layers {
             let bit = index & 1;
             index >>= 1;
-            result *= &layer[bit];
+            if bit == 0 {
+                result *= &(&RingElement::one(Representation::IncompleteNTT) - layer);
+            } else {
+                result *= layer;
+            }
         }
         result
     }
@@ -43,9 +51,9 @@ impl PreprocessedRow {
         for layer in &structured_row.tensor_layers {
             let mut new_entries: Vec<RingElement> = Vec::with_capacity(result.len());
             for r in &mut result {
-                let r1 = &*r * &layer[1];
+                let r1 = &*r * &layer;
                 new_entries.push(r1);
-                *r *= &layer[0];
+                *r *= &(&RingElement::one(Representation::IncompleteNTT) - layer);
             }
             for e in new_entries {
                 result.push(e);
@@ -61,70 +69,76 @@ impl PreprocessedRow {
 #[test]
 fn test_structured_row() {
     let tensor_layers = vec![
-        [
-            RingElement::constant(1, Representation::IncompleteNTT),
-            RingElement::constant(2, Representation::IncompleteNTT),
-        ],
-        [
-            RingElement::constant(3, Representation::IncompleteNTT),
-            RingElement::constant(4, Representation::IncompleteNTT),
-        ],
-        [
-            RingElement::constant(5, Representation::IncompleteNTT),
-            RingElement::constant(6, Representation::IncompleteNTT),
-        ],
+        RingElement::constant(2, Representation::IncompleteNTT),
+        RingElement::constant(3, Representation::IncompleteNTT),
+        RingElement::constant(5, Representation::IncompleteNTT),
     ];
     let structured_row = StructuredRow { tensor_layers };
 
     assert_eq!(
         structured_row.at(0),
-        RingElement::constant(1 * 3 * 5, Representation::IncompleteNTT)
+        RingElement::constant(
+            (MOD_Q as i64 + (1 - 2) * (1 - 3) * (1 - 5)) as u64,
+            Representation::IncompleteNTT
+        )
     );
     assert_eq!(
         structured_row.at(1),
-        RingElement::constant(2 * 3 * 5, Representation::IncompleteNTT)
+        RingElement::constant(
+            (MOD_Q as i64 + 2 * (1 - 3) * (1 - 5)) as u64,
+            Representation::IncompleteNTT
+        )
     );
     assert_eq!(
         structured_row.at(2),
-        RingElement::constant(1 * 4 * 5, Representation::IncompleteNTT)
+        RingElement::constant(
+            (MOD_Q as i64 + (1 - 2) * 3 * (1 - 5)) as u64,
+            Representation::IncompleteNTT
+        )
     );
     assert_eq!(
         structured_row.at(3),
-        RingElement::constant(2 * 4 * 5, Representation::IncompleteNTT)
+        RingElement::constant(
+            (MOD_Q as i64 + 2 * 3 * (1 - 5)) as u64,
+            Representation::IncompleteNTT
+        )
     );
     assert_eq!(
         structured_row.at(4),
-        RingElement::constant(1 * 3 * 6, Representation::IncompleteNTT)
+        RingElement::constant(
+            (MOD_Q as i64 + (1 - 2) * (1 - 3) * 5) as u64,
+            Representation::IncompleteNTT
+        )
     );
     assert_eq!(
         structured_row.at(5),
-        RingElement::constant(2 * 3 * 6, Representation::IncompleteNTT)
+        RingElement::constant(
+            (MOD_Q as i64 + 2 * (1 - 3) * 5) as u64,
+            Representation::IncompleteNTT
+        )
     );
     assert_eq!(
         structured_row.at(6),
-        RingElement::constant(1 * 4 * 6, Representation::IncompleteNTT)
+        RingElement::constant(
+            (MOD_Q as i64 + (1 - 2) * 3 * 5) as u64,
+            Representation::IncompleteNTT
+        )
     );
     assert_eq!(
         structured_row.at(7),
-        RingElement::constant(2 * 4 * 6, Representation::IncompleteNTT)
+        RingElement::constant(
+            (MOD_Q as i64 + 2 * 3 * 5) as u64,
+            Representation::IncompleteNTT
+        )
     );
 }
 
 #[test]
 fn test_preprocessed_row() {
     let tensor_layers = vec![
-        [
-            RingElement::constant(1, Representation::IncompleteNTT),
-            RingElement::constant(2, Representation::IncompleteNTT),
-        ],
-        [
-            RingElement::constant(3, Representation::IncompleteNTT),
-            RingElement::constant(4, Representation::IncompleteNTT),
-        ],
-        [
-            RingElement::constant(5, Representation::IncompleteNTT),
-            RingElement::constant(6, Representation::IncompleteNTT),
-        ],
+        RingElement::constant(1, Representation::IncompleteNTT),
+        RingElement::constant(3, Representation::IncompleteNTT),
+        RingElement::constant(5, Representation::IncompleteNTT),
     ];
     let structured_row = StructuredRow { tensor_layers };
 

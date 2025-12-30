@@ -10,9 +10,9 @@ use crate::{
         sampling::sample_random_short_vector,
     },
     protocol::{
-        commitment::{commit, init_prover_commitment},
+        commitment::{commit, init_commitment},
         crs::CRS,
-        fold::{self, fold},
+        fold::fold,
         open::open_at,
         project::project,
     },
@@ -34,7 +34,7 @@ pub fn execute() {
         &RingElement::zero(Representation::IncompleteNTT),
     );
 
-    let mut commitment = init_prover_commitment(crs.ck.len(), witness.width);
+    let mut commitment = init_commitment(crs.ck.len(), witness.width);
 
     commit(&mut commitment, &crs, &witness);
 

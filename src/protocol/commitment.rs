@@ -9,13 +9,13 @@ use crate::{
     protocol::crs::CRS,
 };
 
-pub struct ProverCommitment {
+pub struct Commitment {
     // TODO: add recursive layers of commitments
     pub(crate) commitment: HorizontallyAlignedMatrix<RingElement>,
 }
 
-pub fn init_prover_commitment(height: usize, width: usize) -> ProverCommitment {
-    ProverCommitment {
+pub fn init_commitment(height: usize, width: usize) -> Commitment {
+    Commitment {
         commitment: HorizontallyAlignedMatrix::new_zero(
             height,
             width,
@@ -26,7 +26,7 @@ pub fn init_prover_commitment(height: usize, width: usize) -> ProverCommitment {
 
 // TODO: allow commitment to the prefix of the CK
 pub fn commit(
-    commitment: &mut ProverCommitment,
+    commitment: &mut Commitment,
     crs: &CRS,
     witness: &VerticallyAlignedMatrix<RingElement>,
 ) {
@@ -103,7 +103,7 @@ fn test_commitment_computation() {
         height: 8,
     };
 
-    let mut commitment = init_prover_commitment(crs.ck.len(), witness.width);
+    let mut commitment = init_commitment(crs.ck.len(), witness.width);
 
     commit(&mut commitment, &crs, &witness);
 
