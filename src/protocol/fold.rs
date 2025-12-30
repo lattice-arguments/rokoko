@@ -1,16 +1,15 @@
 use crate::common::{
-    matrix::VerticallyAlignedMatrix,
+    matrix::{VerticallyAlignedMatrix, ZeroNew},
     ring_arithmetic::{Representation, RingElement},
 };
 
 pub fn fold(
-    folded_witness: &mut VerticallyAlignedMatrix<RingElement>,
     witness: &VerticallyAlignedMatrix<RingElement>,
     fold_challenge: &[RingElement],
-) {
+) -> VerticallyAlignedMatrix<RingElement> {
+    let mut folded_witness = VerticallyAlignedMatrix::new_zero_preallocated(witness.height, 1);
+
     assert_eq!(witness.width, fold_challenge.len());
-    assert_eq!(folded_witness.width, witness.width);
-    assert_eq!(folded_witness.height, witness.height);
 
     for col in 0..witness.width {
         for row in 0..folded_witness.height {
@@ -19,6 +18,7 @@ pub fn fold(
             folded_witness[(row, 0)] += &(challenge * w_el);
         }
     }
+    folded_witness
 }
 
 #[test]
@@ -45,7 +45,7 @@ fn test_fold() {
         height: 2,
     };
 
-    fold(&mut folded_witness, &witness, &fold_challenge);
+    let folded_witness = fold(&witness, &fold_challenge);
 
     assert_eq!(
         folded_witness[(0, 0)],

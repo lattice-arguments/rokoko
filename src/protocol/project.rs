@@ -1,19 +1,20 @@
-use crate::{
-    common::{
-        config::PROJECTION_HEIGHT,
-        matrix::VerticallyAlignedMatrix,
-        projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{Representation, RingElement},
-    },
-    protocol::project,
+use crate::common::{
+    config::PROJECTION_HEIGHT,
+    matrix::{VerticallyAlignedMatrix, ZeroNew},
+    projection_matrix::ProjectionMatrix,
+    ring_arithmetic::{Representation, RingElement},
 };
 
 // TODO: this projection is very naive and unoptimized
+// use parameter-out pattern
 pub fn project(
-    projection_image: &mut VerticallyAlignedMatrix<RingElement>,
     witness: &VerticallyAlignedMatrix<RingElement>,
     projection_matrix: &ProjectionMatrix,
-) {
+) -> VerticallyAlignedMatrix<RingElement> {
+    let mut projection_image = VerticallyAlignedMatrix::new_zero_preallocated(
+        witness.height / projection_matrix.projection_ratio,
+        witness.width,
+    );
     assert_eq!(projection_image.width, witness.width);
 
     assert_eq!(
@@ -49,6 +50,7 @@ pub fn project(
             }
         }
     }
+    projection_image
 }
 
 #[test]
@@ -78,13 +80,7 @@ fn test_projection() {
         data
     });
 
-    let mut projection_image = VerticallyAlignedMatrix {
-        data: vec![RingElement::zero(Representation::IncompleteNTT); PROJECTION_HEIGHT * 2 * 2],
-        width: 2,
-        height: PROJECTION_HEIGHT * 2,
-    };
-
-    project(&mut projection_image, &witness, &projection_matrix);
+    let projection_image = project(&witness, &projection_matrix);
 
     assert_eq!(
         projection_image[(0, 0)],

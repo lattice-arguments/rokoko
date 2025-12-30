@@ -58,11 +58,8 @@ pub fn open_at(
         .map(|sr| PreprocessedRow::from_structured_row(sr))
         .collect::<Vec<PreprocessedRow>>();
 
-    let mut rhs = HorizontallyAlignedMatrix::new_zero(
-        nof_evaluation_points,
-        witness.width,
-        &RingElement::zero(Representation::IncompleteNTT),
-    );
+    let mut rhs =
+        HorizontallyAlignedMatrix::new_zero_preallocated(nof_evaluation_points, witness.width);
 
     for (i, preprocessed_row_inner) in preprocessed_points_inner.iter().enumerate() {
         let mut temp = RingElement::zero(Representation::IncompleteNTT);

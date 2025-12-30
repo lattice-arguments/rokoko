@@ -14,22 +14,15 @@ pub struct Commitment {
     pub(crate) commitment: HorizontallyAlignedMatrix<RingElement>,
 }
 
-pub fn init_commitment(height: usize, width: usize) -> Commitment {
+pub fn init_prover_commitment(height: usize, width: usize) -> Commitment {
     Commitment {
-        commitment: HorizontallyAlignedMatrix::new_zero(
-            height,
-            width,
-            &RingElement::zero(Representation::IncompleteNTT),
-        ),
+        commitment: HorizontallyAlignedMatrix::new_zero_preallocated(height, width),
     }
 }
 
 // TODO: allow commitment to the prefix of the CK
-pub fn commit(
-    commitment: &mut Commitment,
-    crs: &CRS,
-    witness: &VerticallyAlignedMatrix<RingElement>,
-) {
+pub fn commit(crs: &CRS, witness: &VerticallyAlignedMatrix<RingElement>) -> Commitment {
+    let mut commitment = init_prover_commitment(crs.ck.len(), witness.width);
     assert_eq!(crs.ck[0].preprocessed_row.len(), witness.height);
 
     for (i, row) in crs.ck.iter().enumerate() {
@@ -41,6 +34,7 @@ pub fn commit(
             }
         }
     }
+    commitment
 }
 
 #[test]
@@ -103,9 +97,7 @@ fn test_commitment_computation() {
         height: 8,
     };
 
-    let mut commitment = init_commitment(crs.ck.len(), witness.width);
-
-    commit(&mut commitment, &crs, &witness);
+    let commitment = commit(&crs, &witness);
 
     assert_eq!(
         &commitment.commitment[(0, 0)],

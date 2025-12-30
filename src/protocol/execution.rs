@@ -10,33 +10,26 @@ use crate::{
         sampling::sample_random_short_vector,
     },
     protocol::{
-        commitment::{commit, init_commitment},
-        crs::CRS,
+        commitment::{self, commit, Commitment},
+        crs::{self, CRS},
         fold::fold,
-        open::open_at,
+        open::{open_at, Opening},
         project::project,
+        verifier,
     },
 };
 
-pub fn execute() {
-    let crs = CRS::gen_crs(256, 2);
+pub struct RoundOutput {
+    folded_witness: VerticallyAlignedMatrix<RingElement>,
+    projection_image: VerticallyAlignedMatrix<RingElement>,
+    opening: Opening,
+}
+
+pub fn prover_simple_round(
+    commitment: &Commitment,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+) -> RoundOutput {
     let mut hash_wrapper = HashWrapper::new();
-
-    let witness = VerticallyAlignedMatrix {
-        height: 256,
-        width: 16,
-        data: sample_random_short_vector(256 * 16, 1, Representation::IncompleteNTT),
-    };
-
-    let mut folded_witness = VerticallyAlignedMatrix::new_zero(
-        witness.height,
-        witness.width,
-        &RingElement::zero(Representation::IncompleteNTT),
-    );
-
-    let mut commitment = init_commitment(crs.ck.len(), witness.width);
-
-    commit(&mut commitment, &crs, &witness);
 
     hash_wrapper.update_with_ring_element_slice(&commitment.commitment.data);
 
@@ -56,13 +49,7 @@ pub fn execute() {
 
     projection_matrix.sample(&mut hash_wrapper);
 
-    let mut projection_image = VerticallyAlignedMatrix::new_zero(
-        witness.height / projection_matrix.projection_ratio,
-        witness.width,
-        &RingElement::zero(Representation::IncompleteNTT),
-    );
-
-    project(&mut projection_image, &witness, &projection_matrix);
+    let projection_image = project(&witness, &projection_matrix);
 
     hash_wrapper.update_with_ring_element_slice(&projection_image.data);
 
@@ -70,5 +57,34 @@ pub fn execute() {
 
     hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut fold_challenge);
 
-    fold(&mut folded_witness, &witness, &fold_challenge);
+    let folded_witness = fold(&witness, &fold_challenge);
+
+    RoundOutput {
+        folded_witness,
+        projection_image,
+        opening,
+    }
+}
+
+pub fn verifier_simple_round(crs: &CRS, commitment: &Commitment, round_output: &RoundOutput) {
+    // We check if:
+    // folded commitment == commit(folded witness)
+    // projection_image is correct projection of witness
+    // opening is valid opening of witness at evaluation points
+
+    let folded_commitment = commit(crs, &round_output.folded_witness);
+}
+
+pub fn execute() {
+    let crs = CRS::gen_crs(256, 2);
+
+    let witness = VerticallyAlignedMatrix {
+        height: 256,
+        width: 16,
+        data: sample_random_short_vector(256 * 16, 1, Representation::IncompleteNTT),
+    };
+
+    let commitment = commit(&crs, &witness);
+
+    prover_simple_round(&commitment, &witness);
 }
