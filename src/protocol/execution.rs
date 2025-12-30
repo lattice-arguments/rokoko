@@ -12,6 +12,7 @@ use crate::{
     protocol::{
         commitment::{commit, init_prover_commitment},
         crs::CRS,
+        fold::{self, fold},
         open::open_at,
         project::project,
     },
@@ -26,6 +27,12 @@ pub fn execute() {
         width: 16,
         data: sample_random_short_vector(256 * 16, 1, Representation::IncompleteNTT),
     };
+
+    let mut folded_witness = VerticallyAlignedMatrix::new_zero(
+        witness.height,
+        witness.width,
+        &RingElement::zero(Representation::IncompleteNTT),
+    );
 
     let mut commitment = init_prover_commitment(crs.ck.len(), witness.width);
 
@@ -56,4 +63,12 @@ pub fn execute() {
     );
 
     project(&mut projection_image, &witness, &projection_matrix);
+
+    hash_wrapper.update_with_ring_element_slice(&projection_image.data);
+
+    let mut fold_challenge = vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
+
+    hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut fold_challenge);
+
+    fold(&mut folded_witness, &witness, &fold_challenge);
 }

@@ -103,6 +103,29 @@ impl HashWrapper {
         result
     }
 
+    fn sample_biased_ternary_ring_element_into(&mut self, output: &mut RingElement) {
+        let mut buf = [0u8; DEGREE / 4];
+        self.fill_from_xof(b"biased-ternary-ring-element", &mut buf);
+        for i in 0..DEGREE / 4 {
+            let b = buf[i];
+            for j in 0..4 {
+                let bits = (b >> (j * 2)) & 0b11;
+                let coeff = match bits {
+                    0b01 => 1,
+                    0b10 => MOD_Q - 1,
+                    _ => 0,
+                };
+                output.v[i * 4 + j] = coeff;
+            }
+        }
+    }
+
+    pub fn sample_biased_ternary_ring_element_vec_into(&mut self, output: &mut [RingElement]) {
+        for element in output.iter_mut() {
+            self.sample_biased_ternary_ring_element_into(element);
+        }
+    }
+
     fn sample_ternary_ring_element(&mut self) -> RingElement {
         // we need 2 bits per coefficient to sample uniformly from {-1, 0, 1}
         // 0b11 is discarded so we take (two times) more bytes to account for the rejections
