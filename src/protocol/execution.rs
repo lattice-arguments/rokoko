@@ -85,7 +85,7 @@ pub fn verifier_simple_round(
     hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut fold_challenge);
 
     let commitment_of_folded_witness = commit(ck, &round_output.folded_witness);
-    let mut folded_commitment = HorizontallyAlignedMatrix::new_zero_preallocated(ck.len(), 1);
+    let mut folded_commitment = VerticallyAlignedMatrix::new_zero_preallocated(ck.len(), 1);
 
     for i in 0..ck.len() {
         for col in 0..commitment.commitment.width {
@@ -104,7 +104,7 @@ pub fn verifier_simple_round(
     );
 
     let mut folded_opening =
-        HorizontallyAlignedMatrix::new_zero_preallocated(round_output.opening.rhs.height, 1);
+        VerticallyAlignedMatrix::new_zero_preallocated(round_output.opening.rhs.height, 1);
 
     for i in 0..round_output.opening.rhs.height {
         let mut temp = RingElement::zero(Representation::IncompleteNTT);
@@ -165,12 +165,6 @@ pub fn execute() {
     };
 
     let ck = &crs.ck_for_wit_dim(witness.height);
-
-    println!("ck len: {}", crs.cks[2][0].preprocessed_row.len());
-    println!(
-        "ck tl: {}",
-        crs.cks[2][0].structured_row.tensor_layers.len()
-    );
 
     let commitment = commit(&ck, &witness);
 

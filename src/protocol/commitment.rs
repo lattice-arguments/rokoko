@@ -11,12 +11,13 @@ use crate::{
 
 pub struct Commitment {
     // TODO: add recursive layers of commitments
-    pub(crate) commitment: HorizontallyAlignedMatrix<RingElement>,
+    pub(crate) commitment: VerticallyAlignedMatrix<RingElement>,
 }
 
 pub fn init_prover_commitment(height: usize, width: usize) -> Commitment {
     Commitment {
-        commitment: HorizontallyAlignedMatrix::new_zero_preallocated(height, width),
+        // TODO: /think/check which is more efficient
+        commitment: VerticallyAlignedMatrix::new_zero_preallocated(height, width),
     }
 }
 

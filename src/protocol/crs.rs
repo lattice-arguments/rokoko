@@ -11,6 +11,7 @@ pub struct CRS {
 }
 
 impl CRS {
+    // Returns the commitment key for a given witness dimension.
     pub fn ck_for_wit_dim(&self, wit_dim: usize) -> &Vec<PreprocessedRow> {
         let index = wit_dim.ilog2() as usize - 1;
         &self.cks[index]

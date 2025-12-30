@@ -9,7 +9,7 @@ use crate::common::{
 
 pub struct Opening {
     // TODO: add recursive layers of commitments
-    pub rhs: HorizontallyAlignedMatrix<RingElement>,
+    pub rhs: VerticallyAlignedMatrix<RingElement>,
     pub evaluations: Vec<RingElement>,
     pub evaluation_points_inner: Vec<PreprocessedRow>,
     pub evaluation_points_outer: Vec<PreprocessedRow>,
@@ -54,7 +54,7 @@ pub fn open_at(
         .collect::<Vec<PreprocessedRow>>();
 
     let mut rhs =
-        HorizontallyAlignedMatrix::new_zero_preallocated(nof_evaluation_points, witness.width);
+        VerticallyAlignedMatrix::new_zero_preallocated(nof_evaluation_points, witness.width);
 
     for (i, preprocessed_row_inner) in preprocessed_points_inner.iter().enumerate() {
         let mut temp = RingElement::zero(Representation::IncompleteNTT);
@@ -75,12 +75,8 @@ pub fn open_at(
 
     for (i, preprocessed_row_outer) in preprocessed_points_outer.iter().enumerate() {
         let mut temp = RingElement::zero(Representation::IncompleteNTT);
-        for (elem, w_elem) in preprocessed_row_outer
-            .preprocessed_row
-            .iter()
-            .zip(rhs.row(i).iter())
-        {
-            temp *= (elem, w_elem);
+        for col in 0..rhs.width {
+            temp *= (&rhs[(i, col)], &preprocessed_row_outer.preprocessed_row[col]);
             evaluations[i] += &temp;
         }
     }
