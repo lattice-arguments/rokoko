@@ -7,7 +7,7 @@ use crate::common::{
 
 // TODO: this projection is very naive and unoptimized
 // Some idea:
-// (i) Convert witness into i64 using e.g.
+// (i) Convert witness (in-place) into i64 using e.g.
 //     // neg lanes are the big ones (Q - t)
 //    __mmask8 neg = _mm512_cmpgt_epu64_mask(a, halfQ);
 //
