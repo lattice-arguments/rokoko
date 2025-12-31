@@ -18,6 +18,8 @@ use crate::common::{
 // (Steps (i) and (ii) are skipped if witness is already in i16 representation, which we can assume in the first round)
 // (iii) Compute the output rows in chunks of 32 (since __m512i holds 32 i16 values) with _mm512_add_epi16 and _mm512_sub_epi16
 // (iv) _mm512_cvtusepi16_epi64 to convert i16 back to u64
+//
+// Create the same variant for 32 bit and 64 bit too. Add a helper to choose the right one based on the l-inf norm of the witness.
 
 pub fn project(
     witness: &VerticallyAlignedMatrix<RingElement>,
