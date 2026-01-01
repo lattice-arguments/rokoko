@@ -1,40 +1,38 @@
-use crate::common::{
-    config::MOD_Q,
-    matrix::new_vec_zero_preallocated,
-    ring_arithmetic::{Representation, RingElement},
+use crate::{
+    common::{
+        config::MOD_Q,
+        matrix::new_vec_zero_preallocated,
+        ring_arithmetic::{Representation, RingElement},
+    },
+    protocol::sumcheck::common::{HypercubePoint, Polynomial, Sumcheck},
 };
 
-struct HypercubePoint {
-    // We can represent a point in the hypercube as an integer where each bit represents a coordinate
-    pub coordinates: usize,
-}
-
-struct LinearPolynomial {
+pub struct LinearPolynomial {
     // TODO: maybe we should present this in eval domain instead
     pub coefficients: [RingElement; 2],
 }
 
-impl LinearPolynomial {
-    pub fn at_zero(&self) -> RingElement {
+impl Polynomial for LinearPolynomial {
+    fn at_zero(&self) -> RingElement {
         self.coefficients[0].clone()
     }
 
-    pub fn at_one(&self) -> RingElement {
+    fn at_one(&self) -> RingElement {
         &self.coefficients[0] + &self.coefficients[1]
     }
 
-    pub fn at(&self, x: &RingElement) -> RingElement {
+    fn at(&self, x: &RingElement) -> RingElement {
         &self.coefficients[0] + &(&self.coefficients[1] * x)
     }
 }
 
-struct LinearSumcheck {
+pub struct LinearSumcheck {
     pub data: Vec<RingElement>,
     // this polynomial is stored here to avoid multiple allocations
-    pub univariate_polynomial: LinearPolynomial,
+    univariate_polynomial: LinearPolynomial,
     // sum claim at the current round
-    pub claim: RingElement,
-    pub variable_count: usize,
+    //  claim: RingElement,
+    variable_count: usize,
 }
 
 impl LinearSumcheck {
@@ -49,22 +47,69 @@ impl LinearSumcheck {
                     RingElement::zero(representation),
                 ],
             },
-            claim: RingElement::zero(representation),
+            // claim: RingElement::zero(representation),
             variable_count: count.ilog2() as usize,
         }
     }
     pub fn from(&mut self, src: &Vec<RingElement>) {
         self.data.clone_from_slice(src);
-        self.compute_univariate_polynomial_coefficients();
     }
 
-    pub fn at_hypercube_point(&self, point: &HypercubePoint) -> &RingElement {
+    // this return univariate so that the most significant bit is a variable of the polynomial
+    // fn update_univariate_polynomial_internal(&mut self) {
+
+    // // update the claim
+    // if self.variable_count == 0 {
+    //     self.claim.set_from(&self.data[0]);
+    // } else {
+    //     self.claim += (
+    //         &self.univariate_polynomial.coefficients[0],
+    //         &self.univariate_polynomial.coefficients[1],
+    //     );
+    // }
+
+    // we have that polynomial(x) = coeffs[0] * (1 - x) + coeffs[1] * x
+    // we can rewrite this as polynomial(x) = (coeffs[1] - coeffs[0]) * x + coeffs[0]
+
+    //     let (coeff0, coeff1) = self.univariate_polynomial.coefficients.split_at_mut(1);
+    //     coeff1[0] -= &coeff0[0];
+    // }
+}
+
+impl Sumcheck<LinearPolynomial> for LinearSumcheck {
+    fn update_univariate_polynomial(&mut self) {
+        let n = self.data.len();
+
+        self.univariate_polynomial.coefficients[0].set_zero();
+        self.univariate_polynomial.coefficients[1].set_zero();
+
+        for i in 0..(n / 2) {
+            self.univariate_polynomial.coefficients[0] += &self.data[i]; // coefficient for (1 - x)
+            self.univariate_polynomial.coefficients[1] += &self.data[i + (n / 2)];
+        }
+
+        // we have that polynomial(x) = coeffs[0] * (1 - x) + coeffs[1] * x
+        // we can rewrite this as polynomial(x) = (coeffs[1] - coeffs[0]) * x + coeffs[0]
+
+        let (coeff0, coeff1) = self.univariate_polynomial.coefficients.split_at_mut(1);
+        coeff1[0] -= &coeff0[0];
+    }
+
+    fn get_univariate_polynomial(&self) -> &LinearPolynomial {
+        &self.univariate_polynomial
+    }
+
+    fn get_variable_count(&self) -> usize {
+        self.variable_count
+    }
+
+    fn at_hypercube_point(&mut self, point: &HypercubePoint) -> &RingElement {
         &self.data[point.coordinates]
     }
 
     // we evaluate from the variable at the most significant bit to the least significant bit
     // this is done so that we can truncate the data vector in place
-    pub fn partial_evaluate(&mut self, value: &RingElement) {
+    fn partial_evaluate(&mut self, value: &RingElement) {
         let n = self.data.len();
         if n % 2 != 0 {
             panic!("Sumcheck data length must be a power of 2");
@@ -77,36 +122,6 @@ impl LinearSumcheck {
         }
         self.data.truncate(n / 2);
         self.variable_count -= 1;
-        self.compute_univariate_polynomial_coefficients();
-    }
-
-    // this return univariate so that the most significant bit is a variable of the polynomial
-    fn compute_univariate_polynomial_coefficients(&mut self) {
-        let n = self.data.len();
-
-        self.univariate_polynomial.coefficients[0].set_zero();
-        self.univariate_polynomial.coefficients[1].set_zero();
-
-        for i in 0..(n / 2) {
-            self.univariate_polynomial.coefficients[0] += &self.data[i]; // coefficient for (1 - x)
-            self.univariate_polynomial.coefficients[1] += &self.data[i + (n / 2)];
-            // coefficient for x
-        }
-
-        if self.variable_count == 0 {
-            self.claim.set_from(&self.data[0]);
-        } else {
-            self.claim += (
-                &self.univariate_polynomial.coefficients[0],
-                &self.univariate_polynomial.coefficients[1],
-            );
-        }
-
-        // we have that polynomial(x) = coeffs[0] * (1 - x) + coeffs[1] * x
-        // we can rewrite this as polynomial(x) = (coeffs[1] - coeffs[0]) * x + coeffs[0]
-
-        let (coeff0, coeff1) = self.univariate_polynomial.coefficients.split_at_mut(1);
-        coeff1[0] -= &coeff0[0];
     }
 }
 
@@ -130,7 +145,9 @@ fn test_linear_sumcheck() {
 
     let mut claim = RingElement::constant(36, Representation::IncompleteNTT); // sum of 1 to 8
 
-    assert_eq!(claim, sc.claim);
+    // assert_eq!(claim, sc.claim);
+
+    sc.update_univariate_polynomial();
 
     assert_eq!(
         &sc.univariate_polynomial.at_zero() + &sc.univariate_polynomial.at_one(),
@@ -142,7 +159,9 @@ fn test_linear_sumcheck() {
     claim = sc.univariate_polynomial.at(&r0);
 
     sc.partial_evaluate(&r0);
-    assert_eq!(claim, sc.claim);
+    // assert_eq!(claim, sc.claim);
+
+    sc.update_univariate_polynomial();
 
     assert_eq!(
         &sc.univariate_polynomial.at_zero() + &sc.univariate_polynomial.at_one(),
@@ -154,7 +173,10 @@ fn test_linear_sumcheck() {
     claim = sc.univariate_polynomial.at(&r1);
 
     sc.partial_evaluate(&r1);
-    assert_eq!(claim, sc.claim);
+
+    sc.update_univariate_polynomial();
+
+    // assert_eq!(claim, sc.claim);
 
     assert_eq!(
         &sc.univariate_polynomial.at_zero() + &sc.univariate_polynomial.at_one(),
@@ -167,7 +189,9 @@ fn test_linear_sumcheck() {
 
     sc.partial_evaluate(&r2);
 
-    assert_eq!(claim, sc.claim);
+    sc.update_univariate_polynomial();
+
+    // assert_eq!(claim, sc.claim);
 
     assert!(sc.data.len() == 1);
 

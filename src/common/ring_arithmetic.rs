@@ -323,6 +323,10 @@ impl RingElement {
         }
     }
 
+    pub fn conjugate_in_place(&mut self) {
+        // TODO: implement
+    }
+
     pub fn set_from(&mut self, other: &RingElement) {
         self.v.copy_from_slice(&other.v);
         self.representation = other.representation;
