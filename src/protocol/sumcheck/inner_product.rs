@@ -9,13 +9,16 @@ use crate::{
     },
 };
 
+// TODO: The idea here is broken as we have no ways of doing self-inner product sumchecks
+// without ownership issues (as both sumchecks would point to the same data and are mutable)
+// So we only implement inner product of two different sumchecks here
 pub struct InnerProductSumcheck<'a> {
     pub sumcheck_0: &'a mut LinearSumcheck, // we don't want ownership here
     pub sumcheck_1: &'a mut LinearSumcheck,
     pub univariate_polynomial: QuadraticPolynomial,
     // sum claim at the current round
     pub claim: RingElement,
-    // pub variable_count: usize,
+    pub variable_count: usize,
     __hypercube_point: RingElement, // to store the evaluation point temporarily // TODO: maybe we can avoid this? This smells bad
     __a_diff: RingElement,
     __b_diff: RingElement,
@@ -50,6 +53,7 @@ impl InnerProductSumcheck<'_> {
         InnerProductSumcheck {
             sumcheck_0,
             sumcheck_1,
+            variable_count: sumcheck_0.get_variable_count(),
             univariate_polynomial: QuadraticPolynomial {
                 coefficients: [
                     RingElement::zero(rep),
@@ -139,14 +143,20 @@ impl Sumcheck<QuadraticPolynomial> for InnerProductSumcheck<'_> {
     }
 
     fn partial_evaluate(&mut self, value: &RingElement) {
-        self.sumcheck_0.partial_evaluate(value); // TODO: I think we need to introduce some "semaphore" here to avoid partial evaluations being called from different sumchecks.
-        self.sumcheck_1.partial_evaluate(value);
+        if self.variable_count == self.sumcheck_1.get_variable_count() {
+            self.sumcheck_0.partial_evaluate(value);
+        }
+
+        if self.variable_count == self.sumcheck_1.get_variable_count() {
+            self.sumcheck_1.partial_evaluate(value);
+        }
 
         // update the polynomial with the new folded data
         self.update_univariate_polynomial();
 
         // update the claim
         self.claim = self.univariate_polynomial.at(value);
+        self.variable_count -= 1;
     }
 }
 
@@ -256,3 +266,4 @@ fn test_inner_product_sumcheck() {
         )
     );
 }
+
