@@ -28,10 +28,7 @@ impl Polynomial for LinearPolynomial {
 
 pub struct LinearSumcheck {
     pub data: Vec<RingElement>,
-    // this polynomial is stored here to avoid multiple allocations
     univariate_polynomial: LinearPolynomial,
-    // sum claim at the current round
-    //  claim: RingElement,
     variable_count: usize,
 }
 

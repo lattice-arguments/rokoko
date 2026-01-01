@@ -58,6 +58,8 @@ impl InnerProductSumcheck<'_> {
                 ],
             },
             claim: RingElement::zero(rep),
+
+            // helper variables to avoid multiple allocations
             __hypercube_point: RingElement::zero(rep),
             __a_diff: RingElement::zero(rep),
             __b_diff: RingElement::zero(rep),
