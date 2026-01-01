@@ -5,4 +5,5 @@ pub mod fold;
 pub mod open;
 pub mod project;
 pub mod prover;
+pub mod sumcheck;
 pub mod verifier;

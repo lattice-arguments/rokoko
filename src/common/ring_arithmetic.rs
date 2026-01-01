@@ -315,6 +315,13 @@ impl RingElement {
             self.v[i + HALF_DEGREE] = extensions[i].coeffs[1];
         }
     }
+
+    pub fn set_zero(&mut self) {
+        // TODO: optimize with memset (or Rust's equivalent)
+        for i in 0..DEGREE {
+            self.v[i] = 0;
+        }
+    }
 }
 
 pub static SHIFT_FACTORS: LazyLock<[u64; HALF_DEGREE]> = LazyLock::new(|| {
