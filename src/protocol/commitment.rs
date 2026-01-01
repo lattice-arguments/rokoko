@@ -130,7 +130,7 @@ fn test_commitment_computation() {
         height: 8,
     };
 
-    let commitment = commit(&ck, &witness);
+    let commitment = commit(&ck, &witness, &[]);
 
     assert_eq!(
         &commitment.commitment[(0, 0)],

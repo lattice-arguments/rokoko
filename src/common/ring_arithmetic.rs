@@ -19,7 +19,7 @@ pub enum Representation {
 #[derive(PartialEq, Clone, Debug)]
 pub struct RingElement {
     pub v: [u64; DEGREE],
-    representation: Representation,
+    pub representation: Representation,
 }
 
 thread_local! {
@@ -57,6 +57,20 @@ impl RingElement {
             representation: Representation::EvenOddCoefficients,
         };
         element.v[0] = 1;
+
+        element.to_representation(representation);
+
+        element
+    }
+
+    pub fn all(value: u64, representation: Representation) -> Self {
+        let mut element = Self {
+            v: [0; DEGREE],
+            representation: Representation::EvenOddCoefficients,
+        };
+        for i in 0..DEGREE {
+            element.v[i] = value;
+        }
 
         element.to_representation(representation);
 
