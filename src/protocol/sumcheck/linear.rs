@@ -34,6 +34,7 @@ struct LinearSumcheck {
     pub univariate_polynomial: LinearPolynomial,
     // sum claim at the current round
     pub claim: RingElement,
+    pub variable_count: usize,
 }
 
 impl LinearSumcheck {
@@ -49,6 +50,7 @@ impl LinearSumcheck {
                 ],
             },
             claim: RingElement::zero(representation),
+            variable_count: count.ilog2() as usize,
         }
     }
     pub fn from(&mut self, src: &Vec<RingElement>) {
@@ -67,23 +69,18 @@ impl LinearSumcheck {
         if n % 2 != 0 {
             panic!("Sumcheck data length must be a power of 2");
         }
+        let (left_half, right_half) = self.data.split_at_mut(n / 2);
         for i in 0..(n / 2) {
-            let left = &self.data[i];
-            let right = &self.data[i + (n / 2)];
-
-            // TODO: prevent multiple allocations here
-            let mut combined = RingElement::zero(left.representation);
-            combined += &(left * &(&RingElement::one(left.representation) - &value));
-            combined += &(right * &value);
-            // eval = left * (1 - value) + right * value
-            self.data[i] = combined;
+            right_half[i] -= &left_half[i];
+            right_half[i] *= value;
+            left_half[i] += &right_half[i];
         }
         self.data.truncate(n / 2);
+        self.variable_count -= 1;
         self.compute_univariate_polynomial_coefficients();
     }
 
     // this return univariate so that the most significant bit is a variable of the polynomial
-    // TODO: try to prevent multiple allocations here
     fn compute_univariate_polynomial_coefficients(&mut self) {
         let n = self.data.len();
 
@@ -96,8 +93,8 @@ impl LinearSumcheck {
             // coefficient for x
         }
 
-        if n == 1 {
-            self.claim = self.data[0].clone();
+        if self.variable_count == 0 {
+            self.claim.set_from(&self.data[0]);
         } else {
             self.claim += (
                 &self.univariate_polynomial.coefficients[0],

@@ -322,6 +322,11 @@ impl RingElement {
             self.v[i] = 0;
         }
     }
+
+    pub fn set_from(&mut self, other: &RingElement) {
+        self.v.copy_from_slice(&other.v);
+        self.representation = other.representation;
+    }
 }
 
 pub static SHIFT_FACTORS: LazyLock<[u64; HALF_DEGREE]> = LazyLock::new(|| {
