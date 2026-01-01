@@ -17,7 +17,7 @@ pub struct StructuredRow {
     //   [1 - c, c],  // Layer 2
     // ]
     // Then, the entry at position 5 (binary 100) would be computed as:
-    // (1 - a) * (1 - b) * c.
+    // a * (1 - b) * (1 - c).
     // Notably, the order of layers corresponds to the inverse order of bits in the index,
     // (i.e. with the first layer corresponding to the least significant bit.)
     pub tensor_layers: Vec<RingElement>,
@@ -27,7 +27,7 @@ impl StructuredRow {
     pub fn at(&self, pos: usize) -> RingElement {
         let mut result = RingElement::one(Representation::IncompleteNTT);
         let mut index = pos;
-        for layer in &self.tensor_layers {
+        for layer in self.tensor_layers.iter().rev() {
             let bit = index & 1;
             index >>= 1;
             if bit == 0 {
@@ -58,7 +58,7 @@ impl PreprocessedRow {
         let mut result = Vec::with_capacity(2usize.pow(structured_row.tensor_layers.len() as u32));
         result.push(RingElement::one(Representation::IncompleteNTT));
 
-        for layer in &structured_row.tensor_layers {
+        for layer in structured_row.tensor_layers.iter().rev() {
             let mut new_entries: Vec<RingElement> = Vec::with_capacity(result.len());
             for r in &mut result {
                 let r1 = &*r * &layer;
@@ -79,65 +79,65 @@ impl PreprocessedRow {
 #[test]
 fn test_structured_row() {
     let tensor_layers = vec![
-        RingElement::constant(2, Representation::IncompleteNTT),
-        RingElement::constant(3, Representation::IncompleteNTT),
         RingElement::constant(5, Representation::IncompleteNTT),
+        RingElement::constant(3, Representation::IncompleteNTT),
+        RingElement::constant(2, Representation::IncompleteNTT),
     ];
     let structured_row = StructuredRow { tensor_layers };
 
     assert_eq!(
         structured_row.at(0),
         RingElement::constant(
-            (MOD_Q as i64 + (1 - 2) * (1 - 3) * (1 - 5)) as u64,
+            (MOD_Q as i64 + (1 - 2) * (1 - 3) * (1 - 5)) as u64, // 0 0 0
             Representation::IncompleteNTT
         )
     );
     assert_eq!(
         structured_row.at(1),
         RingElement::constant(
-            (MOD_Q as i64 + 2 * (1 - 3) * (1 - 5)) as u64,
+            (MOD_Q as i64 + 2 * (1 - 3) * (1 - 5)) as u64, // 0 0 1
             Representation::IncompleteNTT
         )
     );
     assert_eq!(
         structured_row.at(2),
         RingElement::constant(
-            (MOD_Q as i64 + (1 - 2) * 3 * (1 - 5)) as u64,
+            (MOD_Q as i64 + (1 - 2) * 3 * (1 - 5)) as u64, // 0 1 0
             Representation::IncompleteNTT
         )
     );
     assert_eq!(
         structured_row.at(3),
         RingElement::constant(
-            (MOD_Q as i64 + 2 * 3 * (1 - 5)) as u64,
+            (MOD_Q as i64 + 2 * 3 * (1 - 5)) as u64, // 0 1 1
             Representation::IncompleteNTT
         )
     );
     assert_eq!(
         structured_row.at(4),
         RingElement::constant(
-            (MOD_Q as i64 + (1 - 2) * (1 - 3) * 5) as u64,
+            (MOD_Q as i64 + (1 - 2) * (1 - 3) * 5) as u64, // 1 0 0
             Representation::IncompleteNTT
         )
     );
     assert_eq!(
         structured_row.at(5),
         RingElement::constant(
-            (MOD_Q as i64 + 2 * (1 - 3) * 5) as u64,
+            (MOD_Q as i64 + 2 * (1 - 3) * 5) as u64, // 1 0 1
             Representation::IncompleteNTT
         )
     );
     assert_eq!(
         structured_row.at(6),
         RingElement::constant(
-            (MOD_Q as i64 + (1 - 2) * 3 * 5) as u64,
+            (MOD_Q as i64 + (1 - 2) * 3 * 5) as u64, // 1 1 0
             Representation::IncompleteNTT
         )
     );
     assert_eq!(
         structured_row.at(7),
         RingElement::constant(
-            (MOD_Q as i64 + 2 * 3 * 5) as u64,
+            (MOD_Q as i64 + 2 * 3 * 5) as u64, // 1 1 1
             Representation::IncompleteNTT
         )
     );
@@ -146,9 +146,9 @@ fn test_structured_row() {
 #[test]
 fn test_preprocessed_row() {
     let tensor_layers = vec![
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(3, Representation::IncompleteNTT),
         RingElement::constant(5, Representation::IncompleteNTT),
+        RingElement::constant(3, Representation::IncompleteNTT),
+        RingElement::constant(1, Representation::IncompleteNTT),
     ];
     let structured_row = StructuredRow { tensor_layers };
 
