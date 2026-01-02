@@ -1,24 +1,27 @@
-use crate::common::ring_arithmetic::RingElement;
+use std::ops::Index;
 
-pub struct HypercubePoint {
-    // We can represent a point in the hypercube as an integer where each bit represents a coordinate
-    pub coordinates: usize,
-    // TODO: maybe we need some more methods here??
-}
+use crate::{
+    common::ring_arithmetic::RingElement,
+    protocol::sumcheck::{hypercube_point::HypercubePoint, polynomial::Polynomial},
+};
 
-pub trait Polynomial {
-    fn at_zero(&self) -> RingElement; // at_zero is done separately for efficiency // TODO: maybe we can return by reference??
-    fn at_one(&self) -> RingElement; // at_one is done separately for efficiency // TODO: maybe we can return by reference??
-    fn at(&self, x: &RingElement) -> RingElement;
-}
-
-pub trait SumcheckBaseData {
-    fn get_variable_count(&self) -> usize;
+pub trait SumcheckBaseData:
+    Index<HypercubePoint> + HighOrderSumcheckData + Index<HypercubePoint>
+{
     fn partial_evaluate(&mut self, value: &RingElement);
     fn final_evaluations(&self) -> &RingElement;
 }
 
-pub trait HighOrderSumcheckData<PolynomialType, FinalEvalType> {
-    // fn update_evaluation_table(&mut self);
-    fn univariate_polynomial_into(&self, polynomial: &mut PolynomialType);
+pub trait HighOrderSumcheckData {
+    fn get_variable_count(&self) -> usize;
+    // this is the univariate polynomial for the current variable with the other variables summed out
+    // i.e. let a = f(x_0, x_1, ..., x_{n-1}) then this function returns g(x) = sum_{x_1, ..., x_{n-1}} f(x, x_1, ..., x_{n-1})
+    fn univariate_polynomial_into(&self, polynomial: &mut Polynomial);
+
+    // this is similar to univariate_polynomial_into but evaluates the polynomial at a given point
+    fn univariate_polynomial_at_point_into(
+        &self,
+        point: &HypercubePoint,
+        polynomial: &mut Polynomial,
+    );
 }
