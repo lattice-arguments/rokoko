@@ -1,80 +1,67 @@
+use std::cell::RefCell;
+
 use crate::{
     common::{
         config::MOD_Q,
         ring_arithmetic::{Representation, RingElement},
     },
     protocol::sumcheck::{
-        common::{Polynomial, Sumcheck},
+        common::{HighOrderSumcheckData, Polynomial, SumcheckBaseData},
         linear::LinearSumcheck,
     },
 };
 
-// TODO: The idea here is broken as we have no ways of doing self-inner product sumchecks
-// without ownership issues (as both sumchecks would point to the same data and are mutable)
-// So we only implement inner product of two different sumchecks here
 pub struct InnerProductSumcheck<'a> {
-    pub sumcheck_0: &'a mut LinearSumcheck, // we don't want ownership here
-    pub sumcheck_1: &'a mut LinearSumcheck,
-    pub univariate_polynomial: QuadraticPolynomial,
-    // sum claim at the current round
-    pub claim: RingElement,
-    pub variable_count: usize,
-    __hypercube_point: RingElement, // to store the evaluation point temporarily // TODO: maybe we can avoid this? This smells bad
-    __a_diff: RingElement,
-    __b_diff: RingElement,
-    __a0b0: RingElement,
-    __diff_prod: RingElement,
+    pub sumcheck_0: &'a RefCell<LinearSumcheck>, // interior mutability to share between protocols
+    pub sumcheck_1: &'a RefCell<LinearSumcheck>,
 }
 
 impl InnerProductSumcheck<'_> {
     pub fn new<'a>(
-        sumcheck_0: &'a mut LinearSumcheck,
-        sumcheck_1: &'a mut LinearSumcheck,
+        sumcheck_0: &'a RefCell<LinearSumcheck>,
+        sumcheck_1: &'a RefCell<LinearSumcheck>,
     ) -> InnerProductSumcheck<'a> {
         assert_eq!(
-            sumcheck_0.data.len(),
-            sumcheck_1.data.len(),
+            sumcheck_0.borrow().data.len(),
+            sumcheck_1.borrow().data.len(),
             "Inner product sumcheck: both sumchecks must have the same data length"
         );
 
         assert_eq!(
-            sumcheck_0.data[0].representation, sumcheck_1.data[0].representation,
+            sumcheck_0.borrow().data[0].representation,
+            sumcheck_1.borrow().data[0].representation,
             "Inner product sumcheck: both sumchecks must have the same representation"
         );
 
         assert_eq!(
-            sumcheck_0.get_variable_count(),
-            sumcheck_1.get_variable_count(),
+            sumcheck_0.borrow().get_variable_count(),
+            sumcheck_1.borrow().get_variable_count(),
             "Inner product sumcheck: both sumchecks must have the same variable count"
         );
 
-        let rep = sumcheck_0.data[0].representation;
+        let rep = sumcheck_0.borrow().data[0].representation;
 
         InnerProductSumcheck {
             sumcheck_0,
             sumcheck_1,
-            variable_count: sumcheck_0.get_variable_count(),
-            univariate_polynomial: QuadraticPolynomial {
-                coefficients: [
-                    RingElement::zero(rep),
-                    RingElement::zero(rep),
-                    RingElement::zero(rep),
-                ],
-            },
-            claim: RingElement::zero(rep),
-
-            // helper variables to avoid multiple allocations
-            __hypercube_point: RingElement::zero(rep),
-            __a_diff: RingElement::zero(rep),
-            __b_diff: RingElement::zero(rep),
-            __a0b0: RingElement::zero(rep),
-            __diff_prod: RingElement::zero(rep),
         }
     }
 }
 
 struct QuadraticPolynomial {
     pub coefficients: [RingElement; 3],
+}
+
+impl QuadraticPolynomial {
+    fn new(representation: Representation) -> Self {
+        QuadraticPolynomial {
+            coefficients: [
+                RingElement::zero(representation),
+                RingElement::zero(representation),
+                RingElement::zero(representation),
+            ],
+        }
+    }
 }
 
 impl Polynomial for QuadraticPolynomial {
@@ -95,68 +82,52 @@ impl Polynomial for QuadraticPolynomial {
     }
 }
 
-impl Sumcheck<QuadraticPolynomial> for InnerProductSumcheck<'_> {
-    fn get_univariate_polynomial(&self) -> &QuadraticPolynomial {
-        &self.univariate_polynomial
-    }
+impl HighOrderSumcheckData<QuadraticPolynomial, (RingElement, RingElement)>
+    for InnerProductSumcheck<'_>
+{
+    fn univariate_polynomial_into(&self, polynomial: &mut QuadraticPolynomial) {
+        polynomial.coefficients[0].set_zero();
+        polynomial.coefficients[1].set_zero();
+        polynomial.coefficients[2].set_zero();
 
-    fn update_univariate_polynomial(&mut self) {
-        // this is a bit messy but we want to avoid allocations as much as possible here
-        self.univariate_polynomial.coefficients[0].set_zero();
-        self.univariate_polynomial.coefficients[1].set_zero();
-        self.univariate_polynomial.coefficients[2].set_zero();
+        // TODO: optimize memory allocations here
+        let mut a_diff = RingElement::zero(self.sumcheck_0.borrow().data[0].representation);
+        let mut b_diff = RingElement::zero(self.sumcheck_0.borrow().data[0].representation);
+        let mut prod = RingElement::zero(self.sumcheck_0.borrow().data[0].representation);
 
-        let n = self.sumcheck_0.data.len();
-        let half = n / 2;
-
+        let sc0 = self.sumcheck_0.borrow();
+        let sc1 = self.sumcheck_1.borrow();
+        let half = sc0.data.len() / 2;
         for i in 0..half {
-            let a0 = &self.sumcheck_0.data[i];
-            let a1 = &self.sumcheck_0.data[i + half];
-            let b0 = &self.sumcheck_1.data[i];
-            let b1 = &self.sumcheck_1.data[i + half];
-            self.__a_diff -= (a1, a0); // A(1) - A(0)
-            self.__b_diff -= (b1, b0); // B(1) - B(0)
-                                       // P(x) = (a0 + a_diff * x) * (b0 + b_diff * x)
-            self.__a0b0 *= (a0, b0);
-            self.__diff_prod *= (&self.__a_diff, &self.__b_diff);
-            self.univariate_polynomial.coefficients[0] += &self.__a0b0;
-            self.univariate_polynomial.coefficients[2] += &self.__diff_prod;
-            self.__a_diff *= b0;
-            self.__b_diff *= a0;
-            self.univariate_polynomial.coefficients[1] += &self.__a_diff;
-            self.univariate_polynomial.coefficients[1] += &self.__b_diff;
+            let a0 = &sc0.data[i];
+            let a1 = &sc0.data[i + half];
+            let b0 = &sc1.data[i];
+            let b1 = &sc1.data[i + half];
+
+            // a_diff = A(1) - A(0); b_diff = B(1) - B(0)
+            a_diff.set_from(a1);
+            a_diff -= a0;
+            b_diff.set_from(b1);
+            b_diff -= b0;
+
+            // x^2 term: a_diff * b_diff
+            prod.set_from(&a_diff);
+            prod *= &b_diff;
+            polynomial.coefficients[2] += &prod;
+
+            // x term: a_diff * b0 + b_diff * a0
+            prod.set_from(&a_diff);
+            prod *= b0;
+            polynomial.coefficients[1] += &prod;
+            prod.set_from(&b_diff);
+            prod *= a0;
+            polynomial.coefficients[1] += &prod;
+
+            // constant term: a0 * b0
+            prod.set_from(a0);
+            prod *= b0;
+            polynomial.coefficients[0] += &prod;
         }
-    }
-
-    fn get_variable_count(&self) -> usize {
-        self.sumcheck_0.get_variable_count()
-    }
-
-    fn at_hypercube_point(
-        &mut self,
-        point: &crate::protocol::sumcheck::common::HypercubePoint,
-    ) -> &RingElement {
-        let a = self.sumcheck_0.at_hypercube_point(point);
-        let b = self.sumcheck_1.at_hypercube_point(point);
-        self.__hypercube_point *= (a, b);
-        &self.__hypercube_point // better use it fast before next calls idk
-    }
-
-    fn partial_evaluate(&mut self, value: &RingElement) {
-        if self.variable_count == self.sumcheck_1.get_variable_count() {
-            self.sumcheck_0.partial_evaluate(value);
-        }
-
-        if self.variable_count == self.sumcheck_1.get_variable_count() {
-            self.sumcheck_1.partial_evaluate(value);
-        }
-
-        // update the polynomial with the new folded data
-        self.update_univariate_polynomial();
-
-        // update the claim
-        self.claim = self.univariate_polynomial.at(value);
-        self.variable_count -= 1;
     }
 }
 
@@ -184,64 +155,97 @@ fn test_inner_product_sumcheck() {
         RingElement::constant(16, Representation::IncompleteNTT),
     ];
 
-    let mut sumcheck_0 = LinearSumcheck::new(data_0.len(), data_0[0].representation);
-    sumcheck_0.from(&data_0);
-    let mut sumcheck_1 = LinearSumcheck::new(data_1.len(), data_1[0].representation);
-    sumcheck_1.from(&data_1);
+    let sumcheck_0 = RefCell::new(LinearSumcheck::new(data_0.len(), data_0[0].representation));
+    sumcheck_0.borrow_mut().from(&data_0);
+    let sumcheck_1 = RefCell::new(LinearSumcheck::new(data_1.len(), data_1[0].representation));
+    sumcheck_1.borrow_mut().from(&data_1);
 
-    let mut inner_product_sumcheck = InnerProductSumcheck::new(&mut sumcheck_0, &mut sumcheck_1);
+    let inner_product_sumcheck = InnerProductSumcheck::new(&sumcheck_0, &sumcheck_1);
 
-    // sumcheck execution
+    let mut univariate_poly = QuadraticPolynomial::new(Representation::IncompleteNTT);
 
-    let mut claim = RingElement::constant(
-        1 * 9 + 2 * 10 + 3 * 11 + 4 * 12 + 5 * 13 + 6 * 14 + 7 * 15 + 8 * 16,
-        Representation::IncompleteNTT,
-    );
-
-    inner_product_sumcheck.update_univariate_polynomial();
+    inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
 
     assert_eq!(
-        &inner_product_sumcheck.univariate_polynomial.at_zero()
-            + &inner_product_sumcheck.univariate_polynomial.at_one(),
-        claim
+        &univariate_poly.at_zero() + &univariate_poly.at_one(),
+        RingElement::constant(
+            1 * 9 + 2 * 10 + 3 * 11 + 4 * 12 + 5 * 13 + 6 * 14 + 7 * 15 + 8 * 16,
+            Representation::IncompleteNTT
+        )
     );
 
     let r0 = RingElement::constant(524, Representation::IncompleteNTT);
 
-    claim = inner_product_sumcheck.univariate_polynomial.at(&r0);
+    let claim = univariate_poly.at(&r0);
 
-    inner_product_sumcheck.partial_evaluate(&r0);
+    sumcheck_0.borrow_mut().partial_evaluate(&r0);
+    sumcheck_1.borrow_mut().partial_evaluate(&r0);
 
-    inner_product_sumcheck.update_univariate_polynomial();
+    inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
 
     assert_eq!(
-        &inner_product_sumcheck.univariate_polynomial.at_zero()
-            + &inner_product_sumcheck.univariate_polynomial.at_one(),
+        &univariate_poly.at_zero() + &univariate_poly.at_one(),
         claim
     );
 
     let r1 = RingElement::constant(1337, Representation::IncompleteNTT);
-    claim = inner_product_sumcheck.univariate_polynomial.at(&r1);
-    inner_product_sumcheck.partial_evaluate(&r1);
-    inner_product_sumcheck.update_univariate_polynomial();
+
+    let claim = univariate_poly.at(&r1);
+
+    sumcheck_0.borrow_mut().partial_evaluate(&r1);
+    sumcheck_1.borrow_mut().partial_evaluate(&r1);
+
+    inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
+
     assert_eq!(
-        &inner_product_sumcheck.univariate_polynomial.at_zero()
-            + &inner_product_sumcheck.univariate_polynomial.at_one(),
+        &univariate_poly.at_zero() + &univariate_poly.at_one(),
         claim
     );
 
     let r2 = RingElement::constant(42, Representation::IncompleteNTT);
-    claim = inner_product_sumcheck.univariate_polynomial.at(&r2);
-    inner_product_sumcheck.partial_evaluate(&r2);
-    inner_product_sumcheck.update_univariate_polynomial();
 
-    assert!(inner_product_sumcheck.get_variable_count() == 0);
+    let claim = univariate_poly.at(&r2);
 
-    // assert_eq!(&inner_product_sumcheck.data[0], &claim);
+    sumcheck_0.borrow_mut().partial_evaluate(&r2);
+    sumcheck_1.borrow_mut().partial_evaluate(&r2);
 
-    // We started from \sum_{z \in hypercube} A(z) * B(z)
-    // After 3 rounds of partial evaluations, we should have claim = A(r) * B(r)
-    // where r = (r0, r1, r2)
+    assert_eq!(
+        sumcheck_0.borrow().final_evaluations() * sumcheck_1.borrow().final_evaluations(),
+        claim,
+    );
+
+    assert_eq!(
+        sumcheck_0.borrow().final_evaluations(),
+        &RingElement::constant(
+            (MOD_Q as i64
+                + (1 - 524) * (1 - 1337) * (1 - 42) * 1
+                + (1 - 524) * (1 - 1337) * (42) * 2
+                + (1 - 524) * (1337) * (1 - 42) * 3
+                + (1 - 524) * (1337) * (42) * 4
+                + (524) * (1 - 1337) * (1 - 42) * 5
+                + (524) * (1 - 1337) * (42) * 6
+                + (524) * (1337) * (1 - 42) * 7
+                + (524) * (1337) * (42) * 8) as u64,
+            Representation::IncompleteNTT,
+        )
+    );
+
+    assert_eq!(
+        sumcheck_1.borrow().final_evaluations(),
+        &RingElement::constant(
+            (MOD_Q as i64
+                + (1 - 524) * (1 - 1337) * (1 - 42) * 9
+                + (1 - 524) * (1 - 1337) * (42) * 10
+                + (1 - 524) * (1337) * (1 - 42) * 11
+                + (1 - 524) * (1337) * (42) * 12
+                + (524) * (1 - 1337) * (1 - 42) * 13
+                + (524) * (1 - 1337) * (42) * 14
+                + (524) * (1337) * (1 - 42) * 15
+                + (524) * (1337) * (42) * 16) as u64,
+            Representation::IncompleteNTT,
+        )
+    );
+
     assert_eq!(
         claim,
         RingElement::constant(
@@ -266,4 +270,3 @@ fn test_inner_product_sumcheck() {
         )
     );
 }
-

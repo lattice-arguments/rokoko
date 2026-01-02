@@ -12,11 +12,13 @@ pub trait Polynomial {
     fn at(&self, x: &RingElement) -> RingElement;
 }
 
-pub trait Sumcheck<T: Polynomial> {
-    fn update_univariate_polynomial(&mut self);
-    fn get_univariate_polynomial(&self) -> &T;
-    // fn get_claim(&self) -> &RingElement;
+pub trait SumcheckBaseData {
     fn get_variable_count(&self) -> usize;
-    fn at_hypercube_point(&mut self, point: &HypercubePoint) -> &RingElement;
     fn partial_evaluate(&mut self, value: &RingElement);
+    fn final_evaluations(&self) -> &RingElement;
+}
+
+pub trait HighOrderSumcheckData<PolynomialType, FinalEvalType> {
+    // fn update_evaluation_table(&mut self);
+    fn univariate_polynomial_into(&self, polynomial: &mut PolynomialType);
 }
