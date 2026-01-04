@@ -1,40 +1,47 @@
 use std::{cell::RefCell, cmp::max};
 
 use crate::{
-    common::ring_arithmetic::{Representation, RingElement},
+    common::ring_arithmetic::Representation,
     protocol::sumcheck::{
-        common::{HighOrderSumcheckData, SumcheckBaseData},
+        common::HighOrderSumcheckData,
         hypercube_point::HypercubePoint,
-        linear::LinearSumcheck,
         polynomial::{add_poly_in_place, sub_poly_in_place, Polynomial},
     },
 };
 
-pub struct DiffSumcheck<'a> {
-    pub sumcheck_0: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
-    pub sumcheck_1: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
+#[cfg(test)]
+use crate::{
+    common::ring_arithmetic::RingElement,
+    protocol::sumcheck::{common::SumcheckBaseData, linear::LinearSumcheck},
+};
 
-    temp_poly_0: RefCell<Polynomial>,
-    temp_poly_1: RefCell<Polynomial>,
+/// Sumcheck data that represents the difference between two other sumchecks.
+/// Useful for enforcing equality constraints between two multilinear extensions.
+pub struct DiffSumcheck<'a> {
+    pub lhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
+    pub rhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
+
+    lhs_eval_poly: RefCell<Polynomial>,
+    rhs_eval_poly: RefCell<Polynomial>,
     scratch_poly: RefCell<Polynomial>,
 }
 
 impl DiffSumcheck<'_> {
     pub fn new<'a>(
-        sumcheck_0: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
-        sumcheck_1: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
+        lhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
+        rhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
     ) -> DiffSumcheck<'a> {
         assert_eq!(
-            sumcheck_0.borrow().variable_count(),
-            sumcheck_1.borrow().variable_count(),
+            lhs_sumcheck.borrow().variable_count(),
+            rhs_sumcheck.borrow().variable_count(),
             "Diff sumcheck: both sumchecks must have the same variable count"
         );
 
         DiffSumcheck {
-            sumcheck_0,
-            sumcheck_1,
-            temp_poly_0: RefCell::new(Polynomial::new(0, Representation::IncompleteNTT)),
-            temp_poly_1: RefCell::new(Polynomial::new(0, Representation::IncompleteNTT)),
+            lhs_sumcheck,
+            rhs_sumcheck,
+            lhs_eval_poly: RefCell::new(Polynomial::new(0, Representation::IncompleteNTT)),
+            rhs_eval_poly: RefCell::new(Polynomial::new(0, Representation::IncompleteNTT)),
             scratch_poly: RefCell::new(Polynomial::new(0, Representation::IncompleteNTT)),
         }
     }
@@ -44,14 +51,14 @@ impl HighOrderSumcheckData for DiffSumcheck<'_> {
     fn get_scratch_poly(&self) -> &RefCell<Polynomial> {
         &self.scratch_poly
     }
-    fn nof_polynomial_coefficients(&self) -> usize {
+    fn num_polynomial_coefficients(&self) -> usize {
         max(
-            self.sumcheck_0.borrow().nof_polynomial_coefficients(),
-            self.sumcheck_1.borrow().nof_polynomial_coefficients(),
+            self.lhs_sumcheck.borrow().num_polynomial_coefficients(),
+            self.rhs_sumcheck.borrow().num_polynomial_coefficients(),
         )
     }
     fn variable_count(&self) -> usize {
-        self.sumcheck_0.borrow().variable_count()
+        self.lhs_sumcheck.borrow().variable_count()
     }
 
     fn univariate_polynomial_at_point_into(
@@ -59,21 +66,22 @@ impl HighOrderSumcheckData for DiffSumcheck<'_> {
         point: HypercubePoint,
         polynomial: &mut Polynomial,
     ) -> bool {
+        // Compute the per-round polynomial as the difference of the two inputs.
         polynomial.set_zero();
 
-        let mut temp_poly_0 = self.temp_poly_0.borrow_mut();
-        let mut temp_poly_1 = self.temp_poly_1.borrow_mut();
+        let mut lhs_eval_poly = self.lhs_eval_poly.borrow_mut();
+        let mut rhs_eval_poly = self.rhs_eval_poly.borrow_mut();
 
-        self.sumcheck_0
+        self.lhs_sumcheck
             .borrow()
-            .univariate_polynomial_at_point_into(point, &mut temp_poly_0);
+            .univariate_polynomial_at_point_into(point, &mut lhs_eval_poly);
 
-        self.sumcheck_1
+        self.rhs_sumcheck
             .borrow()
-            .univariate_polynomial_at_point_into(point, &mut temp_poly_1);
+            .univariate_polynomial_at_point_into(point, &mut rhs_eval_poly);
 
-        add_poly_in_place(polynomial, &temp_poly_0);
-        sub_poly_in_place(polynomial, &temp_poly_1);
+        add_poly_in_place(polynomial, &lhs_eval_poly);
+        sub_poly_in_place(polynomial, &rhs_eval_poly);
 
         true
     }
@@ -96,9 +104,9 @@ fn test_diff_sumcheck_basic() {
     ];
 
     let sumcheck_0 = RefCell::new(LinearSumcheck::new(data_0.len()));
-    sumcheck_0.borrow_mut().from(&data_0);
+    sumcheck_0.borrow_mut().load_from(&data_0);
     let sumcheck_1 = RefCell::new(LinearSumcheck::new(data_1.len()));
-    sumcheck_1.borrow_mut().from(&data_1);
+    sumcheck_1.borrow_mut().load_from(&data_1);
 
     let diff_sumcheck = DiffSumcheck::new(&sumcheck_0, &sumcheck_1);
 

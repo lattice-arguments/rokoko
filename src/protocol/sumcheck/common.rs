@@ -1,21 +1,21 @@
-use std::{cell::RefCell, ops::Index};
+use std::cell::RefCell;
 
 use crate::{
-    common::ring_arithmetic::{Representation, RingElement},
+    common::ring_arithmetic::RingElement,
     protocol::sumcheck::{
         hypercube_point::HypercubePoint,
         polynomial::{add_poly_in_place, Polynomial},
     },
 };
 
-pub trait SumcheckBaseData: HighOrderSumcheckData {
-    fn partial_evaluate(&mut self, value: &RingElement);
-    fn final_evaluations(&self) -> &RingElement;
-}
-
+/// Marker trait for data that can be consumed by the sumcheck protocol.
+/// Implementors must also provide the higher-order hooks so they can be
+/// composed with other sumchecks (products, differences, etc.).
 pub trait HighOrderSumcheckData {
-    fn nof_polynomial_coefficients(&self) -> usize;
+    /// Degree + 1 of the univariate polynomial produced at each round.
+    fn num_polynomial_coefficients(&self) -> usize;
     fn variable_count(&self) -> usize;
+    /// Mutable scratch polynomial to avoid allocations between rounds.
     fn get_scratch_poly(&self) -> &RefCell<Polynomial>;
     // this is the univariate polynomial for the current variable with the other variables summed out
     // i.e. let a = f(x_0, x_1, ..., x_{n-1}) then this function returns g(x) = sum_{x_1, ..., x_{n-1}} f(x, x_1, ..., x_{n-1})
@@ -24,12 +24,14 @@ pub trait HighOrderSumcheckData {
         let temp = self.get_scratch_poly();
 
         polynomial.set_zero();
-        polynomial.nof_coefficients = self.nof_polynomial_coefficients();
+        polynomial.num_coefficients = self.num_polynomial_coefficients();
 
-        let len = 1 << self.variable_count();
-        let half = len / 2;
+        let hypercube_size = 1 << self.variable_count();
+        let half_hypercube = hypercube_size / 2;
 
-        for i in 0..half {
+        // Enumerate over the first half of the hypercube; the polynomial at the
+        // corresponding point in the second half is handled by the callee.
+        for i in 0..half_hypercube {
             self.univariate_polynomial_at_point_into(
                 HypercubePoint::new(i),
                 &mut temp.borrow_mut(),
@@ -45,4 +47,11 @@ pub trait HighOrderSumcheckData {
         point: HypercubePoint, // this is just the usize so we pass it by value
         polynomial: &mut Polynomial,
     ) -> bool;
+}
+
+pub trait SumcheckBaseData: HighOrderSumcheckData {
+    /// Fold the multilinear extension along the current challenge `value`.
+    fn partial_evaluate(&mut self, value: &RingElement);
+    /// Final aggregated evaluations after all variables have been folded.
+    fn final_evaluations(&self) -> &RingElement;
 }

@@ -1,10 +1,7 @@
-use std::{cell::RefCell, ops::Index};
+use std::cell::RefCell;
 
 use crate::{
-    common::{
-        config::MOD_Q,
-        ring_arithmetic::{Representation, RingElement},
-    },
+    common::ring_arithmetic::{Representation, RingElement},
     protocol::sumcheck::{
         common::{HighOrderSumcheckData, SumcheckBaseData},
         hypercube_point::HypercubePoint,
@@ -12,14 +9,20 @@ use crate::{
     },
 };
 
+#[cfg(test)]
+use crate::common::config::MOD_Q;
+
+/// Sumcheck for the multilinear equality check `eq(x, selector)`.
+/// It evaluates to 1 exactly when the first `selector_variable_count` bits of
+/// the query match `selector`, while ignoring additional trailing variables.
 pub struct SelectorEq {
     selector: usize,
-    nof_variables_for_selector: usize,
-    nof_variables: usize,
+    selector_variable_count: usize,
+    total_variable_count: usize,
 
     // if we do partial evaluation, we have to store the current claim
-    claim_factor: RingElement,
-    temp: RefCell<RingElement>,
+    current_claim: RingElement,
+    temp_product: RefCell<RingElement>,
     scratch_poly: RefCell<Polynomial>,
 }
 
@@ -35,13 +38,17 @@ pub struct SelectorEq {
 // as univariate_polynomial_at_point_into returns `false` unless the point matches the selector in the higher order bits.
 // This is useful for implementing sumcheck over sparse vectors.
 impl SelectorEq {
-    pub fn new(selector: usize, nof_variables_for_selector: usize, nof_variables: usize) -> Self {
+    pub fn new(
+        selector: usize,
+        selector_variable_count: usize,
+        total_variable_count: usize,
+    ) -> Self {
         SelectorEq {
             selector,
-            nof_variables_for_selector,
-            nof_variables,
-            claim_factor: RingElement::one(Representation::IncompleteNTT),
-            temp: RefCell::new(RingElement::zero(Representation::IncompleteNTT)),
+            selector_variable_count,
+            total_variable_count,
+            current_claim: RingElement::one(Representation::IncompleteNTT),
+            temp_product: RefCell::new(RingElement::zero(Representation::IncompleteNTT)),
             scratch_poly: RefCell::new(Polynomial::new(2, Representation::IncompleteNTT)),
         }
     }
@@ -51,11 +58,11 @@ impl HighOrderSumcheckData for SelectorEq {
     fn get_scratch_poly(&self) -> &RefCell<Polynomial> {
         &self.scratch_poly
     }
-    fn nof_polynomial_coefficients(&self) -> usize {
+    fn num_polynomial_coefficients(&self) -> usize {
         2
     }
     fn variable_count(&self) -> usize {
-        self.nof_variables
+        self.total_variable_count
     }
 
     fn univariate_polynomial_at_point_into(
@@ -64,43 +71,36 @@ impl HighOrderSumcheckData for SelectorEq {
         polynomial: &mut Polynomial,
     ) -> bool {
         polynomial.set_zero();
-        polynomial.nof_coefficients = 2;
+        polynomial.num_coefficients = 2;
 
-        if self.nof_variables_for_selector == 0 {
+        if self.selector_variable_count == 0 {
             // now we have a constrant function which is always 1
-            polynomial.coefficients[0] += &self.claim_factor;
+            polynomial.coefficients[0] += &self.current_claim;
             return true;
         }
 
         // We evaluate from the highest order bit to the lowest order bit
         // Therefore, we check if the higher order bits of point match the selector (expect for the current variable being evaluated being the highest order bit)
 
-        let point_higher_bits = point.shifted(self.nof_variables - self.nof_variables_for_selector);
+        let point_higher_bits =
+            point.shifted(self.total_variable_count - self.selector_variable_count);
 
-        println!(
-            "point_higher_bits: {:b}, selector: {:b}",
-            point_higher_bits.coordinates, self.selector
-        );
-
-        let selector_bits = self.selector & ((1 << self.nof_variables_for_selector - 1) - 1); // mask to get only the relevant bits
-
-        println!("selector_bits: {:b}", selector_bits);
+        let selector_bits = self.selector & ((1 << self.selector_variable_count - 1) - 1); // mask to get only the relevant bits
 
         if point_higher_bits.coordinates != selector_bits {
             // the polynomial is identically zero
             return false;
         }
 
-        let current_bit = (self.selector >> (self.nof_variables_for_selector - 1)) & 1;
+        let current_bit = (self.selector >> (self.selector_variable_count - 1)) & 1;
 
-        println!("current_bit: {}", current_bit);
         if current_bit == 1 {
             // then we have a function which is 1 when the variable is 1, and 0 when the variable is 0. So this is an identity
-            polynomial.coefficients[1] += &self.claim_factor;
+            polynomial.coefficients[1] += &self.current_claim;
         } else {
             // then we have a function which is 1 when the variable is 0, and 0 when the variable is 1. So this is (1 - x)
-            polynomial.coefficients[0] += &self.claim_factor;
-            polynomial.coefficients[1] -= &self.claim_factor;
+            polynomial.coefficients[0] += &self.current_claim;
+            polynomial.coefficients[1] -= &self.current_claim;
         }
 
         true
@@ -109,48 +109,49 @@ impl HighOrderSumcheckData for SelectorEq {
 
 impl SumcheckBaseData for SelectorEq {
     fn partial_evaluate(&mut self, value: &RingElement) {
-        // e.g. if selector = 0b110, nof_variables_for_selector = 3, nof_variables = 5
+        // e.g. if selector = 0b110, selector_variable_count = 3, total_variable_count = 5
         // then bit_index = 0b1 (we look at the highest order bit of the selector)
-        if self.nof_variables_for_selector > 0 {
-            let bit_index = self.selector >> (self.nof_variables_for_selector - 1);
+        if self.selector_variable_count > 0 {
+            let bit_index = self.selector >> (self.selector_variable_count - 1);
 
             if bit_index & 1 == 1 {
                 // then we have a function which is 1 when the variable is 1, and 0 when the variable is 0. So this is an identity
-                self.claim_factor *= value;
+                self.current_claim *= value;
             } else {
                 // then we have a function which is 1 when the variable is 0, and 0 when the variable is 1. So this is (1 - x)
 
-                let mut temp = self.temp.borrow_mut();
-                *temp *= (value, &self.claim_factor); // temp = claim_factor * value
-                self.claim_factor -= &*temp;
+                let mut temp = self.temp_product.borrow_mut();
+                *temp *= (value, &self.current_claim); // temp = claim_factor * value
+                self.current_claim -= &*temp;
             }
-            self.selector &= (1 << (self.nof_variables_for_selector - 1)) - 1;
-            self.nof_variables_for_selector -= 1;
+            self.selector &= (1 << (self.selector_variable_count - 1)) - 1;
+            self.selector_variable_count -= 1;
 
             // } else {
             // now we have a constrant function which is always 1, so the claim remains the same
         }
-        self.nof_variables -= 1;
+        self.total_variable_count -= 1;
     }
 
     fn final_evaluations(&self) -> &RingElement {
-        if self.nof_variables != 0 {
+        if self.total_variable_count != 0 {
             panic!("final_evaluations called before all variables were evaluated");
         }
-        &self.claim_factor
+        &self.current_claim
     }
 }
 
 #[test]
 fn test_selector_eq_basic() {
     let selector = 0b10;
-    let nof_variables_for_selector = 2;
-    let nof_variables = 4;
+    let selector_variable_count = 2;
+    let total_variable_count = 4;
 
     // this can be viewed as a sumcheck over the vector (0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0)
-    let mut sumcheck = SelectorEq::new(selector, nof_variables_for_selector, nof_variables);
+    let mut sumcheck = SelectorEq::new(selector, selector_variable_count, total_variable_count);
     let mut polynomial = Polynomial::new(2, Representation::IncompleteNTT);
 
+    // Irrelevant points should produce an identically-zero polynomial.
     let result =
         sumcheck.univariate_polynomial_at_point_into(HypercubePoint::new(0b100), &mut polynomial);
 
@@ -179,6 +180,7 @@ fn test_selector_eq_basic() {
         RingElement::one(Representation::IncompleteNTT)
     );
 
+    // There are exactly four satisfying assignments for the selector bits.
     let mut claim = RingElement::constant(4, Representation::IncompleteNTT);
 
     sumcheck.univariate_polynomial_into(&mut polynomial);
@@ -187,6 +189,7 @@ fn test_selector_eq_basic() {
 
     let r0 = RingElement::constant(53, Representation::IncompleteNTT);
 
+    // Folding the highest bit turns the indicator vector into four copies of r0.
     sumcheck.partial_evaluate(&r0);
 
     claim = polynomial.at(&r0);
@@ -214,7 +217,7 @@ fn test_selector_eq_basic() {
     assert_eq!(
         claim,
         RingElement::constant(
-            (4 * 53 * (MOD_Q as i64 + 1 - 73) as u64),
+            4 * 53 * (MOD_Q as i64 + 1 - 73) as u64,
             Representation::IncompleteNTT
         )
     );
@@ -241,7 +244,7 @@ fn test_selector_eq_basic() {
     assert_eq!(
         claim,
         RingElement::constant(
-            (2 * 53 * (MOD_Q as i64 + 1 - 73) as u64),
+            2 * 53 * (MOD_Q as i64 + 1 - 73) as u64,
             Representation::IncompleteNTT
         )
     );
@@ -262,10 +265,11 @@ fn test_selector_eq_basic() {
     assert_eq!(
         claim,
         RingElement::constant(
-            (53 * (MOD_Q as i64 + 1 - 73) as u64),
+            53 * (MOD_Q as i64 + 1 - 73) as u64,
             Representation::IncompleteNTT
         )
     );
 
+    // After exhausting all variables, the stored claim should match the verifier's expectation.
     assert_eq!(sumcheck.final_evaluations(), &claim);
 }

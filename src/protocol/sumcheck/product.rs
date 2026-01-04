@@ -1,44 +1,48 @@
 use std::cell::RefCell;
 
 use crate::{
-    common::{
-        config::MOD_Q,
-        ring_arithmetic::{Representation, RingElement},
-    },
+    common::ring_arithmetic::Representation,
     protocol::sumcheck::{
-        self,
-        common::{HighOrderSumcheckData, SumcheckBaseData},
+        common::HighOrderSumcheckData,
         hypercube_point::HypercubePoint,
-        linear::LinearSumcheck,
-        polynomial::{add_poly_in_place, add_poly_into, mul_poly_into, Polynomial},
+        polynomial::{mul_poly_into, Polynomial},
     },
 };
 
-pub struct ProductSumcheck<'a> {
-    pub sumcheck_0: &'a RefCell<dyn HighOrderSumcheckData + 'a>, // interior mutability to share between protocols
-    pub sumcheck_1: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
+#[cfg(test)]
+use crate::{
+    common::{config::MOD_Q, ring_arithmetic::RingElement},
+    protocol::sumcheck::{common::SumcheckBaseData, linear::LinearSumcheck},
+};
 
-    temp_poly_0: RefCell<Polynomial>,
-    temp_poly_1: RefCell<Polynomial>,
+/// Sumcheck data that represents a pointwise product of two other sumcheck polynomials.
+/// Each inner sumcheck is evaluated at the same hypercube point and the resulting
+/// univariate polynomials are multiplied together.
+pub struct ProductSumcheck<'a> {
+    pub lhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData + 'a>, // interior mutability to share between protocols
+    pub rhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
+
+    lhs_eval_poly: RefCell<Polynomial>,
+    rhs_eval_poly: RefCell<Polynomial>,
     scratch_poly: RefCell<Polynomial>,
 }
 
 impl ProductSumcheck<'_> {
     pub fn new<'a>(
-        sumcheck_0: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
-        sumcheck_1: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
+        lhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
+        rhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
     ) -> ProductSumcheck<'a> {
         assert_eq!(
-            sumcheck_0.borrow().variable_count(),
-            sumcheck_1.borrow().variable_count(),
+            lhs_sumcheck.borrow().variable_count(),
+            rhs_sumcheck.borrow().variable_count(),
             "Inner product sumcheck: both sumchecks must have the same data length"
         );
 
         ProductSumcheck {
-            sumcheck_0,
-            sumcheck_1,
-            temp_poly_0: RefCell::new(Polynomial::new(0, Representation::IncompleteNTT)),
-            temp_poly_1: RefCell::new(Polynomial::new(0, Representation::IncompleteNTT)),
+            lhs_sumcheck,
+            rhs_sumcheck,
+            lhs_eval_poly: RefCell::new(Polynomial::new(0, Representation::IncompleteNTT)),
+            rhs_eval_poly: RefCell::new(Polynomial::new(0, Representation::IncompleteNTT)),
             scratch_poly: RefCell::new(Polynomial::new(0, Representation::IncompleteNTT)),
         }
     }
@@ -48,14 +52,14 @@ impl HighOrderSumcheckData for ProductSumcheck<'_> {
     fn get_scratch_poly(&self) -> &RefCell<Polynomial> {
         &self.scratch_poly
     }
-    fn nof_polynomial_coefficients(&self) -> usize {
-        self.sumcheck_0.borrow().nof_polynomial_coefficients()
-            + self.sumcheck_1.borrow().nof_polynomial_coefficients()
+    fn num_polynomial_coefficients(&self) -> usize {
+        self.lhs_sumcheck.borrow().num_polynomial_coefficients()
+            + self.rhs_sumcheck.borrow().num_polynomial_coefficients()
             - 1
     }
 
     fn variable_count(&self) -> usize {
-        self.sumcheck_0.borrow().variable_count()
+        self.lhs_sumcheck.borrow().variable_count()
     }
 
     fn univariate_polynomial_at_point_into(
@@ -63,22 +67,22 @@ impl HighOrderSumcheckData for ProductSumcheck<'_> {
         point: HypercubePoint,
         polynomial: &mut Polynomial,
     ) -> bool {
-        // reset accumulator for this point
+        // Reset accumulator for this point and build g(x) = g_lhs(x) * g_rhs(x).
         polynomial.set_zero();
-        polynomial.nof_coefficients = 0;
+        polynomial.num_coefficients = 0;
 
-        let mut temp_poly_0 = self.temp_poly_0.borrow_mut();
-        let mut temp_poly_1 = self.temp_poly_1.borrow_mut();
+        let mut lhs_eval_poly = self.lhs_eval_poly.borrow_mut();
+        let mut rhs_eval_poly = self.rhs_eval_poly.borrow_mut();
 
-        self.sumcheck_0
+        self.lhs_sumcheck
             .borrow()
-            .univariate_polynomial_at_point_into(point, &mut temp_poly_0);
+            .univariate_polynomial_at_point_into(point, &mut lhs_eval_poly);
 
-        self.sumcheck_1
+        self.rhs_sumcheck
             .borrow()
-            .univariate_polynomial_at_point_into(point, &mut temp_poly_1);
+            .univariate_polynomial_at_point_into(point, &mut rhs_eval_poly);
 
-        mul_poly_into(polynomial, &temp_poly_0, &temp_poly_1);
+        mul_poly_into(polynomial, &lhs_eval_poly, &rhs_eval_poly);
 
         true
     }
@@ -86,7 +90,7 @@ impl HighOrderSumcheckData for ProductSumcheck<'_> {
 
 #[test]
 fn test_inner_product_sumcheck() {
-    let data_0 = vec![
+    let lhs_data = vec![
         RingElement::constant(1, Representation::IncompleteNTT),
         RingElement::constant(2, Representation::IncompleteNTT),
         RingElement::constant(3, Representation::IncompleteNTT),
@@ -97,7 +101,7 @@ fn test_inner_product_sumcheck() {
         RingElement::constant(8, Representation::IncompleteNTT),
     ];
 
-    let data_1 = vec![
+    let rhs_data = vec![
         RingElement::constant(9, Representation::IncompleteNTT),
         RingElement::constant(10, Representation::IncompleteNTT),
         RingElement::constant(11, Representation::IncompleteNTT),
@@ -108,16 +112,19 @@ fn test_inner_product_sumcheck() {
         RingElement::constant(16, Representation::IncompleteNTT),
     ];
 
-    let sumcheck_0 = RefCell::new(LinearSumcheck::new(data_0.len()));
-    sumcheck_0.borrow_mut().from(&data_0);
-    let sumcheck_1 = RefCell::new(LinearSumcheck::new(data_1.len()));
-    sumcheck_1.borrow_mut().from(&data_1);
+    let sumcheck_0 = RefCell::new(LinearSumcheck::new(lhs_data.len()));
+    sumcheck_0.borrow_mut().load_from(&lhs_data);
+    let sumcheck_1 = RefCell::new(LinearSumcheck::new(rhs_data.len()));
+    sumcheck_1.borrow_mut().load_from(&rhs_data);
 
+    // Build a product sumcheck that should track the inner product of lhs_data and rhs_data.
     let inner_product_sumcheck = ProductSumcheck::new(&sumcheck_0, &sumcheck_1);
 
-    let mut univariate_poly = Polynomial::new(0, data_0[0].representation);
+    let mut univariate_poly = Polynomial::new(0, lhs_data[0].representation);
 
     inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
+
+    // The polynomial evaluated at 0 and 1 should sum to the true inner product.
 
     assert_eq!(
         &univariate_poly.at_zero() + &univariate_poly.at_one(),
@@ -131,6 +138,8 @@ fn test_inner_product_sumcheck() {
 
     let claim = univariate_poly.at(&r0);
 
+    // Fold both underlying multilinear extensions by r0 and ensure the verifier
+    // still sees the same claim when re-running round 0 of the protocol.
     sumcheck_0.borrow_mut().partial_evaluate(&r0);
     sumcheck_1.borrow_mut().partial_evaluate(&r0);
 
@@ -145,6 +154,7 @@ fn test_inner_product_sumcheck() {
 
     let claim = univariate_poly.at(&r1);
 
+    // Same invariance check after the second round challenge.
     sumcheck_0.borrow_mut().partial_evaluate(&r1);
     sumcheck_1.borrow_mut().partial_evaluate(&r1);
 
@@ -159,6 +169,8 @@ fn test_inner_product_sumcheck() {
 
     let claim = univariate_poly.at(&r2);
 
+    // After the final fold, the product of the two fully evaluated claims
+    // should equal the verifier's accumulated claim.
     sumcheck_0.borrow_mut().partial_evaluate(&r2);
     sumcheck_1.borrow_mut().partial_evaluate(&r2);
 
@@ -167,6 +179,7 @@ fn test_inner_product_sumcheck() {
         claim,
     );
 
+    // Explicit multilinear evaluations of each folded claim for documentation.
     assert_eq!(
         sumcheck_0.borrow().final_evaluations(),
         &RingElement::constant(
@@ -199,6 +212,7 @@ fn test_inner_product_sumcheck() {
         )
     );
 
+    // Final consistency: inner product claim equals product of individual folded claims.
     assert_eq!(
         claim,
         RingElement::constant(
@@ -238,7 +252,7 @@ fn test_self_inner_product_sumcheck() {
     ];
 
     let sumcheck = RefCell::new(LinearSumcheck::new(data.len()));
-    sumcheck.borrow_mut().from(&data);
+    sumcheck.borrow_mut().load_from(&data);
 
     let inner_product_sumcheck = ProductSumcheck::new(&sumcheck, &sumcheck);
 
@@ -246,6 +260,7 @@ fn test_self_inner_product_sumcheck() {
 
     inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
 
+    // When both inputs are identical, the inner product collapses to a sum of squares.
     assert_eq!(
         &univariate_poly.at_zero() + &univariate_poly.at_one(),
         RingElement::constant(
@@ -279,22 +294,17 @@ fn test_three_way_sumcheck() {
     ];
 
     let mut sumcheck_0 = LinearSumcheck::new(data0.len());
-    sumcheck_0.from(&data0);
+    sumcheck_0.load_from(&data0);
     let mut sumcheck_1 = LinearSumcheck::new(data1.len());
-    sumcheck_1.from(&data1);
+    sumcheck_1.load_from(&data1);
     let mut sumcheck_2 = LinearSumcheck::new(data2.len());
-    sumcheck_2.from(&data2);
+    sumcheck_2.load_from(&data2);
 
     let sumcheck_0_ref = RefCell::new(sumcheck_0);
     let sumcheck_1_ref = RefCell::new(sumcheck_1);
     let sumcheck_2_ref = RefCell::new(sumcheck_2);
 
-    // let sumcheck0 = RefCell::new(LinearSumcheck::new(data0.len(), data0[0].representation));
-    // sumcheck0.borrow_mut().from(&data0);
-    // let sumcheck1 = RefCell::new(LinearSumcheck::new(data1.len(), data1[0].representation));
-    // sumcheck1.borrow_mut().from(&data1);
-    // let sumcheck2 = RefCell::new(LinearSumcheck::new(data2.len(), data2[0].representation));
-    // sumcheck2.borrow_mut().from(&data2);
+    // Compose two nested product sumchecks to validate a three-way product.
 
     let inner_product_sumcheck_01 = ProductSumcheck::new(&sumcheck_0_ref, &sumcheck_1_ref);
 
@@ -306,6 +316,7 @@ fn test_three_way_sumcheck() {
     let mut univariate_poly = Polynomial::new(0, data0[0].representation);
     inner_product_sumcheck_012.univariate_polynomial_into(&mut univariate_poly);
 
+    // Evaluating the first-round polynomial at 0 and 1 should give the full triple product sum.
     assert_eq!(
         &univariate_poly.at_zero() + &univariate_poly.at_one(),
         RingElement::constant(
@@ -324,6 +335,7 @@ fn test_three_way_sumcheck() {
 
     inner_product_sumcheck_012.univariate_polynomial_into(&mut univariate_poly);
 
+    // The verifier's running claim should stay consistent after folding all three vectors.
     assert_eq!(
         &univariate_poly.at_zero() + &univariate_poly.at_one(),
         claim
