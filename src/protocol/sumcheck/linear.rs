@@ -66,40 +66,28 @@ impl Index<HypercubePoint> for LinearSumcheck {
 }
 
 impl HighOrderSumcheckData for LinearSumcheck {
-    fn univariate_polynomial_into(&self, polynomial: &mut Polynomial) {
-        // TODO: optimize this to avoid allocating a temp polynomial each time
-        let mut temp = Polynomial::new(2, self.data[0].representation);
-
-        polynomial.coefficients[0].set_zero();
-        polynomial.coefficients[1].set_zero();
-        polynomial.nof_coefficients = 2;
-
-        let len = 1 << self.variable_count;
-        let half = len / 2;
-
-        for i in 0..half {
-            self.univariate_polynomial_at_point_into(HypercubePoint::new(i), &mut temp);
-            polynomial.coefficients[0] += &temp.coefficients[0];
-            polynomial.coefficients[1] += &temp.coefficients[1];
-        }
+    fn nof_polynomial_coefficients(&self) -> usize {
+        2
     }
 
     fn univariate_polynomial_at_point_into(
         &self,
         point: HypercubePoint,
         polynomial: &mut Polynomial,
-    ) {
+    ) -> bool {
         let len = 1 << self.variable_count;
         let half = len / 2;
         polynomial.coefficients[0].set_zero();
         polynomial.coefficients[0] += &self[point]; // constant term
         polynomial.coefficients[1].set_zero();
-        polynomial.coefficients[1] += &self[point.shifted(half)]; // coeff of x
+        polynomial.coefficients[1] += &self[point.moved(half)]; // coeff of x
         polynomial.coefficients[1] -= &self[point]; // coeff of x
         polynomial.nof_coefficients = 2;
+
+        true
     }
 
-    fn get_variable_count(&self) -> usize {
+    fn variable_count(&self) -> usize {
         self.variable_count
     }
 }

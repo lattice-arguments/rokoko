@@ -10,9 +10,15 @@ impl HypercubePoint {
         HypercubePoint { coordinates }
     }
 
-    pub fn shifted(&self, shift: usize) -> Self {
+    pub fn moved(&self, shift: usize) -> Self {
         HypercubePoint {
             coordinates: self.coordinates + shift,
+        }
+    }
+
+    pub fn shifted(&self, shift: usize) -> Self {
+        HypercubePoint {
+            coordinates: self.coordinates >> shift,
         }
     }
 

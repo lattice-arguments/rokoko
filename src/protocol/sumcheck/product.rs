@@ -25,8 +25,8 @@ impl ProductSumcheck<'_> {
         sumcheck_1: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
     ) -> ProductSumcheck<'a> {
         assert_eq!(
-            sumcheck_0.borrow().get_variable_count(),
-            sumcheck_1.borrow().get_variable_count(),
+            sumcheck_0.borrow().variable_count(),
+            sumcheck_1.borrow().variable_count(),
             "Inner product sumcheck: both sumchecks must have the same data length"
         );
 
@@ -38,28 +38,21 @@ impl ProductSumcheck<'_> {
 }
 
 impl HighOrderSumcheckData for ProductSumcheck<'_> {
-    fn get_variable_count(&self) -> usize {
-        self.sumcheck_0.borrow().get_variable_count()
+    fn nof_polynomial_coefficients(&self) -> usize {
+        self.sumcheck_0.borrow().nof_polynomial_coefficients()
+            + self.sumcheck_1.borrow().nof_polynomial_coefficients()
+            - 1
     }
-    fn univariate_polynomial_into(&self, polynomial: &mut Polynomial) {
-        polynomial.set_zero();
-        let mut temp_poly_0 = Polynomial::new(0, Representation::IncompleteNTT);
 
-        let n = self.get_variable_count();
-        let len = 1 << n;
-        let half = len / 2;
-        for i in 0..half {
-            let point = HypercubePoint::new(i);
-            self.univariate_polynomial_at_point_into(point, &mut temp_poly_0);
-            add_poly_in_place(polynomial, &temp_poly_0);
-        }
+    fn variable_count(&self) -> usize {
+        self.sumcheck_0.borrow().variable_count()
     }
 
     fn univariate_polynomial_at_point_into(
         &self,
         point: HypercubePoint,
         polynomial: &mut Polynomial,
-    ) {
+    ) -> bool {
         // reset accumulator for this point
         polynomial.set_zero();
         polynomial.nof_coefficients = 0;
@@ -76,6 +69,8 @@ impl HighOrderSumcheckData for ProductSumcheck<'_> {
             .univariate_polynomial_at_point_into(point, &mut temp_poly_1);
 
         mul_poly_into(polynomial, &temp_poly_0, &temp_poly_1);
+
+        true
     }
 }
 

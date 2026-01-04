@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, cmp::max};
 
 use crate::{
     common::ring_arithmetic::{Representation, RingElement},
@@ -21,8 +21,8 @@ impl DiffSumcheck<'_> {
         sumcheck_1: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
     ) -> DiffSumcheck<'a> {
         assert_eq!(
-            sumcheck_0.borrow().get_variable_count(),
-            sumcheck_1.borrow().get_variable_count(),
+            sumcheck_0.borrow().variable_count(),
+            sumcheck_1.borrow().variable_count(),
             "Diff sumcheck: both sumchecks must have the same variable count"
         );
 
@@ -34,31 +34,24 @@ impl DiffSumcheck<'_> {
 }
 
 impl HighOrderSumcheckData for DiffSumcheck<'_> {
-    fn get_variable_count(&self) -> usize {
-        self.sumcheck_0.borrow().get_variable_count()
+    fn nof_polynomial_coefficients(&self) -> usize {
+        max(
+            self.sumcheck_0.borrow().nof_polynomial_coefficients(),
+            self.sumcheck_1.borrow().nof_polynomial_coefficients(),
+        )
     }
-
-    fn univariate_polynomial_into(&self, polynomial: &mut Polynomial) {
-        polynomial.set_zero();
-        let mut temp_poly = Polynomial::new(0, Representation::IncompleteNTT);
-
-        let n = self.get_variable_count();
-        let len = 1 << n;
-        let half = len / 2;
-        for i in 0..half {
-            let point = HypercubePoint::new(i);
-            self.univariate_polynomial_at_point_into(point, &mut temp_poly);
-            add_poly_in_place(polynomial, &temp_poly);
-        }
+    fn variable_count(&self) -> usize {
+        self.sumcheck_0.borrow().variable_count()
     }
 
     fn univariate_polynomial_at_point_into(
         &self,
         point: HypercubePoint,
         polynomial: &mut Polynomial,
-    ) {
+    ) -> bool {
         polynomial.set_zero();
 
+        // TODO: optimize allocations
         let mut temp_poly_0 = Polynomial::new(0, Representation::IncompleteNTT);
         let mut temp_poly_1 = Polynomial::new(0, Representation::IncompleteNTT);
 
@@ -76,6 +69,8 @@ impl HighOrderSumcheckData for DiffSumcheck<'_> {
                 &temp_poly_0.coefficients[i] - &temp_poly_1.coefficients[i];
         }
         polynomial.nof_coefficients = max_deg;
+
+        true
     }
 }
 
