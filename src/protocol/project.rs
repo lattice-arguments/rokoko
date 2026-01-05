@@ -7,18 +7,20 @@ use crate::common::{
 
 // TODO: this projection is very naive and unoptimized
 // Some idea:
-// (i) Convert witness (in-place) into i64 using e.g.
+// (i) Convert witness into EvenOdd rep
+// (ii) Convert witness into i64 using e.g.
 //     // neg lanes are the big ones (Q - t)
 //    __mmask8 neg = _mm512_cmpgt_epu64_mask(a, halfQ);
 //
 //   // if neg: a = a - Q  (Q - t - Q = -t). else keep a = t
 //   __m512i signed64 = _mm512_mask_sub_epi64(a, neg, a, vQ);
 
-// (ii) _mm512_cvtsepi64_epi16 to convert i64 to i16 to 16 bits
-// (iii) Compute the output rows in chunks of 32 (since __m512i holds 32 i16 values) with _mm512_add_epi16 and _mm512_sub_epi16
-// (iv) _mm512_cvtusepi16_epi64 to convert i16 back to u64
+// (iii) _mm512_cvtsepi64_epi16 to convert i64 to i16 to 16 bits
+// (steps (i) to (iii) can be preprocessed during commitment computation so it doesn't have to be done during opening)
+// (iv) Compute the output rows in chunks of 32 (since __m512i holds 32 i16 values) with _mm512_add_epi16 and _mm512_sub_epi16
+// (v) _mm512_cvtusepi16_epi64 to convert i16 back to u64
 //
-// Create the same variant for 32 bit and 64 bit too. Add a helper to choose the right one based on the l-inf norm of the witness.
+// Maybe create the same variant for 32 bit and 64 bit too. Add a helper to choose the right one based on the l-inf norm of the witness.
 
 pub fn project(
     witness: &VerticallyAlignedMatrix<RingElement>,
