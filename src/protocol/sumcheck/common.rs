@@ -20,7 +20,6 @@ pub trait HighOrderSumcheckData {
     // this is the univariate polynomial for the current variable with the other variables summed out
     // i.e. let a = f(x_0, x_1, ..., x_{n-1}) then this function returns g(x) = sum_{x_1, ..., x_{n-1}} f(x, x_1, ..., x_{n-1})
     fn univariate_polynomial_into(&self, polynomial: &mut Polynomial) {
-        // TODO: optimize this to avoid allocating a temp polynomial each time
         let temp = self.get_scratch_poly();
 
         polynomial.set_zero();

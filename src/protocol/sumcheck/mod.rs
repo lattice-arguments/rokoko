@@ -1,3 +1,4 @@
+pub mod combiner;
 pub mod common;
 pub mod diff;
 pub mod hypercube_point;

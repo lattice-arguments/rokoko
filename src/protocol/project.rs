@@ -18,10 +18,15 @@ use crate::common::{
 // (iii) _mm512_cvtsepi64_epi16 to convert i64 to i16 to 16 bits
 // (steps (i) to (iii) can be preprocessed during commitment computation so it doesn't have to be done during opening)
 // (iv) Compute the output rows in chunks of 32 (since __m512i holds 32 i16 values) with _mm512_add_epi16 and _mm512_sub_epi16
-// (v) _mm512_cvtusepi16_epi64 to convert i16 back to u64 
+// (v) _mm512_cvtusepi16_epi64 to convert i16 back to u64
 // (vi) Convert back to RingElement in IncompleteNTT representation
 //
 // Maybe create the same variant for 32 bit and 64 bit too. Add a helper to choose the right one based on the l-inf norm of the witness.
+
+// V = (I \otimes J)W
+
+// w \in [0, MOD_Q)
+// w \in [-MOD_Q/2, MOD_Q/2) \in i16 NOT i64
 
 pub fn project(
     witness: &VerticallyAlignedMatrix<RingElement>,
