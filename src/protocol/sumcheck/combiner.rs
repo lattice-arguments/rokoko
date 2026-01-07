@@ -227,4 +227,6 @@ fn test_combiner() {
     term = sumcheck3_ref.borrow().final_evaluations().clone();
     term *= &combiner.challenges.preprocessed_row[3];
     final_eval += &term;
+
+    assert_eq!(final_eval, final_claim);
 }
