@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use crate::{
-    common::ring_arithmetic::Representation,
+    common::{ring_arithmetic::Representation, sumcheck_element::SumcheckElement},
     protocol::sumcheck::{
         common::HighOrderSumcheckData,
         hypercube_point::HypercubePoint,
@@ -18,20 +18,20 @@ use crate::{
 /// Sumcheck data that represents a pointwise product of two other sumcheck polynomials.
 /// Each inner sumcheck is evaluated at the same hypercube point and the resulting
 /// univariate polynomials are multiplied together.
-pub struct ProductSumcheck<'a> {
-    pub lhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData + 'a>, // interior mutability to share between protocols
-    pub rhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
+pub struct ProductSumcheck<'a, E: SumcheckElement = crate::common::ring_arithmetic::RingElement> {
+    pub lhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData<Element = E> + 'a>, // interior mutability to share between protocols
+    pub rhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData<Element = E> + 'a>,
 
-    lhs_eval_poly: RefCell<Polynomial>,
-    rhs_eval_poly: RefCell<Polynomial>,
-    scratch_poly: RefCell<Polynomial>,
+    lhs_eval_poly: RefCell<Polynomial<E>>,
+    rhs_eval_poly: RefCell<Polynomial<E>>,
+    scratch_poly: RefCell<Polynomial<E>>,
 }
 
-impl ProductSumcheck<'_> {
-    pub fn new<'a>(
-        lhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
-        rhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
-    ) -> ProductSumcheck<'a> {
+impl<'a, E: SumcheckElement> ProductSumcheck<'a, E> {
+    pub fn new(
+        lhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData<Element = E> + 'a>,
+        rhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData<Element = E> + 'a>,
+    ) -> ProductSumcheck<'a, E> {
         assert_eq!(
             lhs_sumcheck.borrow().variable_count(),
             rhs_sumcheck.borrow().variable_count(),
@@ -41,15 +41,17 @@ impl ProductSumcheck<'_> {
         ProductSumcheck {
             lhs_sumcheck,
             rhs_sumcheck,
-            lhs_eval_poly: RefCell::new(Polynomial::new(0, Representation::IncompleteNTT)),
-            rhs_eval_poly: RefCell::new(Polynomial::new(0, Representation::IncompleteNTT)),
-            scratch_poly: RefCell::new(Polynomial::new(0, Representation::IncompleteNTT)),
+            lhs_eval_poly: RefCell::new(Polynomial::new(0)),
+            rhs_eval_poly: RefCell::new(Polynomial::new(0)),
+            scratch_poly: RefCell::new(Polynomial::new(0)),
         }
     }
 }
 
-impl HighOrderSumcheckData for ProductSumcheck<'_> {
-    fn get_scratch_poly(&self) -> &RefCell<Polynomial> {
+impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<'_, E> {
+    type Element = E;
+
+    fn get_scratch_poly(&self) -> &RefCell<Polynomial<E>> {
         &self.scratch_poly
     }
     fn max_num_polynomial_coefficients(&self) -> usize {
@@ -75,7 +77,7 @@ impl HighOrderSumcheckData for ProductSumcheck<'_> {
     fn univariate_polynomial_at_point_into(
         &self,
         point: HypercubePoint,
-        polynomial: &mut Polynomial,
+        polynomial: &mut Polynomial<E>,
     ) {
         // Reset accumulator for this point and build g(x) = g_lhs(x) * g_rhs(x).
         polynomial.set_zero();
@@ -128,7 +130,7 @@ fn test_inner_product_sumcheck() {
     // Build a product sumcheck that should track the inner product of lhs_data and rhs_data.
     let inner_product_sumcheck = ProductSumcheck::new(&sumcheck_0, &sumcheck_1);
 
-    let mut univariate_poly = Polynomial::new(0, lhs_data[0].representation);
+    let mut univariate_poly = Polynomial::new(0);
 
     inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
 
@@ -264,7 +266,7 @@ fn test_self_inner_product_sumcheck() {
 
     let inner_product_sumcheck = ProductSumcheck::new(&sumcheck, &sumcheck);
 
-    let mut univariate_poly = Polynomial::new(0, data[0].representation);
+    let mut univariate_poly = Polynomial::new(0);
 
     inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
 
@@ -321,7 +323,7 @@ fn test_three_way_sumcheck() {
     let inner_product_sumcheck_012 =
         ProductSumcheck::new(&inner_product_sumcheck_01_ref, &sumcheck_2_ref);
 
-    let mut univariate_poly = Polynomial::new(0, data0[0].representation);
+    let mut univariate_poly = Polynomial::new(0);
     inner_product_sumcheck_012.univariate_polynomial_into(&mut univariate_poly);
 
     // Evaluating the first-round polynomial at 0 and 1 should give the full triple product sum.

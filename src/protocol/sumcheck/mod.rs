@@ -63,24 +63,18 @@ mod tests {
         let witness_sc = RefCell::new(LinearSumcheck::new(witness.len()));
         witness_sc.borrow_mut().load_from(&witness);
 
-        let lhs_coeff_sumcheck = RefCell::new(LinearSumcheck::new_with_prefixed_data(
-            lhs_coeffs.len(),
-            repr,
-            1,
-        ));
+        let lhs_coeff_sumcheck =
+            RefCell::new(LinearSumcheck::new_with_prefixed_data(lhs_coeffs.len(), 1));
         lhs_coeff_sumcheck.borrow_mut().load_from(&lhs_coeffs);
 
-        let rhs_coeff_sumcheck = RefCell::new(LinearSumcheck::new_with_prefixed_data(
-            rhs_coeffs.len(),
-            repr,
-            1,
-        ));
+        let rhs_coeff_sumcheck =
+            RefCell::new(LinearSumcheck::new_with_prefixed_data(rhs_coeffs.len(), 1));
         rhs_coeff_sumcheck.borrow_mut().load_from(&rhs_coeffs);
 
         // Selectors act as neutral scalars here (selector_variable_count = 0),
         // but are wired in to demonstrate composition with equality gadgets.
-        let lhs_selector = RefCell::new(SelectorEq::new(0b0, 0, 3));
-        let rhs_selector = RefCell::new(SelectorEq::new(0b0, 0, 3));
+        let lhs_selector = RefCell::new(SelectorEq::<RingElement>::new(0b0, 0, 3));
+        let rhs_selector = RefCell::new(SelectorEq::<RingElement>::new(0b0, 0, 3));
 
         // Build product sumchecks for each half: <coeffs, witness_subset>.
         let lhs_inner = RefCell::new(ProductSumcheck::new(&witness_sc, &lhs_coeff_sumcheck));
@@ -91,12 +85,11 @@ mod tests {
 
         let mut diff_sumcheck = DiffSumcheck::new(&lhs_masked, &rhs_masked);
 
-        let mut poly = Polynomial::new(0, repr);
+        let mut poly = Polynomial::new(0);
 
         // Initial claim: the difference of inner products over the full hypercube is zero.
         diff_sumcheck.univariate_polynomial_into(&mut poly);
-        let initial_claim = &poly.at_zero() + &poly.at_one();
-        assert_eq!(initial_claim, RingElement::zero(repr));
+        assert_eq!(&poly.at_zero() + &poly.at_one(), RingElement::zero(repr));
 
         // Round 1: fold highest-order variable, preserving claim consistency.
         let r0 = RingElement::constant(7, repr);

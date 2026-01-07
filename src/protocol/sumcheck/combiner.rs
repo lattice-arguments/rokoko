@@ -5,6 +5,7 @@ use crate::{
         config::MOD_Q,
         ring_arithmetic::{Representation, RingElement},
         structured_row::PreprocessedRow,
+        sumcheck_element::SumcheckElement,
     },
     protocol::{
         open::evaluation_point_to_structured_row,
@@ -17,17 +18,17 @@ use crate::{
     },
 };
 
-pub struct Combiner<'a> {
-    sumchecks: Vec<&'a RefCell<dyn HighOrderSumcheckData + 'a>>,
-    challenges: PreprocessedRow, // for now let's batch in ring elements
-    temp_poly: RefCell<Polynomial>,
-    scratch_poly: RefCell<Polynomial>,
+pub struct Combiner<'a, E: SumcheckElement = RingElement> {
+    sumchecks: Vec<&'a RefCell<dyn HighOrderSumcheckData<Element = E> + 'a>>,
+    challenges: PreprocessedRow<E>, // for now let's batch in ring elements
+    temp_poly: RefCell<Polynomial<E>>,
+    scratch_poly: RefCell<Polynomial<E>>,
 }
 
-impl<'a> Combiner<'a> {
+impl<'a, E: SumcheckElement> Combiner<'a, E> {
     pub fn new(
-        sumchecks: Vec<&'a RefCell<dyn HighOrderSumcheckData + 'a>>,
-        challenges: PreprocessedRow,
+        sumchecks: Vec<&'a RefCell<dyn HighOrderSumcheckData<Element = E> + 'a>>,
+        challenges: PreprocessedRow<E>,
     ) -> Self {
         assert_eq!(
             sumchecks.len().next_power_of_two(),
@@ -41,19 +42,15 @@ impl<'a> Combiner<'a> {
         Self {
             sumchecks,
             challenges,
-            scratch_poly: RefCell::new(super::polynomial::Polynomial::new(
-                0,
-                Representation::IncompleteNTT,
-            )),
-            temp_poly: RefCell::new(super::polynomial::Polynomial::new(
-                0,
-                Representation::IncompleteNTT,
-            )),
+            scratch_poly: RefCell::new(super::polynomial::Polynomial::new(0)),
+            temp_poly: RefCell::new(super::polynomial::Polynomial::new(0)),
         }
     }
 }
 
-impl HighOrderSumcheckData for Combiner<'_> {
+impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<'_, E> {
+    type Element = E;
+
     fn max_num_polynomial_coefficients(&self) -> usize {
         let mut max_coeffs = 0;
         for sumcheck in &self.sumchecks {
@@ -70,14 +67,14 @@ impl HighOrderSumcheckData for Combiner<'_> {
         self.sumchecks[0].borrow().variable_count()
     }
 
-    fn get_scratch_poly(&self) -> &RefCell<super::polynomial::Polynomial> {
+    fn get_scratch_poly(&self) -> &RefCell<super::polynomial::Polynomial<E>> {
         &self.scratch_poly
     }
 
     fn univariate_polynomial_at_point_into(
         &self,
         point: HypercubePoint, // this is just the usize so we pass it by value
-        polynomial: &mut Polynomial,
+        polynomial: &mut Polynomial<E>,
     ) {
         polynomial.set_zero();
         polynomial.num_coefficients = 0; // will be updated as we add terms
@@ -163,7 +160,7 @@ fn test_combiner() {
         preprocessed_challenges,
     );
 
-    let mut poly = Polynomial::new(0, Representation::IncompleteNTT);
+    let mut poly = Polynomial::new(0);
 
     combiner.univariate_polynomial_into(&mut poly);
 
@@ -195,4 +192,39 @@ fn test_combiner() {
 
     combiner.univariate_polynomial_into(&mut poly);
     assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
+
+    let r1 = RingElement::constant(3, Representation::IncompleteNTT);
+    let claim = poly.at(&r1);
+
+    sumcheck0_ref.borrow_mut().partial_evaluate(&r1);
+    sumcheck1_ref.borrow_mut().partial_evaluate(&r1);
+    sumcheck2_ref.borrow_mut().partial_evaluate(&r1);
+    sumcheck3_ref.borrow_mut().partial_evaluate(&r1);
+    combiner.univariate_polynomial_into(&mut poly);
+    assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
+
+    let r2 = RingElement::constant(5, Representation::IncompleteNTT);
+    let final_claim = poly.at(&r2);
+    sumcheck0_ref.borrow_mut().partial_evaluate(&r2);
+    sumcheck1_ref.borrow_mut().partial_evaluate(&r2);
+    sumcheck2_ref.borrow_mut().partial_evaluate(&r2);
+    sumcheck3_ref.borrow_mut().partial_evaluate(&r2);
+
+    let mut final_eval = RingElement::zero(Representation::IncompleteNTT);
+
+    let mut term = sumcheck0_ref.borrow().final_evaluations().clone();
+    term *= &combiner.challenges.preprocessed_row[0];
+    final_eval += &term;
+
+    term = sumcheck1_ref.borrow().final_evaluations().clone();
+    term *= &combiner.challenges.preprocessed_row[1];
+    final_eval += &term;
+
+    term = sumcheck2_ref.borrow().final_evaluations().clone();
+    term *= &combiner.challenges.preprocessed_row[2];
+    final_eval += &term;
+
+    term = sumcheck3_ref.borrow().final_evaluations().clone();
+    term *= &combiner.challenges.preprocessed_row[3];
+    final_eval += &term;
 }

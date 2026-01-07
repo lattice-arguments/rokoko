@@ -1,7 +1,10 @@
 use std::cell::RefCell;
 
 use crate::{
-    common::ring_arithmetic::{Representation, RingElement},
+    common::{
+        ring_arithmetic::{Representation, RingElement},
+        sumcheck_element::SumcheckElement,
+    },
     protocol::sumcheck::{
         common::{HighOrderSumcheckData, SumcheckBaseData},
         hypercube_point::HypercubePoint,
@@ -15,15 +18,15 @@ use crate::common::config::MOD_Q;
 /// Sumcheck for the multilinear equality check `eq(x, selector)`.
 /// It evaluates to 1 exactly when the first `selector_variable_count` bits of
 /// the query match `selector`, while ignoring additional trailing variables.
-pub struct SelectorEq {
+pub struct SelectorEq<E: SumcheckElement = RingElement> {
     selector: usize,
     selector_variable_count: usize,
     total_variable_count: usize,
 
     // if we do partial evaluation, we have to store the current claim
-    current_claim: RingElement,
-    temp_product: RefCell<RingElement>,
-    scratch_poly: RefCell<Polynomial>,
+    current_claim: E,
+    temp_product: RefCell<E>,
+    scratch_poly: RefCell<Polynomial<E>>,
 }
 
 // Selector is a sumcheck that of eq(x, s) over all x in {0,1}^n
@@ -37,7 +40,7 @@ pub struct SelectorEq {
 // However, this implementation is more efficient in space and time.
 // as univariate_polynomial_at_point_into returns `false` unless the point matches the selector in the higher order bits.
 // This is useful for implementing sumcheck over sparse vectors.
-impl SelectorEq {
+impl<E: SumcheckElement> SelectorEq<E> {
     pub fn new(
         selector: usize,
         selector_variable_count: usize,
@@ -47,15 +50,17 @@ impl SelectorEq {
             selector,
             selector_variable_count,
             total_variable_count,
-            current_claim: RingElement::one(Representation::IncompleteNTT),
-            temp_product: RefCell::new(RingElement::zero(Representation::IncompleteNTT)),
-            scratch_poly: RefCell::new(Polynomial::new(2, Representation::IncompleteNTT)),
+            current_claim: E::one(),
+            temp_product: RefCell::new(E::zero()),
+            scratch_poly: RefCell::new(Polynomial::new(2)),
         }
     }
 }
 
-impl HighOrderSumcheckData for SelectorEq {
-    fn get_scratch_poly(&self) -> &RefCell<Polynomial> {
+impl<E: SumcheckElement> HighOrderSumcheckData for SelectorEq<E> {
+    type Element = E;
+
+    fn get_scratch_poly(&self) -> &RefCell<Polynomial<E>> {
         &self.scratch_poly
     }
     fn max_num_polynomial_coefficients(&self) -> usize {
@@ -80,7 +85,7 @@ impl HighOrderSumcheckData for SelectorEq {
     fn univariate_polynomial_at_point_into(
         &self,
         point: HypercubePoint,
-        polynomial: &mut Polynomial,
+        polynomial: &mut Polynomial<E>,
     ) {
         polynomial.set_zero();
         polynomial.num_coefficients = 2;
@@ -120,8 +125,8 @@ impl HighOrderSumcheckData for SelectorEq {
     }
 }
 
-impl SumcheckBaseData for SelectorEq {
-    fn partial_evaluate(&mut self, value: &RingElement) {
+impl<E: SumcheckElement> SumcheckBaseData for SelectorEq<E> {
+    fn partial_evaluate(&mut self, value: &E) {
         // e.g. if selector = 0b110, selector_variable_count = 3, total_variable_count = 5
         // then bit_index = 0b1 (we look at the highest order bit of the selector)
         if self.selector_variable_count > 0 {
@@ -146,7 +151,7 @@ impl SumcheckBaseData for SelectorEq {
         self.total_variable_count -= 1;
     }
 
-    fn final_evaluations(&self) -> &RingElement {
+    fn final_evaluations(&self) -> &E {
         if self.total_variable_count != 0 {
             panic!("final_evaluations called before all variables were evaluated");
         }
@@ -161,8 +166,9 @@ fn test_selector_eq_basic() {
     let total_variable_count = 4;
 
     // this can be viewed as a sumcheck over the vector (0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0)
-    let mut sumcheck = SelectorEq::new(selector, selector_variable_count, total_variable_count);
-    let mut polynomial = Polynomial::new(2, Representation::IncompleteNTT);
+    let mut sumcheck =
+        SelectorEq::<RingElement>::new(selector, selector_variable_count, total_variable_count);
+    let mut polynomial = Polynomial::new(2);
 
     // Irrelevant points should produce an identically-zero polynomial.
     // let result =

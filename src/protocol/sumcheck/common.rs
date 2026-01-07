@@ -1,25 +1,24 @@
 use std::cell::RefCell;
 
-use crate::{
-    common::ring_arithmetic::RingElement,
-    protocol::sumcheck::{
-        hypercube_point::HypercubePoint,
-        polynomial::{add_poly_in_place, Polynomial},
-    },
+use crate::common::sumcheck_element::SumcheckElement;
+use crate::protocol::sumcheck::{
+    hypercube_point::HypercubePoint,
+    polynomial::{add_poly_in_place, Polynomial},
 };
 
 /// Marker trait for data that can be consumed by the sumcheck protocol.
 /// Implementors must also provide the higher-order hooks so they can be
 /// composed with other sumchecks (products, differences, etc.).
 pub trait HighOrderSumcheckData {
+    type Element: SumcheckElement;
     /// Degree + 1 of the univariate polynomial produced at each round.
     fn max_num_polynomial_coefficients(&self) -> usize;
     fn variable_count(&self) -> usize;
     /// Mutable scratch polynomial to avoid allocations between rounds.
-    fn get_scratch_poly(&self) -> &RefCell<Polynomial>;
+    fn get_scratch_poly(&self) -> &RefCell<Polynomial<Self::Element>>;
     // this is the univariate polynomial for the current variable with the other variables summed out
     // i.e. let a = f(x_0, x_1, ..., x_{n-1}) then this function returns g(x) = sum_{x_1, ..., x_{n-1}} f(x, x_1, ..., x_{n-1})
-    fn univariate_polynomial_into(&self, polynomial: &mut Polynomial) {
+    fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
         let temp = self.get_scratch_poly();
 
         polynomial.set_zero();
@@ -46,7 +45,7 @@ pub trait HighOrderSumcheckData {
     fn univariate_polynomial_at_point_into(
         &self,
         point: HypercubePoint, // this is just the usize so we pass it by value
-        polynomial: &mut Polynomial,
+        polynomial: &mut Polynomial<Self::Element>,
     );
 
     fn is_univariate_polynomial_zero_at_point(&self, point: HypercubePoint) -> bool;
@@ -54,7 +53,7 @@ pub trait HighOrderSumcheckData {
 
 pub trait SumcheckBaseData: HighOrderSumcheckData {
     /// Fold the multilinear extension along the current challenge `value`.
-    fn partial_evaluate(&mut self, value: &RingElement);
+    fn partial_evaluate(&mut self, value: &Self::Element);
     /// Final aggregated evaluations after all variables have been folded.
-    fn final_evaluations(&self) -> &RingElement;
+    fn final_evaluations(&self) -> &Self::Element;
 }

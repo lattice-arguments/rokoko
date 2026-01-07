@@ -1,7 +1,7 @@
 use std::{cell::RefCell, cmp::max};
 
 use crate::{
-    common::ring_arithmetic::Representation,
+    common::{ring_arithmetic::Representation, sumcheck_element::SumcheckElement},
     protocol::sumcheck::{
         common::HighOrderSumcheckData,
         hypercube_point::HypercubePoint,
@@ -18,20 +18,20 @@ use crate::{
 
 /// Sumcheck data that represents the difference between two other sumchecks.
 /// Useful for enforcing equality constraints between two multilinear extensions.
-pub struct DiffSumcheck<'a> {
-    pub lhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
-    pub rhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
+pub struct DiffSumcheck<'a, E: SumcheckElement = crate::common::ring_arithmetic::RingElement> {
+    pub lhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData<Element = E> + 'a>,
+    pub rhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData<Element = E> + 'a>,
 
-    lhs_eval_poly: RefCell<Polynomial>,
-    rhs_eval_poly: RefCell<Polynomial>,
-    scratch_poly: RefCell<Polynomial>,
+    lhs_eval_poly: RefCell<Polynomial<E>>,
+    rhs_eval_poly: RefCell<Polynomial<E>>,
+    scratch_poly: RefCell<Polynomial<E>>,
 }
 
-impl DiffSumcheck<'_> {
-    pub fn new<'a>(
-        lhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
-        rhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData + 'a>,
-    ) -> DiffSumcheck<'a> {
+impl<'a, E: SumcheckElement> DiffSumcheck<'a, E> {
+    pub fn new(
+        lhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData<Element = E> + 'a>,
+        rhs_sumcheck: &'a RefCell<dyn HighOrderSumcheckData<Element = E> + 'a>,
+    ) -> DiffSumcheck<'a, E> {
         assert_eq!(
             lhs_sumcheck.borrow().variable_count(),
             rhs_sumcheck.borrow().variable_count(),
@@ -41,15 +41,17 @@ impl DiffSumcheck<'_> {
         DiffSumcheck {
             lhs_sumcheck,
             rhs_sumcheck,
-            lhs_eval_poly: RefCell::new(Polynomial::new(0, Representation::IncompleteNTT)),
-            rhs_eval_poly: RefCell::new(Polynomial::new(0, Representation::IncompleteNTT)),
-            scratch_poly: RefCell::new(Polynomial::new(0, Representation::IncompleteNTT)),
+            lhs_eval_poly: RefCell::new(Polynomial::new(0)),
+            rhs_eval_poly: RefCell::new(Polynomial::new(0)),
+            scratch_poly: RefCell::new(Polynomial::new(0)),
         }
     }
 }
 
-impl HighOrderSumcheckData for DiffSumcheck<'_> {
-    fn get_scratch_poly(&self) -> &RefCell<Polynomial> {
+impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<'_, E> {
+    type Element = E;
+
+    fn get_scratch_poly(&self) -> &RefCell<Polynomial<E>> {
         &self.scratch_poly
     }
     fn max_num_polynomial_coefficients(&self) -> usize {
@@ -75,7 +77,7 @@ impl HighOrderSumcheckData for DiffSumcheck<'_> {
     fn univariate_polynomial_at_point_into(
         &self,
         point: HypercubePoint,
-        polynomial: &mut Polynomial,
+        polynomial: &mut Polynomial<E>,
     ) {
         // Compute the per-round polynomial as the difference of the two inputs.
         polynomial.set_zero();
@@ -119,7 +121,7 @@ fn test_diff_sumcheck_basic() {
 
     let diff_sumcheck = DiffSumcheck::new(&sumcheck_0, &sumcheck_1);
 
-    let mut poly = Polynomial::new(0, data_0[0].representation);
+    let mut poly = Polynomial::new(0);
     diff_sumcheck.univariate_polynomial_into(&mut poly);
 
     // Sum(data_0) - Sum(data_1) = 26 - 10 = 16
@@ -137,8 +139,8 @@ fn test_diff_sumcheck_basic() {
 
 #[test]
 fn diff_with_eqs() {
-    let lhs = RefCell::new(SelectorEq::new(0b101, 3, 5));
-    let rhs = RefCell::new(SelectorEq::new(0b011, 3, 5));
+    let lhs = RefCell::new(SelectorEq::<RingElement>::new(0b101, 3, 5));
+    let rhs = RefCell::new(SelectorEq::<RingElement>::new(0b011, 3, 5));
 
     let diff = DiffSumcheck::new(&lhs, &rhs);
 
@@ -147,7 +149,7 @@ fn diff_with_eqs() {
     // Initial claim: the difference of the two selectors over the full hypercube is zero.
     // Both selectors are 1 at exactly 4 points, so their difference sums to zero.
 
-    let mut poly = Polynomial::new(0, Representation::IncompleteNTT);
+    let mut poly = Polynomial::new(0);
     diff.univariate_polynomial_into(&mut poly);
 
     assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
