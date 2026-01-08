@@ -67,7 +67,7 @@ pub fn get_composer_offset(base_log: u64, radix: usize) -> RingElement {
     let decomposed = decompose(&mut vec![zero], base_log, radix);
     let mut offset = RingElement::zero(Representation::IncompleteNTT);
     for i in 0..radix {
-        offset += &(&decomposed[i]
+        offset -= &(&decomposed[i]
             * &RingElement::constant(1u64 << (i as u64 * base_log), Representation::IncompleteNTT));
     }
     offset
@@ -115,6 +115,6 @@ fn test_decompose() {
         term *= &shift;
         recomposed += &term;
     }
-    recomposed -= &offset;
+    recomposed += &offset;
     assert_eq!(recomposed, input[0]);
 }
