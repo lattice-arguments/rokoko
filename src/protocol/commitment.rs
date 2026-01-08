@@ -72,6 +72,27 @@ pub fn commit_internal(
     commitment
 }
 
+
+// this is first level commit for FW = Y
+pub fn commit_basic(
+    crs: &CRS,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+) -> Commitment {
+    let ck = crs.ck_for_wit_dim(witness.height);
+    let mut commitment = init_prover_commitment(ck.len(), witness.width);
+
+    for (i, row) in ck.iter().enumerate() {
+        for col in 0..witness.width {
+            let mut temp = RingElement::zero(Representation::IncompleteNTT);
+            for (elem, w_elem) in row.preprocessed_row.iter().zip(witness.col(col).iter()) {
+                temp *= (elem, w_elem);
+                *commitment.commitment.index_mut((i, col)) += &temp;
+            }
+        }
+    }
+    commitment
+}
+
 #[test]
 fn test_commitment_computation() {
     let ck: CK = vec![

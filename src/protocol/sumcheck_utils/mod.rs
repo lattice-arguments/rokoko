@@ -18,7 +18,7 @@ mod tests {
         diff::DiffSumcheck, linear::LinearSumcheck, polynomial::Polynomial,
         product::ProductSumcheck, selector_eq::SelectorEq,
     };
-    use crate::protocol::sumcheck::common::{HighOrderSumcheckData, SumcheckBaseData};
+    use crate::protocol::sumcheck_utils::common::{HighOrderSumcheckData, SumcheckBaseData};
 
     #[test]
     fn test_subvector_inner_product_difference_zero() {

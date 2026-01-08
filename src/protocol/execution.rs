@@ -5,17 +5,17 @@ use num::range;
 use crate::{
     common::{
         hash::HashWrapper,
-        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
+        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
         sampling::sample_random_short_vector,
         structured_row::{self, PreprocessedRow, StructuredRow},
     },
     protocol::{
-        commitment::{commit, Commitment},
+        commitment::{Commitment, commit, commit_basic},
         crs::{CK, CRS},
         fold::fold,
-        open::{evaluation_point_to_structured_row, open_at, Opening},
+        open::{Opening, evaluation_point_to_structured_row, open_at},
         project::project,
     },
 };
@@ -171,7 +171,7 @@ pub fn execute() {
 
     let ck = &crs.ck_for_wit_dim(witness.height);
 
-    let commitment = commit(&ck, &witness, &[]);
+    let commitment = commit_basic(&crs, &witness);
 
     let evaluation_points_inner = vec![range(0, witness.height.ilog2() as usize)
         .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 2))
