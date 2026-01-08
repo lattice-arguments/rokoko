@@ -300,7 +300,6 @@ impl RingElement {
         result
     }
 
-    // Probably should never be used
     pub fn combine_from_quadratic_extensions(
         &mut self,
         extensions: &[QuadraticExtension; HALF_DEGREE],

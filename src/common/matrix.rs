@@ -144,6 +144,7 @@ pub fn new_vec_zero_preallocated(count: usize) -> Vec<RingElement> {
 
     data
 }
+
 impl<T> VerticallyAlignedMatrix<T> {
     pub fn col(&self, c: usize) -> &[T] {
         let start = c * self.height;

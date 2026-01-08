@@ -5,6 +5,7 @@ pub mod hypercube_point;
 pub mod linear;
 pub mod polynomial;
 pub mod product;
+pub mod ring_to_field_combiner;
 pub mod selector_eq;
 
 #[cfg(test)]
