@@ -31,12 +31,16 @@ pub fn decompose(input: &mut Vec<RingElement>, base_log: u64, radix: usize) -> V
 
     let small_shift = RingElement::all(1u64 << (base_log - 1), Representation::EvenOddCoefficients);
 
+    let mut temp = RingElement::all(0, Representation::EvenOddCoefficients);
+
     for (index, el) in input.iter_mut().enumerate() {
-        el.to_representation(Representation::EvenOddCoefficients);
-        *el += &big_shift;
+        temp.set_from(el);
+        // TODO: mainly clone??
+        temp.to_representation(Representation::EvenOddCoefficients);
+        temp += &big_shift;
         for i in 0..radix {
             decomposed[index * radix + i].to_representation(Representation::EvenOddCoefficients);
-            el.bits_into(
+            temp.bits_into(
                 &mut decomposed[index * radix + i],
                 i as u64 * base_log,
                 (i as u64 + 1) * base_log,
@@ -44,8 +48,6 @@ pub fn decompose(input: &mut Vec<RingElement>, base_log: u64, radix: usize) -> V
             decomposed[index * radix + i] -= &small_shift;
             decomposed[index * radix + i].to_representation(Representation::IncompleteNTT);
         }
-        *el -= &big_shift;
-        el.to_representation(Representation::IncompleteNTT);
     }
 
     decomposed
