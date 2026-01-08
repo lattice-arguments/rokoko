@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use crate::common::sumcheck_element::SumcheckElement;
-use crate::protocol::sumcheck::{
+use crate::protocol::sumcheck_utils::{
     hypercube_point::HypercubePoint,
     polynomial::{add_poly_in_place, Polynomial},
 };

@@ -9,7 +9,7 @@ use crate::{
     },
     protocol::{
         open::evaluation_point_to_structured_row,
-        sumcheck::{
+        sumcheck_utils::{
             common::{HighOrderSumcheckData, SumcheckBaseData},
             hypercube_point::HypercubePoint,
             linear::LinearSumcheck,

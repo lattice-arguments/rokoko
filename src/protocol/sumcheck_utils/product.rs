@@ -5,7 +5,7 @@ use crate::{
         ring_arithmetic::{Representation, RingElement},
         sumcheck_element::SumcheckElement,
     },
-    protocol::sumcheck::{
+    protocol::sumcheck_utils::{
         common::HighOrderSumcheckData,
         hypercube_point::HypercubePoint,
         polynomial::{mul_poly_into, Polynomial},
@@ -15,7 +15,7 @@ use crate::{
 #[cfg(test)]
 use crate::{
     common::config::MOD_Q,
-    protocol::sumcheck::{common::SumcheckBaseData, linear::LinearSumcheck},
+    protocol::sumcheck_utils::{common::SumcheckBaseData, linear::LinearSumcheck},
 };
 
 /// Sumcheck data that represents a pointwise product of two other sumcheck polynomials.
@@ -366,7 +366,7 @@ fn test_product_of_linear_sumchecks_over_disjoint_variables() {
     // since it should be a produce of two constant polys and one degree 1 poly.
 
     use crate::common::ring_arithmetic::RingElement;
-    use crate::protocol::sumcheck::product::ProductSumcheck;
+    use crate::protocol::sumcheck_utils::product::ProductSumcheck;
 
     let data1 = vec![
         RingElement::constant(1, Representation::IncompleteNTT),

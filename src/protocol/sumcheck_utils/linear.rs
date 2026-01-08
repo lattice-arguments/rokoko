@@ -5,7 +5,7 @@ use crate::{
         ring_arithmetic::{Representation, RingElement},
         sumcheck_element::SumcheckElement,
     },
-    protocol::sumcheck::{
+    protocol::sumcheck_utils::{
         common::{HighOrderSumcheckData, SumcheckBaseData},
         hypercube_point::HypercubePoint,
         polynomial::Polynomial,

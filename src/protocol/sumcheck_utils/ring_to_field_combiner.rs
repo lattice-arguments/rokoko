@@ -6,7 +6,7 @@ use crate::{
         ring_arithmetic::{QuadraticExtension, Representation, RingElement, SHIFT_FACTORS},
         sumcheck_element::SumcheckElement,
     },
-    protocol::sumcheck::{
+    protocol::sumcheck_utils::{
         common::{HighOrderSumcheckData, SumcheckBaseData},
         linear::LinearSumcheck,
         polynomial::Polynomial,

@@ -2,7 +2,7 @@ use std::{cell::RefCell, cmp::max};
 
 use crate::{
     common::{ring_arithmetic::Representation, sumcheck_element::SumcheckElement},
-    protocol::sumcheck::{
+    protocol::sumcheck_utils::{
         common::HighOrderSumcheckData,
         hypercube_point::HypercubePoint,
         polynomial::{add_poly_in_place, sub_poly_in_place, Polynomial},
@@ -13,7 +13,7 @@ use crate::{
 #[cfg(test)]
 use crate::{
     common::ring_arithmetic::RingElement,
-    protocol::sumcheck::{common::SumcheckBaseData, linear::LinearSumcheck},
+    protocol::sumcheck_utils::{common::SumcheckBaseData, linear::LinearSumcheck},
 };
 
 /// Sumcheck data that represents the difference between two other sumchecks.
