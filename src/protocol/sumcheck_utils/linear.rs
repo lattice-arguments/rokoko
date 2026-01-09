@@ -77,6 +77,22 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
         2
     }
 
+    fn constant_univariate_polynomial_at_point_available_by_ref(
+        &self,
+        point: HypercubePoint,
+    ) -> Option<&Self::Element> {
+        if self.variable_count > self.data.len().trailing_zeros() as usize + self.suffix {
+            // we have some prefixed variables
+            return Some(&self[point]);
+        }
+
+        if self.data.len() == 1 && self.suffix > 0 {
+            // only suffix variables remain
+            return Some(&self[point]);
+        }
+        None
+    }
+
     fn univariate_polynomial_at_point_into(
         &self,
         point: HypercubePoint,

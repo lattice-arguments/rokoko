@@ -22,7 +22,7 @@ pub trait HighOrderSumcheckData {
         let temp = self.get_scratch_poly();
 
         polynomial.set_zero();
-        polynomial.num_coefficients = 0; // will be updated as we add terms
+        polynomial.num_coefficients = 1; // will be updated as we add terms
 
         let hypercube_size = 1 << self.variable_count();
         let half_hypercube = hypercube_size / 2;
@@ -30,6 +30,14 @@ pub trait HighOrderSumcheckData {
         // Enumerate over the first half of the hypercube; the polynomial at the
         // corresponding point in the second half is handled by the callee.
         for i in 0..half_hypercube {
+            let constant = self
+                .constant_univariate_polynomial_at_point_available_by_ref(HypercubePoint::new(i));
+
+            if constant.is_some() {
+                polynomial.coefficients[0] += constant.unwrap();
+                continue;
+            }
+
             if self.is_univariate_polynomial_zero_at_point(HypercubePoint::new(i)) {
                 continue;
             }
@@ -49,6 +57,13 @@ pub trait HighOrderSumcheckData {
     );
 
     fn is_univariate_polynomial_zero_at_point(&self, point: HypercubePoint) -> bool;
+
+    fn constant_univariate_polynomial_at_point_available_by_ref(
+        &self,
+        _: HypercubePoint,
+    ) -> Option<&Self::Element> {
+        None
+    }
 }
 
 pub trait SumcheckBaseData: HighOrderSumcheckData {
