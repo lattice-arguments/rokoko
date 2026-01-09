@@ -92,10 +92,6 @@ pub fn prover_round(
 
     let projection_image = project(&witness, &projection_matrix);
 
-    print!("Projection image sampled.\n");
-    println!("{:?}", projection_image.height);
-    println!("{:?}", projection_image.width);
-
     let rc_projection_image =
         recursive_commit(&crs, &CONFIG.projection_recursion, &projection_image.data);
 
