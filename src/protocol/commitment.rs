@@ -55,7 +55,7 @@ pub struct RecursiveCommitment {
     pub decomposition_chunks: usize,
     pub committed_data: Vec<RingElement>,
     pub commitment: Vec<RingElement>,
-    pub recursion: Option<Box<RecursiveCommitment>>,
+    pub next: Option<Box<RecursiveCommitment>>,
 }
 
 fn recursive_commit(
@@ -81,7 +81,7 @@ fn recursive_commit(
         }
     }
 
-    let recursion = match &config.next {
+    let next = match &config.next {
         Some(next_config) => Some(Box::new(recursive_commit(crs, next_config, &commitment))),
         None => None,
     };
@@ -91,7 +91,7 @@ fn recursive_commit(
         decomposition_chunks: config.decomposition_chunks,
         committed_data,
         commitment,
-        recursion,
+        next,
     }
 }
 
@@ -136,7 +136,7 @@ fn test_recursive_commit() {
         recursive_commitment.committed_data[3],
         RingElement::all(0, Representation::IncompleteNTT)
     );
-    assert!(recursive_commitment.recursion.is_none());
+    assert!(recursive_commitment.next.is_none());
 }
 
 #[test]
