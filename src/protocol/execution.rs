@@ -30,6 +30,10 @@ pub struct RoundOutput {
 }
 
 pub static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
+    witness_height: 256,
+    witness_width: 16,
+    challenge_width: 16,  // shall be likely the witness width
+    projection_ratio: 16, // shall be likely the witness_height
     commitment_recursion: RecursionConfig {
         decomposition_radix_log: 15,
         decomposition_chunks: 4,
@@ -38,7 +42,7 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
     },
     projection_opening_recursion: RecursionConfig {
         decomposition_radix_log: 15,
-        decomposition_chunks: 4,
+        decomposition_chunks: 2,
         rank: 1,
         next: None,
     },
@@ -47,7 +51,7 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
 pub struct Config {
     witness_height: usize,
     witness_width: usize,
-    challenge_width: usize, // shall be likely the witness width
+    challenge_width: usize,  // shall be likely the witness width
     projection_ratio: usize, // shall be likely the witness_height
     commitment_recursion: RecursionConfig,
     projection_opening_recursion: RecursionConfig,
@@ -75,11 +79,15 @@ pub fn prover_round(
 
     hash_wrapper.update_with_ring_element_slice(&opening.rhs.data);
 
-    let mut projection_matrix = ProjectionMatrix::new(8);
+    let mut projection_matrix = ProjectionMatrix::new(CONFIG.projection_ratio);
 
     projection_matrix.sample(&mut hash_wrapper);
 
     let projection_image = project(&witness, &projection_matrix);
+
+    print!("Projection image sampled.\n");
+    println!("{:?}", projection_image.height);
+    println!("{:?}", projection_image.width);
 
     let rc_projection_image = recursive_commit(
         &crs,
@@ -112,12 +120,16 @@ pub fn prover_round(
 }
 
 pub fn execute() {
-    let crs = CRS::gen_crs(256, 2);
+    let crs = CRS::gen_crs(CONFIG.witness_height * 2, 2);
 
     let witness = VerticallyAlignedMatrix {
-        height: 256,
-        width: 16,
-        data: sample_random_short_vector(256 * 16, 10, Representation::IncompleteNTT),
+        height: CONFIG.witness_height,
+        width: CONFIG.witness_width,
+        data: sample_random_short_vector(
+            CONFIG.witness_height * CONFIG.witness_width,
+            10,
+            Representation::IncompleteNTT,
+        ),
     };
 
     let ck = &crs.ck_for_wit_dim(witness.height);
@@ -142,6 +154,4 @@ pub fn execute() {
         &evaluation_points_inner,
         &evaluation_points_outer,
     );
-
-    todo!();
 }
