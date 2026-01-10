@@ -5,16 +5,12 @@ use num::range;
 
 use crate::{
     common::{
-        arithmetic::inner_product,
-        decomposition::{
+        arithmetic::inner_product, decomposition::{
             compose_from_decomposed, get_composer_offset, get_decomposed_offset_scaled,
-        },
-        hash::HashWrapper,
-        projection_matrix::{self, ProjectionMatrix},
-        ring_arithmetic::{Representation, RingElement},
+        }, hash::HashWrapper, matrix::new_vec_zero_preallocated, projection_matrix::{self, ProjectionMatrix}, ring_arithmetic::{Representation, RingElement}, structured_row::PreprocessedRow
     },
     protocol::{
-        commitment::{self, Prefix}, config::{BASIC_COMMITMENT_RANK, Config, slice_by_prefix}, crs::{self, CRS}, open::Opening, sumcheck_utils::{
+        commitment::{self, Prefix}, config::{BASIC_COMMITMENT_RANK, Config, slice_by_prefix}, crs::{self, CRS}, open::{Opening, evaluation_point_to_structured_row}, sumcheck_utils::{
             common::{HighOrderSumcheckData, SumcheckBaseData},
             diff::DiffSumcheck,
             linear::LinearSumcheck,
@@ -417,7 +413,19 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
         .collect::<Vec<Type2SumcheckContext>>();
 
     // type3 sumchecks
-    // I \otimes projection_matrix \cdot folded_witness - projection_image \cdot fold_challenge = 0
+    // projection_matrix_flatter \cdot (I \otimes projection_matrix) \cdot folded_witness - projection_matrix_flatter \cdot projection_image \cdot fold_challenge = 0
+    // details:
+    //     projection_matrix_flatter \cdot (I \otimes projection_matrix) shall be seen as a single vector and loaded into a linear sumcheck
+    //      projection_image is a vertically aligned matrix, so we view is as a single vector by flattening it column-by-column.
+    //     projection_matrix_flatter \cdot projection_image \cdot fold_challenge is the viewed as <projection_image, fold_challenge \otimes projection_matrix_flatter > as fold_challenge \otimes projection_matrix_flatter can be loaded into a single linear sumcheck (as there's different composition-related offseting anyway so we cannot reuse existing sumchecks here)
+    // projection_matrix_flatter \cdot (I \otimes projection_matrix) could be efficiently if we view:
+    // (projection_matrix_flatter) = (projection_matrix_flatter_first_vars_expended) ⊗ (projection_matrix_flatter_second_half_vars_expended) and then use mixed product property of tensor products:
+    // (projection_matrix_flatter_first_vars_expended) ⊗ (projection_matrix_flatter_second_half_vars_expended)  \cdot (I \otimes projection_matrix) =
+    // = (projection_matrix_flatter_first_vars_expended) ⊗ (projection_matrix_flatter_second_half_vars_expended  \cdot projection_matrix)
+    // (computing projection_matrix_flatter in expanded form will not be necessary)
+    // projection matrix doesn't not need to be even loaded to ring elements as we can view (projection_matrix_flatter_second_half_vars_expended  \cdot projection_matrix) as bunch of addition and subtractions.
+
+
 
     // type4 sumchecks
     // rc_projection_image, rc_opening, rc_commitment are well-formed
@@ -453,6 +461,12 @@ pub fn sumcheck(
 ) {
     let mut sumcheck_context = init_sumcheck(crs, config);
 
+    let projection_matrix_flatter_base = new_vec_zero_preallocated(config.witness_height.ilog2() as usize);
+
+    let projection_matrix_flatter = PreprocessedRow::from_structured_row(&evaluation_point_to_structured_row(&projection_matrix_flatter_base));
+
+
+    
     sumcheck_context
         .combined_witness_sumcheck
         .borrow_mut()

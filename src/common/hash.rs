@@ -122,6 +122,18 @@ impl HashWrapper {
         output.to_representation(Representation::IncompleteNTT);
     }
 
+    pub fn sample_ring_element_into(&mut self, output: &mut RingElement) {
+        let buf = output.v.as_mut_ptr() as *mut u8;
+        let len = output.v.len() * std::mem::size_of::<u64>();
+        self.fill_from_xof(b"ring-element", unsafe { std::slice::from_raw_parts_mut(buf, len) });
+    }
+
+    pub fn sample_ring_element_vec_into(&mut self, output: &mut [RingElement]) {
+        for element in output.iter_mut() {
+            self.sample_ring_element_into(element);
+        }
+    }
+
     pub fn sample_biased_ternary_ring_element_vec_into(&mut self, output: &mut [RingElement]) {
         for element in output.iter_mut() {
             self.sample_biased_ternary_ring_element_into(element);
@@ -264,5 +276,20 @@ mod tests {
         for &coeff in element.v.iter() {
             assert!(coeff == MOD_Q - 1 || coeff == 0 || coeff == 1);
         }
+    }
+
+    #[test]
+    fn sample_ring_element_works() {
+        let mut transcript = HashWrapper::new();
+        let mut element = RingElement::new(Representation::IncompleteNTT);
+        transcript.sample_ring_element_into(&mut element);
+        let mut found_nonzero = false;
+        for &coeff in element.v.iter() {
+            if coeff != 0 {
+                found_nonzero = true;
+                break;
+            }
+        }
+        assert!(found_nonzero);
     }
 }

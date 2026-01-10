@@ -26,7 +26,7 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
     },
     opening_recursion: RecursionConfig {
         decomposition_base_log: 15,
-        decomposition_chunks: 4,
+        decomposition_chunks: 4, // for now, there's no reason why decomposition_chunks here shall be different from commitment_recursion.decomposition_chunks. I will use that assumption in sumcheck.
         rank: 1,
         next: None,
         prefix: Prefix {
