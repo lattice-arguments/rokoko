@@ -151,6 +151,7 @@ fn test_diff_sumcheck_basic() {
     sumcheck_1.borrow_mut().partial_evaluate(&r0);
 
     diff_sumcheck.univariate_polynomial_into(&mut poly);
+
     assert_eq!(&poly.at_zero() + &poly.at_one(), claim_r0);
 }
 

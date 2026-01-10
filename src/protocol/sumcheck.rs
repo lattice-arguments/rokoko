@@ -131,14 +131,6 @@ fn tensor_product(a: &Vec<RingElement>, b: &Vec<RingElement>) -> Vec<RingElement
 
 pub struct Type0SumcheckContext {
     basic_commitment_row_sumcheck: Rc<RefCell<SelectorEq<RingElement>>>,
-    // left3: Rc<RefCell<ProductSumcheck<RingElement>>>,
-    // left2: Rc<RefCell<DiffSumcheck<RingElement>>>,
-    // left1: Rc<RefCell<ProductSumcheck<RingElement>>>,
-    // left0: Rc<RefCell<ProductSumcheck<RingElement>>>,
-    // right3: Rc<RefCell<ProductSumcheck<RingElement>>>,
-    // right2: Rc<RefCell<DiffSumcheck<RingElement>>>,
-    // right1: Rc<RefCell<ProductSumcheck<RingElement>>>,
-    // right0: Rc<RefCell<ProductSumcheck<RingElement>>>,
     pub output: Rc<RefCell<DiffSumcheck<RingElement>>>,
 }
 

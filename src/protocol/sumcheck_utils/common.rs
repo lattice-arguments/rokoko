@@ -33,8 +33,8 @@ pub trait HighOrderSumcheckData {
             let constant = self
                 .constant_univariate_polynomial_at_point_available_by_ref(HypercubePoint::new(i));
 
-            if constant.is_some() {
-                polynomial.coefficients[0] += constant.unwrap();
+            if let Some(constant) = constant {
+                polynomial.coefficients[0] += constant;
                 continue;
             }
 
