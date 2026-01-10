@@ -177,9 +177,9 @@ fn test_commitment_computation() {
                 RingElement::constant(64, Representation::IncompleteNTT),
                 RingElement::constant(128, Representation::IncompleteNTT),
             ],
-            structured_row: StructuredRow {
-                tensor_layers: vec![], // incorrect but not used here
-            },
+            // structured_row: StructuredRow {
+            //     tensor_layers: vec![], // incorrect but not used here
+            // },
         },
         PreprocessedRow {
             preprocessed_row: vec![
@@ -192,9 +192,9 @@ fn test_commitment_computation() {
                 RingElement::constant(4096, Representation::IncompleteNTT),
                 RingElement::constant(16384, Representation::IncompleteNTT),
             ],
-            structured_row: StructuredRow {
-                tensor_layers: vec![], // incorrect but not used here
-            },
+            // structured_row: StructuredRow {
+            //     tensor_layers: vec![], // incorrect but not used here
+            // },
         },
     ];
 

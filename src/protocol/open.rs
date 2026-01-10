@@ -42,7 +42,7 @@ pub fn open_at(
 
     let preprocessed_points_inner = structured_points_inner
         .into_iter()
-        .map(|sr| PreprocessedRow::from_structured_row(sr))
+        .map(|sr| PreprocessedRow::from_structured_row(&sr))
         .collect::<Vec<PreprocessedRow>>();
 
     let structured_points_outer = evaluation_points_outer
@@ -52,7 +52,7 @@ pub fn open_at(
 
     let preprocessed_points_outer = structured_points_outer
         .into_iter()
-        .map(|sr| PreprocessedRow::from_structured_row(sr))
+        .map(|sr| PreprocessedRow::from_structured_row(&sr))
         .collect::<Vec<PreprocessedRow>>();
 
     // for (i, preprocessed_row_inner) in preprocessed_points_inner.iter().enumerate() {
@@ -92,6 +92,26 @@ pub fn open_at(
         evaluation_points_inner: preprocessed_points_inner,
         evaluation_points_outer: preprocessed_points_outer,
     }
+}
+
+fn claim(
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    evaluation_point_inner: &StructuredRow,
+    evaluation_point_outer: &StructuredRow,
+) -> RingElement {
+    let preprocessed_row_inner = PreprocessedRow::from_structured_row(evaluation_point_inner);
+    let preprocessed_row_outer = PreprocessedRow::from_structured_row(evaluation_point_outer);
+    let mut rhs = commit_basic_internal(&vec![preprocessed_row_inner], witness, 1);
+    let mut temp = RingElement::zero(Representation::IncompleteNTT);
+    let mut result = RingElement::zero(Representation::IncompleteNTT);
+    for col in 0..rhs.width {
+        temp *= (
+            &rhs[(0, col)],
+            &preprocessed_row_outer.preprocessed_row[col],
+        );
+        result += &temp;
+    }
+    result
 }
 
 #[test]

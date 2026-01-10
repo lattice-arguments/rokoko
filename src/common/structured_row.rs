@@ -51,12 +51,12 @@ impl<E: SumcheckElement> StructuredRow<E> {
 
 #[derive(Debug, Clone)]
 pub struct PreprocessedRow<E: SumcheckElement = RingElement> {
-    pub structured_row: StructuredRow<E>,
+    // pub structured_row: StructuredRow<E>,
     pub preprocessed_row: Vec<E>,
 }
 
 impl<E: SumcheckElement> PreprocessedRow<E> {
-    pub fn from_structured_row(structured_row: StructuredRow<E>) -> Self {
+    pub fn from_structured_row(structured_row: &StructuredRow<E>) -> Self {
         let mut result = Vec::with_capacity(2usize.pow(structured_row.tensor_layers.len() as u32));
         result.push(E::one());
 
@@ -76,7 +76,7 @@ impl<E: SumcheckElement> PreprocessedRow<E> {
             }
         }
         PreprocessedRow {
-            structured_row,
+            // structured_row,
             preprocessed_row: result,
         }
     }
@@ -164,7 +164,7 @@ fn test_preprocessed_row() {
 
     let structured_row_unused = structured_row.clone();
 
-    let preprocessed_row = PreprocessedRow::from_structured_row(structured_row_unused);
+    let preprocessed_row = PreprocessedRow::from_structured_row(&structured_row_unused);
 
     for i in 0..preprocessed_row.preprocessed_row.len() {
         assert_eq!(preprocessed_row.preprocessed_row[i], structured_row.at(i));
@@ -184,7 +184,7 @@ fn test_at_matches_preprocessed_row_random() {
         let structured_row = StructuredRow {
             tensor_layers: tensor_layers.clone(),
         };
-        let preprocessed_row = PreprocessedRow::from_structured_row(structured_row.clone());
+        let preprocessed_row = PreprocessedRow::from_structured_row(&structured_row);
 
         for idx in 0..preprocessed_row.preprocessed_row.len() {
             let from_at = structured_row.at(idx);

@@ -15,11 +15,15 @@ use crate::{
     },
     protocol::{
         commitment::{self, Prefix},
-        config::{BASIC_COMMITMENT_RANK, Config, slice_by_prefix},
+        config::{slice_by_prefix, Config, BASIC_COMMITMENT_RANK},
         crs::{self, CRS},
         sumcheck_utils::{
-            common::{HighOrderSumcheckData, SumcheckBaseData}, diff::DiffSumcheck, linear::LinearSumcheck,
-            polynomial::Polynomial, product::ProductSumcheck, selector_eq::SelectorEq,
+            common::{HighOrderSumcheckData, SumcheckBaseData},
+            diff::DiffSumcheck,
+            linear::LinearSumcheck,
+            polynomial::Polynomial,
+            product::ProductSumcheck,
+            selector_eq::SelectorEq,
         },
     },
 };
@@ -150,11 +154,14 @@ pub struct SumcheckContext {
     // commitment_key_row_sumcheck: RefCell<LinearSumcheck<RingElement>>,
     pub commitment_key_rows_sumcheck: Vec<Rc<RefCell<LinearSumcheck<RingElement>>>>,
     pub type0sumchecks: Vec<Type0SumcheckContext>,
+    // put type1sumchecks
 }
 
 impl SumcheckContext {
     pub fn partial_evaluate_all(&mut self, r: &RingElement) {
-        self.combined_witness_sumcheck.borrow_mut().partial_evaluate(r);
+        self.combined_witness_sumcheck
+            .borrow_mut()
+            .partial_evaluate(r);
         self.folded_witness_selector_sumcheck
             .borrow_mut()
             .partial_evaluate(r);
@@ -183,7 +190,6 @@ impl SumcheckContext {
                 .partial_evaluate(r);
         }
     }
-    
 }
 
 // // Initialization of sumcheck protocols which happens before the rounds start
@@ -334,8 +340,5 @@ pub fn sumcheck(
         .output
         .borrow_mut()
         .univariate_polynomial_into(&mut poly);
-    assert_eq!(
-        &poly.at_zero() + &poly.at_one(),
-        claim_after_r0
-    );
+    assert_eq!(&poly.at_zero() + &poly.at_one(), claim_after_r0);
 }

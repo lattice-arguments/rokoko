@@ -34,7 +34,7 @@ impl CRS {
                     let structured_row = StructuredRow {
                         tensor_layers: v_module,
                     };
-                    let preprocessed_row = PreprocessedRow::from_structured_row(structured_row);
+                    let preprocessed_row = PreprocessedRow::from_structured_row(&structured_row);
                     ck.push(preprocessed_row);
                 }
                 ck

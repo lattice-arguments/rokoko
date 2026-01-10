@@ -129,7 +129,7 @@ fn test_combiner() {
 
     // vector is (1 - 32) * (1 - 33), (1 - 32) * 33, 32 * (1 - 33), 32 * 33
 
-    let preprocessed_challenges = PreprocessedRow::from_structured_row(combiner);
+    let preprocessed_challenges = PreprocessedRow::from_structured_row(&combiner);
 
     let mut sumcheck0 = LinearSumcheck::new(data0.len());
 
