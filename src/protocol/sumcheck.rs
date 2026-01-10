@@ -14,17 +14,14 @@ use crate::{
         ring_arithmetic::{Representation, RingElement},
     },
     protocol::{
-        commitment::{self, Prefix},
-        config::{slice_by_prefix, Config, BASIC_COMMITMENT_RANK},
-        crs::{self, CRS},
-        sumcheck_utils::{
+        commitment::{self, Prefix}, config::{BASIC_COMMITMENT_RANK, Config, slice_by_prefix}, crs::{self, CRS}, open::Opening, sumcheck_utils::{
             common::{HighOrderSumcheckData, SumcheckBaseData},
             diff::DiffSumcheck,
             linear::LinearSumcheck,
             polynomial::Polynomial,
             product::ProductSumcheck,
             selector_eq::SelectorEq,
-        },
+        }
     },
 };
 
@@ -233,6 +230,8 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
         ),
     ));
 
+    // Type0 sumchecks
+    // CK \cdot folded_witness - commitment \cdot fold_challenge = 0
     let type0sumchecks = (0..config.basic_commitment_rank)
         .map(|i| {
             let basic_commitment_row_sumcheck = sumcheck_from_prefix(
@@ -281,6 +280,23 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
         })
         .collect::<Vec<Type0SumcheckContext>>();
 
+    // Type1 sumchecks 
+    // inner_evaluation_points \cdot folded_witness - opening.rhs \cdot fold_challenge = 0
+
+    // TODO
+
+    // Type2 sumchecks
+    // <opening.rhs[i], outer_evaluation_points> = evaluations[i] (public)
+
+    // type3 sumchecks
+    // I \otimes projection_matrix \cdot folded_witness - projection_image \cdot fold_challenge = 0
+
+    // type4 sumchecks
+    // rc_projection_image, rc_opening, rc_commitment are well-formed
+
+    // type5 sumchecks
+    // <combined_witness, conj(combined_witness)> = t (public)
+
     SumcheckContext {
         combined_witness_sumcheck,
         folded_witness_selector_sumcheck,
@@ -299,6 +315,8 @@ pub fn sumcheck(
     combined_witness: &Vec<RingElement>,
     projection_matrix: &ProjectionMatrix,
     folding_challenges: &Vec<RingElement>,
+    opening: &Opening,
+    claims: &Vec<RingElement>,
     hash_wrapper: &mut HashWrapper,
 ) {
     let mut sumcheck_context = init_sumcheck(crs, config);

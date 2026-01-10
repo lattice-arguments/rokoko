@@ -12,9 +12,8 @@ use crate::{
 
 pub struct Opening {
     pub rhs: BasicCommitment,
-    pub evaluations: Vec<RingElement>, // TODO: those are already public?
-    pub evaluation_points_inner: Vec<PreprocessedRow>, // TODO: those are unnecessarily stored like this?
-    pub evaluation_points_outer: Vec<PreprocessedRow>, // TODO: those are unnecessarily stored like this?
+    pub evaluation_points_inner: Vec<PreprocessedRow>,
+    pub evaluation_points_outer: Vec<PreprocessedRow>,
 }
 
 pub fn evaluation_point_to_structured_row(evaluation_point: &Vec<RingElement>) -> StructuredRow {
@@ -25,49 +24,25 @@ pub fn evaluation_point_to_structured_row(evaluation_point: &Vec<RingElement>) -
 
 pub fn open_at(
     witness: &VerticallyAlignedMatrix<RingElement>,
-    evaluation_points_inner: &Vec<Vec<RingElement>>,
-    evaluation_points_outer: &Vec<Vec<RingElement>>,
+    structured_points_inner: &Vec<StructuredRow>,
+    structured_points_outer: &Vec<StructuredRow>,
 ) -> Opening {
     assert_eq!(
-        evaluation_points_inner[0].len(),
+        structured_points_inner[0].tensor_layers.len(),
         witness.height.ilog2() as usize
     );
 
-    let nof_evaluation_points = evaluation_points_inner.len();
-
-    let structured_points_inner = evaluation_points_inner
-        .iter()
-        .map(evaluation_point_to_structured_row)
-        .collect::<Vec<StructuredRow>>();
-
+    let nof_evaluation_points = structured_points_inner.len();
+ 
     let preprocessed_points_inner = structured_points_inner
         .into_iter()
         .map(|sr| PreprocessedRow::from_structured_row(&sr))
         .collect::<Vec<PreprocessedRow>>();
 
-    let structured_points_outer = evaluation_points_outer
-        .iter()
-        .map(evaluation_point_to_structured_row)
-        .collect::<Vec<StructuredRow>>();
-
     let preprocessed_points_outer = structured_points_outer
         .into_iter()
         .map(|sr| PreprocessedRow::from_structured_row(&sr))
         .collect::<Vec<PreprocessedRow>>();
-
-    // for (i, preprocessed_row_inner) in preprocessed_points_inner.iter().enumerate() {
-    //     let mut temp = RingElement::zero(Representation::IncompleteNTT);
-    //     for col in 0..witness.width {
-    //         for (elem, w_elem) in preprocessed_row_inner
-    //             .preprocessed_row
-    //             .iter()
-    //             .zip(witness.col(col).iter())
-    //         {
-    //             temp *= (elem, w_elem);
-    //             *rhs.index_mut((i, col)) += &temp;
-    //         }
-    //     }
-    // }
 
     // it's not a commitment, but we can reuse the same structure
     let mut rhs = commit_basic_internal(&preprocessed_points_inner, witness, nof_evaluation_points);
@@ -87,21 +62,20 @@ pub fn open_at(
     }
 
     Opening {
-        rhs,
-        evaluations,
-        evaluation_points_inner: preprocessed_points_inner,
+        rhs, // Y
+        evaluation_points_inner: preprocessed_points_inner, // we keep it here as well for convenience so we don't have to prerocess again later
         evaluation_points_outer: preprocessed_points_outer,
     }
 }
 
-fn claim(
+pub fn claim(
     witness: &VerticallyAlignedMatrix<RingElement>,
     evaluation_point_inner: &StructuredRow,
     evaluation_point_outer: &StructuredRow,
 ) -> RingElement {
     let preprocessed_row_inner = PreprocessedRow::from_structured_row(evaluation_point_inner);
     let preprocessed_row_outer = PreprocessedRow::from_structured_row(evaluation_point_outer);
-    let mut rhs = commit_basic_internal(&vec![preprocessed_row_inner], witness, 1);
+    let mut rhs = commit_basic_internal(&vec![preprocessed_row_inner], witness, 1); // TODO: this is a bit wasteful, but now
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
     let mut result = RingElement::zero(Representation::IncompleteNTT);
     for col in 0..rhs.width {

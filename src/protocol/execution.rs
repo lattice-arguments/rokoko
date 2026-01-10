@@ -21,7 +21,7 @@ use crate::{
         config::{paste_by_prefix, paste_recursive_commitment, slice_by_prefix, CONFIG},
         crs::{CK, CRS},
         fold::fold,
-        open::{evaluation_point_to_structured_row, open_at, Opening},
+        open::{claim, evaluation_point_to_structured_row, open_at, Opening},
         project::project,
         sumcheck::sumcheck,
         // sumcheck::sumcheck,
@@ -32,8 +32,9 @@ pub fn prover_round(
     crs: &CRS,
     rc_commitment: &RecursiveCommitment,
     witness: &VerticallyAlignedMatrix<RingElement>,
-    evaluation_points_inner: &Vec<Vec<RingElement>>,
-    evaluation_points_outer: &Vec<Vec<RingElement>>,
+    evaluation_points_inner: &Vec<StructuredRow>,
+    evaluation_points_outer: &Vec<StructuredRow>,
+    claims: &Vec<RingElement>,
 ) {
     let mut hash_wrapper = HashWrapper::new();
 
@@ -97,6 +98,8 @@ pub fn prover_round(
         &next_round_data,
         &projection_matrix,
         &fold_challenge,
+        &opening,
+        &claims,
         &mut hash_wrapper,
     );
     // RoundOutput {
@@ -126,19 +129,29 @@ pub fn execute() {
     let rc_commitment =
         recursive_commit(&crs, &CONFIG.commitment_recursion, &basic_commitment.data);
 
-    let evaluation_points_inner = vec![range(0, witness.height.ilog2() as usize)
-        .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 2))
-        .collect::<Vec<RingElement>>()];
+    let evaluation_points_inner = vec![evaluation_point_to_structured_row(
+        &range(0, witness.height.ilog2() as usize)
+            .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 2))
+            .collect::<Vec<RingElement>>(),
+    )];
 
-    let evaluation_points_outer = vec![range(0, witness.width.ilog2() as usize)
-        .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 2))
-        .collect::<Vec<RingElement>>()];
+    let evaluation_points_outer = vec![evaluation_point_to_structured_row(
+        &range(0, witness.width.ilog2() as usize)
+            .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 2))
+            .collect::<Vec<RingElement>>(),
+    )];
 
+    let claims = vec![claim(
+        &witness,
+        &evaluation_points_inner[0],
+        &evaluation_points_outer[0],
+    )];
     let round_output = prover_round(
         &crs,
         &rc_commitment,
         &witness,
         &evaluation_points_inner,
         &evaluation_points_outer,
+        &claims
     );
 }
