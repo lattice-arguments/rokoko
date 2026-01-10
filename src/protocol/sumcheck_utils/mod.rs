@@ -10,7 +10,7 @@ pub mod selector_eq;
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
+    use std::{cell::RefCell, rc::Rc};
 
     use crate::common::ring_arithmetic::{Representation, RingElement};
 
@@ -61,37 +61,43 @@ mod tests {
         // Each is prefixed with one dummy variable so they share the same 3-variable
         // domain and can be multiplied together. Because the two witness halves and
         // the coefficient vectors are identical, the target inner products are equal.
-        let witness_sc = RefCell::new(LinearSumcheck::new(witness.len()));
+        let witness_sc = Rc::new(RefCell::new(LinearSumcheck::new(witness.len())));
         witness_sc.borrow_mut().load_from(&witness);
 
-        let lhs_coeff_sumcheck = RefCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
-            lhs_coeffs.len(),
-            1,
-            0,
+        let lhs_coeff_sumcheck = Rc::new(RefCell::new(
+            LinearSumcheck::new_with_prefixed_sufixed_data(lhs_coeffs.len(), 1, 0),
         ));
         lhs_coeff_sumcheck.borrow_mut().load_from(&lhs_coeffs);
 
-        let rhs_coeff_sumcheck = RefCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
-            rhs_coeffs.len(),
-            1,
-            0,
+        let rhs_coeff_sumcheck = Rc::new(RefCell::new(
+            LinearSumcheck::new_with_prefixed_sufixed_data(rhs_coeffs.len(), 1, 0),
         ));
         rhs_coeff_sumcheck.borrow_mut().load_from(&rhs_coeffs);
 
         // Selectors act as neutral scalars here (selector_variable_count = 0),
         // but are wired in to demonstrate composition with equality gadgets.
-        let lhs_selector = RefCell::new(SelectorEq::<RingElement>::new(0b0, 0, 3));
-        let rhs_selector = RefCell::new(SelectorEq::<RingElement>::new(0b0, 0, 3));
+        let lhs_selector = Rc::new(RefCell::new(SelectorEq::<RingElement>::new(0b0, 0, 3)));
+        let rhs_selector = Rc::new(RefCell::new(SelectorEq::<RingElement>::new(0b0, 0, 3)));
 
         // Build product sumchecks for each half: <coeffs, witness_subset>.
-        let lhs_inner = RefCell::new(ProductSumcheck::new(&witness_sc, &lhs_coeff_sumcheck));
-        let lhs_masked = RefCell::new(ProductSumcheck::new(&lhs_inner, &lhs_selector));
+        let lhs_inner = Rc::new(RefCell::new(ProductSumcheck::new(
+            witness_sc.clone(),
+            lhs_coeff_sumcheck.clone(),
+        )));
+        let lhs_masked = Rc::new(RefCell::new(ProductSumcheck::new(
+            lhs_inner.clone(),
+            lhs_selector.clone(),
+        )));
 
-        let rhs_inner = RefCell::new(ProductSumcheck::new(&witness_sc, &rhs_coeff_sumcheck));
-        let rhs_masked = RefCell::new(ProductSumcheck::new(&rhs_inner, &rhs_selector));
-
-        let mut diff_sumcheck = DiffSumcheck::new(&lhs_masked, &rhs_masked);
-
+        let rhs_inner = Rc::new(RefCell::new(ProductSumcheck::new(
+            witness_sc.clone(),
+            rhs_coeff_sumcheck.clone(),
+        )));
+        let rhs_masked = Rc::new(RefCell::new(ProductSumcheck::new(
+            rhs_inner.clone(),
+            rhs_selector.clone(),
+        )));
+        let mut diff_sumcheck = DiffSumcheck::new(lhs_masked.clone(), rhs_masked.clone());
         let mut poly = Polynomial::new(0);
 
         // Initial claim: the difference of inner products over the full hypercube is zero.

@@ -5,11 +5,13 @@ use crate::{
     protocol::commitment::{Prefix, RecursionConfig, RecursiveCommitment},
 };
 
+pub const BASIC_COMMITMENT_RANK: usize = 2;
+
 pub static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
     witness_height: 512,
     witness_width: 16,
     projection_ratio: 32,
-    basic_commitment_rank: 2,
+    basic_commitment_rank: BASIC_COMMITMENT_RANK,
     nof_openings: 1,
 
     commitment_recursion: RecursionConfig {

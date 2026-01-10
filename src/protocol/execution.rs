@@ -24,6 +24,7 @@ use crate::{
         open::{evaluation_point_to_structured_row, open_at, Opening},
         project::project,
         sumcheck::sumcheck,
+        // sumcheck::sumcheck,
     },
 };
 
