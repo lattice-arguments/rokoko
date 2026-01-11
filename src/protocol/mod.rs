@@ -9,5 +9,6 @@ pub mod prefix;
 pub mod project;
 pub mod prover;
 pub mod sumcheck;
+pub mod sumchecks;
 pub mod sumcheck_utils;
 pub mod verifier;
