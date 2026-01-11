@@ -1,8 +1,6 @@
-use core::hash;
-
 use crate::{
     common::{
-        arithmetic::{ONE, inner_product},
+        arithmetic::inner_product,
         hash::HashWrapper,
         matrix::new_vec_zero_preallocated,
         projection_matrix::ProjectionMatrix,
@@ -205,7 +203,10 @@ pub fn sumcheck(
 
     let mut poly = Polynomial::new(0);
 
-    let combination = vec![ONE.clone(); sumcheck_context.combiner.borrow().sumchecks_count()]; 
+    // Sample random batching coefficients from Fiat-Shamir
+    let num_sumchecks = sumcheck_context.combiner.borrow().sumchecks_count();
+    let mut combination = new_vec_zero_preallocated(num_sumchecks);
+    hash_wrapper.sample_ring_element_vec_into(&mut combination);
     
     sumcheck_context.combiner.borrow_mut().load_challenges_from(&combination);
 
@@ -215,26 +216,59 @@ pub fn sumcheck(
         .borrow()
         .variable_count();
 
+    // Compute batched claim matching the combiner's output order:
+    // type0 (rank many) -> type1 (nof_openings) -> type2 (nof_openings) -> 
+    // type3 (1) -> type4[3 recursions, each with layers*rank + output_rank] -> type5 (1)
     let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
-    // we need to add all claims (assuming for now that we combine with 1s)
-    for rc_inner_i in rc_commitment_inner.iter() {
-        batched_claim += rc_inner_i;
-    }
-
-    for rc_opening_i in rc_opening_inner.iter() {
-        batched_claim += rc_opening_i;
-    }
-
-    for rc_projection_i in rc_projection_inner.iter() {
-        batched_claim += rc_projection_i;
-    }
-
+    let mut idx = 0;
+    
+    // Type0: zero claims (difference sumchecks)
+    idx += config.basic_commitment_rank;
+    
+    // Type1: zero claims (difference sumchecks)
+    idx += config.nof_openings;
+    
+    // Type2: claims for evaluations
     for claim in claims.iter() {
-        batched_claim += claim;
+        let mut weighted = claim.clone();
+        weighted *= &combination[idx];
+        batched_claim += &weighted;
+        idx += 1;
     }
-
-
-    batched_claim += &norm_claim;
+    
+    // Type3: zero claim (difference sumcheck)
+    idx += 1;
+    
+    // Type4: Three recursion trees (commitment, opening, projection)
+    // Each tree has: (layers with rank each) + (output layer with rank)
+    for (recursion_idx, rc_inner) in [rc_commitment_inner, rc_opening_inner, rc_projection_inner].iter().enumerate() {
+        let recursion_config = match recursion_idx {
+            0 => &config.commitment_recursion,
+            1 => &config.opening_recursion,
+            2 => &config.projection_recursion,
+            _ => unreachable!(),
+        };
+        
+        // Internal layers (zero claims)
+        let mut current = recursion_config;
+        while let Some(next) = current.next.as_deref() {
+            idx += current.rank; // Each layer has rank outputs, all zero claims
+            current = next;
+        }
+        
+        // Output layer: rc_inner claims
+        for rc_value in rc_inner.iter() {
+            let mut weighted = rc_value.clone();
+            weighted *= &combination[idx];
+            batched_claim += &weighted;
+            idx += 1;
+        }
+    }
+    
+    // Type5: norm claim
+    let mut weighted_norm = norm_claim.clone();
+    weighted_norm *= &combination[idx];
+    batched_claim += &weighted_norm;
 
     print!("Num vars before sumcheck: {}\n", num_vars);
 
