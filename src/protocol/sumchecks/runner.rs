@@ -24,11 +24,11 @@ use super::{
     builder::init_sumcheck,
     loader::load_sumcheck_data,
 };
-/// Executes a full sumcheck protocol round for all constraints in the prover's proof.
+/// Executes the complete sumcheck protocol for all constraints in the prover's proof.
 ///
 /// This is the main entry point for running the sumcheck layer of the protocol. It's
-/// deliberately written as an eager, assertion-heavy simulation rather than an interactive
-/// loop, which serves several purposes:
+/// deliberately written as an eager, assertion-heavy implementation that validates each
+/// round of the sumcheck protocol, serving several purposes:
 ///
 /// **Design Philosophy:**
 /// 1. **Testing**: By computing all polynomials and checking all claims eagerly, we can
@@ -40,8 +40,7 @@ use super::{
 ///    exactly which data feeds into which constraint and in what order.
 ///
 /// 3. **Debugging**: When an assertion fails, you immediately know which constraint is
-///    broken. In an interactive protocol, failures might not manifest until the final
-///    verification step, making it hard to pinpoint the issue.
+///    broken and at which round, making it easier to pinpoint issues.
 ///
 /// **High-Level Flow:**
 ///
@@ -51,35 +50,37 @@ use super::{
 ///    - Creates the tree of product/difference sumchecks that implement each constraint.
 ///
 /// 2. **Random Sampling** (projection flattener):
-///    - Samples a random point for flattening the projection constraint. This is the only
-///      randomness we need from the Fiat-Shamir hash, and it's used to compress the
-///      projection matrix check into a single inner product.
+///    - Samples a random point from the Fiat-Shamir hash for flattening the projection
+///      constraint. This compresses the projection matrix check into a single inner product.
+///    - Converts to both structured and preprocessed row formats for different uses.
 ///
-/// 3. **Data Loading**:
+/// 3. **Data Loading** (via `load_sumcheck_data`):
 ///    - Loads the combined witness into the root linear sumcheck.
 ///    - Loads the folding challenges, which are used to fold multiple witnesses together.
 ///    - Loads the evaluation points from the opening proofs (both inner and outer).
 ///    - Computes and loads the projection coefficients (via the tensor product trick).
+///    - Computes and loads the conjugated witness for the norm check (Type5).
 ///
-/// 4. **Initial Evaluation (Round 0)**:
-///    - For each constraint type (type0, type1, type2, type3, type4, type5), extracts the
-///      univariate polynomial that the verifier will see in round 0.
-///    - Asserts that the polynomial sums correctly:
-///      * For zero-claims: `poly(0) + poly(1) = 0`
-///      * For public claims: `poly(0) + poly(1) = claim`
-///    - Records the claim after folding with the verifier's challenge `r0` (here, hardcoded
-///      to 7 for testing, but in a real protocol this would come from Fiat-Shamir).
+/// 4. **Batching Setup**:
+///    - Combines all individual constraint claims into a single batched claim using
+///      random linear combination (currently using coefficients of 1 for simplicity).
+///    - The batched claim includes: recursive commitment claims, opening claims,
+///      projection claims, evaluation claims, and the witness norm claim.
 ///
-/// 5. **Partial Evaluation (Folding)**:
-///    - Calls `partial_evaluate_all(&r0)` to fold every sumcheck gadget with the challenge.
-///    - This advances the protocol by one round: the hypercube dimension decreases by 1,
-///      and each gadget's internal state is updated to reflect the evaluation at `r0`.
+/// 5. **Sumcheck Loop** (one iteration per variable):
+///    - For each round i (from 0 to num_vars-1):
+///      * Extracts the univariate polynomial from the combiner representing all constraints.
+///      * Asserts the sumcheck invariant: `poly(0) + poly(1) = batched_claim`.
+///      * Samples a random challenge `r` from the Fiat-Shamir hash.
+///      * Calls `partial_evaluate_all(&r)` to fold all gadgets with the challenge.
+///      * Updates `batched_claim = poly(r)` for the next round.
+///    - This advances the protocol by collapsing the hypercube dimension by 1 each round.
 ///
-/// 6. **Post-Fold Verification**:
-///    - Re-extracts the univariate polynomials (now for round 1) and asserts that they
-///      sum to the recorded claims from round 0.
-///    - This confirms that the folding was done correctly and that the constraints are
-///      still consistent after the fold.
+/// 6. **Final Verification**:
+///    - After the loop completes, verifies that all variables have been consumed
+///      (variable_count == 0).
+///    - At this point, the sumcheck has reduced the multilinear polynomial evaluation
+///      to a final point evaluation.
 ///
 /// **Constraint Types Checked:**
 ///
