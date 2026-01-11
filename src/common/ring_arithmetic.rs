@@ -394,7 +394,7 @@ impl RingElement {
         assert_eq!(self.representation, Representation::IncompleteNTT);
 
         let transform = &*CONJUGATION_NTT_TRANSFORM;
-        let mut temp = [0u64; DEGREE];
+        let mut temp = get_temp_buffer();
 
         // Apply even part permutation
         for i in 0..HALF_DEGREE {
@@ -414,6 +414,30 @@ impl RingElement {
         }
         for i in 0..HALF_DEGREE {
             self.v[HALF_DEGREE + transform.odd_permutation[i]] = temp[i];
+        }
+    }
+
+    fn conjugate_into(&self, result: &mut RingElement) {
+        assert_eq!(self.representation, Representation::IncompleteNTT);
+        result.representation = self.representation;
+
+        let transform = &*CONJUGATION_NTT_TRANSFORM;
+        let mut temp = get_temp_buffer();
+        for i in 0..HALF_DEGREE {
+            temp[transform.even_permutation[i]] = self.v[i];
+        }
+        result.v[..HALF_DEGREE].copy_from_slice(&temp[..HALF_DEGREE]);
+        unsafe {
+            eltwise_mult_mod(
+                temp.as_mut_ptr(),
+                self.v.as_ptr().add(HALF_DEGREE),
+                transform.odd_factors.as_ptr(),
+                HALF_DEGREE as u64,
+                MOD_Q,
+            );
+        }
+        for i in 0..HALF_DEGREE {
+            result.v[HALF_DEGREE + transform.odd_permutation[i]] = temp[i];
         }
     }
 }
@@ -1346,6 +1370,26 @@ mod tests {
         let ct = inner_product.v[0];
 
         assert_eq!(ct, two_norm_squared);
+    }
+
+    #[test]
+    fn test_conjugate_into_matches_in_place() {
+        init_common();
+
+        let mut a = RingElement::random(Representation::Coefficients);
+        a.from_coefficients_to_even_odd_coefficients();
+        a.from_even_odd_coefficients_to_incomplete_ntt_representation();
+
+        let original = a.clone();
+
+        let mut result = RingElement::new(Representation::IncompleteNTT);
+        a.conjugate_into(&mut result);
+
+        let mut expected = a.clone();
+        expected.conjugate_in_place();
+
+        assert_eq!(result, expected);
+        assert_eq!(a, original);
     }
 }
 

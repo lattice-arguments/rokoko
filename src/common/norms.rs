@@ -13,7 +13,7 @@ pub fn inf_norm(vec: &Vec<RingElement>) -> u64 {
                 .map(|x| x)
                 .iter()
                 .map(|&x| {
-                    if x < MOD_Q / 2 {
+                    if x > MOD_Q / 2 {
                         MOD_Q - x as u64
                     } else {
                         x as u64
@@ -33,7 +33,7 @@ pub fn l2_norm(vec: &Vec<RingElement>) -> f64 {
         el_cloned.from_incomplete_ntt_to_even_odd_coefficients();
         for &x in el_cloned.v.map(|x| x).iter() {
             let centered = if x < MOD_Q / 2 { x } else { MOD_Q - x };
-            sum += (centered * centered);
+            sum += centered * centered;
         }
     }
     (sum as f64).sqrt() as f64
