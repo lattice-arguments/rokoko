@@ -209,7 +209,11 @@ pub fn sumcheck(
     sumcheck_context.combiner.borrow_mut().load_challenges_from(&combination);
 
     
-    
+    let mut num_vars = sumcheck_context
+        .combiner
+        .borrow()
+        .variable_count();
+
     let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
     // we need to add all claims (assuming for now that we combine with 1s)
     for rc_inner_i in rc_commitment_inner.iter() {
@@ -228,25 +232,33 @@ pub fn sumcheck(
         batched_claim += claim;
     }
 
+
     batched_claim += &norm_claim;
 
-    sumcheck_context
+    print!("Num vars before sumcheck: {}\n", num_vars);
+
+    while num_vars > 0 {
+        num_vars -= 1;
+        // round 0
+
+        sumcheck_context
+            .combiner
+            .borrow_mut()
+            .univariate_polynomial_into(&mut poly);
+        
+        assert_eq!(&poly.at_zero() + &poly.at_one(), batched_claim);
+
+        let mut r = RingElement::zero(Representation::IncompleteNTT);
+        hash_wrapper.sample_ring_element_into(&mut r);
+        sumcheck_context.partial_evaluate_all(&r);
+
+        batched_claim = poly.at(&r);
+    }
+
+    // final round
+    assert_eq!(sumcheck_context
         .combiner
-        .borrow_mut()
-        .univariate_polynomial_into(&mut poly);
+        .borrow().variable_count(), 0);
+
     
-    assert_eq!(&poly.at_zero() + &poly.at_one(), batched_claim);
-
-    let mut r0 = RingElement::zero(Representation::IncompleteNTT);
-    hash_wrapper.sample_ring_element_into(&mut r0);
-    sumcheck_context.partial_evaluate_all(&r0);
-
-    batched_claim = poly.at(&r0);
-
-    sumcheck_context
-        .combiner
-        .borrow_mut()
-        .univariate_polynomial_into(&mut poly);
-
-    assert_eq!(&poly.at_zero() + &poly.at_one(), batched_claim);
 }
