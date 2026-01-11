@@ -92,6 +92,26 @@ use super::{
 /// 
 /// - **Type3** (projection): `<projection_coeffs, folded_witness> = <fold_tensor, projection_image>`
 ///   This verifies the projection image is correctly formed from the witness.
+/// 
+/// - **Type4** (recursive commitments): Verifies well-formedness of recursive commitment trees.
+///   There are three separate Type4 contexts (for commitment, opening, and projection recursions).
+///   Each Type4 context contains multiple layers:
+///   
+///   * **Internal layers** (non-leaf): For each layer i, prove that:
+///     `CK_i · selected_witness_i = compose(child_commitment_{i+1})`
+///     where compose() reconstructs the parent commitment from decomposed child chunks.
+///     These checks ensure parent-child consistency throughout the recursion tree.
+///     Assertion: `poly(0) + poly(1) = 0` (difference should sum to zero).
+///   
+///   * **Output layer** (leaf): At the deepest level, prove that:
+///     `selector · (CK_leaf · witness) = public_commitment`
+///     This anchors the entire recursive tree to the public commitment value.
+///     Assertion: `poly(0) + poly(1) = rc_inner[i]` (product should equal the public value).
+///   
+///   The recursive structure allows us to commit to large data efficiently by breaking it
+///   into a tree where each parent commits to its children's commitments, rather than
+///   committing to all data at once. Type4 sumchecks verify every level of this tree is
+///   correctly constructed, from the public root commitment down to the actual witness data.
 ///
 /// **Parameters:**
 /// 

@@ -4,6 +4,15 @@
 //! The sumcheck protocol is complex and involves many types of constraints (Type0-Type4),
 //! each with its own sumcheck gadgets and verification logic.
 //!
+//! **Constraint Types Overview:**
+//!
+//! - **Type0**: Basic commitment correctness - verifies `CK · folded_witness = commitment · fold_challenge`
+//! - **Type1**: Inner evaluation consistency - verifies opening RHS matches witness evaluation
+//! - **Type2**: Outer evaluation consistency - verifies opening produces the claimed scalar result
+//! - **Type3**: Projection validity - verifies projection image is correctly computed from witness
+//! - **Type4**: Recursive commitment well-formedness - verifies the entire recursive commitment
+//!   tree structure (internal layer parent-child consistency + leaf layer anchoring to public values)
+//!
 //! **Module Organization:**
 //!
 //! - `sumchecks::context`: Type definitions for all sumcheck contexts (Type0-Type4).

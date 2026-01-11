@@ -492,6 +492,11 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
         type1sumchecks,
         type2sumchecks,
         type3sumcheck,
+        // Type4 sumchecks: Three separate recursive commitment trees
+        // 1. Commitment recursion: verifies the basic witness commitments are well-formed
+        // 2. Opening recursion: verifies the opening proofs are correctly committed
+        // 3. Projection recursion: verifies the projection images are correctly committed
+        // Each tree has its own depth, rank, and decomposition parameters defined in config.
         type4sumchecks: vec![
             build_type4_sumcheck_context(
                 crs,
