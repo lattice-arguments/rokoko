@@ -324,14 +324,21 @@ impl RingElement {
     }
 
 
-    #[cfg(test)]
-    pub fn conjugate_in_place_ref(&mut self) {
+    fn conjugate_in_place_ref(&mut self) {
+        // True Galois conjugation: X -> X^{-1} = -X^{n-1} in Z_q[X]/(X^n + 1)
+        // In coefficient form: [c_0, c_1, ..., c_{n-1}] -> [c_0, -c_{n-1}, -c_{n-2}, ..., -c_1]
+        // Reference implementation used for deriving NTT-domain transformations
         assert_eq!(self.representation, Representation::IncompleteNTT);
         self.from_incomplete_ntt_to_even_odd_coefficients();
         self.from_even_odd_coefficients_to_coefficients();
-        for i in 1..DEGREE {
-            self.v[i] = MOD_Q - self.v[i];
+        
+        // Reverse and negate coefficients 1 to n-1
+        for i in 1..(DEGREE / 2 + 1) {
+            let temp = self.v[i];
+            self.v[i] = MOD_Q - self.v[DEGREE - i];
+            self.v[DEGREE - i] = MOD_Q - temp;
         }
+        
         self.from_coefficients_to_even_odd_coefficients();
         self.from_even_odd_coefficients_to_incomplete_ntt_representation();
     }
@@ -342,53 +349,72 @@ impl RingElement {
     }
 
     pub fn conjugate_in_place(&mut self) {
-        // Conjugation sends X -> X^{-1}, which in coefficient form negates all non-constant terms.
-        // In coefficient representation: [c0, c1, c2, ...] -> [c0, -c1, -c2, ...]
-        // In EvenOdd representation: [c0, c2, c4, ...] ++ [c1, c3, c5, ...] 
-        //                        -> [c0, -c2, -c4, ...] ++ [-c1, -c3, -c5, ...]
-        // 
-        // For the odd part, NTT is linear: NTT(-x) = -NTT(x), so we just negate.
-        // For the even part, we have: NTT([c0, c2, ...]) + NTT([c0, -c2, ...]) = 2*NTT([c0, 0, 0, ...])  
-        //                                                                       = 2*c0*[1, 1, 1, ...]
-        //                                                                       = [2*c0, 2*c0, ...]
+        // True Galois conjugation: X -> X^{-1} = -X^{n-1} in Z_q[X]/(X^n + 1)
+        // Pure NTT-domain implementation using empirically derived transformations
         //
-        // To find c0 from NTT_even, we use: c0 = (1/n) * sum_k NTT_even[k]
-        // Therefore: NTT([c0, -c2, ...]) = 2*c0 - NTT([c0, c2, ...])
+        // PERFORMANCE: O(n) vs O(n log n)
+        // This implementation: 0 NTT transforms, pure element-wise permutation and multiplication
+        // Reference (coefficient space): 4 NTT transforms required
+        //
+        // MATHEMATICAL FOUNDATION:
+        // =======================
+        // Conjugation in coefficient space: [c_0, c_1, ..., c_{n-1}] -> [c_0, -c_{n-1}, ..., -c_1]
+        // This reverses and negates all non-constant coefficients.
+        //
+        // In IncompleteNTT representation: f(X) = f_even(X^2) + X·f_odd(X^2)
+        // Conjugation: f(X^{-1}) = f_even(X^{-2}) - X^{n-1}·f_odd(X^{-2})
+        //
+        // NTT-DOMAIN TRANSFORMATION:
+        // =========================
+        // Rather than analytically deriving how conjugation acts on NTT coefficients
+        // (which requires deep knowledge of HEXL's root ordering and evaluation points),
+        // we use PRECOMPUTED PERMUTATIONS AND FACTORS derived empirically.
+        //
+        // The empirical approach:
+        // 1. For each basis vector e_i in IncompleteNTT space
+        // 2. Apply conjugation via coefficient space (ground truth)
+        // 3. Observe where e_i maps to and what scaling factor is applied
+        // 4. Build lookup tables: CONJUGATION_NTT_TRANSFORM
+        //
+        // This gives us:
+        // - even_permutation[i]: where even[i] goes after conjugation
+        // - odd_permutation[i]: where odd[i] goes after conjugation  
+        // - odd_factors[i]: scaling factor for odd[i] (accounts for X -> -X^{n-1})
+        //
+        // IMPLEMENTATION:
+        // ==============
+        // Apply the precomputed transformation directly in NTT space:
+        // - even_new[even_permutation[i]] = even_old[i]
+        // - odd_new[odd_permutation[i]] = odd_old[i] * odd_factors[i]
+        //
+        // Benefits:
+        // - No NTT transforms needed (pure O(n) operation)
+        // - Provably correct (matches reference implementation by construction)
+        // - Robust to HEXL implementation details
         
         assert_eq!(self.representation, Representation::IncompleteNTT);
         
+        let transform = &*CONJUGATION_NTT_TRANSFORM;
+        let mut temp = [0u64; DEGREE];
+        
+        // Apply even part permutation
+        for i in 0..HALF_DEGREE {
+            temp[transform.even_permutation[i]] = self.v[i];
+        }
+        self.v[..HALF_DEGREE].copy_from_slice(&temp[..HALF_DEGREE]);
+        
+        // Apply odd part: multiply by factors, then permute
         unsafe {
-            // Compute 2*c0 = (2/HALF_DEGREE) * sum(NTT_even)
-            let mut sum = 0u64;
-            for i in 0..HALF_DEGREE {
-                sum += self.v[i];
-            }
-            
-            let two_c0 = multiply_mod(sum, *TWO_INV_HALF_DEGREE, MOD_Q);
-            
-            // Create a temporary buffer filled with 2*c0
-            let mut temp = get_temp_buffer();
-            for i in 0..HALF_DEGREE {
-                temp[i] = two_c0;
-            }
-            
-            // Transform even part: result[k] = 2*c0 - original[k]
-            eltwise_sub_mod(
-                self.v.as_mut_ptr(),
-                temp.as_ptr(),
-                self.v.as_ptr(),
-                HALF_DEGREE as u64,
-                MOD_Q,
-            );
-            
-            // Transform odd part: negate using element-wise subtraction from zero
-            eltwise_sub_mod(
-                self.v.as_mut_ptr().add(HALF_DEGREE),
-                ZERO.v.as_ptr(),
+            eltwise_mult_mod(
+                temp.as_mut_ptr(),
                 self.v.as_ptr().add(HALF_DEGREE),
+                transform.odd_factors.as_ptr(),
                 HALF_DEGREE as u64,
                 MOD_Q,
             );
+        }
+        for i in 0..HALF_DEGREE {
+            self.v[HALF_DEGREE + transform.odd_permutation[i]] = temp[i];
         }
     }
 
@@ -410,10 +436,96 @@ pub static TWO_INV_HALF_DEGREE: LazyLock<u64> = LazyLock::new(|| {
     unsafe { multiply_mod(2, *INV_HALF_DEGREE, MOD_Q) }
 });
 
+/// Precomputed permutation and factors for NTT-domain conjugation
+/// Generated by analyzing how conjugation transforms NTT coefficients empirically
+pub static CONJUGATION_NTT_TRANSFORM: LazyLock<ConjugationTransform> = LazyLock::new(|| {
+    derive_conjugation_transform()
+});
+
+#[derive(Clone, Debug)]
+pub struct ConjugationTransform {
+    pub even_permutation: [usize; HALF_DEGREE],
+    pub odd_permutation: [usize; HALF_DEGREE],
+    pub odd_factors: [u64; HALF_DEGREE],
+}
+
 pub static mut temp_buffer: LazyLock<[u64; DEGREE]> = LazyLock::new(|| [0u64; DEGREE]);
 
 fn get_temp_buffer() -> &'static mut [u64; DEGREE] {
     unsafe { &mut temp_buffer }
+}
+
+/// Empirically derive the conjugation transformation in NTT domain
+/// 
+/// METHODOLOGY:
+/// ============
+/// We cannot analytically derive the NTT-domain conjugation without deep knowledge
+/// of HEXL's internal NTT implementation details. Instead, we use an empirical approach:
+/// 
+/// 1. Generate test basis vectors in IncompleteNTT (one-hot encoded)
+/// 2. For each basis vector:
+///    a. Convert to coefficient space
+///    b. Apply conjugation (reverse and negate non-constant coefficients)
+///    c. Convert back to IncompleteNTT
+///    d. Observe where the value moved and what factor was applied
+/// 3. Build permutation tables and factor arrays from observations
+/// 
+/// This approach is robust because:
+/// - It directly measures HEXL's actual behavior
+/// - No assumptions about root ordering or evaluation points
+/// - Automatically handles any HEXL implementation details
+/// - Will continue working even if HEXL internals change (as long as we regenerate)
+fn derive_conjugation_transform() -> ConjugationTransform {
+    let mut even_permutation = [0usize; HALF_DEGREE];
+    let mut odd_permutation = [0usize; HALF_DEGREE];
+    let mut odd_factors = [0u64; HALF_DEGREE];
+    
+    // Derive even part permutation
+    // Test each position in the even part
+    for i in 0..HALF_DEGREE {
+        let mut test_vec = RingElement::new(Representation::IncompleteNTT);
+        test_vec.v[i] = 1; // One-hot encode position i in even part
+        
+        // Apply reference conjugation (via coefficient space)
+        let mut conjugated = test_vec.clone();
+        conjugated.conjugate_in_place_ref();
+        
+        // Find where the 1 moved to in the even part
+        for j in 0..HALF_DEGREE {
+            if conjugated.v[j] != 0 {
+                even_permutation[i] = j;
+                break;
+            }
+        }
+    }
+    
+    // Derive odd part permutation and factors
+    // Test each position in the odd part
+    for i in 0..HALF_DEGREE {
+        let mut test_vec = RingElement::new(Representation::IncompleteNTT);
+        test_vec.v[HALF_DEGREE + i] = 1; // One-hot encode position i in odd part
+        
+        // Apply reference conjugation
+        let mut conjugated = test_vec.clone();
+        conjugated.conjugate_in_place_ref();
+        
+        // Find where the value moved to and what factor was applied
+        for j in 0..HALF_DEGREE {
+            if conjugated.v[HALF_DEGREE + j] != 0 {
+                odd_permutation[i] = j;
+                // The factor is the value at the new position
+                // (since we started with 1)
+                odd_factors[i] = conjugated.v[HALF_DEGREE + j];
+                break;
+            }
+        }
+    }
+    
+    ConjugationTransform {
+        even_permutation,
+        odd_permutation,
+        odd_factors,
+    }
 }
 
 ///// Helpers
@@ -1194,6 +1306,48 @@ mod tests {
         a_conj_ref.conjugate_in_place_ref();
         assert_eq!(a_conj.v, a_conj_ref.v);
     }
+
+    #[test]
+    fn test_norm_squared_via_conjugation() {
+        init_common();
+        let mut vector: Vec<RingElement> = vec![
+            RingElement::random_bounded(Representation::Coefficients, 10),
+            RingElement::random_bounded(Representation::Coefficients, 10),
+            RingElement::random_bounded(Representation::Coefficients, 10),
+            RingElement::random_bounded(Representation::Coefficients, 10),
+        ];
+
+        let mut two_norm_squared = 0u64;
+        for e in vector.iter_mut() {
+            for coeff in e.v.iter() {
+                let centered = if *coeff > MOD_Q / 2 {
+                    MOD_Q - *coeff  // Interpret as negative
+                } else {
+                    *coeff
+                };
+                two_norm_squared = unsafe { add_mod(two_norm_squared, multiply_mod(centered, centered, MOD_Q), MOD_Q) };
+            }
+            e.to_representation(Representation::IncompleteNTT);
+        }     
+
+        let mut vector_conj = vector.clone();
+        for e in vector_conj.iter_mut() {
+            e.conjugate_in_place();
+        }
+
+        let mut inner_product = RingElement::new(Representation::IncompleteNTT);
+        for (e1, e2) in vector.iter().zip(vector_conj.iter()) {
+            let mut prod = RingElement::new(Representation::IncompleteNTT);
+            prod *= (e1, e2);
+            inner_product += &prod;
+        }
+        inner_product.from_incomplete_ntt_to_even_odd_coefficients();
+        inner_product.from_even_odd_coefficients_to_coefficients();
+        let ct = inner_product.v[0];
+
+        assert_eq!(ct, two_norm_squared);
+        
+    }
 }
 
 // #[test]
@@ -1207,3 +1361,4 @@ mod tests {
 //     a.conjugate_in_place_ref();
 //     assert_eq!(a.v, a_conj.v);
 // }
+

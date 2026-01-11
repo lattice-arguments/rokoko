@@ -19,6 +19,7 @@ pub fn init_common() {
     LazyLock::force(&SHIFT_FACTORS);
     LazyLock::force(&INV_HALF_DEGREE);
     LazyLock::force(&TWO_INV_HALF_DEGREE);
+    LazyLock::force(&CONJUGATION_NTT_TRANSFORM);
     LazyLock::force(&NORMALIZE_INCOMPLETE_NTT_FACTORS);
     LazyLock::force(&NORMALIZE_INCOMPLETE_NTT_FACTORS_INVERSE);
     LazyLock::force(&ONE);
