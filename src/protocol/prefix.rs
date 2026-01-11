@@ -59,6 +59,12 @@ pub fn check_prefixing_correctness(config: &Config) {
             }
         }
     }
+
+    // TODO: print some stuff about e.g. how many slots are free (i.e. uncovered by any prefix)
+
+    if config.next.is_some() {
+        check_prefixing_correctness(config.next.as_ref().unwrap());
+    }
 }
 
 #[cfg(test)]
