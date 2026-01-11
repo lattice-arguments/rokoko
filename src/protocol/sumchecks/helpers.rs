@@ -189,7 +189,7 @@ pub(crate) fn ck_sumcheck(
 /// The ordering (outer loop over `a`, inner loop over `b`) matches the standard Kronecker
 /// product definition and ensures the indices align with how we lay out the hypercube.
 pub(crate) fn tensor_product(a: &Vec<RingElement>, b: &Vec<RingElement>) -> Vec<RingElement> {
-    let mut result = new_vec_zero_preallocated(a.len() * b.len());
+    let mut result: Vec<RingElement> = new_vec_zero_preallocated(a.len() * b.len());
     let mut idx = 0;
     for a_elem in a.iter() {
         for b_elem in b.iter() {
