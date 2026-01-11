@@ -562,6 +562,22 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
         opening_combiner_constant_sumcheck,
         projection_combiner_sumcheck,
         projection_combiner_constant_sumcheck,
+        // TODO: type 0 sumchecks and type 1 sumchecks prove the relation in form 
+        // |------------|                   |-------------| 
+        // | CK rows    |                   | commitment  |
+        // |------------| folded_wit   =    |-------------| fold_chal
+        // | inner eval |                   | opening.rhs | 
+        // |------------|                   |-------------|
+        // I speculate it would be "better" to left-fold the two sides separately first
+        // and then prove the relation on the smaller vectors.
+        // This would reduce the size of the vectors in the product sumchecks,
+        // which would speed up the sumcheck rounds.
+        // Pictorially:
+        //               |------------|                               |-------------|
+        //               | CK rows    |                               | commitment  |
+        // batch_chall   |------------|   folded_wit   =  batch_chall |-------------|  fold_chal
+        //               | inner eval |                               | opening.rhs |
+        //               |------------|                               |-------------|
         type0sumchecks,
         type1sumchecks,
         type2sumchecks,
