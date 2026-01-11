@@ -3,11 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{
     common::ring_arithmetic::RingElement,
     protocol::sumcheck_utils::{
-        common::{HighOrderSumcheckData, SumcheckBaseData},
-        diff::DiffSumcheck,
-        linear::LinearSumcheck,
-        product::ProductSumcheck,
-        selector_eq::SelectorEq,
+        combiner::Combiner, common::{HighOrderSumcheckData, SumcheckBaseData}, diff::DiffSumcheck, linear::LinearSumcheck, product::ProductSumcheck, selector_eq::SelectorEq
     },
 };
 
@@ -21,6 +17,8 @@ use crate::{
 ///   recursive commitments at every internal layer. The recursive structure
 ///   means we keep a stack of layers so we can fold every selector/combiner
 ///   consistently when the verifier provides a challenge.
+/// - type5 verifies the inner product between the combined witness and its
+///   conjugate, which is used to check witness norm constraints.
 /// By keeping everything together here, folding a single random challenge
 /// becomes a single method call, which reduces the risk of forgetting to
 /// advance some sub-check when modifying the protocol.
@@ -43,6 +41,7 @@ pub struct SumcheckContext {
     pub type3sumcheck: Type3SumcheckContext,
     pub type4sumchecks: [Type4SumcheckContext; 3],
     pub type5sumcheck: Type5SumcheckContext,
+    pub combiner: Combiner<RingElement>,
 }
 
 /// Encapsulates the bookkeeping required to fold every tracked sumcheck with
@@ -441,7 +440,12 @@ pub struct Type4SumcheckContext {
     pub output_layer: Type4OutputLayerSumcheckContext,
 }
 
-// we hanhle <combined witness, conjugated combined witness> inner product to check norm
+/// Type5 sumcheck verifies the inner product between the combined witness and
+/// its self-conjugate: `<combined_witness, conjugated_combined_witness>`.
+/// This constraint is used to check the norm of the witness, ensuring it stays
+/// within acceptable bounds. The sumcheck computes the multilinear extension
+/// of both vectors over the boolean hypercube and verifies that their inner
+/// product equals the claimed norm value.
 pub struct Type5SumcheckContext {
     pub conjugated_combined_witness: Rc<RefCell<LinearSumcheck<RingElement>>>,
     pub output: Rc<RefCell<ProductSumcheck<RingElement>>>,

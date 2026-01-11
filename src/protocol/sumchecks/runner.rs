@@ -60,7 +60,7 @@ use super::{
 ///    - Computes and loads the projection coefficients (via the tensor product trick).
 ///
 /// 4. **Initial Evaluation (Round 0)**:
-///    - For each constraint type (type0, type1, type2, type3), extracts the
+///    - For each constraint type (type0, type1, type2, type3, type4, type5), extracts the
 ///      univariate polynomial that the verifier will see in round 0.
 ///    - Asserts that the polynomial sums correctly:
 ///      * For zero-claims: `poly(0) + poly(1) = 0`
@@ -108,6 +108,12 @@ use super::{
 ///     `selector · (CK_leaf · witness) = public_commitment`
 ///     This anchors the entire recursive tree to the public commitment value.
 ///     Assertion: `poly(0) + poly(1) = rc_inner[i]` (product should equal the public value).
+///
+/// - **Type5** (witness norm check): `<combined_witness, conjugated_combined_witness> = norm_claim`
+///   Verifies the inner product of the witness with its self-conjugate to bound the witness norm.
+///   This is computed as the sum over the boolean hypercube:
+///   `Σ_Z MLE[witness](Z) · MLE[conjugated_witness](Z) = <witness, conjugated_witness>`
+///   Assertion: `poly(0) + poly(1) = norm_claim` (product should equal the claimed norm).
 ///   
 ///   The recursive structure allows us to commit to large data efficiently by breaking it
 ///   into a tree where each parent commits to its children's commitments, rather than
