@@ -6,9 +6,7 @@ use num::range;
 use crate::{
     common::{
         arithmetic::inner_product,
-        decomposition::{
-            compose_from_decomposed, get_composer_offset, get_decomposed_offset_scaled,
-        },
+        decomposition::{compose_from_decomposed, get_decomposed_offset_scaled},
         hash::HashWrapper,
         matrix::{new_vec_zero_preallocated, VerticallyAlignedMatrix},
         projection_matrix::{self, ProjectionMatrix},
@@ -230,6 +228,19 @@ pub struct Type3SumcheckContext {
     pub output: Rc<RefCell<DiffSumcheck<RingElement>>>,
 }
 
+pub struct Type4LayerSumcheckContext {
+    selector_sumcheck: Rc<RefCell<SelectorEq<RingElement>>>,
+    child_selector_sumcheck: Rc<RefCell<SelectorEq<RingElement>>>,
+    combiner_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
+    combiner_constant_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
+    ck_sumchecks: Vec<Rc<RefCell<LinearSumcheck<RingElement>>>>,
+    pub outputs: Vec<Rc<RefCell<DiffSumcheck<RingElement>>>>,
+}
+
+pub struct Type4SumcheckContext {
+    pub layers: Vec<Type4LayerSumcheckContext>,
+}
+
 pub struct SumcheckContext {
     pub combined_witness_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
     pub folded_witness_selector_sumcheck: Rc<RefCell<SelectorEq<RingElement>>>,
@@ -249,6 +260,7 @@ pub struct SumcheckContext {
     pub type1sumchecks: Vec<Type1SumcheckContext>,
     pub type2sumchecks: Vec<Type2SumcheckContext>,
     pub type3sumcheck: Type3SumcheckContext,
+    pub type4sumchecks: Vec<Type4SumcheckContext>,
 }
 
 impl SumcheckContext {
@@ -323,7 +335,92 @@ impl SumcheckContext {
             .projection_selector_sumcheck
             .borrow_mut()
             .partial_evaluate(r);
+        for type4_sc in self.type4sumchecks.iter_mut() {
+            partial_evaluate_type4(type4_sc, r);
+        }
     }
+}
+
+fn partial_evaluate_type4(ctx: &mut Type4SumcheckContext, r: &RingElement) {
+    for layer in ctx.layers.iter_mut() {
+        layer.selector_sumcheck.borrow_mut().partial_evaluate(r);
+            layer.child_selector_sumcheck.borrow_mut().partial_evaluate(r);
+        layer.combiner_sumcheck.borrow_mut().partial_evaluate(r);
+        layer.combiner_constant_sumcheck.borrow_mut().partial_evaluate(r);
+        for ck in layer.ck_sumchecks.iter() {
+            ck.borrow_mut().partial_evaluate(r);
+        }
+    }
+}
+
+fn build_type4_sumcheck_context(
+    crs: &CRS,
+    total_vars: usize,
+    combined_witness_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
+    config: &commitment::RecursionConfig,
+) -> Type4SumcheckContext {
+    let mut layers = Vec::new();
+    let mut current = config;
+    while let Some(next) = current.next.as_deref() {
+        let selector_sumcheck = sumcheck_from_prefix(&current.prefix, total_vars);
+        let child_selector_sumcheck = sumcheck_from_prefix(&next.prefix, total_vars);
+
+        let data_len = 1 << (total_vars - current.prefix.length);
+
+        let data_selected_sumcheck = Rc::new(RefCell::new(ProductSumcheck::new(
+            selector_sumcheck.clone(),
+            combined_witness_sumcheck.clone(),
+        )));
+
+        let (combiner_sumcheck, combiner_constant_sumcheck) = composition_sumcheck(
+            next.decomposition_base_log as u64,
+            next.decomposition_chunks,
+            total_vars,
+        );
+
+        let recomposed_child_raw = Rc::new(RefCell::new(DiffSumcheck::new(
+            Rc::new(RefCell::new(ProductSumcheck::new(
+                combined_witness_sumcheck.clone(),
+                combiner_sumcheck.clone(),
+            ))),
+            combiner_constant_sumcheck.clone(),
+        )));
+
+        let recomposed_child_sumcheck = Rc::new(RefCell::new(ProductSumcheck::new(
+            child_selector_sumcheck.clone(),
+            recomposed_child_raw,
+        )));
+
+        let mut ck_sumchecks = Vec::with_capacity(current.rank);
+        for i in 0..current.rank {
+            ck_sumchecks.push(ck_sumcheck(crs, total_vars, data_len, i, 0));
+        }
+
+        let outputs = ck_sumchecks
+            .iter()
+            .map(|ck_row| {
+                let lhs = Rc::new(RefCell::new(ProductSumcheck::new(
+                    ck_row.clone(),
+                    data_selected_sumcheck.clone(),
+                )));
+                let rhs = recomposed_child_sumcheck.clone();
+                Rc::new(RefCell::new(DiffSumcheck::new(lhs, rhs)))
+            })
+            .collect::<Vec<_>>();
+
+        layers.push(Type4LayerSumcheckContext {
+            selector_sumcheck,
+            child_selector_sumcheck,
+            combiner_sumcheck,
+            combiner_constant_sumcheck,
+            ck_sumchecks,
+            outputs,
+        });
+
+        current = next;
+    }
+
+    Type4SumcheckContext { layers }
 }
 
 // // Initialization of sumcheck protocols which happens before the rounds start
@@ -598,16 +695,24 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
     // i.e. check that
     // CK decomposed_layer_i - compose(decomposed_layer{i+1}) = 0 for each recursion layer
     // CK is of propoer size and we use only desirable rows (specified by rank)
-    // (note that sumcheck for the last layer is different as CK decomposed_layer_n is public, not composed from anything (and passed as an argument to the sumcheck function))
     // composition and rank are described in config.commitment_recursion and config.opening_recursion
     // Therefore, Type5SumcheckContext shall have a recursive structure inside.
     // there is no need to load any new data in sumcheck!!!!!!!
+    // Do not use any scaling tricks, and concretely the arithmetic should look like:
+    // \sum_{z \in HC)
+    //  diff(
+    //         (selector_for_decomposed_layer_i(z) \cdot ((CK_{i,j}(z) - decomposed_layer_i(z))),
+    //         (selector_for_decomposed_layer_{i+1}(z) compose(decomposed_layer_{i+1})(z))
+    // )
 
-    // type5 sumchecks
+    // Write all the sumchecks in the recursive structure. Note that the sumcheck on the inner level will be different from the outer level
+    // because the "claim" will not be zero, but rather commitment which is public.
+
+    // type5 sumchecksRecursiveCommitment
     // <combined_witness, conj(combined_witness)> = t (public)
 
     SumcheckContext {
-        combined_witness_sumcheck,
+        combined_witness_sumcheck: combined_witness_sumcheck.clone(),
         folded_witness_selector_sumcheck,
         folded_witness_combiner_sumcheck,
         witness_combiner_constant_sumcheck,
@@ -640,6 +745,26 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
         type1sumchecks,
         type2sumchecks,
         type3sumcheck,
+        type4sumchecks: vec![
+            build_type4_sumcheck_context(
+                crs,
+                total_vars,
+                combined_witness_sumcheck.clone(),
+                &config.commitment_recursion,
+            ),
+            build_type4_sumcheck_context(
+                crs,
+                total_vars,
+                combined_witness_sumcheck.clone(),
+                &config.opening_recursion,
+            ),
+            build_type4_sumcheck_context(
+                crs,
+                total_vars,
+                combined_witness_sumcheck.clone(),
+                &config.projection_recursion,
+            ),
+        ],
     }
 }
 pub fn sumcheck(
@@ -650,11 +775,9 @@ pub fn sumcheck(
     folding_challenges: &Vec<RingElement>,
     opening: &Opening,
     claims: &Vec<RingElement>,
-    // rc_commitment: &Vec<RingElement>,
-    // rc_opening: &Vec<RingElement>,
-    // rc_projection_image: &Vec<RingElement>,
     hash_wrapper: &mut HashWrapper,
 ) {
+    let total_vars = config.composed_witness_length.ilog2() as usize;
     let mut sumcheck_context = init_sumcheck(crs, config);
 
     let projection_height_flat = config.witness_height / config.projection_ratio;
@@ -761,6 +884,18 @@ pub fn sumcheck(
     );
     type3_claim_after_r0 = Some(poly.at(&r0));
 
+    for type4cs in sumcheck_context.type4sumchecks.iter_mut() {
+        for layer in type4cs.layers.iter_mut() {
+            layer.outputs.iter().for_each(|output_sc| {
+                output_sc.borrow_mut().univariate_polynomial_into(&mut poly);
+                assert_eq!(
+                    &poly.at_zero() + &poly.at_one(),
+                    RingElement::zero(Representation::IncompleteNTT)
+                );
+            })
+        }
+    }
+    /////////
     sumcheck_context.partial_evaluate_all(&r0);
     sumcheck_context.type0sumchecks[i]
         .output
