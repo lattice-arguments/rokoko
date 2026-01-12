@@ -4,10 +4,12 @@ use crate::common::{
     structured_row::{PreprocessedRow, StructuredRow},
 };
 pub type CK = Vec<PreprocessedRow>;
+pub type SCK = Vec<StructuredRow>;
 
 /// Struct representing the Common Reference String (CRS).
 pub struct CRS {
-    pub cks: Vec<CK>, // Commitment keys for each witness length
+    pub cks: Vec<CK>,             // Commitment keys for each witness length
+    pub structured_cks: Vec<SCK>, // Structured commitment keys for each witness length
 }
 
 impl CRS {
@@ -23,9 +25,10 @@ impl CRS {
     pub fn gen_crs(max_wit_dim: usize, max_module_size: usize) -> CRS {
         assert!(max_wit_dim.is_power_of_two());
 
-        let cks = (1..=max_wit_dim.ilog2() as usize)
+        let (cks, structured_cks): (Vec<_>, Vec<_>) = (1..=max_wit_dim.ilog2() as usize)
             .map(|nof_tensor_layers| {
                 let mut ck = Vec::with_capacity(max_module_size);
+                let mut sck = Vec::with_capacity(max_module_size);
 
                 for _ in 0..max_module_size {
                     let v_module =
@@ -36,10 +39,15 @@ impl CRS {
                     };
                     let preprocessed_row = PreprocessedRow::from_structured_row(&structured_row);
                     ck.push(preprocessed_row);
+                    sck.push(structured_row);
                 }
-                ck
+                (ck, sck)
             })
-            .collect::<Vec<Vec<PreprocessedRow>>>();
-        CRS { cks }
+            .unzip();
+
+        CRS {
+            cks,
+            structured_cks,
+        }
     }
 }
