@@ -257,18 +257,20 @@ fn test_combiner() {
 
 /// Evaluation-only version of Combiner that evaluates a linear combination of sumchecks at a point.
 pub struct CombinerEvaluation<E: SumcheckElement = RingElement> {
-    evaluations: Vec<Box<dyn EvaluationSumcheckData<Element = E>>>,
+    evaluations: Vec<Rc<RefCell<dyn EvaluationSumcheckData<Element = E>>>>,
     challenges: Vec<E>,
     result: E,
+    scratch: E
 }
 
 impl<E: SumcheckElement> CombinerEvaluation<E> {
-    pub fn new(evaluations: Vec<Box<dyn EvaluationSumcheckData<Element = E>>>) -> Self {
+    pub fn new(evaluations: Vec<Rc<RefCell<dyn EvaluationSumcheckData<Element = E>>>>) -> Self {
         let evaluations_len = evaluations.len();
         CombinerEvaluation {
             evaluations,
             challenges: E::allocate_zero_vec(evaluations_len),
             result: E::zero(),
+            scratch: E::zero(),
         }
     }
 
@@ -290,10 +292,8 @@ impl<E: SumcheckElement> EvaluationSumcheckData for CombinerEvaluation<E> {
         self.result = E::zero();
 
         for i in 0..self.evaluations.len() {
-            let eval = self.evaluations[i].evaluate(point);
-            let mut term = eval.clone();
-            term *= &self.challenges[i];
-            self.result += &term;
+            self.scratch *= (self.evaluations[i].borrow_mut().evaluate(&point), &self.challenges[i]);
+            self.result += &self.scratch;
         }
 
         &self.result
@@ -320,11 +320,11 @@ fn test_combiner_evaluation() {
 
     let mut eval0_impl = BasicEvaluationLinearSumcheck::new(data0.len());
     eval0_impl.load_from(&data0);
-    let eval0 = Box::new(eval0_impl);
+    let eval0 = Rc::new(RefCell::new(eval0_impl));
 
     let mut eval1_impl = BasicEvaluationLinearSumcheck::new(data1.len());
     eval1_impl.load_from(&data1);
-    let eval1 = Box::new(eval1_impl);
+    let eval1 = Rc::new(RefCell::new(eval1_impl));
 
     let challenges = vec![
         RingElement::constant(3, Representation::IncompleteNTT),

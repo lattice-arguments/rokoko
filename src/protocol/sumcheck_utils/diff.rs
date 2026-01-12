@@ -174,15 +174,15 @@ fn diff_with_eqs() {
 
 /// Evaluation-only version of DiffSumcheck that evaluates the difference of two sumchecks at a point.
 pub struct DiffSumcheckEvaluation {
-    lhs_evaluation: Box<dyn EvaluationSumcheckData<Element = RingElement>>,
-    rhs_evaluation: Box<dyn EvaluationSumcheckData<Element = RingElement>>,
+    lhs_evaluation: Rc<RefCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
+    rhs_evaluation: Rc<RefCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
     result: RingElement,
 }
 
 impl DiffSumcheckEvaluation {
     pub fn new(
-        lhs_evaluation: Box<dyn EvaluationSumcheckData<Element = RingElement>>,
-        rhs_evaluation: Box<dyn EvaluationSumcheckData<Element = RingElement>>,
+        lhs_evaluation: Rc<RefCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
+        rhs_evaluation: Rc<RefCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
     ) -> Self {
         DiffSumcheckEvaluation {
             lhs_evaluation,
@@ -196,14 +196,10 @@ impl EvaluationSumcheckData for DiffSumcheckEvaluation {
     type Element = RingElement;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
-        // Evaluate both sides at the given point
-        let lhs = self.lhs_evaluation.evaluate(point);
-        let rhs = self.rhs_evaluation.evaluate(point);
-
-        // Compute the difference: lhs - rhs
-        self.result = lhs.clone();
-        self.result -= rhs;
-
+        self.result -= (
+            self.lhs_evaluation.borrow_mut().evaluate(&point),
+            self.rhs_evaluation.borrow_mut().evaluate(&point),
+        );
         &self.result
     }
 }
@@ -228,11 +224,11 @@ fn test_diff_evaluation() {
 
     let mut lhs_eval_impl = BasicEvaluationLinearSumcheck::new(lhs_data.len());
     lhs_eval_impl.load_from(&lhs_data);
-    let lhs_eval = Box::new(lhs_eval_impl);
+    let lhs_eval = Rc::new(RefCell::new(lhs_eval_impl));
 
     let mut rhs_eval_impl = BasicEvaluationLinearSumcheck::new(rhs_data.len());
     rhs_eval_impl.load_from(&rhs_data);
-    let rhs_eval = Box::new(rhs_eval_impl);
+    let rhs_eval = Rc::new(RefCell::new(rhs_eval_impl));
 
     let mut diff_eval = DiffSumcheckEvaluation::new(lhs_eval, rhs_eval);
 

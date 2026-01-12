@@ -329,11 +329,9 @@ pub struct FakeEvaluationLinearSumcheck<E: SumcheckElement = RingElement> {
     result: E,
 }
 
-impl <E: SumcheckElement> FakeEvaluationLinearSumcheck<E> {
+impl<E: SumcheckElement> FakeEvaluationLinearSumcheck<E> {
     pub fn new() -> Self {
-        FakeEvaluationLinearSumcheck {
-            result: E::zero(),
-        }
+        FakeEvaluationLinearSumcheck { result: E::zero() }
     }
 
     pub fn set_result(&mut self, result: E) {
@@ -348,8 +346,6 @@ impl<E: SumcheckElement> EvaluationSumcheckData for FakeEvaluationLinearSumcheck
         &self.result
     }
 }
-
-
 
 #[test]
 fn test_linear_sumcheck() {

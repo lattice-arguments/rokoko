@@ -195,7 +195,7 @@ fn test_ring_to_field_combiner() {
 /// Note: This takes RingElement points but implements EvaluationSumcheckData<Element=QuadraticExtension>
 /// because it converts the ring evaluation to field extensions.
 pub struct RingToFieldCombinerEvaluation {
-    evaluation: Box<dyn EvaluationSumcheckData<Element = RingElement>>,
+    evaluation: Rc<RefCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
     challenge_vec: [QuadraticExtension; HALF_DEGREE],
     result: QuadraticExtension,
     // Store the point converted to QuadraticExtension for trait compatibility
@@ -204,7 +204,7 @@ pub struct RingToFieldCombinerEvaluation {
 
 impl RingToFieldCombinerEvaluation {
     pub fn new(
-        evaluation: Box<dyn EvaluationSumcheckData<Element = RingElement>>,
+        evaluation: Rc<RefCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
         challenge_vec: [QuadraticExtension; HALF_DEGREE],
     ) -> Self {
         RingToFieldCombinerEvaluation {
@@ -218,7 +218,10 @@ impl RingToFieldCombinerEvaluation {
     /// Evaluate at a RingElement point (convenience method)
     pub fn evaluate_at_ring_point(&mut self, point: &Vec<RingElement>) -> &QuadraticExtension {
         // Evaluate the inner sumcheck at the given point
-        let ring_eval = self.evaluation.evaluate(point);
+        let ring_eval = {
+            let mut eval_borrow = self.evaluation.borrow_mut();
+            eval_borrow.evaluate(point).clone()
+        };
 
         // Convert to field extensions and combine with challenges
         let mut temp = ring_eval.clone();
@@ -265,7 +268,7 @@ fn test_ring_to_field_combiner_evaluation() {
 
     let mut eval_impl = BasicEvaluationLinearSumcheck::new(data.len());
     eval_impl.load_from(&data);
-    let eval = Box::new(eval_impl);
+    let eval = Rc::new(RefCell::new(eval_impl));
 
     let mut challenge_qe = [QuadraticExtension::zero(); HALF_DEGREE];
     for i in 0..HALF_DEGREE {
