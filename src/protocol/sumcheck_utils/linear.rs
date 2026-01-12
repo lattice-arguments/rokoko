@@ -5,10 +5,13 @@ use crate::{
         ring_arithmetic::{Representation, RingElement},
         sumcheck_element::SumcheckElement,
     },
-    protocol::sumcheck_utils::{
-        common::{HighOrderSumcheckData, SumcheckBaseData},
-        hypercube_point::HypercubePoint,
-        polynomial::Polynomial,
+    protocol::{
+        sumcheck,
+        sumcheck_utils::{
+            common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
+            hypercube_point::HypercubePoint,
+            polynomial::Polynomial,
+        },
     },
 };
 
@@ -170,6 +173,86 @@ impl<E: SumcheckElement> SumcheckBaseData for LinearSumcheck<E> {
         if self.data.len() != 1 {
             panic!("Sumcheck is not fully evaluated yet");
         }
+        &self.data[0]
+    }
+}
+
+pub struct BasicEvaluationLinearSumcheck<E: SumcheckElement = RingElement> {
+    pub data: Vec<E>,
+    variable_count: usize,
+    index_mask: usize,
+    suffix: usize,
+}
+
+impl<E: SumcheckElement> BasicEvaluationLinearSumcheck<E> {
+    pub fn new(count: usize) -> Self {
+        Self::new_with_prefixed_sufixed_data(count, 0, 0)
+    }
+
+    pub fn new_with_prefixed_sufixed_data(
+        count: usize,
+        prefix_size: usize,
+        suffix_size: usize,
+    ) -> Self {
+        BasicEvaluationLinearSumcheck {
+            data: E::allocate_zero_vec(count),
+            variable_count: count.ilog2() as usize + prefix_size + suffix_size,
+            index_mask: count - 1,
+            suffix: suffix_size,
+        }
+    }
+
+    pub fn load_from(&mut self, src: &[E]) {
+        self.data.clone_from_slice(src);
+    }
+}
+
+impl EvaluationSumcheckData for BasicEvaluationLinearSumcheck {
+    type Element = RingElement;
+
+    fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
+        // Evaluate the multilinear extension at the given point by folding.
+        // This achieves O(n) complexity instead of O(n * log(n)).
+
+        if point.len() != self.variable_count {
+            panic!("Point has incorrect number of variables");
+        }
+
+        let data_variable_count = self.data.len().ilog2() as usize;
+        let prefix_size = self.variable_count - data_variable_count - self.suffix;
+
+        // Fold through all variables in order
+        let mut current_len = self.data.len();
+        let mut current_variable = 0;
+
+        for r in point.iter() {
+            // Handle prefix variables (don't fold data, just advance)
+            if current_variable < prefix_size {
+                current_variable += 1;
+                continue;
+            }
+
+            // Handle suffix variables (don't fold data, just advance)
+            if current_variable >= prefix_size + data_variable_count {
+                current_variable += 1;
+                continue;
+            }
+
+            // Fold the data array using the current random value
+            // For each pair (a, b) at positions i and i + half,
+            // compute a + (b - a) * r and store in position i
+            let half = current_len / 2;
+            for i in 0..half {
+                let mut delta = self.data[i + half].clone();
+                delta -= &self.data[i];
+                delta *= r;
+                self.data[i] += &delta;
+            }
+            current_len = half;
+            current_variable += 1;
+        }
+
+        // After all folds, data[0] contains the evaluation
         &self.data[0]
     }
 }
@@ -459,4 +542,45 @@ fn test_linear_sumcheck_with_suffixed_data() {
     );
 
     assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
+}
+
+#[test]
+fn test_evaluation_sumcheck() {
+    let data = vec![
+        RingElement::constant(1, Representation::IncompleteNTT),
+        RingElement::constant(2, Representation::IncompleteNTT),
+        RingElement::constant(3, Representation::IncompleteNTT),
+        RingElement::constant(4, Representation::IncompleteNTT),
+        RingElement::constant(5, Representation::IncompleteNTT),
+        RingElement::constant(6, Representation::IncompleteNTT),
+        RingElement::constant(7, Representation::IncompleteNTT),
+        RingElement::constant(8, Representation::IncompleteNTT),
+    ];
+
+    let mut evaluation_sumcheck =
+        BasicEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(8, 3, 3);
+
+    evaluation_sumcheck.load_from(&data);
+
+    let mut point = vec![
+        RingElement::constant(1, Representation::IncompleteNTT),
+        RingElement::constant(2, Representation::IncompleteNTT),
+        RingElement::constant(5, Representation::IncompleteNTT),
+        RingElement::constant(1, Representation::IncompleteNTT),
+        RingElement::constant(6, Representation::IncompleteNTT),
+        RingElement::constant(1, Representation::IncompleteNTT),
+        RingElement::constant(1, Representation::IncompleteNTT),
+        RingElement::constant(3, Representation::IncompleteNTT),
+        RingElement::constant(4, Representation::IncompleteNTT),
+    ];
+
+    let mut ref_sumcheck = LinearSumcheck::new_with_prefixed_sufixed_data(8, 3, 3);
+    ref_sumcheck.load_from(&data);
+
+    for r in point.iter() {
+        ref_sumcheck.partial_evaluate(r);
+    }
+    let expected_evaluation = ref_sumcheck.final_evaluations();
+
+    assert_eq!(evaluation_sumcheck.evaluate(&point), expected_evaluation);
 }

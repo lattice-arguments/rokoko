@@ -353,5 +353,10 @@ pub fn sumcheck(
         .clone();
 
     // TODO: how to avoid cloning here?
-    (claim_over_witness, claim_over_witness_conjugate, norm_claim, polys)
+    (
+        claim_over_witness,
+        claim_over_witness_conjugate,
+        norm_claim,
+        polys,
+    )
 }

@@ -72,3 +72,11 @@ pub trait SumcheckBaseData: HighOrderSumcheckData {
     /// Final aggregated evaluations after all variables have been folded.
     fn final_evaluations(&self) -> &Self::Element;
 }
+
+// This trait is different from SumcheckBaseData in that it only requires the ability to evaluate the polynomial at a point.
+// This is useful for verifier, who only needs to check evaluations and does not need to perform folding.
+pub trait EvaluationSumcheckData {
+    // This evaluates the polynomial at the given point and writes the result into `point`.
+    type Element: SumcheckElement;
+    fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element;
+}

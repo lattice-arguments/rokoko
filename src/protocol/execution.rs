@@ -8,7 +8,7 @@ use crate::{
         config::MOD_Q,
         decomposition::{compose_from_decomposed, decompose},
         hash::HashWrapper,
-        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
+        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         norms,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
@@ -16,8 +16,15 @@ use crate::{
         structured_row::{self, PreprocessedRow, StructuredRow},
     },
     protocol::{
-        commitment::{RecursiveCommitment, commit_basic, recursive_commit}, config::{CONFIG, paste_by_prefix, paste_recursive_commitment}, crs::{CK, CRS}, fold::fold, open::{Opening, claim, evaluation_point_to_structured_row, open_at}, prefix::check_prefixing_correctness, project::project, proof::Proof, sumcheck::{self, SumcheckContext, init_sumcheck, sumcheck}
-        // sumcheck::sumcheck,
+        commitment::{commit_basic, recursive_commit, RecursiveCommitment},
+        config::{paste_by_prefix, paste_recursive_commitment, CONFIG},
+        crs::{CK, CRS},
+        fold::fold,
+        open::{claim, evaluation_point_to_structured_row, open_at, Opening},
+        prefix::check_prefixing_correctness,
+        project::project,
+        proof::Proof,
+        sumcheck::{self, init_sumcheck, sumcheck, SumcheckContext}, // sumcheck::sumcheck,
     },
 };
 
@@ -102,20 +109,21 @@ pub fn prover_round(
         "norm too large, aborting"
     );
 
-    let (claim_over_witness, claim_over_witness_conjugate, norm_claim, sumcheck_transcript) = sumcheck(
-        crs,
-        &CONFIG,
-        &next_round_data,
-        &projection_matrix,
-        &fold_challenge,
-        &opening,
-        &claims,
-        rc_commitment.most_inner_commitment(),
-        rc_opening.most_inner_commitment(),
-        rc_projection_image.most_inner_commitment(),
-        sumcheck_context,
-        &mut hash_wrapper,
-    );
+    let (claim_over_witness, claim_over_witness_conjugate, norm_claim, sumcheck_transcript) =
+        sumcheck(
+            crs,
+            &CONFIG,
+            &next_round_data,
+            &projection_matrix,
+            &fold_challenge,
+            &opening,
+            &claims,
+            rc_commitment.most_inner_commitment(),
+            rc_opening.most_inner_commitment(),
+            rc_projection_image.most_inner_commitment(),
+            sumcheck_context,
+            &mut hash_wrapper,
+        );
 
     let proof = Proof {
         rc_commitment: rc_commitment.most_inner_commitment().clone(), // TODO: avoid cloning
