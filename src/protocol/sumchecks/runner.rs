@@ -1,6 +1,6 @@
 use crate::{
     common::{
-        arithmetic::inner_product, config::HALF_DEGREE, hash::HashWrapper, matrix::new_vec_zero_preallocated, projection_matrix::ProjectionMatrix, ring_arithmetic::{QuadraticExtension, Representation, RingElement}, structured_row::PreprocessedRow, sumcheck_element::SumcheckElement
+        arithmetic::{field_to_ring_element, field_to_ring_element_into, inner_product}, config::HALF_DEGREE, hash::HashWrapper, matrix::new_vec_zero_preallocated, projection_matrix::ProjectionMatrix, ring_arithmetic::{QuadraticExtension, Representation, RingElement}, structured_row::PreprocessedRow, sumcheck_element::SumcheckElement
     },
     protocol::{
         config::Config,
@@ -272,7 +272,7 @@ pub fn sumcheck(
 
     print!("Num vars before sumcheck: {}\n", num_vars);
 
-    let batched_claim_over_field = {
+    let mut batched_claim_over_field = {
         let batched_claim = {
             let mut temp = batched_claim.clone();
             temp.from_incomplete_ntt_to_homogenized_field_extensions();
@@ -288,41 +288,34 @@ pub fn sumcheck(
     };
 
 
-    let mut poly = Polynomial::new(0);
 
     let mut poly_over_field = Polynomial::<QuadraticExtension>::new(0);
 
-
-    sumcheck_context
-        .field_combiner
-        .borrow_mut()
-        .univariate_polynomial_into(&mut poly_over_field);
-
-    assert_eq!(poly_over_field.at_zero() + poly_over_field.at_one(), batched_claim_over_field);
-    //
     while num_vars > 0 {
         num_vars -= 1;
-        // round 0
 
         sumcheck_context
-            .combiner
+            .field_combiner
             .borrow_mut()
-            .univariate_polynomial_into(&mut poly);
+            .univariate_polynomial_into(&mut poly_over_field);
         
-        assert_eq!(&poly.at_zero() + &poly.at_one(), batched_claim);
-
-
+        assert_eq!(poly_over_field.at_zero() + poly_over_field.at_one(), batched_claim_over_field);
 
         let mut r = RingElement::zero(Representation::IncompleteNTT);
-        hash_wrapper.sample_ring_element_into(&mut r);
+        let mut f = QuadraticExtension::zero();
+
+        hash_wrapper.sample_field_element_into(&mut f);
+        field_to_ring_element_into(&mut r, &f);
+        r.from_homogenized_field_extensions_to_incomplete_ntt();
+
         sumcheck_context.partial_evaluate_all(&r);
 
-        batched_claim = poly.at(&r);
+        batched_claim_over_field = poly_over_field.at(&f);
     }
 
     // final round
     assert_eq!(sumcheck_context
-        .combiner
+        .field_combiner
         .borrow().variable_count(), 0);
 
     
