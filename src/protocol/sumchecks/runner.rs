@@ -1,3 +1,5 @@
+use core::hash;
+
 use crate::{
     common::{
         arithmetic::{field_to_ring_element, field_to_ring_element_into, inner_product},
@@ -14,7 +16,10 @@ use crate::{
         crs,
         open::{evaluation_point_to_structured_row, Opening},
         sumcheck::{self, SumcheckContext},
-        sumcheck_utils::{common::HighOrderSumcheckData, polynomial::Polynomial},
+        sumcheck_utils::{
+            common::{HighOrderSumcheckData, SumcheckBaseData},
+            polynomial::Polynomial,
+        },
     },
 };
 
@@ -160,6 +165,11 @@ pub fn sumcheck(
     rc_projection_inner: &Vec<RingElement>,
     sumcheck_context: &mut SumcheckContext,
     hash_wrapper: &mut HashWrapper,
+) -> (
+    RingElement,
+    RingElement,
+    RingElement,
+    Vec<Polynomial<QuadraticExtension>>,
 ) {
     let projection_height_flat = config.witness_height / config.projection_ratio;
     let mut projection_matrix_flatter_base =
@@ -194,6 +204,8 @@ pub fn sumcheck(
 
     // let norm_claim = RingElement::zero(Representation::IncompleteNTT);
     let norm_claim = inner_product(&combined_witness, &conjugated_combined_witness);
+
+    hash_wrapper.update_with_ring_element(&norm_claim);
 
     // Sample random batching coefficients from Fiat-Shamir
     let num_sumchecks = sumcheck_context.combiner.borrow().sumchecks_count();
@@ -239,6 +251,8 @@ pub fn sumcheck(
 
     // Type3: zero claim (difference sumcheck)
     idx += 1;
+
+    let mut polys: Vec<Polynomial<QuadraticExtension>> = vec![];
 
     // Type4: Three recursion trees (commitment, opening, projection)
     // Each tree has: (layers with rank each) + (output layer with rank)
@@ -291,15 +305,17 @@ pub fn sumcheck(
         result
     };
 
-    let mut poly_over_field = Polynomial::<QuadraticExtension>::new(0);
-
     while num_vars > 0 {
         num_vars -= 1;
+
+        let mut poly_over_field = Polynomial::<QuadraticExtension>::new(0);
 
         sumcheck_context
             .field_combiner
             .borrow_mut()
             .univariate_polynomial_into(&mut poly_over_field);
+
+        hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
 
         assert_eq!(
             poly_over_field.at_zero() + poly_over_field.at_one(),
@@ -316,8 +332,26 @@ pub fn sumcheck(
         sumcheck_context.partial_evaluate_all(&r);
 
         batched_claim_over_field = poly_over_field.at(&f);
+
+        polys.push(poly_over_field);
     }
 
     // final round
     assert_eq!(sumcheck_context.field_combiner.borrow().variable_count(), 0);
+
+    let claim_over_witness = sumcheck_context
+        .combined_witness_sumcheck
+        .borrow()
+        .final_evaluations()
+        .clone();
+
+    let claim_over_witness_conjugate = sumcheck_context
+        .type5sumcheck
+        .conjugated_combined_witness
+        .borrow()
+        .final_evaluations()
+        .clone();
+
+    // TODO: how to avoid cloning here?
+    (claim_over_witness, claim_over_witness_conjugate, norm_claim, polys)
 }

@@ -50,6 +50,12 @@ impl HashWrapper {
         self.transcript.update(bytes);
     }
 
+    pub fn update_with_quadratic_extension_slice(&mut self, elements: &[QuadraticExtension]) {
+        for element in elements {
+            self.update_with_quadratic_extension_element(element);
+        }
+    }
+
     pub fn update_with_bytes(&mut self, bytes: &[u8]) {
         self.transcript.update(bytes);
     }

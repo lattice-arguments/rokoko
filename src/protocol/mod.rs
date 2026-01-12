@@ -7,6 +7,7 @@ pub mod fold;
 pub mod open;
 pub mod prefix;
 pub mod project;
+pub mod proof;
 pub mod prover;
 pub mod sumcheck;
 pub mod sumcheck_utils;
