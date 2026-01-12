@@ -12,7 +12,7 @@ pub mod sampling;
 pub mod structured_row;
 pub mod sumcheck_element;
 use crate::common::{
-    arithmetic::{ONE, ZERO},
+    arithmetic::{ONE, TWO, ZERO},
     ring_arithmetic::*,
 };
 
@@ -25,6 +25,7 @@ pub fn init_common() {
     LazyLock::force(&NORMALIZE_INCOMPLETE_NTT_FACTORS_INVERSE);
     LazyLock::force(&ONE);
     LazyLock::force(&ZERO);
+    LazyLock::force(&TWO);
     unsafe { LazyLock::force_mut(&mut crate::common::ring_arithmetic::temp_buffer) };
 
     // init some caches of HEXL
