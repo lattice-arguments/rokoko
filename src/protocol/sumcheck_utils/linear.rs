@@ -325,6 +325,32 @@ impl EvaluationSumcheckData for StructuredRowEvaluationLinearSumcheck<RingElemen
     }
 }
 
+pub struct FakeEvaluationLinearSumcheck<E: SumcheckElement = RingElement> {
+    result: E,
+}
+
+impl <E: SumcheckElement> FakeEvaluationLinearSumcheck<E> {
+    pub fn new() -> Self {
+        FakeEvaluationLinearSumcheck {
+            result: E::zero(),
+        }
+    }
+
+    pub fn set_result(&mut self, result: E) {
+        self.result = result;
+    }
+}
+
+impl<E: SumcheckElement> EvaluationSumcheckData for FakeEvaluationLinearSumcheck<E> {
+    type Element = E;
+
+    fn evaluate(&mut self, _point: &Vec<Self::Element>) -> &Self::Element {
+        &self.result
+    }
+}
+
+
+
 #[test]
 fn test_linear_sumcheck() {
     use crate::common::ring_arithmetic::RingElement;
