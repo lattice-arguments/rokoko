@@ -5,10 +5,7 @@ use crate::{
         ring_arithmetic::RingElement,
         structured_row::{PreprocessedRow, StructuredRow},
     },
-    protocol::{
-        config::Config,
-        open::Opening,
-    },
+    protocol::{config::Config, open::Opening},
 };
 
 use super::context::SumcheckContext;

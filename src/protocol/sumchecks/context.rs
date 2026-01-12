@@ -3,7 +3,13 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{
     common::ring_arithmetic::RingElement,
     protocol::sumcheck_utils::{
-        combiner::Combiner, common::{HighOrderSumcheckData, SumcheckBaseData}, diff::DiffSumcheck, linear::LinearSumcheck, product::ProductSumcheck, ring_to_field_combiner::RingToFieldCombiner, selector_eq::SelectorEq
+        combiner::Combiner,
+        common::{HighOrderSumcheckData, SumcheckBaseData},
+        diff::DiffSumcheck,
+        linear::LinearSumcheck,
+        product::ProductSumcheck,
+        ring_to_field_combiner::RingToFieldCombiner,
+        selector_eq::SelectorEq,
     },
 };
 

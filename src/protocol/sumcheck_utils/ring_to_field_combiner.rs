@@ -21,9 +21,7 @@ pub struct RingToFieldCombiner {
 }
 
 impl RingToFieldCombiner {
-    pub fn new(
-        sumcheck: Rc<RefCell<dyn HighOrderSumcheckData<Element = RingElement>>>,
-    ) -> Self {
+    pub fn new(sumcheck: Rc<RefCell<dyn HighOrderSumcheckData<Element = RingElement>>>) -> Self {
         Self {
             sumcheck,
             challenge_vec: [QuadraticExtension::zero(); HALF_DEGREE],

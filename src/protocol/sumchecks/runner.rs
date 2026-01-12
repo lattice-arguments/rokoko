@@ -1,22 +1,24 @@
 use crate::{
     common::{
-        arithmetic::{field_to_ring_element, field_to_ring_element_into, inner_product}, config::HALF_DEGREE, hash::HashWrapper, matrix::new_vec_zero_preallocated, projection_matrix::ProjectionMatrix, ring_arithmetic::{QuadraticExtension, Representation, RingElement}, structured_row::PreprocessedRow, sumcheck_element::SumcheckElement
+        arithmetic::{field_to_ring_element, field_to_ring_element_into, inner_product},
+        config::HALF_DEGREE,
+        hash::HashWrapper,
+        matrix::new_vec_zero_preallocated,
+        projection_matrix::ProjectionMatrix,
+        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        structured_row::PreprocessedRow,
+        sumcheck_element::SumcheckElement,
     },
     protocol::{
         config::Config,
         crs,
-        open::{Opening, evaluation_point_to_structured_row},
-        sumcheck_utils::{
-            common::HighOrderSumcheckData,
-            polynomial::Polynomial,
-        },
+        open::{evaluation_point_to_structured_row, Opening},
+        sumcheck::{self, SumcheckContext},
+        sumcheck_utils::{common::HighOrderSumcheckData, polynomial::Polynomial},
     },
 };
 
-use super::{
-    builder::init_sumcheck,
-    loader::load_sumcheck_data,
-};
+use super::{builder::init_sumcheck, loader::load_sumcheck_data};
 /// Executes the complete sumcheck protocol for all constraints in the prover's proof.
 ///
 /// This is the main entry point for running the sumcheck layer of the protocol. It's
@@ -156,10 +158,9 @@ pub fn sumcheck(
     rc_commitment_inner: &Vec<RingElement>,
     rc_opening_inner: &Vec<RingElement>,
     rc_projection_inner: &Vec<RingElement>,
+    sumcheck_context: &mut SumcheckContext,
     hash_wrapper: &mut HashWrapper,
 ) {
-    let mut sumcheck_context = init_sumcheck(crs, config);
-
     let projection_height_flat = config.witness_height / config.projection_ratio;
     let mut projection_matrix_flatter_base =
         new_vec_zero_preallocated(projection_height_flat.ilog2() as usize);
@@ -173,7 +174,7 @@ pub fn sumcheck(
 
     // Load all data into the sumcheck context
     load_sumcheck_data(
-        &mut sumcheck_context,
+        sumcheck_context,
         config,
         combined_witness,
         folding_challenges,
@@ -182,7 +183,6 @@ pub fn sumcheck(
         &projection_matrix_flatter_structured,
         &projection_matrix_flatter,
     );
-
 
     let mut conjugated_combined_witness = new_vec_zero_preallocated(combined_witness.len());
     combined_witness
@@ -195,39 +195,40 @@ pub fn sumcheck(
     // let norm_claim = RingElement::zero(Representation::IncompleteNTT);
     let norm_claim = inner_product(&combined_witness, &conjugated_combined_witness);
 
-
     // Sample random batching coefficients from Fiat-Shamir
     let num_sumchecks = sumcheck_context.combiner.borrow().sumchecks_count();
     let mut combination = new_vec_zero_preallocated(num_sumchecks);
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
-    
+
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
     let qe = combination_to_field.split_into_quadratic_extensions();
-    sumcheck_context.combiner.borrow_mut().load_challenges_from(&combination);
+    sumcheck_context
+        .combiner
+        .borrow_mut()
+        .load_challenges_from(&combination);
 
     // TODO: can we avoid cloning?
-    sumcheck_context.field_combiner.borrow_mut().load_challenges_from(qe.clone());
+    sumcheck_context
+        .field_combiner
+        .borrow_mut()
+        .load_challenges_from(qe.clone());
 
-    
-    let mut num_vars = sumcheck_context
-        .combiner
-        .borrow()
-        .variable_count();
+    let mut num_vars = sumcheck_context.combiner.borrow().variable_count();
 
     // Compute batched claim matching the combiner's output order:
-    // type0 (rank many) -> type1 (nof_openings) -> type2 (nof_openings) -> 
+    // type0 (rank many) -> type1 (nof_openings) -> type2 (nof_openings) ->
     // type3 (1) -> type4[3 recursions, each with layers*rank + output_rank] -> type5 (1)
     let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
     let mut idx = 0;
-    
+
     // Type0: zero claims (difference sumchecks)
     idx += config.basic_commitment_rank;
-    
+
     // Type1: zero claims (difference sumchecks)
     idx += config.nof_openings;
-    
+
     // Type2: claims for evaluations
     for claim in claims.iter() {
         let mut weighted = claim.clone();
@@ -235,27 +236,30 @@ pub fn sumcheck(
         batched_claim += &weighted;
         idx += 1;
     }
-    
+
     // Type3: zero claim (difference sumcheck)
     idx += 1;
-    
+
     // Type4: Three recursion trees (commitment, opening, projection)
     // Each tree has: (layers with rank each) + (output layer with rank)
-    for (recursion_idx, rc_inner) in [rc_commitment_inner, rc_opening_inner, rc_projection_inner].iter().enumerate() {
+    for (recursion_idx, rc_inner) in [rc_commitment_inner, rc_opening_inner, rc_projection_inner]
+        .iter()
+        .enumerate()
+    {
         let recursion_config = match recursion_idx {
             0 => &config.commitment_recursion,
             1 => &config.opening_recursion,
             2 => &config.projection_recursion,
             _ => unreachable!(),
         };
-        
+
         // Internal layers (zero claims)
         let mut current = recursion_config;
         while let Some(next) = current.next.as_deref() {
             idx += current.rank; // Each layer has rank outputs, all zero claims
             current = next;
         }
-        
+
         // Output layer: rc_inner claims
         for rc_value in rc_inner.iter() {
             let mut weighted = rc_value.clone();
@@ -264,7 +268,7 @@ pub fn sumcheck(
             idx += 1;
         }
     }
-    
+
     // Type5: norm claim
     let mut weighted_norm = norm_claim.clone();
     weighted_norm *= &combination[idx];
@@ -287,8 +291,6 @@ pub fn sumcheck(
         result
     };
 
-
-
     let mut poly_over_field = Polynomial::<QuadraticExtension>::new(0);
 
     while num_vars > 0 {
@@ -298,8 +300,11 @@ pub fn sumcheck(
             .field_combiner
             .borrow_mut()
             .univariate_polynomial_into(&mut poly_over_field);
-        
-        assert_eq!(poly_over_field.at_zero() + poly_over_field.at_one(), batched_claim_over_field);
+
+        assert_eq!(
+            poly_over_field.at_zero() + poly_over_field.at_one(),
+            batched_claim_over_field
+        );
 
         let mut r = RingElement::zero(Representation::IncompleteNTT);
         let mut f = QuadraticExtension::zero();
@@ -314,9 +319,5 @@ pub fn sumcheck(
     }
 
     // final round
-    assert_eq!(sumcheck_context
-        .field_combiner
-        .borrow().variable_count(), 0);
-
-    
+    assert_eq!(sumcheck_context.field_combiner.borrow().variable_count(), 0);
 }

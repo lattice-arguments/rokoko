@@ -1,4 +1,7 @@
-use std::{cell::{Ref, RefCell}, rc::Rc};
+use std::{
+    cell::{Ref, RefCell},
+    rc::Rc,
+};
 
 use crate::{
     common::ring_arithmetic::RingElement,
@@ -6,7 +9,11 @@ use crate::{
         commitment::{self, Prefix},
         config::Config,
         crs::{self, CRS},
-        sumcheck_utils::{combiner::Combiner, common::HighOrderSumcheckData, diff::DiffSumcheck, linear::LinearSumcheck, product::ProductSumcheck, ring_to_field_combiner::RingToFieldCombiner},
+        sumcheck_utils::{
+            combiner::Combiner, common::HighOrderSumcheckData, diff::DiffSumcheck,
+            linear::LinearSumcheck, product::ProductSumcheck,
+            ring_to_field_combiner::RingToFieldCombiner,
+        },
         sumchecks::context::Type5SumcheckContext,
     },
 };
@@ -489,7 +496,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
         ))),
     };
 
-     // Type4 sumchecks: Three separate recursive commitment trees
+    // Type4 sumchecks: Three separate recursive commitment trees
     // 1. Commitment recursion: verifies the basic witness commitments are well-formed
     // 2. Opening recursion: verifies the opening proofs are correctly committed
     // 3. Projection recursion: verifies the projection images are correctly committed
@@ -515,7 +522,8 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
         ),
     ];
 
-    let mut all_outputs: Vec<Rc<RefCell<dyn HighOrderSumcheckData<Element = RingElement>>>> = vec![];
+    let mut all_outputs: Vec<Rc<RefCell<dyn HighOrderSumcheckData<Element = RingElement>>>> =
+        vec![];
     for type0 in &type0sumchecks {
         all_outputs.push(type0.output.clone());
     }
@@ -539,13 +547,11 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
     }
 
     all_outputs.push(type5sumcheck.output.clone());
-    
 
     // TODO: do something smart here
     let combiner = Rc::new(RefCell::new(Combiner::new(all_outputs)));
 
     let field_combiner = Rc::new(RefCell::new(RingToFieldCombiner::new(combiner.clone())));
-    
 
     SumcheckContext {
         combined_witness_sumcheck: combined_witness_sumcheck.clone(),

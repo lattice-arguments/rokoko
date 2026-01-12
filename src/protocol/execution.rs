@@ -23,7 +23,7 @@ use crate::{
         open::{claim, evaluation_point_to_structured_row, open_at, Opening},
         prefix::check_prefixing_correctness,
         project::project,
-        sumcheck::sumcheck,
+        sumcheck::{self, init_sumcheck, sumcheck, SumcheckContext},
         // sumcheck::sumcheck,
     },
 };
@@ -35,6 +35,7 @@ pub fn prover_round(
     evaluation_points_inner: &Vec<StructuredRow>,
     evaluation_points_outer: &Vec<StructuredRow>,
     claims: &Vec<RingElement>,
+    sumcheck_context: &mut SumcheckContext,
 ) {
     let mut hash_wrapper = HashWrapper::new();
 
@@ -119,6 +120,7 @@ pub fn prover_round(
         rc_commitment.most_inner_commitment(),
         rc_opening.most_inner_commitment(),
         rc_projection_image.most_inner_commitment(),
+        sumcheck_context,
         &mut hash_wrapper,
     );
     // RoundOutput {
@@ -131,6 +133,8 @@ pub fn prover_round(
 pub fn execute() {
     check_prefixing_correctness(&CONFIG);
     let crs = CRS::gen_crs(CONFIG.witness_height * 2, 2);
+
+    let mut sumcheck_context = init_sumcheck(&crs, &CONFIG);
 
     let witness = VerticallyAlignedMatrix {
         height: CONFIG.witness_height,
@@ -173,5 +177,6 @@ pub fn execute() {
         &evaluation_points_inner,
         &evaluation_points_outer,
         &claims,
+        &mut sumcheck_context,
     );
 }

@@ -107,7 +107,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
             // let constant_ref = sumcheck
             //     .borrow()
             //     .constant_univariate_polynomial_at_point_available_by_ref(point);
-        
+
             let challenge = &self.challenges[i];
             sumcheck
                 .borrow()

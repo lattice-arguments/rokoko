@@ -1,7 +1,13 @@
 use std::sync::LazyLock;
 
 use crate::common::{
-    config::HALF_DEGREE, ring_arithmetic::{QuadraticExtension, Representation, RingElement, SHIFT_FACTORS, incomplete_ntt_multiplication}, structured_row::StructuredRow, sumcheck_element::SumcheckElement
+    config::HALF_DEGREE,
+    ring_arithmetic::{
+        incomplete_ntt_multiplication, QuadraticExtension, Representation, RingElement,
+        SHIFT_FACTORS,
+    },
+    structured_row::StructuredRow,
+    sumcheck_element::SumcheckElement,
 };
 
 pub fn inner_product(a: &Vec<RingElement>, b: &Vec<RingElement>) -> RingElement {
@@ -39,7 +45,6 @@ pub static ONE: LazyLock<RingElement> =
 
 pub static ZERO: LazyLock<RingElement> =
     LazyLock::new(|| RingElement::zero(Representation::IncompleteNTT));
-
 
 #[test]
 fn test_field_to_ring_roundtrip() {
