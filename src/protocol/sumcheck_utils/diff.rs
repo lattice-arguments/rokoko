@@ -10,7 +10,7 @@ use crate::{
         sumcheck_element::SumcheckElement,
     },
     protocol::sumcheck_utils::{
-        common::HighOrderSumcheckData,
+        common::{EvaluationSumcheckData, HighOrderSumcheckData},
         hypercube_point::HypercubePoint,
         polynomial::{add_poly_in_place, sub_poly_in_place, Polynomial},
         selector_eq::SelectorEq,
@@ -170,4 +170,103 @@ fn diff_with_eqs() {
     diff.univariate_polynomial_into(&mut poly);
 
     assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
+}
+
+/// Evaluation-only version of DiffSumcheck that evaluates the difference of two sumchecks at a point.
+pub struct DiffSumcheckEvaluation {
+    lhs_evaluation: Box<dyn EvaluationSumcheckData<Element = RingElement>>,
+    rhs_evaluation: Box<dyn EvaluationSumcheckData<Element = RingElement>>,
+    result: RingElement,
+}
+
+impl DiffSumcheckEvaluation {
+    pub fn new(
+        lhs_evaluation: Box<dyn EvaluationSumcheckData<Element = RingElement>>,
+        rhs_evaluation: Box<dyn EvaluationSumcheckData<Element = RingElement>>,
+    ) -> Self {
+        DiffSumcheckEvaluation {
+            lhs_evaluation,
+            rhs_evaluation,
+            result: RingElement::constant(0, Representation::IncompleteNTT),
+        }
+    }
+}
+
+impl EvaluationSumcheckData for DiffSumcheckEvaluation {
+    type Element = RingElement;
+
+    fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
+        // Evaluate both sides at the given point
+        let lhs = self.lhs_evaluation.evaluate(point);
+        let rhs = self.rhs_evaluation.evaluate(point);
+
+        // Compute the difference: lhs - rhs
+        self.result = lhs.clone();
+        self.result -= rhs;
+
+        &self.result
+    }
+}
+
+#[test]
+fn test_diff_evaluation() {
+    use crate::protocol::sumcheck_utils::linear::BasicEvaluationLinearSumcheck;
+
+    let lhs_data = vec![
+        RingElement::constant(8, Representation::IncompleteNTT),
+        RingElement::constant(7, Representation::IncompleteNTT),
+        RingElement::constant(6, Representation::IncompleteNTT),
+        RingElement::constant(5, Representation::IncompleteNTT),
+    ];
+
+    let rhs_data = vec![
+        RingElement::constant(1, Representation::IncompleteNTT),
+        RingElement::constant(2, Representation::IncompleteNTT),
+        RingElement::constant(3, Representation::IncompleteNTT),
+        RingElement::constant(4, Representation::IncompleteNTT),
+    ];
+
+    let mut lhs_eval_impl = BasicEvaluationLinearSumcheck::new(lhs_data.len());
+    lhs_eval_impl.load_from(&lhs_data);
+    let lhs_eval = Box::new(lhs_eval_impl);
+
+    let mut rhs_eval_impl = BasicEvaluationLinearSumcheck::new(rhs_data.len());
+    rhs_eval_impl.load_from(&rhs_data);
+    let rhs_eval = Box::new(rhs_eval_impl);
+
+    let mut diff_eval = DiffSumcheckEvaluation::new(lhs_eval, rhs_eval);
+
+    let point = vec![
+        RingElement::constant(5, Representation::IncompleteNTT),
+        RingElement::constant(7, Representation::IncompleteNTT),
+    ];
+
+    // Create reference using the folding implementation
+    let ref_lhs_data = vec![
+        RingElement::constant(8, Representation::IncompleteNTT),
+        RingElement::constant(7, Representation::IncompleteNTT),
+        RingElement::constant(6, Representation::IncompleteNTT),
+        RingElement::constant(5, Representation::IncompleteNTT),
+    ];
+    let ref_rhs_data = vec![
+        RingElement::constant(1, Representation::IncompleteNTT),
+        RingElement::constant(2, Representation::IncompleteNTT),
+        RingElement::constant(3, Representation::IncompleteNTT),
+        RingElement::constant(4, Representation::IncompleteNTT),
+    ];
+
+    let sumcheck_0 = Rc::new(RefCell::new(LinearSumcheck::new(ref_lhs_data.len())));
+    sumcheck_0.borrow_mut().load_from(&ref_lhs_data);
+    let sumcheck_1 = Rc::new(RefCell::new(LinearSumcheck::new(ref_rhs_data.len())));
+    sumcheck_1.borrow_mut().load_from(&ref_rhs_data);
+
+    for r in &point {
+        sumcheck_0.borrow_mut().partial_evaluate(r);
+        sumcheck_1.borrow_mut().partial_evaluate(r);
+    }
+
+    let expected =
+        sumcheck_0.borrow().final_evaluations() - sumcheck_1.borrow().final_evaluations();
+
+    assert_eq!(diff_eval.evaluate(&point), &expected);
 }

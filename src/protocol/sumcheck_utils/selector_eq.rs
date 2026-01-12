@@ -2,11 +2,12 @@ use std::cell::RefCell;
 
 use crate::{
     common::{
+        arithmetic::{ONE, TWO},
         ring_arithmetic::{Representation, RingElement},
         sumcheck_element::SumcheckElement,
     },
     protocol::sumcheck_utils::{
-        common::{HighOrderSumcheckData, SumcheckBaseData},
+        common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
         hypercube_point::HypercubePoint,
         polynomial::Polynomial,
     },
@@ -300,4 +301,94 @@ fn test_selector_eq_basic() {
 
     // After exhausting all variables, the stored claim should match the verifier's expectation.
     assert_eq!(sumcheck.final_evaluations(), &claim);
+}
+
+pub struct SelectorEqEvaluation {
+    selector: usize,
+    selector_variable_count: usize,
+    total_variable_count: usize,
+    result: RingElement,
+    scratch: RingElement,
+}
+
+impl SelectorEqEvaluation {
+    pub fn new(
+        selector: usize,
+        selector_variable_count: usize,
+        total_variable_count: usize,
+    ) -> Self {
+        SelectorEqEvaluation {
+            selector,
+            selector_variable_count,
+            total_variable_count,
+            result: RingElement::constant(1, Representation::IncompleteNTT),
+            scratch: RingElement::constant(0, Representation::IncompleteNTT),
+        }
+    }
+}
+
+impl EvaluationSumcheckData for SelectorEqEvaluation {
+    type Element = RingElement;
+
+    fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
+        if point.len() != self.total_variable_count {
+            panic!("Point has incorrect number of variables");
+        }
+
+        self.result = RingElement::constant(1, Representation::IncompleteNTT);
+
+        // For the selector variables, compute the eq polynomial value
+        // eq(x, selector) = product over i of: (x_i * selector_i + (1-x_i) * (1-selector_i))
+        // = product over i of: (x_i if selector_i=1, else (1-x_i))
+
+        for i in 0..self.selector_variable_count {
+            let selector_bit = (self.selector >> (self.selector_variable_count - 1 - i)) & 1;
+            let r = &point[i];
+
+            if selector_bit == 1 {
+                // Multiply by r
+                self.result *= r;
+            } else {
+                // Multiply by (1 - r)
+                // Compute: result = result - result * r = result * (1 - r)
+                self.scratch = &self.result * r;
+                self.result -= &self.scratch;
+            }
+        }
+
+        // For the remaining variables (beyond selector_variable_count), they don't affect
+        // the selector equality - it's constant across those dimensions.
+        // So we don't need to do anything with them.
+
+        &self.result
+    }
+}
+
+#[test]
+fn test_selector_eq_evaluation() {
+    use crate::common::ring_arithmetic::RingElement;
+
+    let selector = 0b10;
+    let selector_variable_count = 2;
+    let total_variable_count = 4;
+
+    let mut evaluation_sumcheck =
+        SelectorEqEvaluation::new(selector, selector_variable_count, total_variable_count);
+
+    let point = vec![
+        RingElement::constant(53, Representation::IncompleteNTT), // var 0
+        RingElement::constant(73, Representation::IncompleteNTT), // var 1
+        RingElement::constant(19, Representation::IncompleteNTT), // var 2
+        RingElement::constant(743, Representation::IncompleteNTT), // var 3
+    ];
+
+    let mut ref_sumcheck =
+        SelectorEq::<RingElement>::new(selector, selector_variable_count, total_variable_count);
+
+    for r in point.iter() {
+        ref_sumcheck.partial_evaluate(r);
+    }
+    let expected_evaluation = ref_sumcheck.final_evaluations();
+
+    assert_eq!(evaluation_sumcheck.evaluate(&point), expected_evaluation);
 }
