@@ -8,7 +8,7 @@ use crate::{
         config::MOD_Q,
         decomposition::{compose_from_decomposed, decompose},
         hash::HashWrapper,
-        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
+        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
         norms,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
@@ -16,20 +16,23 @@ use crate::{
         structured_row::{self, PreprocessedRow, StructuredRow},
     },
     protocol::{
-        commitment::{commit_basic, recursive_commit, RecursiveCommitment},
-        config::{paste_by_prefix, paste_recursive_commitment, CONFIG},
+        commitment::{RecursiveCommitment, commit_basic, recursive_commit},
+        config::{CONFIG, paste_by_prefix, paste_recursive_commitment},
         crs::{CK, CRS},
         fold::fold,
-        open::{claim, evaluation_point_to_structured_row, open_at, Opening},
+        open::{Opening, claim, evaluation_point_to_structured_row, open_at},
         prefix::check_prefixing_correctness,
         project::project,
         proof::Proof,
-        sumcheck::{self, init_sumcheck, sumcheck, SumcheckContext},
+        sumcheck::{self, SumcheckContext, init_sumcheck, sumcheck},
         sumcheck_utils::{
             common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
             linear::{LinearSumcheck, StructuredRowEvaluationLinearSumcheck},
         },
-        sumchecks::{builder_verifier::init_verifier, context_verifier::VerifierSumcheckContext}, // sumcheck::sumcheck,
+        sumchecks::{
+            builder_verifier::init_verifier, context_verifier::VerifierSumcheckContext,
+            runner::{RoundProof, sumcheck_verifier},
+        }, // sumcheck::sumcheck,
     },
 };
 
@@ -51,7 +54,7 @@ pub fn prover_round(
 
     let rc_opening = recursive_commit(crs, &CONFIG.opening_recursion, &opening.rhs.data);
 
-    hash_wrapper.update_with_ring_element_slice(&opening.rhs.data);
+    hash_wrapper.update_with_ring_element_slice(&rc_opening.most_inner_commitment());
 
     let mut projection_matrix = ProjectionMatrix::new(CONFIG.projection_ratio);
 
@@ -114,6 +117,7 @@ pub fn prover_round(
         ell_2_norm * ell_2_norm < (MOD_Q as f64 / 2f64),
         "norm too large, aborting"
     );
+
     let (claim_over_witness, claim_over_witness_conjugate, norm_claim, sumcheck_transcript) =
         sumcheck(
             crs,
@@ -133,15 +137,40 @@ pub fn prover_round(
             &mut hash_wrapper,
         );
 
-    let proof = Proof {
-        rc_commitment: rc_commitment.most_inner_commitment().clone(), // TODO: avoid cloning
-        rc_opening: rc_opening.most_inner_commitment().clone(),
-        rc_projection_image: rc_projection_image.most_inner_commitment().clone(),
-        sumcheck_transcript,
-        claim_over_witness,
-        claim_over_witness_conjugate,
-        norm_claim,
+    assert!(
+        ell_2_norm * ell_2_norm < (MOD_Q as f64 / 2f64),
+        "norm too large, aborting"
+    );
+
+    // TODO: recurse
+
+
+   let rp =  RoundProof {
+        polys: &sumcheck_transcript,
+        claim_over_witness: &claim_over_witness,
+        claim_over_witness_conjugate: &claim_over_witness_conjugate,
+        norm_claim: &norm_claim,
+        rc_commitment_inner: rc_commitment.most_inner_commitment(),
+        rc_opening_inner: rc_opening.most_inner_commitment(),
+        rc_projection_inner: rc_projection_image.most_inner_commitment(),
     };
+
+
+    let mut hash_wrapper_verifier = HashWrapper::new();
+
+
+    sumcheck_verifier(
+        &CONFIG,
+        verifier_sumcheck_context,
+        &rp,
+        &evaluation_points_inner,
+        &evaluation_points_outer,
+        &claims,
+        &mut hash_wrapper_verifier
+    );
+
+
+
     // RoundOutput {
     //     folded_witness,
     //     projection_image,

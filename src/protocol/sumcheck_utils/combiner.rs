@@ -294,6 +294,10 @@ impl<E: SumcheckElement> CombinerEvaluation<E> {
         );
         self.challenges.clone_from_slice(challenges);
     }
+
+    pub fn sumchecks_count(&self) -> usize {
+        self.evaluations.len()
+    }
 }
 
 impl<E: SumcheckElement> EvaluationSumcheckData for CombinerEvaluation<E> {

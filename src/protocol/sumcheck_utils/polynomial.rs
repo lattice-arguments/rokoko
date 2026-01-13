@@ -5,6 +5,7 @@ use crate::common::{ring_arithmetic::RingElement, sumcheck_element::SumcheckElem
 /// Dense polynomial representation used throughout the sumcheck routines.
 /// The storage is fixed to four coefficients because, at the moment,
 /// the protocol only needs up to cubic polynomials.
+#[derive(Clone, Debug)]
 pub struct Polynomial<E: SumcheckElement = RingElement> {
     // coefficients[i] corresponds to x^i.
     pub coefficients: [E; 4],

@@ -23,7 +23,6 @@ use super::context_verifier::VerifierSumcheckContext;
 /// evaluation points in their structured form.
 pub fn load_verifier_sumcheck_data(
     verifier_sumcheck_context: &mut VerifierSumcheckContext,
-    config: &Config,
     folding_challenges: &Vec<RingElement>,
     claim_over_witness: &RingElement,
     claim_over_witness_conjugate: &RingElement,
@@ -31,7 +30,6 @@ pub fn load_verifier_sumcheck_data(
     evaluation_points_outer: &Vec<StructuredRow>,
     projection_matrix: &ProjectionMatrix,
     projection_matrix_flatter_structured: &StructuredRow,
-    projection_matrix_flatter_preprocessed: &PreprocessedRow,
     combination: &Vec<RingElement>,
     qe: &[QuadraticExtension; HALF_DEGREE],
 ) {

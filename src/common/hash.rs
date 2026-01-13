@@ -6,6 +6,7 @@ use blake3::Hasher;
 /// Incremental transcript hash suitable for Fiat–Shamir style challenges.
 /// The transcript absorbs ring elements and can deterministically derive
 /// pseudorandom bytes for challenges.
+#[derive(Clone)]
 pub struct HashWrapper {
     transcript: Hasher,
     sample_counter: u64,
