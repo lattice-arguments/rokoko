@@ -88,7 +88,7 @@ pub fn load_verifier_sumcheck_data(
             .type3evaluation
             .lhs_flatter_0_evaluation
             .borrow_mut()
-            .load_from(&projection_flatter_0_preprocessed.preprocessed_row);
+            .load_from(projection_flatter_0_structured.clone());
 
         // Load flatter_1 · projection_matrix (within-block coefficients)
         let projection_flatter_1_preprocessed =
@@ -108,7 +108,7 @@ pub fn load_verifier_sumcheck_data(
             .type3evaluation
             .rhs_projection_flatter_evaluation
             .borrow_mut()
-            .load_from(&projection_matrix_flatter_preprocessed.preprocessed_row);
+            .load_from(projection_matrix_flatter_structured.clone());
 
         verifier_sumcheck_context
             .type3evaluation

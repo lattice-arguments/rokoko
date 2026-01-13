@@ -340,14 +340,16 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
     let inner_width = config.projection_ratio * height;
     let blocks = config.witness_height / inner_width;
 
-    let lhs_flatter_0_evaluation = basic_evaluation_linear(
-        blocks,
-        total_vars
-            - blocks.ilog2() as usize
-            - inner_width.ilog2() as usize
-            - config.witness_decomposition_chunks.ilog2() as usize,
-        inner_width.ilog2() as usize + config.witness_decomposition_chunks.ilog2() as usize,
-    );
+    let lhs_flatter_0_evaluation = Rc::new(RefCell::new
+        (StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
+            blocks,
+            total_vars
+                - blocks.ilog2() as usize
+                - inner_width.ilog2() as usize
+                - config.witness_decomposition_chunks.ilog2() as usize,
+            inner_width.ilog2() as usize + config.witness_decomposition_chunks.ilog2() as usize,
+        ),
+    ));
 
     let lhs_flatter_1_times_matrix_evaluation = basic_evaluation_linear(
         inner_width,
@@ -358,13 +360,15 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
     );
 
     // Split RHS into projection_flatter and fold_challenge
-    let rhs_projection_flatter_evaluation = basic_evaluation_linear(
-        projection_height_flat,
-        total_vars
-            - config.witness_width.ilog2() as usize
-            - config.projection_recursion.decomposition_chunks.ilog2() as usize,
-        config.projection_recursion.decomposition_chunks.ilog2() as usize,
-    );
+    let rhs_projection_flatter_evaluation = Rc::new(RefCell::new(
+        StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
+            projection_height_flat,
+            total_vars
+                - config.witness_width.ilog2() as usize
+                - config.projection_recursion.decomposition_chunks.ilog2() as usize,
+            config.projection_recursion.decomposition_chunks.ilog2() as usize,
+        ),
+    ));
 
     let rhs_fold_challenge_evaluation = basic_evaluation_linear(
         config.witness_width,
