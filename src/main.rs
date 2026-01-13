@@ -6,6 +6,10 @@ use cowboys_and_aliens::protocol::execution;
 use cowboys_and_aliens::protocol::execution::execute;
 
 fn main() {
+    #[cfg(feature = "unsafe-sumcheck")]
+    {
+        println!("Sumcheck unsafe...");
+    }
     load_and_preallocate("pool_stats.txt").expect("Failed to load stats");
     init_common();
     execute();

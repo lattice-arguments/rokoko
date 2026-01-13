@@ -67,14 +67,6 @@ impl Index<(usize, usize)> for ProjectionSquare {
 
     fn index(&self, index: (usize, usize)) -> &Self::Output {
         let (row, col) = index;
-        assert!(
-            row < PROJECTION_HEIGHT && col < PROJECTION_HEIGHT,
-            "{} < {} && {} < {} failed",
-            row,
-            PROJECTION_HEIGHT,
-            col,
-            PROJECTION_HEIGHT
-        );
         let byte_index = (col / 4) * PROJECTION_HEIGHT + row;
         let bits_offset = (col % 4) * 2;
         let byte = self.data[byte_index];
