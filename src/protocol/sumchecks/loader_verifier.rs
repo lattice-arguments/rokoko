@@ -82,6 +82,7 @@ pub fn load_verifier_sumcheck_data(
         .borrow_mut()
         .load_from(&projection_coeffs);
 
+    // TODO IMPORTANT: This shall be changed to something faster (and use fake linear eval)
     let fold_tensor = tensor_product(
         folding_challenges,
         &projection_matrix_flatter_preprocessed.preprocessed_row,
