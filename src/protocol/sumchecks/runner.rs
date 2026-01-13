@@ -242,7 +242,7 @@ pub fn sumcheck(
     RingElement,
     Vec<Polynomial<QuadraticExtension>>,
 ) {
-    let mut hash_wrapper_clone = hash_wrapper.clone();
+    // Removed: let mut hash_wrapper_clone = hash_wrapper.clone(); - unused
     let projection_height_flat = config.witness_height / config.projection_ratio;
     let mut projection_matrix_flatter_base =
         new_vec_zero_preallocated(projection_height_flat.ilog2() as usize);
@@ -278,6 +278,7 @@ pub fn sumcheck(
     let qe = combination_to_field.split_into_quadratic_extensions();
 
     // Load all data into the sumcheck context
+    let t_load = std::time::Instant::now();
     load_sumcheck_data(
         sumcheck_context,
         config,
@@ -291,6 +292,7 @@ pub fn sumcheck(
         &combination,
         &qe,
     );
+    println!("    load_sumcheck_data: {} ms", t_load.elapsed().as_millis());
 
     sumcheck_context
         .combiner
@@ -304,20 +306,26 @@ pub fn sumcheck(
         .load_challenges_from(qe.clone());
 
     let mut num_vars = sumcheck_context.combiner.borrow().variable_count();
+    println!("    sumcheck num_vars: {}, hypercube_size: {}", num_vars, 1u64 << (num_vars - 1));
 
     // Collect evaluation points during sumcheck
     let mut evaluation_points: Vec<RingElement> = vec![];
 
     let mut polys: Vec<Polynomial<QuadraticExtension>> = vec![];
+    let t_loop = std::time::Instant::now();
+    let mut time_poly = 0;
+    let mut time_eval = 0;
     while num_vars > 0 {
         num_vars -= 1;
 
+        let t1 = std::time::Instant::now();
         let mut poly_over_field = Polynomial::<QuadraticExtension>::new(0);
 
         sumcheck_context
             .field_combiner
             .borrow_mut()
             .univariate_polynomial_into(&mut poly_over_field);
+        time_poly += t1.elapsed().as_millis();
 
         hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
 
@@ -330,10 +338,13 @@ pub fn sumcheck(
 
         evaluation_points.push(r.clone());
 
+        let t2 = std::time::Instant::now();
         sumcheck_context.partial_evaluate_all(&r);
+        time_eval += t2.elapsed().as_millis();
 
         polys.push(poly_over_field);
     }
+    println!("    sumcheck loop: {} ms (poly: {} ms, eval: {} ms)", t_loop.elapsed().as_millis(), time_poly, time_eval);
 
     // final round
     assert_eq!(sumcheck_context.field_combiner.borrow().variable_count(), 0);

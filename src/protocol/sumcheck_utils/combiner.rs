@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::cell::RefCell;
 
 use crate::{
     common::{
@@ -13,30 +13,30 @@ use crate::{
         sumcheck,
         sumcheck_utils::{
             common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
+            elephant_cell::ElephantCell,
             hypercube_point::HypercubePoint,
             linear::LinearSumcheck,
-            polynomial::Polynomial,
+            polynomial::{Polynomial, add_poly_in_place},
         },
     },
 };
 
 pub struct Combiner<E: SumcheckElement = RingElement> {
-    sumchecks: Vec<Rc<RefCell<dyn HighOrderSumcheckData<Element = E>>>>,
-    challenges: Vec<E>, // for now let's batch in ring elements
+    sumchecks: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = E>>>,
+    challenges: Vec<E>,
     temp_poly: RefCell<Polynomial<E>>,
     scratch_poly: RefCell<Polynomial<E>>,
 }
 
 impl<E: SumcheckElement> Combiner<E> {
     pub fn new(
-        sumchecks: Vec<Rc<RefCell<dyn HighOrderSumcheckData<Element = E>>>>,
-        // challenges: Vec<E>,
+        sumchecks: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = E>>>,
     ) -> Self {
         let sumchecks_len = sumchecks.len();
         // assert all variables counts are the same
-        let var_count = sumchecks[0].borrow().variable_count();
+        let var_count = sumchecks[0].get_ref().variable_count();
         for sumcheck in &sumchecks {
-            assert_eq!(sumcheck.borrow().variable_count(), var_count);
+            assert_eq!(sumcheck.get_ref().variable_count(), var_count);
         }
         Self {
             sumchecks,
@@ -66,7 +66,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
     fn max_num_polynomial_coefficients(&self) -> usize {
         let mut max_coeffs = 0;
         for sumcheck in &self.sumchecks {
-            let sumcheck_borrowed = sumcheck.borrow();
+            let sumcheck_borrowed = sumcheck.get_ref();
             let coeffs = sumcheck_borrowed.max_num_polynomial_coefficients();
             if coeffs > max_coeffs {
                 max_coeffs = coeffs;
@@ -76,14 +76,15 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
     }
 
     fn variable_count(&self) -> usize {
-        self.sumchecks[0].borrow().variable_count()
+        self.sumchecks[0].get_ref().variable_count()
     }
 
     fn get_scratch_poly(&self) -> &RefCell<super::polynomial::Polynomial<E>> {
         &self.scratch_poly
     }
 
-    fn univariate_polynomial_at_point_into(
+    #[inline]
+   fn univariate_polynomial_at_point_into(
         &self,
         point: HypercubePoint, // this is just the usize so we pass it by value
         polynomial: &mut Polynomial<E>,
@@ -117,7 +118,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
                 temp_poly.coefficients[j] *= challenge;
             }
             // add to polynomial
-            super::polynomial::add_poly_in_place(polynomial, &temp_poly);
+            add_poly_in_place(polynomial, &temp_poly);
         }
     }
 
@@ -133,7 +134,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
         let nof_sumchecks = self.sumchecks.len();
         for i in 0..nof_sumchecks {
             let sumcheck = &self.sumchecks[i];
-            let mut term = sumcheck.borrow().final_evaluations_test_only().clone();
+            let mut term = sumcheck.get_ref().final_evaluations_test_only().clone();
             term *= &self.challenges[i];
             result += &term;
         }
@@ -182,10 +183,10 @@ fn test_combiner() {
     let mut sumcheck3 = LinearSumcheck::new(data3.len());
     sumcheck3.load_from(&data3);
 
-    let sumcheck0_ref = Rc::new(RefCell::new(sumcheck0));
-    let sumcheck1_ref = Rc::new(RefCell::new(sumcheck1));
-    let sumcheck2_ref = Rc::new(RefCell::new(sumcheck2));
-    let sumcheck3_ref = Rc::new(RefCell::new(sumcheck3));
+    let sumcheck0_ref = ElephantCell::new(sumcheck0);
+    let sumcheck1_ref = ElephantCell::new(sumcheck1);
+    let sumcheck2_ref = ElephantCell::new(sumcheck2);
+    let sumcheck3_ref = ElephantCell::new(sumcheck3);
 
     let mut combiner = Combiner::new(vec![
         sumcheck0_ref.clone(),
@@ -248,19 +249,19 @@ fn test_combiner() {
 
     let mut final_eval = RingElement::zero(Representation::IncompleteNTT);
 
-    let mut term = sumcheck0_ref.borrow().final_evaluations().clone();
+    let mut term = sumcheck0_ref.get_ref().final_evaluations().clone();
     term *= &combiner.challenges[0];
     final_eval += &term;
 
-    term = sumcheck1_ref.borrow().final_evaluations().clone();
+    term = sumcheck1_ref.get_ref().final_evaluations().clone();
     term *= &combiner.challenges[1];
     final_eval += &term;
 
-    term = sumcheck2_ref.borrow().final_evaluations().clone();
+    term = sumcheck2_ref.get_ref().final_evaluations().clone();
     term *= &combiner.challenges[2];
     final_eval += &term;
 
-    term = sumcheck3_ref.borrow().final_evaluations().clone();
+    term = sumcheck3_ref.get_ref().final_evaluations().clone();
     term *= &combiner.challenges[3];
     final_eval += &term;
 
@@ -269,14 +270,14 @@ fn test_combiner() {
 
 /// Evaluation-only version of Combiner that evaluates a linear combination of sumchecks at a point.
 pub struct CombinerEvaluation<E: SumcheckElement = RingElement> {
-    evaluations: Vec<Rc<RefCell<dyn EvaluationSumcheckData<Element = E>>>>,
+    evaluations: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = E>>>,
     challenges: Vec<E>,
     result: E,
     scratch: E,
 }
 
 impl<E: SumcheckElement> CombinerEvaluation<E> {
-    pub fn new(evaluations: Vec<Rc<RefCell<dyn EvaluationSumcheckData<Element = E>>>>) -> Self {
+    pub fn new(evaluations: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = E>>>) -> Self {
         let evaluations_len = evaluations.len();
         CombinerEvaluation {
             evaluations,
@@ -339,11 +340,11 @@ fn test_combiner_evaluation() {
 
     let mut eval0_impl = BasicEvaluationLinearSumcheck::new(data0.len());
     eval0_impl.load_from(&data0);
-    let eval0 = Rc::new(RefCell::new(eval0_impl));
+    let eval0: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> = ElephantCell::new(eval0_impl);
 
     let mut eval1_impl = BasicEvaluationLinearSumcheck::new(data1.len());
     eval1_impl.load_from(&data1);
-    let eval1 = Rc::new(RefCell::new(eval1_impl));
+    let eval1: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> = ElephantCell::new(eval1_impl);
 
     let challenges = vec![
         RingElement::constant(3, Representation::IncompleteNTT),
@@ -359,9 +360,9 @@ fn test_combiner_evaluation() {
     ];
 
     // Create reference using the folding implementation
-    let sumcheck0 = Rc::new(RefCell::new(LinearSumcheck::new(data0.len())));
+    let sumcheck0 = ElephantCell::new(LinearSumcheck::new(data0.len()));
     sumcheck0.borrow_mut().load_from(&data0);
-    let sumcheck1 = Rc::new(RefCell::new(LinearSumcheck::new(data1.len())));
+    let sumcheck1 = ElephantCell::new(LinearSumcheck::new(data1.len()));
     sumcheck1.borrow_mut().load_from(&data1);
 
     for r in &point {
@@ -369,9 +370,9 @@ fn test_combiner_evaluation() {
         sumcheck1.borrow_mut().partial_evaluate(r);
     }
 
-    let mut expected = sumcheck0.borrow().final_evaluations().clone();
+    let mut expected = sumcheck0.get_ref().final_evaluations().clone();
     expected *= &challenges[0];
-    let mut term = sumcheck1.borrow().final_evaluations().clone();
+    let mut term = sumcheck1.get_ref().final_evaluations().clone();
     term *= &challenges[1];
     expected += &term;
 

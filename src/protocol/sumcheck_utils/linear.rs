@@ -15,6 +15,7 @@ use crate::{
     protocol::{
         sumcheck,
         sumcheck_utils::{
+            elephant_cell::ElephantCell,
             common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
             hypercube_point::HypercubePoint,
             polynomial::Polynomial,
@@ -87,6 +88,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
         2
     }
 
+    #[inline]
     fn constant_univariate_polynomial_at_point_available_by_ref(
         &self,
         point: HypercubePoint,
@@ -103,6 +105,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
         None
     }
 
+    #[inline]
     fn univariate_polynomial_at_point_into(
         &self,
         point: HypercubePoint,
@@ -280,14 +283,14 @@ impl<E: SumcheckElement> EvaluationSumcheckData for BasicEvaluationLinearSumchec
 }
 
 pub struct RingToFieldWrapperEvaluation {
-    field_evaluation: Rc<RefCell<BasicEvaluationLinearSumcheck<QuadraticExtension>>>,
+    field_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<QuadraticExtension>>,
     result: RingElement,
     evaluated: bool,
 }
 
 impl RingToFieldWrapperEvaluation {
     pub fn new(
-        field_evaluation: Rc<RefCell<BasicEvaluationLinearSumcheck<QuadraticExtension>>>,
+        field_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<QuadraticExtension>>,
     ) -> Self {
         RingToFieldWrapperEvaluation {
             field_evaluation,

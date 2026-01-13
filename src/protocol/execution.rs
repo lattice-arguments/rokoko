@@ -52,9 +52,13 @@ pub fn prover_round(
     let start = std::time::Instant::now();
     hash_wrapper.update_with_ring_element_slice(&rc_commitment.most_inner_commitment());
 
+    let t0 = std::time::Instant::now();
     let opening = open_at(&witness, &evaluation_points_inner, &evaluation_points_outer);
+    println!("  open_at: {} ms", t0.elapsed().as_millis());
 
+    let t1 = std::time::Instant::now();
     let rc_opening = recursive_commit(crs, &CONFIG.opening_recursion, &opening.rhs.data);
+    println!("  rc_opening: {} ms", t1.elapsed().as_millis());
 
     hash_wrapper.update_with_ring_element_slice(&rc_opening.most_inner_commitment());
 
@@ -62,10 +66,14 @@ pub fn prover_round(
 
     projection_matrix.sample(&mut hash_wrapper);
 
+    let t2 = std::time::Instant::now();
     let projection_image = project(&witness, &projection_matrix);
+    println!("  project: {} ms", t2.elapsed().as_millis());
 
+    let t3 = std::time::Instant::now();
     let rc_projection_image =
         recursive_commit(&crs, &CONFIG.projection_recursion, &projection_image.data);
+    println!("  rc_projection: {} ms", t3.elapsed().as_millis());
 
     hash_wrapper.update_with_ring_element_slice(&rc_projection_image.most_inner_commitment());
 
@@ -73,15 +81,19 @@ pub fn prover_round(
 
     hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut fold_challenge);
 
+    let t4 = std::time::Instant::now();
     let folded_witness = fold(&witness, &fold_challenge);
+    println!("  fold: {} ms", t4.elapsed().as_millis());
 
     let mut next_round_data = new_vec_zero_preallocated(CONFIG.composed_witness_length);
 
+    let t5 = std::time::Instant::now();
     let folded_witness_decomposed = decompose(
         &folded_witness.data,
         CONFIG.witness_decomposition_base_log as u64,
         CONFIG.witness_decomposition_chunks,
     );
+    println!("  decompose: {} ms", t5.elapsed().as_millis());
 
     // TODO: can we avoid those copies?
     paste_by_prefix(
@@ -120,6 +132,7 @@ pub fn prover_round(
         "norm too large, aborting"
     );
 
+    let t6 = std::time::Instant::now();
     let (claim_over_witness, claim_over_witness_conjugate, norm_claim, sumcheck_transcript) =
         sumcheck(
             &CONFIG,
@@ -130,6 +143,7 @@ pub fn prover_round(
             sumcheck_context,
             &mut hash_wrapper,
         );
+    println!("  sumcheck: {} ms", t6.elapsed().as_millis());
 
     assert!(
         ell_2_norm * ell_2_norm < (MOD_Q as f64 / 2f64),

@@ -61,6 +61,7 @@ impl<E: SumcheckElement> Polynomial<E> {
 }
 
 /// Multiply two polynomials and store the result in `result`.
+#[inline]
 pub fn mul_poly_into<E: SumcheckElement>(
     result: &mut Polynomial<E>,
     poly_0: &Polynomial<E>,
@@ -91,6 +92,7 @@ pub fn add_poly_into(result: &mut Polynomial, poly_0: &Polynomial, poly_1: &Poly
     result.num_coefficients = max(poly_0.num_coefficients, poly_1.num_coefficients);
 }
 
+#[inline]
 /// Add `poly` into `result` in place.
 pub fn add_poly_in_place<E: SumcheckElement>(result: &mut Polynomial<E>, poly: &Polynomial<E>) {
     for i in 0..poly.num_coefficients {
@@ -100,6 +102,7 @@ pub fn add_poly_in_place<E: SumcheckElement>(result: &mut Polynomial<E>, poly: &
     result.num_coefficients = max(result.num_coefficients, poly.num_coefficients);
 }
 
+#[inline]
 /// Subtract `poly` from `result` in place.
 pub fn sub_poly_in_place<E: SumcheckElement>(result: &mut Polynomial<E>, poly: &Polynomial<E>) {
     for i in 0..poly.num_coefficients {

@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::cell::RefCell;
 
 use crate::{
     common::{
@@ -7,6 +7,7 @@ use crate::{
     },
     protocol::sumcheck_utils::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
+        elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
         polynomial::{mul_poly_into, Polynomial},
     },
@@ -22,8 +23,8 @@ use crate::{
 /// Each inner sumcheck is evaluated at the same hypercube point and the resulting
 /// univariate polynomials are multiplied together.
 pub struct ProductSumcheck<E: SumcheckElement = RingElement> {
-    pub lhs_sumcheck: Rc<RefCell<dyn HighOrderSumcheckData<Element = E>>>, // interior mutability to share between protocols
-    pub rhs_sumcheck: Rc<RefCell<dyn HighOrderSumcheckData<Element = E>>>,
+    pub lhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
+    pub rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
 
     lhs_eval_poly: RefCell<Polynomial<E>>,
     rhs_eval_poly: RefCell<Polynomial<E>>,
@@ -32,12 +33,12 @@ pub struct ProductSumcheck<E: SumcheckElement = RingElement> {
 
 impl<E: SumcheckElement> ProductSumcheck<E> {
     pub fn new(
-        lhs_sumcheck: Rc<RefCell<dyn HighOrderSumcheckData<Element = E>>>,
-        rhs_sumcheck: Rc<RefCell<dyn HighOrderSumcheckData<Element = E>>>,
+        lhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
+        rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
     ) -> ProductSumcheck<E> {
         assert_eq!(
-            lhs_sumcheck.borrow().variable_count(),
-            rhs_sumcheck.borrow().variable_count(),
+            lhs_sumcheck.get_ref().variable_count(),
+            rhs_sumcheck.get_ref().variable_count(),
             "Inner product sumcheck: both sumchecks must have the same data length"
         );
 
@@ -58,25 +59,27 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
         &self.scratch_poly
     }
     fn max_num_polynomial_coefficients(&self) -> usize {
-        self.lhs_sumcheck.borrow().max_num_polynomial_coefficients()
-            + self.rhs_sumcheck.borrow().max_num_polynomial_coefficients()
+        self.lhs_sumcheck.get_ref().max_num_polynomial_coefficients()
+            + self.rhs_sumcheck.get_ref().max_num_polynomial_coefficients()
             - 1
     }
 
     fn variable_count(&self) -> usize {
-        self.lhs_sumcheck.borrow().variable_count()
+        self.lhs_sumcheck.get_ref().variable_count()
     }
 
+    #[inline]
     fn is_univariate_polynomial_zero_at_point(&self, point: HypercubePoint) -> bool {
         self.lhs_sumcheck
-            .borrow()
+            .get_ref()
             .is_univariate_polynomial_zero_at_point(point)
             || self
                 .rhs_sumcheck
-                .borrow()
+                .get_ref()
                 .is_univariate_polynomial_zero_at_point(point)
     }
 
+    #[inline]
     fn univariate_polynomial_at_point_into(
         &self,
         point: HypercubePoint,
@@ -90,11 +93,11 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
         let mut rhs_eval_poly = self.rhs_eval_poly.borrow_mut();
 
         self.lhs_sumcheck
-            .borrow()
+            .get_ref()
             .univariate_polynomial_at_point_into(point, &mut lhs_eval_poly);
 
         self.rhs_sumcheck
-            .borrow()
+            .get_ref()
             .univariate_polynomial_at_point_into(point, &mut rhs_eval_poly);
 
         mul_poly_into(polynomial, &lhs_eval_poly, &rhs_eval_poly);
@@ -103,10 +106,10 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
     fn final_evaluations_test_only(&self) -> Self::Element {
         let mut result = self
             .lhs_sumcheck
-            .borrow()
+            .get_ref()
             .final_evaluations_test_only()
             .clone();
-        result *= &self.rhs_sumcheck.borrow().final_evaluations_test_only();
+        result *= &self.rhs_sumcheck.get_ref().final_evaluations_test_only();
         result
     }
 }
@@ -135,9 +138,9 @@ fn test_inner_product_sumcheck() {
         RingElement::constant(16, Representation::IncompleteNTT),
     ];
 
-    let sumcheck_0 = Rc::new(RefCell::new(LinearSumcheck::new(lhs_data.len())));
+    let sumcheck_0 = ElephantCell::new(LinearSumcheck::new(lhs_data.len()));
     sumcheck_0.borrow_mut().load_from(&lhs_data);
-    let sumcheck_1 = Rc::new(RefCell::new(LinearSumcheck::new(rhs_data.len())));
+    let sumcheck_1 = ElephantCell::new(LinearSumcheck::new(rhs_data.len()));
     sumcheck_1.borrow_mut().load_from(&rhs_data);
 
     // Build a product sumcheck that should track the inner product of lhs_data and rhs_data.
@@ -198,13 +201,13 @@ fn test_inner_product_sumcheck() {
     sumcheck_1.borrow_mut().partial_evaluate(&r2);
 
     assert_eq!(
-        sumcheck_0.borrow().final_evaluations() * sumcheck_1.borrow().final_evaluations(),
+        sumcheck_0.get_ref().final_evaluations() * sumcheck_1.get_ref().final_evaluations(),
         claim,
     );
 
     // Explicit multilinear evaluations of each folded claim for documentation.
     assert_eq!(
-        sumcheck_0.borrow().final_evaluations(),
+        sumcheck_0.get_ref().final_evaluations(),
         &RingElement::constant(
             (MOD_Q as i64
                 + (1 - 524) * (1 - 1337) * (1 - 42) * 1
@@ -220,7 +223,7 @@ fn test_inner_product_sumcheck() {
     );
 
     assert_eq!(
-        sumcheck_1.borrow().final_evaluations(),
+        sumcheck_1.get_ref().final_evaluations(),
         &RingElement::constant(
             (MOD_Q as i64
                 + (1 - 524) * (1 - 1337) * (1 - 42) * 9
@@ -274,7 +277,7 @@ fn test_self_inner_product_sumcheck() {
         RingElement::constant(8, Representation::IncompleteNTT),
     ];
 
-    let sumcheck = Rc::new(RefCell::new(LinearSumcheck::new(data.len())));
+    let sumcheck = ElephantCell::new(LinearSumcheck::new(data.len()));
     sumcheck.borrow_mut().load_from(&data);
 
     let inner_product_sumcheck = ProductSumcheck::new(sumcheck.clone(), sumcheck.clone());
@@ -323,16 +326,16 @@ fn test_three_way_sumcheck() {
     let mut sumcheck_2 = LinearSumcheck::new(data2.len());
     sumcheck_2.load_from(&data2);
 
-    let sumcheck_0_ref = Rc::new(RefCell::new(sumcheck_0));
-    let sumcheck_1_ref = Rc::new(RefCell::new(sumcheck_1));
-    let sumcheck_2_ref = Rc::new(RefCell::new(sumcheck_2));
+    let sumcheck_0_ref = ElephantCell::new(sumcheck_0);
+    let sumcheck_1_ref = ElephantCell::new(sumcheck_1);
+    let sumcheck_2_ref = ElephantCell::new(sumcheck_2);
 
     // Compose two nested product sumchecks to validate a three-way product.
 
     let inner_product_sumcheck_01 =
         ProductSumcheck::new(sumcheck_0_ref.clone(), sumcheck_1_ref.clone());
 
-    let inner_product_sumcheck_01_ref = Rc::new(RefCell::new(inner_product_sumcheck_01));
+    let inner_product_sumcheck_01_ref = ElephantCell::new(inner_product_sumcheck_01);
 
     let inner_product_sumcheck_012 = ProductSumcheck::new(
         inner_product_sumcheck_01_ref.clone(),
@@ -402,33 +405,33 @@ fn test_product_of_linear_sumchecks_over_disjoint_variables() {
         RingElement::constant(12, Representation::IncompleteNTT),
     ];
 
-    let sumcheck_1 = Rc::new(RefCell::new(
+    let sumcheck_1 = ElephantCell::new(
         LinearSumcheck::new_with_prefixed_sufixed_data(data1.len(), 0, 4),
-    ));
+    );
     sumcheck_1.borrow_mut().load_from(&data1);
 
     // 1 x 16, 2 x 16, 3 x 16, 4 x 16, 1 x 16, 2 x 16, 3 x 16, 4 x 16,
 
-    let sumcheck_2 = Rc::new(RefCell::new(
+    let sumcheck_2 = ElephantCell::new(
         LinearSumcheck::new_with_prefixed_sufixed_data(data2.len(), 2, 2),
-    ));
+    );
 
     // (5 x 4, 6 x 4, 7 x 4, 8 x 4, 5 x 4, 6 x 4, 7 x 4, 8 x 4) x 4
 
     sumcheck_2.borrow_mut().load_from(&data2);
-    let sumcheck_3 = Rc::new(RefCell::new(
+    let sumcheck_3 = ElephantCell::new(
         LinearSumcheck::new_with_prefixed_sufixed_data(data3.len(), 4, 0),
-    ));
+    );
     sumcheck_3.borrow_mut().load_from(&data3);
 
-    let product_12 = Rc::new(RefCell::new(ProductSumcheck::new(
+    let product_12 = ElephantCell::new(ProductSumcheck::new(
         sumcheck_1.clone(),
         sumcheck_2.clone(),
-    )));
-    let product_123 = Rc::new(RefCell::new(ProductSumcheck::new(
+    ));
+    let product_123 = ElephantCell::new(ProductSumcheck::new(
         product_12.clone(),
         sumcheck_3.clone(),
-    )));
+    ));
     let mut univariate_poly = Polynomial::new(0);
 
     let mut claim = RingElement::constant(
@@ -438,7 +441,7 @@ fn test_product_of_linear_sumchecks_over_disjoint_variables() {
 
     for _ in 0..5 {
         product_123
-            .borrow()
+            .get_ref()
             .univariate_polynomial_into(&mut univariate_poly);
         assert_eq!(
             &univariate_poly.at_zero() + &univariate_poly.at_one(),
@@ -457,7 +460,7 @@ fn test_product_of_linear_sumchecks_over_disjoint_variables() {
     }
 
     product_123
-        .borrow()
+        .get_ref()
         .univariate_polynomial_into(&mut univariate_poly);
     assert_eq!(
         &univariate_poly.at_zero() + &univariate_poly.at_one(),
@@ -469,15 +472,15 @@ fn test_product_of_linear_sumchecks_over_disjoint_variables() {
 
 /// Evaluation-only version of ProductSumcheck that evaluates the product of two sumchecks at a point.
 pub struct ProductSumcheckEvaluation {
-    lhs_evaluation: Rc<RefCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
-    rhs_evaluation: Rc<RefCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
+    lhs_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
+    rhs_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
     result: RingElement,
 }
 
 impl ProductSumcheckEvaluation {
     pub fn new(
-        lhs_evaluation: Rc<RefCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
-        rhs_evaluation: Rc<RefCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
+        lhs_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
+        rhs_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
     ) -> Self {
         ProductSumcheckEvaluation {
             lhs_evaluation,
@@ -519,11 +522,11 @@ fn test_product_evaluation() {
 
     let mut lhs_eval_impl = BasicEvaluationLinearSumcheck::new(lhs_data.len());
     lhs_eval_impl.load_from(&lhs_data);
-    let lhs_eval = Rc::new(RefCell::new(lhs_eval_impl));
+    let lhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> = ElephantCell::new(lhs_eval_impl);
 
     let mut rhs_eval_impl = BasicEvaluationLinearSumcheck::new(rhs_data.len());
     rhs_eval_impl.load_from(&rhs_data);
-    let rhs_eval = Rc::new(RefCell::new(rhs_eval_impl));
+    let rhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> = ElephantCell::new(rhs_eval_impl);
 
     let mut product_eval = ProductSumcheckEvaluation::new(lhs_eval, rhs_eval);
 
@@ -546,9 +549,9 @@ fn test_product_evaluation() {
         RingElement::constant(8, Representation::IncompleteNTT),
     ];
 
-    let sumcheck_0 = Rc::new(RefCell::new(LinearSumcheck::new(ref_lhs_data.len())));
+    let sumcheck_0 = ElephantCell::new(LinearSumcheck::new(ref_lhs_data.len()));
     sumcheck_0.borrow_mut().load_from(&ref_lhs_data);
-    let sumcheck_1 = Rc::new(RefCell::new(LinearSumcheck::new(ref_rhs_data.len())));
+    let sumcheck_1 = ElephantCell::new(LinearSumcheck::new(ref_rhs_data.len()));
     sumcheck_1.borrow_mut().load_from(&ref_rhs_data);
 
     for r in &point {
@@ -557,7 +560,7 @@ fn test_product_evaluation() {
     }
 
     let expected =
-        sumcheck_0.borrow().final_evaluations() * sumcheck_1.borrow().final_evaluations();
+        sumcheck_0.get_ref().final_evaluations() * sumcheck_1.get_ref().final_evaluations();
 
     assert_eq!(product_eval.evaluate(&point), &expected);
 }

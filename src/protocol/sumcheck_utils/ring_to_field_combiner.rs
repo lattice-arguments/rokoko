@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc};
+use std::cell::RefCell;
 
 use crate::{
     common::{
@@ -8,20 +8,21 @@ use crate::{
     },
     protocol::sumcheck_utils::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
+        elephant_cell::ElephantCell,
         linear::LinearSumcheck,
         polynomial::Polynomial,
     },
 };
 
 pub struct RingToFieldCombiner {
-    sumcheck: Rc<RefCell<dyn HighOrderSumcheckData<Element = RingElement>>>,
+    sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
     challenge_vec: [QuadraticExtension; HALF_DEGREE],
     temp_poly: RefCell<Polynomial<RingElement>>,
     scratch_poly: RefCell<Polynomial<QuadraticExtension>>,
 }
 
 impl RingToFieldCombiner {
-    pub fn new(sumcheck: Rc<RefCell<dyn HighOrderSumcheckData<Element = RingElement>>>) -> Self {
+    pub fn new(sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>) -> Self {
         Self {
             sumcheck,
             challenge_vec: [QuadraticExtension::zero(); HALF_DEGREE],
@@ -39,11 +40,11 @@ impl HighOrderSumcheckData for RingToFieldCombiner {
     type Element = QuadraticExtension;
 
     fn max_num_polynomial_coefficients(&self) -> usize {
-        self.sumcheck.borrow().max_num_polynomial_coefficients()
+        self.sumcheck.get_ref().max_num_polynomial_coefficients()
     }
 
     fn variable_count(&self) -> usize {
-        self.sumcheck.borrow().variable_count()
+        self.sumcheck.get_ref().variable_count()
     }
 
     fn get_scratch_poly(&self) -> &RefCell<Polynomial<Self::Element>> {
@@ -57,7 +58,7 @@ impl HighOrderSumcheckData for RingToFieldCombiner {
     ) {
         let temp = &mut self.temp_poly.borrow_mut();
         self.sumcheck
-            .borrow()
+            .get_ref()
             .univariate_polynomial_at_point_into(point, temp);
 
         polynomial.set_zero();
@@ -82,7 +83,7 @@ impl HighOrderSumcheckData for RingToFieldCombiner {
     }
     fn final_evaluations_test_only(&self) -> Self::Element {
         let mut result = QuadraticExtension::zero();
-        let final_ring_eval = self.sumcheck.borrow().final_evaluations_test_only();
+        let final_ring_eval = self.sumcheck.get_ref().final_evaluations_test_only();
         let mut temp = final_ring_eval.clone();
         temp.from_incomplete_ntt_to_homogenized_field_extensions();
         let mut coeff = temp.split_into_quadratic_extensions();
@@ -108,7 +109,7 @@ fn test_ring_to_field_combiner() {
         RingElement::constant(8, Representation::IncompleteNTT),
     ];
 
-    let sumcheck = Rc::new(RefCell::new(LinearSumcheck::<RingElement>::new(data.len())));
+    let sumcheck = ElephantCell::new(LinearSumcheck::<RingElement>::new(data.len()));
     sumcheck.borrow_mut().load_from(&data);
 
     let mut challenge_qe = vec![];
@@ -208,7 +209,7 @@ fn test_ring_to_field_combiner() {
 /// Note: This takes RingElement points but implements EvaluationSumcheckData<Element=QuadraticExtension>
 /// because it converts the ring evaluation to field extensions.
 pub struct RingToFieldCombinerEvaluation {
-    evaluation: Rc<RefCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
+    evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
     challenge_vec: [QuadraticExtension; HALF_DEGREE],
     result: QuadraticExtension,
     // Store the point converted to QuadraticExtension for trait compatibility
@@ -216,7 +217,7 @@ pub struct RingToFieldCombinerEvaluation {
 }
 
 impl RingToFieldCombinerEvaluation {
-    pub fn new(evaluation: Rc<RefCell<dyn EvaluationSumcheckData<Element = RingElement>>>) -> Self {
+    pub fn new(evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>) -> Self {
         RingToFieldCombinerEvaluation {
             evaluation,
             challenge_vec: [QuadraticExtension::zero(); HALF_DEGREE],
@@ -282,7 +283,7 @@ fn test_ring_to_field_combiner_evaluation() {
 
     let mut eval_impl = BasicEvaluationLinearSumcheck::new(data.len());
     eval_impl.load_from(&data);
-    let eval = Rc::new(RefCell::new(eval_impl));
+    let eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> = ElephantCell::new(eval_impl);
 
     let mut challenge_qe = [QuadraticExtension::zero(); HALF_DEGREE];
     for i in 0..HALF_DEGREE {
@@ -302,7 +303,7 @@ fn test_ring_to_field_combiner_evaluation() {
     ];
 
     // Create reference using the folding implementation
-    let sumcheck = Rc::new(RefCell::new(LinearSumcheck::<RingElement>::new(data.len())));
+    let sumcheck = ElephantCell::new(LinearSumcheck::<RingElement>::new(data.len()));
     sumcheck.borrow_mut().load_from(&data);
 
     for r in &point {

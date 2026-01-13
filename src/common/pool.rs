@@ -58,6 +58,7 @@ static ACCESS_TRACKER_QUAD: LazyLock<Mutex<HashMap<usize, usize>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Get a preallocated vector from the RingElement pool
+#[inline]
 pub fn get_preallocated_ring_element_vec(len: usize) -> Vec<RingElement> {
     // Track this access
     {
@@ -78,6 +79,7 @@ pub fn get_preallocated_ring_element_vec(len: usize) -> Vec<RingElement> {
 }
 
 /// Get a preallocated vector from the QuadraticExtension pool
+#[inline]
 pub fn get_preallocated_quad_vec(len: usize) -> Vec<QuadraticExtension> {
     // Track this access
     {

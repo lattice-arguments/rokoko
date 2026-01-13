@@ -1,11 +1,10 @@
-use std::{cell::RefCell, rc::Rc};
-
 use crate::{
     common::ring_arithmetic::RingElement,
     protocol::sumcheck_utils::{
         combiner::Combiner,
         common::{HighOrderSumcheckData, SumcheckBaseData},
         diff::DiffSumcheck,
+        elephant_cell::ElephantCell,
         linear::LinearSumcheck,
         product::ProductSumcheck,
         ring_to_field_combiner::RingToFieldCombiner,
@@ -29,26 +28,26 @@ use crate::{
 /// becomes a single method call, which reduces the risk of forgetting to
 /// advance some sub-check when modifying the protocol.
 pub struct SumcheckContext {
-    pub combined_witness_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
-    pub folded_witness_selector_sumcheck: Rc<RefCell<SelectorEq<RingElement>>>,
-    pub folded_witness_combiner_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
-    pub witness_combiner_constant_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
-    pub folding_challenges_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
-    pub basic_commitment_combiner_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
-    pub basic_commitment_combiner_constant_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
-    pub commitment_key_rows_sumcheck: Vec<Rc<RefCell<LinearSumcheck<RingElement>>>>,
-    pub opening_combiner_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
-    pub opening_combiner_constant_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
-    pub projection_combiner_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
-    pub projection_combiner_constant_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
+    pub combined_witness_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub folded_witness_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
+    pub folded_witness_combiner_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub witness_combiner_constant_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub folding_challenges_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub basic_commitment_combiner_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub basic_commitment_combiner_constant_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub commitment_key_rows_sumcheck: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
+    pub opening_combiner_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub opening_combiner_constant_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub projection_combiner_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub projection_combiner_constant_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub type0sumchecks: Vec<Type0SumcheckContext>,
     pub type1sumchecks: Vec<Type1SumcheckContext>,
     pub type2sumchecks: Vec<Type2SumcheckContext>,
     pub type3sumcheck: Type3SumcheckContext,
     pub type4sumchecks: [Type4SumcheckContext; 3],
     pub type5sumcheck: Type5SumcheckContext,
-    pub combiner: Rc<RefCell<Combiner<RingElement>>>,
-    pub field_combiner: Rc<RefCell<RingToFieldCombiner>>,
+    pub combiner: ElephantCell<Combiner<RingElement>>,
+    pub field_combiner: ElephantCell<RingToFieldCombiner>,
 }
 
 /// Encapsulates the bookkeeping required to fold every tracked sumcheck with
@@ -179,8 +178,8 @@ impl SumcheckContext {
 ///   - `output`: The final DiffSumcheck that the verifier will check. This is the composition
 ///     of multiple product and difference sumchecks that implement the full constraint.
 pub struct Type0SumcheckContext {
-    pub basic_commitment_row_sumcheck: Rc<RefCell<SelectorEq<RingElement>>>,
-    pub output: Rc<RefCell<DiffSumcheck<RingElement>>>,
+    pub basic_commitment_row_sumcheck: ElephantCell<SelectorEq<RingElement>>,
+    pub output: ElephantCell<DiffSumcheck<RingElement>>,
 }
 
 /// Type1 sumcheck context: Inner evaluation point consistency for openings.
@@ -220,9 +219,9 @@ pub struct Type0SumcheckContext {
 ///     the combined witness. Each opening gets its own prefix.
 ///   - `output`: The final DiffSumcheck that the verifier checks.
 pub struct Type1SumcheckContext {
-    pub inner_evaluation_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
-    pub opening_selector_sumcheck: Rc<RefCell<SelectorEq<RingElement>>>,
-    pub output: Rc<RefCell<DiffSumcheck<RingElement>>>,
+    pub inner_evaluation_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub opening_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
+    pub output: ElephantCell<DiffSumcheck<RingElement>>,
 }
 
 /// Type2 sumcheck context: Outer evaluation point consistency for openings.
@@ -262,8 +261,8 @@ pub struct Type1SumcheckContext {
 ///   - `output`: The final ProductSumcheck that the verifier checks. The verifier will
 ///     compute the sum of this product and compare it to the claimed_evaluation.
 pub struct Type2SumcheckContext {
-    pub outer_evaluation_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
-    pub output: Rc<RefCell<ProductSumcheck<RingElement>>>,
+    pub outer_evaluation_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub output: ElephantCell<ProductSumcheck<RingElement>>,
 }
 
 /// Type3 sumcheck context: Projection image consistency constraint.
@@ -310,12 +309,12 @@ pub struct Type2SumcheckContext {
 ///     from the combined witness.
 ///   - `output`: The final DiffSumcheck that the verifier checks.
 pub struct Type3SumcheckContext {
-    pub lhs_flatter_0_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
-    pub lhs_flatter_1_times_matrix_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
-    pub rhs_fold_challenge_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
-    pub rhs_projection_flatter_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
-    pub projection_selector_sumcheck: Rc<RefCell<SelectorEq<RingElement>>>,
-    pub output: Rc<RefCell<DiffSumcheck<RingElement>>>,
+    pub lhs_flatter_0_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub lhs_flatter_1_times_matrix_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub rhs_fold_challenge_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub rhs_projection_flatter_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub projection_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
+    pub output: ElephantCell<DiffSumcheck<RingElement>>,
 }
 
 /// Type4 layer sumcheck context: One layer in a recursive commitment tree.
@@ -387,15 +386,15 @@ pub struct Type3SumcheckContext {
 /// while allowing for different constraint types (difference vs. product sumchecks), and
 /// from the sharing of sub-computations across multiple CK rows to minimize prover work.
 pub struct Type4LayerSumcheckContext {
-    pub selector_sumcheck: Rc<RefCell<SelectorEq<RingElement>>>,
-    pub child_selector_sumcheck: Option<Rc<RefCell<SelectorEq<RingElement>>>>,
-    pub combiner_sumcheck: Option<Rc<RefCell<LinearSumcheck<RingElement>>>>,
-    pub combiner_constant_sumcheck: Option<Rc<RefCell<LinearSumcheck<RingElement>>>>,
-    pub data_selected_sumcheck: Rc<RefCell<ProductSumcheck<RingElement>>>,
-    pub rhs_sumcheck: Rc<RefCell<dyn HighOrderSumcheckData<Element = RingElement>>>,
-    pub commitment_sumcheck: Option<Rc<RefCell<LinearSumcheck<RingElement>>>>,
-    pub ck_sumchecks: Vec<Rc<RefCell<LinearSumcheck<RingElement>>>>,
-    pub outputs: Vec<Rc<RefCell<DiffSumcheck<RingElement>>>>,
+    pub selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
+    pub child_selector_sumcheck: Option<ElephantCell<SelectorEq<RingElement>>>,
+    pub combiner_sumcheck: Option<ElephantCell<LinearSumcheck<RingElement>>>,
+    pub combiner_constant_sumcheck: Option<ElephantCell<LinearSumcheck<RingElement>>>,
+    pub data_selected_sumcheck: ElephantCell<ProductSumcheck<RingElement>>,
+    pub rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
+    pub commitment_sumcheck: Option<ElephantCell<LinearSumcheck<RingElement>>>,
+    pub ck_sumchecks: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
+    pub outputs: Vec<ElephantCell<DiffSumcheck<RingElement>>>,
 }
 
 /// Type4 output layer sumcheck context: The leaf layer in a recursive commitment tree.
@@ -419,9 +418,9 @@ pub struct Type4LayerSumcheckContext {
 /// - `outputs`: ProductSumchecks that compute `selector · (witness · CK_row)` for each row.
 ///   The verifier will check these against the public leaf commitments.
 pub struct Type4OutputLayerSumcheckContext {
-    pub selector_sumcheck: Rc<RefCell<SelectorEq<RingElement>>>,
-    pub ck_sumchecks: Vec<Rc<RefCell<LinearSumcheck<RingElement>>>>,
-    pub outputs: Vec<Rc<RefCell<ProductSumcheck<RingElement>>>>,
+    pub selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
+    pub ck_sumchecks: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
+    pub outputs: Vec<ElephantCell<ProductSumcheck<RingElement>>>,
 }
 
 /// Type4 sumcheck context: Complete recursive commitment verification structure.
@@ -464,8 +463,8 @@ pub struct Type4SumcheckContext {
 /// of both vectors over the boolean hypercube and verifies that their inner
 /// product equals the claimed norm value.
 pub struct Type5SumcheckContext {
-    pub conjugated_combined_witness: Rc<RefCell<LinearSumcheck<RingElement>>>,
-    pub output: Rc<RefCell<ProductSumcheck<RingElement>>>,
+    pub conjugated_combined_witness: ElephantCell<LinearSumcheck<RingElement>>,
+    pub output: ElephantCell<ProductSumcheck<RingElement>>,
 }
 
 fn partial_evaluate_type4(ctx: &mut Type4SumcheckContext, r: &RingElement) {

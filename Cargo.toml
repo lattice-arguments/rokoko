@@ -3,23 +3,33 @@ name = "cowboys-and-aliens"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# Enables zero-cost borrow checking by using UnsafeCell instead of RefCell
+# WARNING: Only safe if mutations never overlap with reads
+unsafe-sumcheck = []
+
 [dependencies]
 criterion = "0.7.0"
 num = "0.4.3"
 rand = "0.9.2"
 blake3 = "1.5.1"
 
-[profile.dev]
-opt-level = 3
-
 [profile.release]
 opt-level = 3
 debug = false
+lto = "fat"           # Full link-time optimization
+codegen-units = 1     # Better optimization at cost of compile time
+panic = "abort"       # Smaller binaries, slightly faster
+
+[profile.dev]
+opt-level = 3
 
 [profile.bench]
-opt-level = 3         # full optimizations (default)
-debug = false         # no debug symbols
+opt-level = 3
+debug = false
 overflow-checks = false
+lto = "fat"
+codegen-units = 1
 
 [[bench]]
 name = "bench"

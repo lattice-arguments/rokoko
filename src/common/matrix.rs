@@ -90,10 +90,12 @@ impl HorizontallyAlignedMatrix<RingElement> {
     }
 }
 
+#[inline]
 pub fn new_vec_zero_preallocated(count: usize) -> Vec<RingElement> {
     get_preallocated_ring_element_vec(count)
 }
 
+#[inline]
 pub fn new_vec_zero_field_preallocated(count: usize) -> Vec<QuadraticExtension> {
     get_preallocated_quad_vec(count)
 }

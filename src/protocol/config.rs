@@ -87,6 +87,7 @@ pub struct Config {
     pub next: Option<Box<Config>>, // for multiple rounds
 }
 
+#[inline]
 pub fn paste_by_prefix(dest: &mut Vec<RingElement>, src: &Vec<RingElement>, prefix: &Prefix) {
     assert_eq!(src.len(), 1 << dest.len().ilog2() as usize - prefix.length);
     // e.g. if dest.len() = 2048, prefix.length = 4, prefix.prefix = 9 (0b1001)
@@ -109,6 +110,7 @@ pub fn paste_recursive_commitment(
     }
 }
 
+#[inline]
 pub fn slice_by_prefix(src: &Vec<RingElement>, prefix: &Prefix) -> Vec<RingElement> {
     let start = prefix.prefix << (src.len().ilog2() as usize - prefix.length);
     let length = 1 << (src.len().ilog2() as usize - prefix.length);

@@ -10,6 +10,7 @@ use crate::common::{
     sumcheck_element::SumcheckElement,
 };
 
+#[inline]
 pub fn inner_product(a: &Vec<RingElement>, b: &Vec<RingElement>) -> RingElement {
     assert_eq!(a.len(), b.len());
     let mut result = RingElement::zero(Representation::IncompleteNTT);
@@ -21,6 +22,7 @@ pub fn inner_product(a: &Vec<RingElement>, b: &Vec<RingElement>) -> RingElement 
     result
 }
 
+#[inline]
 pub fn field_to_ring_element(fe: &QuadraticExtension) -> RingElement {
     let mut result = RingElement::zero(Representation::HomogenizedFieldExtensions);
     for i in 0..2 {
@@ -31,6 +33,7 @@ pub fn field_to_ring_element(fe: &QuadraticExtension) -> RingElement {
     result
 }
 
+#[inline]
 pub fn field_to_ring_element_into(mut r: &mut RingElement, fe: &QuadraticExtension) {
     for i in 0..2 {
         for j in 0..HALF_DEGREE {

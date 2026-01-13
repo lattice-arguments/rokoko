@@ -80,9 +80,6 @@ pub fn load_verifier_sumcheck_data(
         let (projection_flatter_0_structured, projection_flatter_1_structured) =
             split_projection_flatter(projection_matrix_flatter_structured);
 
-        // Load flatter_0 (block-level weights)
-        let projection_flatter_0_preprocessed =
-            PreprocessedRow::from_structured_row(&projection_flatter_0_structured);
 
         verifier_sumcheck_context
             .type3evaluation

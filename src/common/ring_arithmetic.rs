@@ -317,11 +317,9 @@ impl RingElement {
         }
     }
 
+    #[inline]
     pub fn set_zero(&mut self) {
-        // TODO: optimize with memset (or Rust's equivalent)
-        for i in 0..DEGREE {
-            self.v[i] = 0;
-        }
+        self.v.fill(0);
     }
 
     fn conjugate_in_place_ref(&mut self) {
@@ -343,6 +341,7 @@ impl RingElement {
         self.from_even_odd_coefficients_to_incomplete_ntt_representation();
     }
 
+    #[inline]
     pub fn set_from(&mut self, other: &RingElement) {
         self.v.copy_from_slice(&other.v);
         self.representation = other.representation;
@@ -418,6 +417,7 @@ impl RingElement {
         }
     }
 
+    #[inline]
     pub fn conjugate_into(&self, result: &mut RingElement) {
         assert_eq!(self.representation, Representation::IncompleteNTT);
         result.representation = self.representation;

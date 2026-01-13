@@ -1,5 +1,3 @@
-use std::{cell::RefCell, rc::Rc};
-
 use num::range;
 
 use crate::{
@@ -16,6 +14,7 @@ use crate::{
         commitment::Prefix,
         crs::CRS,
         sumcheck_utils::{
+            elephant_cell::ElephantCell,
             linear::LinearSumcheck, product::ProductSumcheck, selector_eq::SelectorEq,
         },
     },
@@ -38,8 +37,8 @@ pub(crate) fn composition_sumcheck(
     chunks: usize,
     total_vars: usize,
 ) -> (
-    Rc<RefCell<LinearSumcheck<RingElement>>>,
-    Rc<RefCell<LinearSumcheck<RingElement>>>,
+    ElephantCell<LinearSumcheck<RingElement>>,
+    ElephantCell<LinearSumcheck<RingElement>>,
 ) {
     let conmposition_basis = range(0, chunks)
         .map(|i| {
@@ -50,21 +49,21 @@ pub(crate) fn composition_sumcheck(
             )
         })
         .collect::<Vec<RingElement>>();
-    let combiner_sumcheck = Rc::new(RefCell::new(
+    let combiner_sumcheck = ElephantCell::new(
         LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
             conmposition_basis.len(),
             total_vars - conmposition_basis.len().ilog2() as usize,
             0,
         ),
-    ));
+    );
 
     combiner_sumcheck
         .borrow_mut()
         .load_from(&conmposition_basis);
 
-    let mut witness_combiner_constant_sumcheck = Rc::new(RefCell::new(
+    let witness_combiner_constant_sumcheck = ElephantCell::new(
         LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(1, total_vars, 0),
-    ));
+    );
 
     witness_combiner_constant_sumcheck
         .borrow_mut()
@@ -102,12 +101,12 @@ pub(crate) fn composition_sumcheck(
 pub(crate) fn sumcheck_from_prefix(
     prefix: &Prefix,
     total_vars: usize,
-) -> Rc<RefCell<SelectorEq<RingElement>>> {
-    Rc::new(RefCell::new(SelectorEq::<RingElement>::new(
+) -> ElephantCell<SelectorEq<RingElement>> {
+    ElephantCell::new(SelectorEq::<RingElement>::new(
         prefix.prefix,
         prefix.length,
         total_vars,
-    )))
+    ))
 }
 
 /// Loads a single row from the commitment key (CK) into a linear sumcheck gadget.
@@ -145,16 +144,16 @@ pub(crate) fn ck_sumcheck(
     wit_dim: usize,
     i: usize,
     sufix: usize,
-) -> Rc<RefCell<LinearSumcheck<RingElement>>> {
+) -> ElephantCell<LinearSumcheck<RingElement>> {
     let ck = crs.ck_for_wit_dim(wit_dim);
 
-    let mut sumcheck = Rc::new(RefCell::new(
+    let sumcheck = ElephantCell::new(
         LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
             wit_dim,
             total_vars - wit_dim.ilog2() as usize - sufix,
             sufix,
         ),
-    ));
+    );
 
     sumcheck.borrow_mut().load_from(&ck[i].preprocessed_row);
 

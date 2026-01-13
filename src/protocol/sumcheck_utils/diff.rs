@@ -1,7 +1,6 @@
 use std::{
     cell::RefCell,
     cmp::max,
-    rc::{Rc, Weak},
 };
 
 use crate::{
@@ -11,6 +10,7 @@ use crate::{
     },
     protocol::sumcheck_utils::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
+        elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
         polynomial::{add_poly_in_place, sub_poly_in_place, Polynomial},
         selector_eq::SelectorEq,
@@ -23,8 +23,8 @@ use crate::protocol::sumcheck_utils::{common::SumcheckBaseData, linear::LinearSu
 /// Sumcheck data that represents the difference between two other sumchecks.
 /// Useful for enforcing equality constraints between two multilinear extensions.
 pub struct DiffSumcheck<E: SumcheckElement = RingElement> {
-    pub lhs_sumcheck: Rc<RefCell<dyn HighOrderSumcheckData<Element = E>>>,
-    pub rhs_sumcheck: Rc<RefCell<dyn HighOrderSumcheckData<Element = E>>>,
+    pub lhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
+    pub rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
 
     lhs_eval_poly: RefCell<Polynomial<E>>,
     rhs_eval_poly: RefCell<Polynomial<E>>,
@@ -33,12 +33,12 @@ pub struct DiffSumcheck<E: SumcheckElement = RingElement> {
 
 impl<E: SumcheckElement> DiffSumcheck<E> {
     pub fn new(
-        lhs_sumcheck: Rc<RefCell<dyn HighOrderSumcheckData<Element = E>>>,
-        rhs_sumcheck: Rc<RefCell<dyn HighOrderSumcheckData<Element = E>>>,
+        lhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
+        rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
     ) -> DiffSumcheck<E> {
         assert_eq!(
-            lhs_sumcheck.borrow().variable_count(),
-            rhs_sumcheck.borrow().variable_count(),
+            lhs_sumcheck.get_ref().variable_count(),
+            rhs_sumcheck.get_ref().variable_count(),
             "Diff sumcheck: both sumchecks must have the same variable count"
         );
 
@@ -60,24 +60,26 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
     }
     fn max_num_polynomial_coefficients(&self) -> usize {
         max(
-            self.lhs_sumcheck.borrow().max_num_polynomial_coefficients(),
-            self.rhs_sumcheck.borrow().max_num_polynomial_coefficients(),
+            self.lhs_sumcheck.get_ref().max_num_polynomial_coefficients(),
+            self.rhs_sumcheck.get_ref().max_num_polynomial_coefficients(),
         )
     }
     fn variable_count(&self) -> usize {
-        self.lhs_sumcheck.borrow().variable_count()
+        self.lhs_sumcheck.get_ref().variable_count()
     }
 
+    #[inline]
     fn is_univariate_polynomial_zero_at_point(&self, point: HypercubePoint) -> bool {
         self.lhs_sumcheck
-            .borrow()
+            .get_ref()
             .is_univariate_polynomial_zero_at_point(point)
             && self
                 .rhs_sumcheck
-                .borrow()
+                .get_ref()
                 .is_univariate_polynomial_zero_at_point(point)
     }
 
+    #[inline]
     fn univariate_polynomial_at_point_into(
         &self,
         point: HypercubePoint,
@@ -89,11 +91,11 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
         let mut lhs_eval_poly = self.lhs_eval_poly.borrow_mut();
         let lhs_sumcheck = &self.lhs_sumcheck;
         if !lhs_sumcheck
-            .borrow()
+            .get_ref()
             .is_univariate_polynomial_zero_at_point(point)
         {
             lhs_sumcheck
-                .borrow()
+                .get_ref()
                 .univariate_polynomial_at_point_into(point, &mut lhs_eval_poly);
             add_poly_in_place(polynomial, &lhs_eval_poly);
         }
@@ -101,11 +103,11 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
         let mut rhs_eval_poly = self.rhs_eval_poly.borrow_mut();
         let rhs_sumcheck = &self.rhs_sumcheck;
         if !rhs_sumcheck
-            .borrow()
+            .get_ref()
             .is_univariate_polynomial_zero_at_point(point)
         {
             rhs_sumcheck
-                .borrow()
+                .get_ref()
                 .univariate_polynomial_at_point_into(point, &mut rhs_eval_poly);
             sub_poly_in_place(polynomial, &rhs_eval_poly);
         }
@@ -114,10 +116,10 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
     fn final_evaluations_test_only(&self) -> Self::Element {
         let mut result = self
             .lhs_sumcheck
-            .borrow()
+            .get_ref()
             .final_evaluations_test_only()
             .clone();
-        result -= &self.rhs_sumcheck.borrow().final_evaluations_test_only();
+        result -= &self.rhs_sumcheck.get_ref().final_evaluations_test_only();
         result
     }
 }
@@ -138,8 +140,8 @@ fn test_diff_sumcheck_basic() {
         RingElement::constant(4, Representation::IncompleteNTT),
     ];
 
-    let mut sumcheck_0 = Rc::new(RefCell::new(LinearSumcheck::new(data_0.len())));
-    let mut sumcheck_1 = Rc::new(RefCell::new(LinearSumcheck::new(data_1.len())));
+    let mut sumcheck_0 = ElephantCell::new(LinearSumcheck::new(data_0.len()));
+    let mut sumcheck_1 = ElephantCell::new(LinearSumcheck::new(data_1.len()));
 
     sumcheck_0.borrow_mut().load_from(&data_0);
     sumcheck_1.borrow_mut().load_from(&data_1);
@@ -167,8 +169,8 @@ fn test_diff_sumcheck_basic() {
 
 #[test]
 fn diff_with_eqs() {
-    let lhs = Rc::new(RefCell::new(SelectorEq::<RingElement>::new(0b101, 3, 5)));
-    let rhs = Rc::new(RefCell::new(SelectorEq::<RingElement>::new(0b011, 3, 5)));
+    let lhs = ElephantCell::new(SelectorEq::<RingElement>::new(0b101, 3, 5));
+    let rhs = ElephantCell::new(SelectorEq::<RingElement>::new(0b011, 3, 5));
 
     let diff = DiffSumcheck::new(lhs.clone(), rhs.clone());
     let claim = RingElement::constant(0, Representation::IncompleteNTT);
@@ -184,15 +186,15 @@ fn diff_with_eqs() {
 
 /// Evaluation-only version of DiffSumcheck that evaluates the difference of two sumchecks at a point.
 pub struct DiffSumcheckEvaluation {
-    lhs_evaluation: Rc<RefCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
-    rhs_evaluation: Rc<RefCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
+    lhs_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
+    rhs_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
     result: RingElement,
 }
 
 impl DiffSumcheckEvaluation {
     pub fn new(
-        lhs_evaluation: Rc<RefCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
-        rhs_evaluation: Rc<RefCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
+        lhs_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
+        rhs_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
     ) -> Self {
         DiffSumcheckEvaluation {
             lhs_evaluation,
@@ -234,11 +236,11 @@ fn test_diff_evaluation() {
 
     let mut lhs_eval_impl = BasicEvaluationLinearSumcheck::new(lhs_data.len());
     lhs_eval_impl.load_from(&lhs_data);
-    let lhs_eval = Rc::new(RefCell::new(lhs_eval_impl));
+    let lhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> = ElephantCell::new(lhs_eval_impl);
 
     let mut rhs_eval_impl = BasicEvaluationLinearSumcheck::new(rhs_data.len());
     rhs_eval_impl.load_from(&rhs_data);
-    let rhs_eval = Rc::new(RefCell::new(rhs_eval_impl));
+    let rhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> = ElephantCell::new(rhs_eval_impl);
 
     let mut diff_eval = DiffSumcheckEvaluation::new(lhs_eval, rhs_eval);
 
@@ -261,9 +263,9 @@ fn test_diff_evaluation() {
         RingElement::constant(4, Representation::IncompleteNTT),
     ];
 
-    let sumcheck_0 = Rc::new(RefCell::new(LinearSumcheck::new(ref_lhs_data.len())));
+    let sumcheck_0 = ElephantCell::new(LinearSumcheck::new(ref_lhs_data.len()));
     sumcheck_0.borrow_mut().load_from(&ref_lhs_data);
-    let sumcheck_1 = Rc::new(RefCell::new(LinearSumcheck::new(ref_rhs_data.len())));
+    let sumcheck_1 = ElephantCell::new(LinearSumcheck::new(ref_rhs_data.len()));
     sumcheck_1.borrow_mut().load_from(&ref_rhs_data);
 
     for r in &point {
@@ -272,7 +274,7 @@ fn test_diff_evaluation() {
     }
 
     let expected =
-        sumcheck_0.borrow().final_evaluations() - sumcheck_1.borrow().final_evaluations();
+        sumcheck_0.get_ref().final_evaluations() - sumcheck_1.get_ref().final_evaluations();
 
     assert_eq!(diff_eval.evaluate(&point), &expected);
 }
