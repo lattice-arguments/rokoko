@@ -1011,6 +1011,7 @@ impl MulAssign<(&RingElement, &RingElement)> for RingElement {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct QuadraticExtension {
     pub coeffs: [u64; 2],
+    // TODO: remove shift factor as it's always the same
     pub(crate) shift: u64,
 }
 

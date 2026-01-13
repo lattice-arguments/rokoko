@@ -1,12 +1,14 @@
 use std::{
     cell::{Ref, RefCell},
     ops::Index,
+    rc::Rc,
 };
 
 use crate::{
     common::{
-        arithmetic::{ONE, TWO},
-        ring_arithmetic::{Representation, RingElement},
+        arithmetic::{field_to_ring_element_into, ONE, TWO},
+        config::HALF_DEGREE,
+        ring_arithmetic::{QuadraticExtension, Representation, RingElement, SHIFT_FACTORS},
         structured_row::{PreprocessedRow, StructuredRow},
         sumcheck_element::SumcheckElement,
     },
@@ -221,8 +223,8 @@ impl<E: SumcheckElement> BasicEvaluationLinearSumcheck<E> {
     }
 }
 
-impl EvaluationSumcheckData for BasicEvaluationLinearSumcheck {
-    type Element = RingElement;
+impl<E: SumcheckElement> EvaluationSumcheckData for BasicEvaluationLinearSumcheck<E> {
+    type Element = E;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
         // If already evaluated, return cached result
@@ -274,6 +276,48 @@ impl EvaluationSumcheckData for BasicEvaluationLinearSumcheck {
         // After all folds, data[0] contains the evaluation
         self.evaluated = true;
         &self.data[0]
+    }
+}
+
+pub struct RingToFieldWrapperEvaluation {
+    field_evaluation: Rc<RefCell<BasicEvaluationLinearSumcheck<QuadraticExtension>>>,
+    result: RingElement,
+    evaluated: bool,
+}
+
+impl RingToFieldWrapperEvaluation {
+    pub fn new(
+        field_evaluation: Rc<RefCell<BasicEvaluationLinearSumcheck<QuadraticExtension>>>,
+    ) -> Self {
+        RingToFieldWrapperEvaluation {
+            field_evaluation,
+            result: RingElement::zero(Representation::IncompleteNTT),
+            evaluated: false,
+        }
+    }
+}
+
+impl EvaluationSumcheckData for RingToFieldWrapperEvaluation {
+    type Element = RingElement;
+
+    fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
+        let point_field: Vec<QuadraticExtension> = point
+            .iter()
+            .map(|r| QuadraticExtension {
+                coeffs: [r.v[0], r.v[HALF_DEGREE]],
+                shift: SHIFT_FACTORS[0],
+            })
+            .collect();
+
+        // Evaluate the field evaluation at the converted point
+        field_to_ring_element_into(
+            &mut self.result,
+            self.field_evaluation.borrow_mut().evaluate(&point_field),
+        );
+        self.result
+            .from_homogenized_field_extensions_to_incomplete_ntt();
+        self.evaluated = true;
+        &self.result
     }
 }
 

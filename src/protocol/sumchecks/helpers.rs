@@ -4,10 +4,12 @@ use num::range;
 
 use crate::{
     common::{
+        arithmetic::field_to_ring_element_into,
+        config::HALF_DEGREE,
         decomposition::get_decomposed_offset_scaled,
-        matrix::new_vec_zero_preallocated,
+        matrix::{new_vec_zero_field_preallocated, new_vec_zero_preallocated},
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{Representation, RingElement},
+        ring_arithmetic::{QuadraticExtension, Representation, RingElement, SHIFT_FACTORS},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
@@ -380,19 +382,19 @@ pub(crate) fn split_projection_flatter(
 pub(crate) fn projection_flatter_1_times_matrix(
     projection_matrix: &ProjectionMatrix,
     projection_flatter_1: &PreprocessedRow,
-) -> Vec<RingElement> {
+) -> Vec<QuadraticExtension> {
     let height = crate::common::config::PROJECTION_HEIGHT;
     let projection_ratio = projection_matrix.projection_ratio;
     let inner_width = projection_ratio * height;
-    let zero = RingElement::zero(Representation::IncompleteNTT);
 
-    let mut result = new_vec_zero_preallocated(inner_width);
+    let mut result_field = new_vec_zero_field_preallocated(inner_width);
 
     for inner_row in 0..height {
         let weight = &projection_flatter_1.preprocessed_row[inner_row];
-        if weight == &zero {
-            continue;
-        }
+        let weight_field = QuadraticExtension {
+            coeffs: [weight.v[0], weight.v[HALF_DEGREE]],
+            shift: SHIFT_FACTORS[0],
+        };
 
         for i in 0..inner_width {
             let (is_positive, is_non_zero) = projection_matrix[(inner_row, i)];
@@ -400,12 +402,12 @@ pub(crate) fn projection_flatter_1_times_matrix(
                 continue;
             }
             if is_positive {
-                result[i] += weight;
+                result_field[i] += &weight_field;
             } else {
-                result[i] -= weight;
+                result_field[i] -= &weight_field;
             }
         }
     }
 
-    result
+    result_field
 }

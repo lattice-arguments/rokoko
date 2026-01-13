@@ -6,8 +6,7 @@ use crate::{
         combiner::CombinerEvaluation,
         diff::DiffSumcheckEvaluation,
         linear::{
-            BasicEvaluationLinearSumcheck, FakeEvaluationLinearSumcheck,
-            StructuredRowEvaluationLinearSumcheck,
+            BasicEvaluationLinearSumcheck, FakeEvaluationLinearSumcheck, RingToFieldWrapperEvaluation, StructuredRowEvaluationLinearSumcheck
         },
         product::ProductSumcheckEvaluation,
         ring_to_field_combiner::RingToFieldCombinerEvaluation,
@@ -77,10 +76,10 @@ pub struct Type2VerifierContext {
 }
 
 pub struct Type3VerifierContext {
-    // TODO: make strucutred row evaluations
     pub lhs_flatter_0_evaluation: Rc<RefCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
-    pub lhs_flatter_1_times_matrix_evaluation:
-        Rc<RefCell<BasicEvaluationLinearSumcheck<RingElement>>>,
+    pub lhs_flatter_1_times_matrix_evaluation_field:
+        Rc<RefCell<BasicEvaluationLinearSumcheck<QuadraticExtension>>>,
+    pub lhs_flatter_1_times_matrix_evaluation: Rc<RefCell<RingToFieldWrapperEvaluation>>,
     // RHS: Split into projection_flatter and fold_challenge
     pub rhs_projection_flatter_evaluation:
         Rc<RefCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,

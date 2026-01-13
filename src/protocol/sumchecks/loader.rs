@@ -1,5 +1,6 @@
 use crate::{
     common::{
+        arithmetic::field_to_ring_element_into,
         config::HALF_DEGREE,
         matrix::new_vec_zero_preallocated,
         projection_matrix::ProjectionMatrix,
@@ -108,10 +109,22 @@ pub fn load_sumcheck_data(
             projection_matrix,
             &projection_flatter_1_preprocessed,
         );
+
+        let mut flatter_1_times_matrix_ring =
+            new_vec_zero_preallocated(flatter_1_times_matrix.len());
+
+        for i in 0..flatter_1_times_matrix.len() {
+            field_to_ring_element_into(
+                &mut flatter_1_times_matrix_ring[i],
+                &flatter_1_times_matrix[i],
+            );
+            flatter_1_times_matrix_ring[i].from_homogenized_field_extensions_to_incomplete_ntt();
+        }
+
         type3_sc
             .lhs_flatter_1_times_matrix_sumcheck
             .borrow_mut()
-            .load_from(&flatter_1_times_matrix);
+            .load_from(&flatter_1_times_matrix_ring);
 
         // RHS: Split into fold_challenge and projection_flatter (Product)
         type3_sc

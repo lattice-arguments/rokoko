@@ -1,5 +1,7 @@
+use crate::common::arithmetic::field_to_ring_element_into;
 use crate::common::config::{DEGREE, MOD_Q};
 use crate::common::ring_arithmetic::*;
+use crate::common::sumcheck_element::SumcheckElement;
 use crate::hexl::bindings::eltwise_reduce_mod;
 use blake3::Hasher;
 
@@ -165,6 +167,15 @@ impl HashWrapper {
     pub fn sample_ring_element_vec_into(&mut self, output: &mut [RingElement]) {
         for element in output.iter_mut() {
             self.sample_ring_element_into(element);
+        }
+    }
+
+    pub fn sample_ring_element_ntt_slots_same_vec_into(&mut self, output: &mut [RingElement]) {
+        let mut f = QuadraticExtension::zero();
+        for element in output.iter_mut() {
+            self.sample_field_element_into(&mut f);
+            field_to_ring_element_into(&mut *element, &f);
+            element.from_homogenized_field_extensions_to_incomplete_ntt();
         }
     }
 

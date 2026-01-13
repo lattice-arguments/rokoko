@@ -1,6 +1,8 @@
 use crate::{
     common::{
+        arithmetic::field_to_ring_element_into,
         config::HALF_DEGREE,
+        matrix::new_vec_zero_preallocated,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{QuadraticExtension, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
@@ -95,9 +97,10 @@ pub fn load_verifier_sumcheck_data(
             projection_matrix,
             &projection_flatter_1_preprocessed,
         );
+
         verifier_sumcheck_context
             .type3evaluation
-            .lhs_flatter_1_times_matrix_evaluation
+            .lhs_flatter_1_times_matrix_evaluation_field
             .borrow_mut()
             .load_from(&flatter_1_times_matrix);
 

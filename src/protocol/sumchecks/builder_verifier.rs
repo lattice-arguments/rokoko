@@ -16,8 +16,7 @@ use crate::{
             common::EvaluationSumcheckData,
             diff::DiffSumcheckEvaluation,
             linear::{
-                BasicEvaluationLinearSumcheck, FakeEvaluationLinearSumcheck,
-                StructuredRowEvaluationLinearSumcheck,
+                BasicEvaluationLinearSumcheck, FakeEvaluationLinearSumcheck, RingToFieldWrapperEvaluation, StructuredRowEvaluationLinearSumcheck
             },
             product::ProductSumcheckEvaluation,
             ring_to_field_combiner::RingToFieldCombinerEvaluation,
@@ -351,13 +350,20 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
         ),
     ));
 
-    let lhs_flatter_1_times_matrix_evaluation = basic_evaluation_linear(
-        inner_width,
-        total_vars
-            - inner_width.ilog2() as usize
-            - config.witness_decomposition_chunks.ilog2() as usize,
-        config.witness_decomposition_chunks.ilog2() as usize,
-    );
+    let lhs_flatter_1_times_matrix_evaluation_field =
+        Rc::new(RefCell::new(BasicEvaluationLinearSumcheck::<
+            QuadraticExtension,
+        >::new_with_prefixed_sufixed_data(
+            inner_width,
+            total_vars
+                - inner_width.ilog2() as usize
+                - config.witness_decomposition_chunks.ilog2() as usize,
+            config.witness_decomposition_chunks.ilog2() as usize,
+        )));
+
+    let lhs_flatter_1_times_matrix_evaluation = Rc::new(RefCell::new(
+        RingToFieldWrapperEvaluation::new(lhs_flatter_1_times_matrix_evaluation_field.clone()
+    )));
 
     // Split RHS into projection_flatter and fold_challenge
     let rhs_projection_flatter_evaluation = Rc::new(RefCell::new(
@@ -534,6 +540,7 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
 
     let type3evaluation = Type3VerifierContext {
         lhs_flatter_0_evaluation,
+        lhs_flatter_1_times_matrix_evaluation_field,
         lhs_flatter_1_times_matrix_evaluation,
         rhs_projection_flatter_evaluation,
         rhs_fold_challenge_evaluation,

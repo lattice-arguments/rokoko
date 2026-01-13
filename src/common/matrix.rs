@@ -4,7 +4,10 @@ use std::{
     sync::{LazyLock, Mutex},
 };
 
-use crate::common::ring_arithmetic::{Representation, RingElement};
+use crate::common::{
+    ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+    sumcheck_element::SumcheckElement,
+};
 
 pub trait ZeroNew<T> {
     fn new_zero(height: usize, width: usize, zero: &T) -> Self;
@@ -27,6 +30,10 @@ static ZERO_REP_INCOMPLETE_NTT: LazyLock<RingElement> =
 // 3) Preallocation mode: preallocate a number of zero matrices of given sizes at the start of the program (based on the data from warmup mode).
 static PREALLOCATED_MATRICES: LazyLock<Mutex<HashMap<(usize, usize), Vec<Vec<RingElement>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+static PREALLOCATED_MATRICES_QUAD: LazyLock<
+    Mutex<HashMap<(usize, usize), Vec<Vec<QuadraticExtension>>>>,
+> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 impl<T> Index<(usize, usize)> for VerticallyAlignedMatrix<T> {
     type Output = T;
@@ -140,6 +147,22 @@ pub fn new_vec_zero_preallocated(count: usize) -> Vec<RingElement> {
                 count
             );
             vec![ZERO_REP_INCOMPLETE_NTT.clone(); count]
+        });
+
+    data
+}
+
+pub fn new_vec_zero_field_preallocated(count: usize) -> Vec<QuadraticExtension> {
+    let mut pool = PREALLOCATED_MATRICES_QUAD.lock().expect("pool poisoned");
+    let data = pool
+        .get_mut(&(1, count))
+        .and_then(|v| v.pop())
+        .unwrap_or_else(|| {
+            println!(
+                "Preallocated vector pool miss for size {}, allocating new",
+                count
+            );
+            vec![QuadraticExtension::zero(); count]
         });
 
     data

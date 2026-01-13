@@ -246,7 +246,7 @@ pub fn sumcheck(
     let projection_height_flat = config.witness_height / config.projection_ratio;
     let mut projection_matrix_flatter_base =
         new_vec_zero_preallocated(projection_height_flat.ilog2() as usize);
-    hash_wrapper.sample_ring_element_vec_into(&mut projection_matrix_flatter_base);
+    hash_wrapper.sample_ring_element_ntt_slots_same_vec_into(&mut projection_matrix_flatter_base);
 
     let projection_matrix_flatter_structured =
         evaluation_point_to_structured_row(&projection_matrix_flatter_base);
@@ -393,7 +393,7 @@ pub fn sumcheck_verifier(
     let projection_height_flat = config.witness_height / config.projection_ratio;
     let mut projection_matrix_flatter_base =
         new_vec_zero_preallocated(projection_height_flat.ilog2() as usize);
-    hash_wrapper.sample_ring_element_vec_into(&mut projection_matrix_flatter_base);
+    hash_wrapper.sample_ring_element_ntt_slots_same_vec_into(&mut projection_matrix_flatter_base);
 
     let projection_matrix_flatter_structured =
         evaluation_point_to_structured_row(&projection_matrix_flatter_base);

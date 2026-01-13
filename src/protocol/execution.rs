@@ -49,6 +49,7 @@ pub fn prover_round(
 ) {
     let mut hash_wrapper = HashWrapper::new();
 
+    let start = std::time::Instant::now();
     hash_wrapper.update_with_ring_element_slice(&rc_commitment.most_inner_commitment());
 
     let opening = open_at(&witness, &evaluation_points_inner, &evaluation_points_outer);
@@ -147,8 +148,12 @@ pub fn prover_round(
         rc_projection_inner: rc_projection_image.most_inner_commitment(),
     };
 
+    let elapsed = start.elapsed().as_nanos();
+    println!("Prover: {} ns", elapsed);
+
     let mut hash_wrapper_verifier = HashWrapper::new();
 
+    let start = std::time::Instant::now();
     sumcheck_verifier(
         &CONFIG,
         verifier_sumcheck_context,
@@ -158,6 +163,9 @@ pub fn prover_round(
         &claims,
         &mut hash_wrapper_verifier,
     );
+
+    let elapsed = start.elapsed().as_nanos();
+    println!("Verifier: {} ns", elapsed);
 
     // RoundOutput {
     //     folded_witness,
@@ -182,8 +190,6 @@ pub fn execute() {
             Representation::IncompleteNTT,
         ),
     };
-
-    let ck = &crs.ck_for_wit_dim(witness.height);
 
     let basic_commitment = commit_basic(&crs, &witness, CONFIG.basic_commitment_rank);
 
