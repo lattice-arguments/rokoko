@@ -320,3 +320,91 @@ pub(crate) fn projection_coefficients(
 
     result
 }
+
+/// Splits projection_flatter into two components for the elder/LS variable separation.
+///
+/// This function decomposes a projection flattening vector into:
+/// - projection_flatter_0: operates on "elder variables" (block indices)
+/// - projection_flatter_1: operates on "LS variables" (within-block indices)
+///
+/// The split follows the tensor structure: given a StructuredRow with tensor_layers,
+/// we partition the layers at the boundary between block-level and within-block indexing.
+/// Specifically, if we have `blocks = witness_height / inner_width`, then the first
+/// `blocks.ilog2()` layers correspond to block selection (elder), and the remaining
+/// `height.ilog2()` layers handle within-block positions (LS).
+///
+/// This decomposition enables us to structure the projection coefficient sumcheck as a
+/// product of two independent linear sumchecks, which can improve verifier efficiency
+/// when the two components have different sparsity patterns or when we want to fold
+/// them separately.
+pub(crate) fn split_projection_flatter(
+    projection_flatter: &StructuredRow,
+) -> (StructuredRow, StructuredRow) {
+    let height = crate::common::config::PROJECTION_HEIGHT;
+    let height_log = height.ilog2() as usize;
+    let tensor_layers = &projection_flatter.tensor_layers;
+    
+    debug_assert!(tensor_layers.len() >= height_log);
+    let block_layers = tensor_layers.len() - height_log;
+    
+    let projection_flatter_0 = StructuredRow {
+        tensor_layers: tensor_layers[..block_layers].to_vec(),
+    };
+    let projection_flatter_1 = StructuredRow {
+        tensor_layers: tensor_layers[block_layers..].to_vec(),
+    };
+    
+    (projection_flatter_0, projection_flatter_1)
+}
+
+/// Computes the product of projection_flatter_1 with the projection matrix.
+///
+/// This function computes the linear combination:
+///   projection_flatter_1 · (I ⊗ projection_matrix)
+///
+/// where projection_flatter_1 operates on the "within-block" indices (LS variables)
+/// and the projection_matrix defines the projection structure. The result is a vector
+/// of length `inner_width = projection_ratio * height` that captures how the projection
+/// matrix rows are weighted by projection_flatter_1.
+///
+/// **Computational Strategy:**
+/// For each row in the projection matrix, we:
+/// 1. Check if projection_flatter_1[row] is non-zero (skip if zero for efficiency)
+/// 2. For each non-zero entry in that row, accumulate the weighted contribution
+/// 3. Handle the sign of the projection matrix entry (positive or negative)
+///
+/// The result is then used in the LS-variable linear sumcheck component, which gets
+/// multiplied with the elder-variable component to form the complete projection
+/// coefficient sumcheck.
+pub(crate) fn projection_flatter_1_times_matrix(
+    projection_matrix: &ProjectionMatrix,
+    projection_flatter_1: &PreprocessedRow,
+) -> Vec<RingElement> {
+    let height = crate::common::config::PROJECTION_HEIGHT;
+    let projection_ratio = projection_matrix.projection_ratio;
+    let inner_width = projection_ratio * height;
+    let zero = RingElement::zero(Representation::IncompleteNTT);
+    
+    let mut result = new_vec_zero_preallocated(inner_width);
+    
+    for inner_row in 0..height {
+        let weight = &projection_flatter_1.preprocessed_row[inner_row];
+        if weight == &zero {
+            continue;
+        }
+        
+        for i in 0..inner_width {
+            let (is_positive, is_non_zero) = projection_matrix[(inner_row, i)];
+            if !is_non_zero {
+                continue;
+            }
+            if is_positive {
+                result[i] += weight;
+            } else {
+                result[i] -= weight;
+            }
+        }
+    }
+    
+    result
+}

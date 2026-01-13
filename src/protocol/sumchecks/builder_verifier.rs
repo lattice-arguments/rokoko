@@ -334,11 +334,21 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
         selector_evaluation_from_prefix(&config.projection_recursion.prefix, total_vars);
 
     let projection_height_flat = config.witness_height / config.projection_ratio;
-    let projection_coeff_evaluation = basic_evaluation_linear(
-        config.witness_height,
-        total_vars
-            - config.witness_height.ilog2() as usize
-            - config.witness_decomposition_chunks.ilog2() as usize,
+    
+    // Split LHS projection coefficients evaluations
+    let height = crate::common::config::PROJECTION_HEIGHT;
+    let inner_width = config.projection_ratio * height;
+    let blocks = config.witness_height / inner_width;
+    
+    let lhs_flatter_0_evaluation = basic_evaluation_linear(
+        blocks,
+        total_vars - blocks.ilog2() as usize - inner_width.ilog2() as usize - config.witness_decomposition_chunks.ilog2() as usize,
+        inner_width.ilog2() as usize + config.witness_decomposition_chunks.ilog2() as usize,
+    );
+
+    let lhs_flatter_1_times_matrix_evaluation = basic_evaluation_linear(
+        inner_width,
+        total_vars - inner_width.ilog2() as usize - config.witness_decomposition_chunks.ilog2() as usize,
         config.witness_decomposition_chunks.ilog2() as usize,
     );
 
@@ -357,7 +367,6 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
         ))),
         witness_combiner_constant_evaluation.clone(),
     )));
-
     let recomposed_opening = Rc::new(RefCell::new(DiffSumcheckEvaluation::new(
         Rc::new(RefCell::new(ProductSumcheckEvaluation::new(
             combined_witness_evaluation.clone(),
@@ -474,9 +483,15 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
         })
         .collect::<Vec<_>>();
 
+    // Build Type3 with Product of split LHS coefficients
+    let projection_coeff_product = Rc::new(RefCell::new(ProductSumcheckEvaluation::new(
+        lhs_flatter_0_evaluation.clone(),
+        lhs_flatter_1_times_matrix_evaluation.clone(),
+    )));
+
     let type3lhs_inner = Rc::new(RefCell::new(ProductSumcheckEvaluation::new(
         recomposed_folded_witness.clone(),
-        projection_coeff_evaluation.clone(),
+        projection_coeff_product,
     )));
     let type3lhs = Rc::new(RefCell::new(ProductSumcheckEvaluation::new(
         folded_witness_selector_evaluation.clone(),
@@ -493,7 +508,8 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
     )));
 
     let type3evaluation = Type3VerifierContext {
-        lhs_evaluation: projection_coeff_evaluation.clone(),
+        lhs_flatter_0_evaluation,
+        lhs_flatter_1_times_matrix_evaluation,
         rhs_evaluation: fold_tensor_evaluation.clone(),
         projection_selector_evaluation,
         output: Rc::new(RefCell::new(DiffSumcheckEvaluation::new(

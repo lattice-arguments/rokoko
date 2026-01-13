@@ -115,7 +115,11 @@ impl SumcheckContext {
                 .partial_evaluate(r);
         }
         self.type3sumcheck
-            .lhs_sumcheck
+            .lhs_flatter_0_sumcheck
+            .borrow_mut()
+            .partial_evaluate(r);
+        self.type3sumcheck
+            .lhs_flatter_1_times_matrix_sumcheck
             .borrow_mut()
             .partial_evaluate(r);
         self.type3sumcheck
@@ -294,15 +298,16 @@ pub struct Type2SumcheckContext {
 /// projection image equals the projection of the folded witness.
 ///
 /// **Field Details:**
-///   - `lhs_sumcheck`: Linear sumcheck loaded with the projection coefficients (computed
-///     from the projection matrix and the random flattener).
+///   - `lhs_flatter_0_sumcheck`: Block-level flattener (elder variables)
+///   - `lhs_flatter_1_times_matrix_sumcheck`: Within-block coefficients (LS variables)
 ///   - `rhs_sumcheck`: Linear sumcheck loaded with the fold tensor (fold_challenge ⊗
 ///     projection_flattener).
 ///   - `projection_selector_sumcheck`: Selector that picks out the projection image's slice
 ///     from the combined witness.
 ///   - `output`: The final DiffSumcheck that the verifier checks.
 pub struct Type3SumcheckContext {
-    pub lhs_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
+    pub lhs_flatter_0_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
+    pub lhs_flatter_1_times_matrix_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
     pub rhs_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
     pub projection_selector_sumcheck: Rc<RefCell<SelectorEq<RingElement>>>,
     pub output: Rc<RefCell<DiffSumcheck<RingElement>>>,

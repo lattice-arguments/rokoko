@@ -7,7 +7,7 @@ use crate::{
     },
     protocol::{
         config::Config,
-        sumchecks::helpers::{projection_coefficients, tensor_product},
+        sumchecks::helpers::{projection_coefficients, projection_flatter_1_times_matrix, split_projection_flatter, tensor_product},
     },
 };
 
@@ -70,24 +70,35 @@ pub fn load_verifier_sumcheck_data(
             .load_from(point.clone());
     }
     {
-        // projection_matrix_flatter \cdot (I \otimes projection_matrix) \cdot folded_witness - projection_matrix_flatter \cdot projection_image \cdot fold_challenge = 0
-        // Here, we treat projection_matrix_flatter \cdot (I \otimes projection_matrix) as a single multilinear polynomial
-        // Also, we treat projection_matrix_flatter \tensor fold_challenge as a single multilinear polynomial
-        // TODO: we should not do it as each of those have nice structure that we should exploit
-    
-        let projection_coeffs = projection_coefficients(
-            projection_matrix,
-            projection_matrix_flatter_structured,
-            config.witness_height,
-            config.projection_ratio,
-        );
+        // Type3: projection image consistency with split LHS structure
+        // LHS: Prod(flatter_0, flatter_1·matrix) where flatter_0 covers elder (block) variables
+        // and flatter_1·matrix covers LS (within-block) variables
+        
+
+        let (projection_flatter_0_structured, projection_flatter_1_structured) =
+            split_projection_flatter(projection_matrix_flatter_structured);
+
+        // Load flatter_0 (block-level weights)
+        let projection_flatter_0_preprocessed =
+            PreprocessedRow::from_structured_row(&projection_flatter_0_structured);
         verifier_sumcheck_context
             .type3evaluation
-            .lhs_evaluation
+            .lhs_flatter_0_evaluation
             .borrow_mut()
-            .load_from(&projection_coeffs);
+            .load_from(&projection_flatter_0_preprocessed.preprocessed_row);
 
+        // Load flatter_1 · projection_matrix (within-block coefficients)
+        let projection_flatter_1_preprocessed =
+            PreprocessedRow::from_structured_row(&projection_flatter_1_structured);
+        let flatter_1_times_matrix =
+            projection_flatter_1_times_matrix(projection_matrix, &projection_flatter_1_preprocessed);
+        verifier_sumcheck_context
+            .type3evaluation
+            .lhs_flatter_1_times_matrix_evaluation
+            .borrow_mut()
+            .load_from(&flatter_1_times_matrix);
 
+        // RHS: fold tensor
         let fold_tensor = tensor_product(
             folding_challenges,
             &projection_matrix_flatter_preprocessed.preprocessed_row,

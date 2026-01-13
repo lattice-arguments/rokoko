@@ -430,6 +430,12 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
     // Here, we treat projection_matrix_flatter \cdot (I \otimes projection_matrix) as a single multilinear polynomial
     // Also, we treat projection_matrix_flatter \tensor fold_challenge as a single multilinear polynomial
     
+    // It corresponds to:
+    // \sum_z Diff(Prod(projection_matrix_flatter \cdot (I \otimes projection_matrix), folded_witness), Prod(projection_matrix_flatter \tensor fold_challenge, projection_image))
+    // change to:
+    // \sum_z Diff(Prod(projection_matrix_flatter_0, Prod(projection_matrix_flatter_1 \cdot (I \otimes projection_matrix), folded_witness)), Prod(Prod(projection_matrix_flatter, Prod(fold_challenge, projection_image))
+     
+
     let recomposed_projection = Rc::new(RefCell::new(DiffSumcheck::new(
         Rc::new(RefCell::new(ProductSumcheck::new(
             combined_witness_sumcheck.clone(),
@@ -443,15 +449,36 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
         let projection_selector_sumcheck =
             sumcheck_from_prefix(&config.projection_recursion.prefix, total_vars);
 
-        let projection_coeff_sumcheck = Rc::new(RefCell::new(
+        // Split projection coefficients into two parts:
+        // 1. projection_flatter_0: elder variables (block indices)
+        // 2. projection_flatter_1 · matrix: LS variables (within-block)
+        let height = crate::common::config::PROJECTION_HEIGHT;
+        let inner_width = config.projection_ratio * height;
+        let blocks = config.witness_height / inner_width;
+        
+        // Elder variables: projection_flatter_0 (length = blocks)
+        let lhs_flatter_0_sumcheck = Rc::new(RefCell::new(
             LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
-                config.witness_height,
-                total_vars
-                    - config.witness_height.ilog2() as usize
-                    - config.witness_decomposition_chunks.ilog2() as usize,
+                blocks,
+                total_vars - blocks.ilog2() as usize - inner_width.ilog2() as usize - config.witness_decomposition_chunks.ilog2() as usize,
+                inner_width.ilog2() as usize + config.witness_decomposition_chunks.ilog2() as usize,
+            ),
+        ));
+
+        // LS variables: projection_flatter_1 · matrix (length = inner_width)
+        let lhs_flatter_1_times_matrix_sumcheck = Rc::new(RefCell::new(
+            LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                inner_width,
+                total_vars - inner_width.ilog2() as usize - config.witness_decomposition_chunks.ilog2() as usize,
                 config.witness_decomposition_chunks.ilog2() as usize,
             ),
         ));
+
+        // Combined projection coefficients via Product
+        let projection_coeff_product = Rc::new(RefCell::new(ProductSumcheck::new(
+            lhs_flatter_0_sumcheck.clone(),
+            lhs_flatter_1_times_matrix_sumcheck.clone(),
+        )));
 
         let fold_tensor_sumcheck = Rc::new(RefCell::new(
             LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
@@ -467,7 +494,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
             folded_witness_selector_sumcheck.clone(),
             Rc::new(RefCell::new(ProductSumcheck::new(
                 recomposed_folded_witness.clone(),
-                projection_coeff_sumcheck.clone(),
+                projection_coeff_product,
             ))),
         )));
         let rhs = Rc::new(RefCell::new(ProductSumcheck::new(
@@ -480,7 +507,8 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
         let output = Rc::new(RefCell::new(DiffSumcheck::new(lhs, rhs)));
 
         Type3SumcheckContext {
-            lhs_sumcheck: projection_coeff_sumcheck,
+            lhs_flatter_0_sumcheck,
+            lhs_flatter_1_times_matrix_sumcheck,
             rhs_sumcheck: fold_tensor_sumcheck,
             projection_selector_sumcheck,
             output,

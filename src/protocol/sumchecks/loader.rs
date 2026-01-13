@@ -85,19 +85,33 @@ pub fn load_sumcheck_data(
     }
 
     // Load projection data (type3)
+    // LHS: Split into flatter_0 (elder/block variables) and flatter_1·matrix (LS/within-block variables)
     let type3_sc = &mut sumcheck_context.type3sumcheck;
     {
-        let projection_coeffs = projection_coefficients(
-            projection_matrix,
-            projection_matrix_flatter_structured,
-            config.witness_height,
-            config.projection_ratio,
-        );
-        type3_sc
-            .lhs_sumcheck
-            .borrow_mut()
-            .load_from(&projection_coeffs);
+        use super::helpers::{projection_flatter_1_times_matrix, split_projection_flatter};
 
+        let (projection_flatter_0_structured, projection_flatter_1_structured) =
+            split_projection_flatter(projection_matrix_flatter_structured);
+
+        // Load flatter_0 (block-level weights)
+        let projection_flatter_0_preprocessed =
+            PreprocessedRow::from_structured_row(&projection_flatter_0_structured);
+        type3_sc
+            .lhs_flatter_0_sumcheck
+            .borrow_mut()
+            .load_from(&projection_flatter_0_preprocessed.preprocessed_row);
+
+        // Load flatter_1 · projection_matrix (within-block coefficients)
+        let projection_flatter_1_preprocessed =
+            PreprocessedRow::from_structured_row(&projection_flatter_1_structured);
+        let flatter_1_times_matrix =
+            projection_flatter_1_times_matrix(projection_matrix, &projection_flatter_1_preprocessed);
+        type3_sc
+            .lhs_flatter_1_times_matrix_sumcheck
+            .borrow_mut()
+            .load_from(&flatter_1_times_matrix);
+
+        // RHS: fold tensor
         let fold_tensor = tensor_product(
             folding_challenges,
             &projection_matrix_flatter_preprocessed.preprocessed_row,
