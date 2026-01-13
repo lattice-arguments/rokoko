@@ -316,6 +316,7 @@ pub struct SelectorEqEvaluation {
     total_variable_count: usize,
     result: RingElement,
     scratch: RingElement,
+    evaluated: bool,
 }
 
 impl SelectorEqEvaluation {
@@ -330,6 +331,7 @@ impl SelectorEqEvaluation {
             total_variable_count,
             result: RingElement::constant(1, Representation::IncompleteNTT),
             scratch: RingElement::constant(0, Representation::IncompleteNTT),
+            evaluated: false,
         }
     }
 }
@@ -338,11 +340,15 @@ impl EvaluationSumcheckData for SelectorEqEvaluation {
     type Element = RingElement;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
+        if self.evaluated {
+            return &self.result;
+        }
+
         if point.len() != self.total_variable_count {
             panic!("Point has incorrect number of variables");
         }
 
-        self.result = RingElement::constant(1, Representation::IncompleteNTT);
+        self.result.set_from(&*ONE);
 
         // For the selector variables, compute the eq polynomial value
         // eq(x, selector) = product over i of: (x_i * selector_i + (1-x_i) * (1-selector_i))
@@ -367,6 +373,7 @@ impl EvaluationSumcheckData for SelectorEqEvaluation {
         // the selector equality - it's constant across those dimensions.
         // So we don't need to do anything with them.
 
+        self.evaluated = true;
         &self.result
     }
 }

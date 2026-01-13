@@ -559,7 +559,6 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
     let combiner_evaluation = Rc::new(RefCell::new(CombinerEvaluation::new(all_outputs)));
     let field_combiner_evaluation = Rc::new(RefCell::new(RingToFieldCombinerEvaluation::new(
         combiner_evaluation.clone(),
-        [QuadraticExtension::zero(); HALF_DEGREE],
     )));
 
     VerifierSumcheckContext {

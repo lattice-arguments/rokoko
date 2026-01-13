@@ -194,6 +194,7 @@ pub struct BasicEvaluationLinearSumcheck<E: SumcheckElement = RingElement> {
     variable_count: usize,
     index_mask: usize,
     suffix: usize,
+    evaluated: bool,
 }
 
 impl<E: SumcheckElement> BasicEvaluationLinearSumcheck<E> {
@@ -211,6 +212,7 @@ impl<E: SumcheckElement> BasicEvaluationLinearSumcheck<E> {
             variable_count: count.ilog2() as usize + prefix_size + suffix_size,
             index_mask: count - 1,
             suffix: suffix_size,
+            evaluated: false,
         }
     }
 
@@ -223,6 +225,11 @@ impl EvaluationSumcheckData for BasicEvaluationLinearSumcheck {
     type Element = RingElement;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
+        // If already evaluated, return cached result
+        if self.evaluated {
+            return &self.data[0];
+        }
+
         // Evaluate the multilinear extension at the given point by folding.
         // This achieves O(n) complexity instead of O(n * log(n)).
 
@@ -265,6 +272,7 @@ impl EvaluationSumcheckData for BasicEvaluationLinearSumcheck {
         }
 
         // After all folds, data[0] contains the evaluation
+        self.evaluated = true;
         &self.data[0]
     }
 }
@@ -305,6 +313,7 @@ impl EvaluationSumcheckData for StructuredRowEvaluationLinearSumcheck<RingElemen
     type Element = RingElement;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
+        self.result.set_from(&*ONE);
         if point.len() != self.variable_count {
             panic!("Point has incorrect number of variables");
         }

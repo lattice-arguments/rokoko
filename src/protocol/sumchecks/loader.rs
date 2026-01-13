@@ -1,8 +1,9 @@
 use crate::{
     common::{
+        config::HALF_DEGREE,
         matrix::new_vec_zero_preallocated,
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::RingElement,
+        ring_arithmetic::{QuadraticExtension, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{config::Config, open::Opening},
@@ -32,11 +33,14 @@ pub fn load_sumcheck_data(
     sumcheck_context: &mut SumcheckContext,
     config: &Config,
     combined_witness: &Vec<RingElement>,
+    conjugated_combined_witness: &Vec<RingElement>,
     folding_challenges: &Vec<RingElement>,
     opening: &Opening,
     projection_matrix: &ProjectionMatrix,
     projection_matrix_flatter_structured: &StructuredRow,
     projection_matrix_flatter_preprocessed: &PreprocessedRow,
+    combination: &Vec<RingElement>,
+    qe: &[QuadraticExtension; HALF_DEGREE],
 ) {
     // Load combined witness
     sumcheck_context
@@ -49,15 +53,6 @@ pub fn load_sumcheck_data(
         .folding_challenges_sumcheck
         .borrow_mut()
         .load_from(&folding_challenges);
-
-    // Compute and load conjugated witness for norm check (type5)
-    let mut conjugated_combined_witness = new_vec_zero_preallocated(combined_witness.len());
-    combined_witness
-        .iter()
-        .zip(conjugated_combined_witness.iter_mut())
-        .for_each(|(orig, conj)| {
-            orig.conjugate_into(conj);
-        });
 
     sumcheck_context
         .type5sumcheck
@@ -109,4 +104,14 @@ pub fn load_sumcheck_data(
         );
         type3_sc.rhs_sumcheck.borrow_mut().load_from(&fold_tensor);
     }
+
+    sumcheck_context
+        .combiner
+        .borrow_mut()
+        .load_challenges_from(&combination);
+
+    sumcheck_context
+        .field_combiner
+        .borrow_mut()
+        .load_challenges_from(qe.clone());
 }

@@ -216,16 +216,17 @@ pub struct RingToFieldCombinerEvaluation {
 }
 
 impl RingToFieldCombinerEvaluation {
-    pub fn new(
-        evaluation: Rc<RefCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
-        challenge_vec: [QuadraticExtension; HALF_DEGREE],
-    ) -> Self {
+    pub fn new(evaluation: Rc<RefCell<dyn EvaluationSumcheckData<Element = RingElement>>>) -> Self {
         RingToFieldCombinerEvaluation {
             evaluation,
-            challenge_vec,
+            challenge_vec: [QuadraticExtension::zero(); HALF_DEGREE],
             result: QuadraticExtension::zero(),
             qe_point: Vec::new(),
         }
+    }
+
+    pub fn load_challenges_from(&mut self, challenge: [QuadraticExtension; HALF_DEGREE]) {
+        self.challenge_vec = challenge;
     }
 
     /// Evaluate at a RingElement point (convenience method)
@@ -291,7 +292,9 @@ fn test_ring_to_field_combiner_evaluation() {
         };
     }
 
-    let mut combiner_eval = RingToFieldCombinerEvaluation::new(eval, challenge_qe);
+    let mut combiner_eval = RingToFieldCombinerEvaluation::new(eval);
+
+    combiner_eval.load_challenges_from(challenge_qe);
 
     let point = vec![
         RingElement::constant(7, Representation::IncompleteNTT),

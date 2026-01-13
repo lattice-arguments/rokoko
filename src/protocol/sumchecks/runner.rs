@@ -2,13 +2,13 @@ use core::hash;
 
 use crate::{
     common::{
-        arithmetic::{field_to_ring_element, field_to_ring_element_into, inner_product},
+        arithmetic::{field_to_ring_element, field_to_ring_element_into, inner_product, ONE},
         config::HALF_DEGREE,
         hash::HashWrapper,
         matrix::new_vec_zero_preallocated,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
-        structured_row::PreprocessedRow,
+        structured_row::{PreprocessedRow, StructuredRow},
         sumcheck_element::SumcheckElement,
     },
     protocol::{
@@ -20,7 +20,10 @@ use crate::{
             common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
             polynomial::Polynomial,
         },
-        sumchecks::context_verifier::VerifierSumcheckContext,
+        sumchecks::{
+            context_verifier::VerifierSumcheckContext,
+            loader_verifier::{self, load_verifier_sumcheck_data},
+        },
     },
 };
 
@@ -162,6 +165,8 @@ pub fn sumcheck(
     projection_matrix: &ProjectionMatrix,
     folding_challenges: &Vec<RingElement>,
     opening: &Opening,
+    evaluation_points_inner: &Vec<StructuredRow>,
+    evaluation_points_outer: &Vec<StructuredRow>,
     claims: &Vec<RingElement>,
     rc_commitment_inner: &Vec<RingElement>,
     rc_opening_inner: &Vec<RingElement>,
@@ -186,18 +191,6 @@ pub fn sumcheck(
     let projection_matrix_flatter =
         PreprocessedRow::from_structured_row(&projection_matrix_flatter_structured);
 
-    // Load all data into the sumcheck context
-    load_sumcheck_data(
-        sumcheck_context,
-        config,
-        combined_witness,
-        folding_challenges,
-        opening,
-        projection_matrix,
-        &projection_matrix_flatter_structured,
-        &projection_matrix_flatter,
-    );
-
     let mut conjugated_combined_witness = new_vec_zero_preallocated(combined_witness.len());
     combined_witness
         .iter()
@@ -220,6 +213,22 @@ pub fn sumcheck(
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
     let qe = combination_to_field.split_into_quadratic_extensions();
+
+    // Load all data into the sumcheck context
+    load_sumcheck_data(
+        sumcheck_context,
+        config,
+        combined_witness,
+        &conjugated_combined_witness,
+        folding_challenges,
+        opening,
+        projection_matrix,
+        &projection_matrix_flatter_structured,
+        &projection_matrix_flatter,
+        &combination,
+        &qe,
+    );
+
     sumcheck_context
         .combiner
         .borrow_mut()
@@ -371,6 +380,33 @@ pub fn sumcheck(
     //     .clone();
 
     // assert_eq!(&a, &b);
+    load_verifier_sumcheck_data(
+        verifier_sumcheck_context,
+        config,
+        folding_challenges,
+        &claim_over_witness,
+        &claim_over_witness_conjugate,
+        evaluation_points_inner,
+        evaluation_points_outer,
+        projection_matrix,
+        &projection_matrix_flatter_structured,
+        &projection_matrix_flatter,
+        &combination,
+        &qe,
+    );
+
+    {
+        let a = &sumcheck_context
+            .field_combiner
+            .borrow()
+            .final_evaluations_test_only();
+        let b = verifier_sumcheck_context
+            .field_combiner_evaluation
+            .borrow_mut()
+            .evaluate_at_ring_point(&evaluation_points)
+            .clone();
+        assert_eq!(a, &b);
+    }
 
     (
         claim_over_witness,

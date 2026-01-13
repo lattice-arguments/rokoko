@@ -122,6 +122,8 @@ pub fn prover_round(
             &projection_matrix,
             &fold_challenge,
             &opening,
+            &evaluation_points_inner,
+            &evaluation_points_outer,
             &claims,
             rc_commitment.most_inner_commitment(),
             rc_opening.most_inner_commitment(),

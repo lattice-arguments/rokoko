@@ -301,7 +301,7 @@ impl<E: SumcheckElement> EvaluationSumcheckData for CombinerEvaluation<E> {
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
         // Compute the linear combination: sum of (evaluation[i] * challenge[i])
-        self.result = E::zero();
+        self.result.set_zero();
 
         for i in 0..self.evaluations.len() {
             self.scratch *= (
