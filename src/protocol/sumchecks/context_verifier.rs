@@ -79,8 +79,11 @@ pub struct Type2VerifierContext {
 pub struct Type3VerifierContext {
     // TODO: make strucutred row evaluations
     pub lhs_flatter_0_evaluation: Rc<RefCell<BasicEvaluationLinearSumcheck<RingElement>>>,
-    pub lhs_flatter_1_times_matrix_evaluation: Rc<RefCell<BasicEvaluationLinearSumcheck<RingElement>>>,
-    pub rhs_evaluation: Rc<RefCell<BasicEvaluationLinearSumcheck<RingElement>>>,
+    pub lhs_flatter_1_times_matrix_evaluation:
+        Rc<RefCell<BasicEvaluationLinearSumcheck<RingElement>>>,
+    // RHS: Split into projection_flatter and fold_challenge
+    pub rhs_projection_flatter_evaluation: Rc<RefCell<BasicEvaluationLinearSumcheck<RingElement>>>,
+    pub rhs_fold_challenge_evaluation: Rc<RefCell<BasicEvaluationLinearSumcheck<RingElement>>>,
     pub projection_selector_evaluation: Rc<RefCell<SelectorEqEvaluation>>,
     pub output: Rc<RefCell<DiffSumcheckEvaluation>>,
 }

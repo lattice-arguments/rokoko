@@ -429,12 +429,11 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
     // projection_matrix_flatter \cdot (I \otimes projection_matrix) \cdot folded_witness - projection_matrix_flatter \cdot projection_image \cdot fold_challenge = 0
     // Here, we treat projection_matrix_flatter \cdot (I \otimes projection_matrix) as a single multilinear polynomial
     // Also, we treat projection_matrix_flatter \tensor fold_challenge as a single multilinear polynomial
-    
+
     // It corresponds to:
     // \sum_z Diff(Prod(projection_matrix_flatter \cdot (I \otimes projection_matrix), folded_witness), Prod(projection_matrix_flatter \tensor fold_challenge, projection_image))
     // change to:
     // \sum_z Diff(Prod(projection_matrix_flatter_0, Prod(projection_matrix_flatter_1 \cdot (I \otimes projection_matrix), folded_witness)), Prod(Prod(projection_matrix_flatter, Prod(fold_challenge, projection_image))
-     
 
     let recomposed_projection = Rc::new(RefCell::new(DiffSumcheck::new(
         Rc::new(RefCell::new(ProductSumcheck::new(
@@ -455,12 +454,15 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
         let height = crate::common::config::PROJECTION_HEIGHT;
         let inner_width = config.projection_ratio * height;
         let blocks = config.witness_height / inner_width;
-        
+
         // Elder variables: projection_flatter_0 (length = blocks)
         let lhs_flatter_0_sumcheck = Rc::new(RefCell::new(
             LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
                 blocks,
-                total_vars - blocks.ilog2() as usize - inner_width.ilog2() as usize - config.witness_decomposition_chunks.ilog2() as usize,
+                total_vars
+                    - blocks.ilog2() as usize
+                    - inner_width.ilog2() as usize
+                    - config.witness_decomposition_chunks.ilog2() as usize,
                 inner_width.ilog2() as usize + config.witness_decomposition_chunks.ilog2() as usize,
             ),
         ));
@@ -469,7 +471,9 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
         let lhs_flatter_1_times_matrix_sumcheck = Rc::new(RefCell::new(
             LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
                 inner_width,
-                total_vars - inner_width.ilog2() as usize - config.witness_decomposition_chunks.ilog2() as usize,
+                total_vars
+                    - inner_width.ilog2() as usize
+                    - config.witness_decomposition_chunks.ilog2() as usize,
                 config.witness_decomposition_chunks.ilog2() as usize,
             ),
         ));
@@ -480,15 +484,33 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
             lhs_flatter_1_times_matrix_sumcheck.clone(),
         )));
 
-        let fold_tensor_sumcheck = Rc::new(RefCell::new(
+        // Split RHS into Product of two LinearSumchecks:
+        let rhs_fold_challenge_sumcheck = Rc::new(RefCell::new(
             LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
-                projection_height_flat * config.witness_width,
+                config.witness_width,
                 total_vars
-                    - (projection_height_flat * config.witness_width).ilog2() as usize
+                    - config.witness_width.ilog2() as usize
+                    - projection_height_flat.ilog2() as usize
+                    - config.projection_recursion.decomposition_chunks.ilog2() as usize,
+                projection_height_flat.ilog2() as usize
+                    + config.projection_recursion.decomposition_chunks.ilog2() as usize,
+            ),
+        ));
+
+        let rhs_projection_flatter_sumcheck = Rc::new(RefCell::new(
+            LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                projection_height_flat,
+                total_vars
+                    - projection_height_flat.ilog2() as usize
                     - config.projection_recursion.decomposition_chunks.ilog2() as usize,
                 config.projection_recursion.decomposition_chunks.ilog2() as usize,
             ),
         ));
+
+        let rhs_fold_tensor_product = Rc::new(RefCell::new(ProductSumcheck::new(
+            rhs_fold_challenge_sumcheck.clone(),
+            rhs_projection_flatter_sumcheck.clone(),
+        )));
 
         let lhs = Rc::new(RefCell::new(ProductSumcheck::new(
             folded_witness_selector_sumcheck.clone(),
@@ -501,7 +523,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
             projection_selector_sumcheck.clone(),
             Rc::new(RefCell::new(ProductSumcheck::new(
                 recomposed_projection.clone(),
-                fold_tensor_sumcheck.clone(),
+                rhs_fold_tensor_product,
             ))),
         )));
         let output = Rc::new(RefCell::new(DiffSumcheck::new(lhs, rhs)));
@@ -509,7 +531,8 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
         Type3SumcheckContext {
             lhs_flatter_0_sumcheck,
             lhs_flatter_1_times_matrix_sumcheck,
-            rhs_sumcheck: fold_tensor_sumcheck,
+            rhs_fold_challenge_sumcheck,
+            rhs_projection_flatter_sumcheck,
             projection_selector_sumcheck,
             output,
         }

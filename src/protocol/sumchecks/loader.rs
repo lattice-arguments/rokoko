@@ -104,19 +104,25 @@ pub fn load_sumcheck_data(
         // Load flatter_1 · projection_matrix (within-block coefficients)
         let projection_flatter_1_preprocessed =
             PreprocessedRow::from_structured_row(&projection_flatter_1_structured);
-        let flatter_1_times_matrix =
-            projection_flatter_1_times_matrix(projection_matrix, &projection_flatter_1_preprocessed);
+        let flatter_1_times_matrix = projection_flatter_1_times_matrix(
+            projection_matrix,
+            &projection_flatter_1_preprocessed,
+        );
         type3_sc
             .lhs_flatter_1_times_matrix_sumcheck
             .borrow_mut()
             .load_from(&flatter_1_times_matrix);
 
-        // RHS: fold tensor
-        let fold_tensor = tensor_product(
-            folding_challenges,
-            &projection_matrix_flatter_preprocessed.preprocessed_row,
-        );
-        type3_sc.rhs_sumcheck.borrow_mut().load_from(&fold_tensor);
+        // RHS: Split into fold_challenge and projection_flatter (Product)
+        type3_sc
+            .rhs_fold_challenge_sumcheck
+            .borrow_mut()
+            .load_from(folding_challenges);
+
+        type3_sc
+            .rhs_projection_flatter_sumcheck
+            .borrow_mut()
+            .load_from(&projection_matrix_flatter_preprocessed.preprocessed_row);
     }
 
     sumcheck_context

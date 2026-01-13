@@ -7,7 +7,10 @@ use crate::{
     },
     protocol::{
         config::Config,
-        sumchecks::helpers::{projection_coefficients, projection_flatter_1_times_matrix, split_projection_flatter, tensor_product},
+        sumchecks::helpers::{
+            projection_coefficients, projection_flatter_1_times_matrix, split_projection_flatter,
+            tensor_product,
+        },
     },
 };
 
@@ -73,7 +76,6 @@ pub fn load_verifier_sumcheck_data(
         // Type3: projection image consistency with split LHS structure
         // LHS: Prod(flatter_0, flatter_1·matrix) where flatter_0 covers elder (block) variables
         // and flatter_1·matrix covers LS (within-block) variables
-        
 
         let (projection_flatter_0_structured, projection_flatter_1_structured) =
             split_projection_flatter(projection_matrix_flatter_structured);
@@ -81,6 +83,7 @@ pub fn load_verifier_sumcheck_data(
         // Load flatter_0 (block-level weights)
         let projection_flatter_0_preprocessed =
             PreprocessedRow::from_structured_row(&projection_flatter_0_structured);
+
         verifier_sumcheck_context
             .type3evaluation
             .lhs_flatter_0_evaluation
@@ -90,24 +93,28 @@ pub fn load_verifier_sumcheck_data(
         // Load flatter_1 · projection_matrix (within-block coefficients)
         let projection_flatter_1_preprocessed =
             PreprocessedRow::from_structured_row(&projection_flatter_1_structured);
-        let flatter_1_times_matrix =
-            projection_flatter_1_times_matrix(projection_matrix, &projection_flatter_1_preprocessed);
+        let flatter_1_times_matrix = projection_flatter_1_times_matrix(
+            projection_matrix,
+            &projection_flatter_1_preprocessed,
+        );
         verifier_sumcheck_context
             .type3evaluation
             .lhs_flatter_1_times_matrix_evaluation
             .borrow_mut()
             .load_from(&flatter_1_times_matrix);
 
-        // RHS: fold tensor
-        let fold_tensor = tensor_product(
-            folding_challenges,
-            &projection_matrix_flatter_preprocessed.preprocessed_row,
-        );
+        // RHS: Split into projection_flatter and fold_challenge (Product)
         verifier_sumcheck_context
             .type3evaluation
-            .rhs_evaluation
+            .rhs_projection_flatter_evaluation
             .borrow_mut()
-            .load_from(&fold_tensor);
+            .load_from(&projection_matrix_flatter_preprocessed.preprocessed_row);
+
+        verifier_sumcheck_context
+            .type3evaluation
+            .rhs_fold_challenge_evaluation
+            .borrow_mut()
+            .load_from(folding_challenges);
     }
     // Load combiner challenges
     verifier_sumcheck_context

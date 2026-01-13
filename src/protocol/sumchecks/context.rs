@@ -123,7 +123,11 @@ impl SumcheckContext {
             .borrow_mut()
             .partial_evaluate(r);
         self.type3sumcheck
-            .rhs_sumcheck
+            .rhs_fold_challenge_sumcheck
+            .borrow_mut()
+            .partial_evaluate(r);
+        self.type3sumcheck
+            .rhs_projection_flatter_sumcheck
             .borrow_mut()
             .partial_evaluate(r);
         self.type3sumcheck
@@ -308,7 +312,8 @@ pub struct Type2SumcheckContext {
 pub struct Type3SumcheckContext {
     pub lhs_flatter_0_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
     pub lhs_flatter_1_times_matrix_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
-    pub rhs_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
+    pub rhs_fold_challenge_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
+    pub rhs_projection_flatter_sumcheck: Rc<RefCell<LinearSumcheck<RingElement>>>,
     pub projection_selector_sumcheck: Rc<RefCell<SelectorEq<RingElement>>>,
     pub output: Rc<RefCell<DiffSumcheck<RingElement>>>,
 }

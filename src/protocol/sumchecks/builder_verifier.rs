@@ -334,30 +334,46 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
         selector_evaluation_from_prefix(&config.projection_recursion.prefix, total_vars);
 
     let projection_height_flat = config.witness_height / config.projection_ratio;
-    
+
     // Split LHS projection coefficients evaluations
     let height = crate::common::config::PROJECTION_HEIGHT;
     let inner_width = config.projection_ratio * height;
     let blocks = config.witness_height / inner_width;
-    
+
     let lhs_flatter_0_evaluation = basic_evaluation_linear(
         blocks,
-        total_vars - blocks.ilog2() as usize - inner_width.ilog2() as usize - config.witness_decomposition_chunks.ilog2() as usize,
+        total_vars
+            - blocks.ilog2() as usize
+            - inner_width.ilog2() as usize
+            - config.witness_decomposition_chunks.ilog2() as usize,
         inner_width.ilog2() as usize + config.witness_decomposition_chunks.ilog2() as usize,
     );
 
     let lhs_flatter_1_times_matrix_evaluation = basic_evaluation_linear(
         inner_width,
-        total_vars - inner_width.ilog2() as usize - config.witness_decomposition_chunks.ilog2() as usize,
+        total_vars
+            - inner_width.ilog2() as usize
+            - config.witness_decomposition_chunks.ilog2() as usize,
         config.witness_decomposition_chunks.ilog2() as usize,
     );
 
-    let fold_tensor_evaluation = basic_evaluation_linear(
-        projection_height_flat * config.witness_width,
+    // Split RHS into projection_flatter and fold_challenge
+    let rhs_projection_flatter_evaluation = basic_evaluation_linear(
+        projection_height_flat,
         total_vars
-            - (projection_height_flat * config.witness_width).ilog2() as usize
+            - config.witness_width.ilog2() as usize
             - config.projection_recursion.decomposition_chunks.ilog2() as usize,
         config.projection_recursion.decomposition_chunks.ilog2() as usize,
+    );
+
+    let rhs_fold_challenge_evaluation = basic_evaluation_linear(
+        config.witness_width,
+        total_vars
+            - projection_height_flat.ilog2() as usize
+            - config.witness_width.ilog2() as usize
+            - config.projection_recursion.decomposition_chunks.ilog2() as usize,
+        config.witness_width.ilog2() as usize
+            + config.projection_recursion.decomposition_chunks.ilog2() as usize,
     );
 
     let recomposed_folded_witness = Rc::new(RefCell::new(DiffSumcheckEvaluation::new(
@@ -483,15 +499,20 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
         })
         .collect::<Vec<_>>();
 
-    // Build Type3 with Product of split LHS coefficients
-    let projection_coeff_product = Rc::new(RefCell::new(ProductSumcheckEvaluation::new(
+    // Build Type3 with Product of split LHS and RHS coefficients
+    let lhs_projection_coeff_product = Rc::new(RefCell::new(ProductSumcheckEvaluation::new(
         lhs_flatter_0_evaluation.clone(),
         lhs_flatter_1_times_matrix_evaluation.clone(),
     )));
 
+    let rhs_fold_tensor_product = Rc::new(RefCell::new(ProductSumcheckEvaluation::new(
+        rhs_projection_flatter_evaluation.clone(),
+        rhs_fold_challenge_evaluation.clone(),
+    )));
+
     let type3lhs_inner = Rc::new(RefCell::new(ProductSumcheckEvaluation::new(
         recomposed_folded_witness.clone(),
-        projection_coeff_product,
+        lhs_projection_coeff_product,
     )));
     let type3lhs = Rc::new(RefCell::new(ProductSumcheckEvaluation::new(
         folded_witness_selector_evaluation.clone(),
@@ -500,7 +521,7 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
 
     let type3rhs_inner = Rc::new(RefCell::new(ProductSumcheckEvaluation::new(
         recomposed_projection.clone(),
-        fold_tensor_evaluation.clone(),
+        rhs_fold_tensor_product,
     )));
     let type3rhs = Rc::new(RefCell::new(ProductSumcheckEvaluation::new(
         projection_selector_evaluation.clone(),
@@ -510,7 +531,8 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
     let type3evaluation = Type3VerifierContext {
         lhs_flatter_0_evaluation,
         lhs_flatter_1_times_matrix_evaluation,
-        rhs_evaluation: fold_tensor_evaluation.clone(),
+        rhs_projection_flatter_evaluation,
+        rhs_fold_challenge_evaluation,
         projection_selector_evaluation,
         output: Rc::new(RefCell::new(DiffSumcheckEvaluation::new(
             type3lhs, type3rhs,

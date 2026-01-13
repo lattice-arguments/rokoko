@@ -343,17 +343,17 @@ pub(crate) fn split_projection_flatter(
     let height = crate::common::config::PROJECTION_HEIGHT;
     let height_log = height.ilog2() as usize;
     let tensor_layers = &projection_flatter.tensor_layers;
-    
+
     debug_assert!(tensor_layers.len() >= height_log);
     let block_layers = tensor_layers.len() - height_log;
-    
+
     let projection_flatter_0 = StructuredRow {
         tensor_layers: tensor_layers[..block_layers].to_vec(),
     };
     let projection_flatter_1 = StructuredRow {
         tensor_layers: tensor_layers[block_layers..].to_vec(),
     };
-    
+
     (projection_flatter_0, projection_flatter_1)
 }
 
@@ -384,15 +384,15 @@ pub(crate) fn projection_flatter_1_times_matrix(
     let projection_ratio = projection_matrix.projection_ratio;
     let inner_width = projection_ratio * height;
     let zero = RingElement::zero(Representation::IncompleteNTT);
-    
+
     let mut result = new_vec_zero_preallocated(inner_width);
-    
+
     for inner_row in 0..height {
         let weight = &projection_flatter_1.preprocessed_row[inner_row];
         if weight == &zero {
             continue;
         }
-        
+
         for i in 0..inner_width {
             let (is_positive, is_non_zero) = projection_matrix[(inner_row, i)];
             if !is_non_zero {
@@ -405,6 +405,6 @@ pub(crate) fn projection_flatter_1_times_matrix(
             }
         }
     }
-    
+
     result
 }
