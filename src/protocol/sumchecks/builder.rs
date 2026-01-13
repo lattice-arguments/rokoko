@@ -427,6 +427,9 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
 
     // type3 sumchecks
     // projection_matrix_flatter \cdot (I \otimes projection_matrix) \cdot folded_witness - projection_matrix_flatter \cdot projection_image \cdot fold_challenge = 0
+    // Here, we treat projection_matrix_flatter \cdot (I \otimes projection_matrix) as a single multilinear polynomial
+    // Also, we treat projection_matrix_flatter \tensor fold_challenge as a single multilinear polynomial
+    
     let recomposed_projection = Rc::new(RefCell::new(DiffSumcheck::new(
         Rc::new(RefCell::new(ProductSumcheck::new(
             combined_witness_sumcheck.clone(),

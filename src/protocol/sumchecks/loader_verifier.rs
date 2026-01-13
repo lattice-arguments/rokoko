@@ -69,30 +69,35 @@ pub fn load_verifier_sumcheck_data(
             .borrow_mut()
             .load_from(point.clone());
     }
+    {
+        // projection_matrix_flatter \cdot (I \otimes projection_matrix) \cdot folded_witness - projection_matrix_flatter \cdot projection_image \cdot fold_challenge = 0
+        // Here, we treat projection_matrix_flatter \cdot (I \otimes projection_matrix) as a single multilinear polynomial
+        // Also, we treat projection_matrix_flatter \tensor fold_challenge as a single multilinear polynomial
+        // TODO: we should not do it as each of those have nice structure that we should exploit
+    
+        let projection_coeffs = projection_coefficients(
+            projection_matrix,
+            projection_matrix_flatter_structured,
+            config.witness_height,
+            config.projection_ratio,
+        );
+        verifier_sumcheck_context
+            .type3evaluation
+            .lhs_evaluation
+            .borrow_mut()
+            .load_from(&projection_coeffs);
 
-    let projection_coeffs = projection_coefficients(
-        projection_matrix,
-        projection_matrix_flatter_structured,
-        config.witness_height,
-        config.projection_ratio,
-    );
-    verifier_sumcheck_context
-        .type3evaluation
-        .lhs_evaluation
-        .borrow_mut()
-        .load_from(&projection_coeffs);
 
-    // TODO IMPORTANT: This shall be changed to something faster (and use fake linear eval)
-    let fold_tensor = tensor_product(
-        folding_challenges,
-        &projection_matrix_flatter_preprocessed.preprocessed_row,
-    );
-    verifier_sumcheck_context
-        .type3evaluation
-        .rhs_evaluation
-        .borrow_mut()
-        .load_from(&fold_tensor);
-
+        let fold_tensor = tensor_product(
+            folding_challenges,
+            &projection_matrix_flatter_preprocessed.preprocessed_row,
+        );
+        verifier_sumcheck_context
+            .type3evaluation
+            .rhs_evaluation
+            .borrow_mut()
+            .load_from(&fold_tensor);
+    }
     // Load combiner challenges
     verifier_sumcheck_context
         .combiner_evaluation
