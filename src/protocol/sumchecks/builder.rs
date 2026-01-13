@@ -455,8 +455,6 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
         let inner_width = config.projection_ratio * height;
         let blocks = config.witness_height / inner_width;
 
-        println!("blocks: {}, inner_width: {}", blocks, inner_width);
-
         // Elder variables: projection_flatter_0 (length = blocks)
         let lhs_flatter_0_sumcheck = Rc::new(RefCell::new(
             LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(

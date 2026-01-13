@@ -209,7 +209,6 @@ impl<E: SumcheckElement> BasicEvaluationLinearSumcheck<E> {
         prefix_size: usize,
         suffix_size: usize,
     ) -> Self {
-        println!("Creating BasicEvaluationLinearSumcheck with count: {}, prefix_size: {}, suffix_size: {}", count.ilog2(), prefix_size, suffix_size);
         BasicEvaluationLinearSumcheck {
             data: E::allocate_zero_vec(count),
             variable_count: count.ilog2() as usize + prefix_size + suffix_size,
@@ -341,7 +340,6 @@ impl<E: SumcheckElement> StructuredRowEvaluationLinearSumcheck<E> {
         prefix_size: usize,
         suffix_size: usize,
     ) -> Self {
-        println!("Creating StructuredRowEvaluationLinearSumcheck with count: {}, prefix_size: {}, suffix_size: {}", count.ilog2(), prefix_size, suffix_size);
         StructuredRowEvaluationLinearSumcheck {
             data: None,
             variable_count: count.ilog2() as usize + prefix_size + suffix_size,
