@@ -23,6 +23,16 @@ pub fn inner_product(a: &Vec<RingElement>, b: &Vec<RingElement>) -> RingElement 
 }
 
 #[inline]
+pub fn inner_product_into(mut r: &mut RingElement, a: &Vec<RingElement>, b: &Vec<RingElement>) {
+    assert_eq!(a.len(), b.len());
+    let mut temp = RingElement::zero(Representation::IncompleteNTT);
+    for (x, y) in a.iter().zip(b.iter()) {
+        incomplete_ntt_multiplication(&mut temp, x, y);
+        *r += &temp;
+    }
+}
+
+#[inline]
 pub fn field_to_ring_element(fe: &QuadraticExtension) -> RingElement {
     let mut result = RingElement::zero(Representation::HomogenizedFieldExtensions);
     for i in 0..2 {

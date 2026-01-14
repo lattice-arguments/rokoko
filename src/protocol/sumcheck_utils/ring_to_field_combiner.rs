@@ -217,7 +217,9 @@ pub struct RingToFieldCombinerEvaluation {
 }
 
 impl RingToFieldCombinerEvaluation {
-    pub fn new(evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>) -> Self {
+    pub fn new(
+        evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
+    ) -> Self {
         RingToFieldCombinerEvaluation {
             evaluation,
             challenge_vec: [QuadraticExtension::zero(); HALF_DEGREE],
@@ -283,7 +285,8 @@ fn test_ring_to_field_combiner_evaluation() {
 
     let mut eval_impl = BasicEvaluationLinearSumcheck::new(data.len());
     eval_impl.load_from(&data);
-    let eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> = ElephantCell::new(eval_impl);
+    let eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
+        ElephantCell::new(eval_impl);
 
     let mut challenge_qe = [QuadraticExtension::zero(); HALF_DEGREE];
     for i in 0..HALF_DEGREE {

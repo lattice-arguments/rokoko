@@ -14,8 +14,8 @@ use crate::{
         commitment::Prefix,
         crs::CRS,
         sumcheck_utils::{
-            elephant_cell::ElephantCell,
-            linear::LinearSumcheck, product::ProductSumcheck, selector_eq::SelectorEq,
+            elephant_cell::ElephantCell, linear::LinearSumcheck, product::ProductSumcheck,
+            selector_eq::SelectorEq,
         },
     },
 };

@@ -15,8 +15,8 @@ use crate::{
     protocol::{
         sumcheck,
         sumcheck_utils::{
-            elephant_cell::ElephantCell,
             common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
+            elephant_cell::ElephantCell,
             hypercube_point::HypercubePoint,
             polynomial::Polynomial,
         },
@@ -365,7 +365,11 @@ impl EvaluationSumcheckData for StructuredRowEvaluationLinearSumcheck<RingElemen
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
         self.result.set_from(&*ONE);
         if point.len() != self.variable_count {
-            panic!("Point has incorrect number of variables, expected {}, got {}", self.variable_count, point.len());
+            panic!(
+                "Point has incorrect number of variables, expected {}, got {}",
+                self.variable_count,
+                point.len()
+            );
         }
 
         let data = self.data.as_ref().expect("Data not loaded");

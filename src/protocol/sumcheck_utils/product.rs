@@ -59,8 +59,13 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
         &self.scratch_poly
     }
     fn max_num_polynomial_coefficients(&self) -> usize {
-        self.lhs_sumcheck.get_ref().max_num_polynomial_coefficients()
-            + self.rhs_sumcheck.get_ref().max_num_polynomial_coefficients()
+        self.lhs_sumcheck
+            .get_ref()
+            .max_num_polynomial_coefficients()
+            + self
+                .rhs_sumcheck
+                .get_ref()
+                .max_num_polynomial_coefficients()
             - 1
     }
 
@@ -405,33 +410,35 @@ fn test_product_of_linear_sumchecks_over_disjoint_variables() {
         RingElement::constant(12, Representation::IncompleteNTT),
     ];
 
-    let sumcheck_1 = ElephantCell::new(
-        LinearSumcheck::new_with_prefixed_sufixed_data(data1.len(), 0, 4),
-    );
+    let sumcheck_1 = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
+        data1.len(),
+        0,
+        4,
+    ));
     sumcheck_1.borrow_mut().load_from(&data1);
 
     // 1 x 16, 2 x 16, 3 x 16, 4 x 16, 1 x 16, 2 x 16, 3 x 16, 4 x 16,
 
-    let sumcheck_2 = ElephantCell::new(
-        LinearSumcheck::new_with_prefixed_sufixed_data(data2.len(), 2, 2),
-    );
+    let sumcheck_2 = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
+        data2.len(),
+        2,
+        2,
+    ));
 
     // (5 x 4, 6 x 4, 7 x 4, 8 x 4, 5 x 4, 6 x 4, 7 x 4, 8 x 4) x 4
 
     sumcheck_2.borrow_mut().load_from(&data2);
-    let sumcheck_3 = ElephantCell::new(
-        LinearSumcheck::new_with_prefixed_sufixed_data(data3.len(), 4, 0),
-    );
+    let sumcheck_3 = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
+        data3.len(),
+        4,
+        0,
+    ));
     sumcheck_3.borrow_mut().load_from(&data3);
 
-    let product_12 = ElephantCell::new(ProductSumcheck::new(
-        sumcheck_1.clone(),
-        sumcheck_2.clone(),
-    ));
-    let product_123 = ElephantCell::new(ProductSumcheck::new(
-        product_12.clone(),
-        sumcheck_3.clone(),
-    ));
+    let product_12 =
+        ElephantCell::new(ProductSumcheck::new(sumcheck_1.clone(), sumcheck_2.clone()));
+    let product_123 =
+        ElephantCell::new(ProductSumcheck::new(product_12.clone(), sumcheck_3.clone()));
     let mut univariate_poly = Polynomial::new(0);
 
     let mut claim = RingElement::constant(
@@ -522,11 +529,13 @@ fn test_product_evaluation() {
 
     let mut lhs_eval_impl = BasicEvaluationLinearSumcheck::new(lhs_data.len());
     lhs_eval_impl.load_from(&lhs_data);
-    let lhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> = ElephantCell::new(lhs_eval_impl);
+    let lhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
+        ElephantCell::new(lhs_eval_impl);
 
     let mut rhs_eval_impl = BasicEvaluationLinearSumcheck::new(rhs_data.len());
     rhs_eval_impl.load_from(&rhs_data);
-    let rhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> = ElephantCell::new(rhs_eval_impl);
+    let rhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
+        ElephantCell::new(rhs_eval_impl);
 
     let mut product_eval = ProductSumcheckEvaluation::new(lhs_eval, rhs_eval);
 

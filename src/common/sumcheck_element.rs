@@ -75,3 +75,51 @@ impl SumcheckElement for QuadraticExtension {
         ]
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct U64Wrapper(pub u64);
+
+impl AddAssign<&U64Wrapper> for U64Wrapper {
+    fn add_assign(&mut self, rhs: &U64Wrapper) {
+        self.0 += rhs.0;
+    }
+}
+
+impl SubAssign<&U64Wrapper> for U64Wrapper {
+    fn sub_assign(&mut self, rhs: &U64Wrapper) {
+        self.0 -= rhs.0;
+    }
+}
+
+impl MulAssign<&U64Wrapper> for U64Wrapper {
+    fn mul_assign(&mut self, rhs: &U64Wrapper) {
+        self.0 *= rhs.0;
+    }
+}
+
+impl MulAssign<(&U64Wrapper, &U64Wrapper)> for U64Wrapper {
+    fn mul_assign(&mut self, (a, b): (&U64Wrapper, &U64Wrapper)) {
+        self.0 = a.0 * b.0;
+    }
+}
+
+impl SumcheckElement for U64Wrapper {
+    fn zero() -> Self {
+        U64Wrapper(0)
+    }
+
+    fn one() -> Self {
+        U64Wrapper(1)
+    }
+
+    fn set_zero(&mut self) {
+        self.0 = 0;
+    }
+    
+    fn allocate_zero_vec(len: usize) -> Vec<Self>
+    where
+        Self: Sized,
+    {
+        vec![U64Wrapper(0); len]
+    }
+}

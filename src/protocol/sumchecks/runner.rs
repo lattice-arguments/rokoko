@@ -292,7 +292,10 @@ pub fn sumcheck(
         &combination,
         &qe,
     );
-    println!("    load_sumcheck_data: {} ms", t_load.elapsed().as_millis());
+    println!(
+        "    load_sumcheck_data: {} ms",
+        t_load.elapsed().as_millis()
+    );
 
     sumcheck_context
         .combiner
@@ -306,7 +309,11 @@ pub fn sumcheck(
         .load_challenges_from(qe.clone());
 
     let mut num_vars = sumcheck_context.combiner.borrow().variable_count();
-    println!("    sumcheck num_vars: {}, hypercube_size: {}", num_vars, 1u64 << (num_vars - 1));
+    println!(
+        "    sumcheck num_vars: {}, hypercube_size: {}",
+        num_vars,
+        1u64 << (num_vars - 1)
+    );
 
     // Collect evaluation points during sumcheck
     let mut evaluation_points: Vec<RingElement> = vec![];
@@ -344,7 +351,12 @@ pub fn sumcheck(
 
         polys.push(poly_over_field);
     }
-    println!("    sumcheck loop: {} ms (poly: {} ms, eval: {} ms)", t_loop.elapsed().as_millis(), time_poly, time_eval);
+    println!(
+        "    sumcheck loop: {} ms (poly: {} ms, eval: {} ms)",
+        t_loop.elapsed().as_millis(),
+        time_poly,
+        time_eval
+    );
 
     // final round
     assert_eq!(sumcheck_context.field_combiner.borrow().variable_count(), 0);

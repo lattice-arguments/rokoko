@@ -1,7 +1,4 @@
-use std::{
-    cell::RefCell,
-    cmp::max,
-};
+use std::{cell::RefCell, cmp::max};
 
 use crate::{
     common::{
@@ -60,8 +57,12 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
     }
     fn max_num_polynomial_coefficients(&self) -> usize {
         max(
-            self.lhs_sumcheck.get_ref().max_num_polynomial_coefficients(),
-            self.rhs_sumcheck.get_ref().max_num_polynomial_coefficients(),
+            self.lhs_sumcheck
+                .get_ref()
+                .max_num_polynomial_coefficients(),
+            self.rhs_sumcheck
+                .get_ref()
+                .max_num_polynomial_coefficients(),
         )
     }
     fn variable_count(&self) -> usize {
@@ -236,11 +237,13 @@ fn test_diff_evaluation() {
 
     let mut lhs_eval_impl = BasicEvaluationLinearSumcheck::new(lhs_data.len());
     lhs_eval_impl.load_from(&lhs_data);
-    let lhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> = ElephantCell::new(lhs_eval_impl);
+    let lhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
+        ElephantCell::new(lhs_eval_impl);
 
     let mut rhs_eval_impl = BasicEvaluationLinearSumcheck::new(rhs_data.len());
     rhs_eval_impl.load_from(&rhs_data);
-    let rhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> = ElephantCell::new(rhs_eval_impl);
+    let rhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
+        ElephantCell::new(rhs_eval_impl);
 
     let mut diff_eval = DiffSumcheckEvaluation::new(lhs_eval, rhs_eval);
 

@@ -1,18 +1,17 @@
+use std::marker::Unsize;
+use std::ops::CoerceUnsized;
 /// ElephantCell: A cell type that can operate in safe or unsafe mode via compile-time feature flag.
-/// 
+///
 /// - Safe mode (default): Uses Rc<RefCell<T>> with runtime borrow checking
 /// - Unsafe mode (feature="unsafe-sumcheck"): Uses Rc<UnsafeCell<T>> with zero-cost access
-/// 
+///
 /// Safety invariant for unsafe mode: During polynomial generation (read operations),
 /// no mutations occur. Mutations only happen during partial_evaluate, which is never
 /// concurrent with polynomial generation.
-
 use std::rc::Rc;
-use std::ops::CoerceUnsized;
-use std::marker::Unsize;
 
 #[cfg(not(feature = "unsafe-sumcheck"))]
-use std::cell::{RefCell, Ref, RefMut};
+use std::cell::{Ref, RefCell, RefMut};
 
 #[cfg(feature = "unsafe-sumcheck")]
 use std::cell::UnsafeCell;

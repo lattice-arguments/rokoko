@@ -5,13 +5,12 @@ use crate::{
     protocol::commitment::{Prefix, RecursionConfig, RecursiveCommitment},
 };
 
-
 // 2^26 = 2^7 (DEGREE) * 2^19
 // 2^19 = 2^5 * 2^14
 
 pub static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
-    witness_height: 2usize.pow(14), // 2^14
-    witness_width: 2usize.pow(5), // 2^5
+    witness_height: 2usize.pow(14),  // 2^14
+    witness_width: 2usize.pow(5),    // 2^5
     projection_ratio: 2usize.pow(5), // 2^5
     basic_commitment_rank: 4,
     nof_openings: 1,
@@ -25,13 +24,13 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
             length: 7, // 2^16 / 2^9 = 2^7
         },
         next: Some(Box::new(RecursionConfig {
-            decomposition_base_log: 7, 
+            decomposition_base_log: 7,
             decomposition_chunks: 8, // 1 (rank) * 8 (decomp) = 2^3
             rank: 1,
             prefix: Prefix {
                 prefix: 0b1100001010000,
                 length: 13, // 2^16 / 2^3 = 2^13
-            }, 
+            },
             next: None,
         })),
     },
@@ -43,23 +42,25 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
         prefix: Prefix {
             prefix: 0b110000100,
             length: 9, // 2^16 / 2^7 = 2^9
-        }, 
+        },
     },
-    projection_recursion: RecursionConfig { // 2^14 (witness_height) * 2^5 (witness_width) / 2^5 (projection_ratio) * 2^0 (decomp) = 2^14
+    projection_recursion: RecursionConfig {
+        // 2^14 (witness_height) * 2^5 (witness_width) / 2^5 (projection_ratio) * 2^0 (decomp) = 2^14
         decomposition_base_log: 20, // no decomposition
         decomposition_chunks: 1,
         rank: 1,
         next: None,
-        prefix: Prefix { 
+        prefix: Prefix {
             prefix: 0b10,
-            length: 2,  // 2^16 / 2^14 = 2^2
+            length: 2, // 2^16 / 2^14 = 2^2
         },
     },
 
-    folded_witness_prefix: Prefix {  //  2^14 (witness_height) * 2^1 (decomp) = 2^15
+    folded_witness_prefix: Prefix {
+        //  2^14 (witness_height) * 2^1 (decomp) = 2^15
         prefix: 0b0,
-        length: 1,  // 2^16 / 2^15 = 2^1
-    }, 
+        length: 1, // 2^16 / 2^15 = 2^1
+    },
     witness_decomposition_chunks: 2,
     witness_decomposition_base_log: 10, // no decomposition
 

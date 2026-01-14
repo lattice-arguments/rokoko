@@ -16,7 +16,7 @@ use crate::{
             elephant_cell::ElephantCell,
             hypercube_point::HypercubePoint,
             linear::LinearSumcheck,
-            polynomial::{Polynomial, add_poly_in_place},
+            polynomial::{add_poly_in_place, Polynomial},
         },
     },
 };
@@ -29,9 +29,7 @@ pub struct Combiner<E: SumcheckElement = RingElement> {
 }
 
 impl<E: SumcheckElement> Combiner<E> {
-    pub fn new(
-        sumchecks: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = E>>>,
-    ) -> Self {
+    pub fn new(sumchecks: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = E>>>) -> Self {
         let sumchecks_len = sumchecks.len();
         // assert all variables counts are the same
         let var_count = sumchecks[0].get_ref().variable_count();
@@ -84,7 +82,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
     }
 
     #[inline]
-   fn univariate_polynomial_at_point_into(
+    fn univariate_polynomial_at_point_into(
         &self,
         point: HypercubePoint, // this is just the usize so we pass it by value
         polynomial: &mut Polynomial<E>,
@@ -340,11 +338,13 @@ fn test_combiner_evaluation() {
 
     let mut eval0_impl = BasicEvaluationLinearSumcheck::new(data0.len());
     eval0_impl.load_from(&data0);
-    let eval0: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> = ElephantCell::new(eval0_impl);
+    let eval0: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
+        ElephantCell::new(eval0_impl);
 
     let mut eval1_impl = BasicEvaluationLinearSumcheck::new(data1.len());
     eval1_impl.load_from(&data1);
-    let eval1: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> = ElephantCell::new(eval1_impl);
+    let eval1: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
+        ElephantCell::new(eval1_impl);
 
     let challenges = vec![
         RingElement::constant(3, Representation::IncompleteNTT),

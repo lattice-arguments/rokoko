@@ -1,7 +1,9 @@
 use std::ops::{Index, IndexMut};
 
 use crate::common::{
-    pool::{get_preallocated_quad_vec, get_preallocated_ring_element_vec, preallocate_ring_element_vecs},
+    pool::{
+        get_preallocated_quad_vec, get_preallocated_ring_element_vec, preallocate_ring_element_vecs,
+    },
     ring_arithmetic::{QuadraticExtension, RingElement},
 };
 

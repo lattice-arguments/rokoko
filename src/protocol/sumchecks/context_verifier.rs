@@ -1,11 +1,12 @@
 use crate::{
     common::ring_arithmetic::{QuadraticExtension, RingElement},
     protocol::sumcheck_utils::{
-        elephant_cell::ElephantCell,
         combiner::CombinerEvaluation,
         diff::DiffSumcheckEvaluation,
+        elephant_cell::ElephantCell,
         linear::{
-            BasicEvaluationLinearSumcheck, FakeEvaluationLinearSumcheck, RingToFieldWrapperEvaluation, StructuredRowEvaluationLinearSumcheck
+            BasicEvaluationLinearSumcheck, FakeEvaluationLinearSumcheck,
+            RingToFieldWrapperEvaluation, StructuredRowEvaluationLinearSumcheck,
         },
         product::ProductSumcheckEvaluation,
         ring_to_field_combiner::RingToFieldCombinerEvaluation,
@@ -19,7 +20,8 @@ pub struct VerifierSumcheckContext {
     // Base evaluations (leaf nodes that will be loaded with data)
     pub combined_witness_evaluation: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
     pub folded_witness_selector_evaluation: ElephantCell<SelectorEqEvaluation>,
-    pub folded_witness_combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
+    pub folded_witness_combiner_evaluation:
+        ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub witness_combiner_constant_evaluation:
         ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub folding_challenges_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,

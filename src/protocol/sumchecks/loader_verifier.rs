@@ -80,7 +80,6 @@ pub fn load_verifier_sumcheck_data(
         let (projection_flatter_0_structured, projection_flatter_1_structured) =
             split_projection_flatter(projection_matrix_flatter_structured);
 
-
         verifier_sumcheck_context
             .type3evaluation
             .lhs_flatter_0_evaluation

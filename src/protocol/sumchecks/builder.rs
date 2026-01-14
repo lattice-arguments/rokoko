@@ -8,12 +8,8 @@ use crate::{
         config::Config,
         crs::{self, CRS},
         sumcheck_utils::{
-            combiner::Combiner,
-            common::HighOrderSumcheckData,
-            diff::DiffSumcheck,
-            elephant_cell::ElephantCell,
-            linear::LinearSumcheck,
-            product::ProductSumcheck,
+            combiner::Combiner, common::HighOrderSumcheckData, diff::DiffSumcheck,
+            elephant_cell::ElephantCell, linear::LinearSumcheck, product::ProductSumcheck,
             ring_to_field_combiner::RingToFieldCombiner,
         },
         sumchecks::context::Type5SumcheckContext,
@@ -557,12 +553,12 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
     // 2. Opening recursion: verifies the opening proofs are correctly committed
     // 3. Projection recursion: verifies the projection images are correctly committed
     // Each tree has its own depth, rank, and decomposition parameters defined in config.
-    
+
     // Convert concrete ElephantCell<LinearSumcheck> to trait object ElephantCell<dyn HighOrderSumcheckData>
     // CoerceUnsized handles this automatically
-    let combined_witness_trait_obj: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>> = 
+    let combined_witness_trait_obj: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>> =
         combined_witness_sumcheck.clone();
-    
+
     let type4sumchecks = [
         build_type4_sumcheck_context(
             crs,

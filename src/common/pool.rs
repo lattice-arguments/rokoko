@@ -67,15 +67,13 @@ pub fn get_preallocated_ring_element_vec(len: usize) -> Vec<RingElement> {
     }
 
     let mut pool = PREALLOCATED_RING.lock().expect("pool poisoned");
-    pool.get_mut(&len)
-        .and_then(|v| v.pop())
-        .unwrap_or_else(|| {
-            println!(
-                "Preallocated RingElement pool miss for size {}, allocating new",
-                len
-            );
-            vec![ZERO_REP_INCOMPLETE_NTT.clone(); len]
-        })
+    pool.get_mut(&len).and_then(|v| v.pop()).unwrap_or_else(|| {
+        println!(
+            "Preallocated RingElement pool miss for size {}, allocating new",
+            len
+        );
+        vec![ZERO_REP_INCOMPLETE_NTT.clone(); len]
+    })
 }
 
 /// Get a preallocated vector from the QuadraticExtension pool
@@ -88,15 +86,13 @@ pub fn get_preallocated_quad_vec(len: usize) -> Vec<QuadraticExtension> {
     }
 
     let mut pool = PREALLOCATED_QUAD.lock().expect("pool poisoned");
-    pool.get_mut(&len)
-        .and_then(|v| v.pop())
-        .unwrap_or_else(|| {
-            println!(
-                "Preallocated QuadraticExtension pool miss for size {}, allocating new",
-                len
-            );
-            vec![QuadraticExtension::zero(); len]
-        })
+    pool.get_mut(&len).and_then(|v| v.pop()).unwrap_or_else(|| {
+        println!(
+            "Preallocated QuadraticExtension pool miss for size {}, allocating new",
+            len
+        );
+        vec![QuadraticExtension::zero(); len]
+    })
 }
 
 /// Preallocate RingElement vectors in the pool

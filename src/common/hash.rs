@@ -82,6 +82,10 @@ impl HashWrapper {
         u64::from_le_bytes(buf)
     }
 
+    pub fn sample_u64_mod_q(&mut self) -> u64 {
+        self.sample_u64() % MOD_Q
+    }
+
     pub fn fill_from_xof(&mut self, label: &[u8], out: &mut [u8]) {
         let mut state = self.transcript.clone();
         state.update(&self.sample_counter.to_le_bytes());
@@ -163,7 +167,6 @@ impl HashWrapper {
             );
         }
     }
-
     pub fn sample_ring_element_vec_into(&mut self, output: &mut [RingElement]) {
         for element in output.iter_mut() {
             self.sample_ring_element_into(element);
