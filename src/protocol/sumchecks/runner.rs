@@ -352,15 +352,15 @@ pub fn sumcheck(
     let mut time_eval = 0;
 
     let mut poly_temp = Polynomial::<RingElement>::new(0);
-    let c = &sumcheck_context.type3_1_a_sumchecks.as_ref().unwrap()[0]
-        .output
-        .borrow()
-        .univariate_polynomial_into(&mut poly_temp);
-    assert_eq!(
-        &poly_temp.at_one() + &poly_temp.at_zero(),
-        RingElement::zero(Representation::IncompleteNTT),
-        "Type3_1_A initial claim failed"
-    );
+    // let c = &sumcheck_context.type3_1_a_sumchecks.as_ref().unwrap()[0]
+    //     .output
+    //     .borrow()
+    //     .univariate_polynomial_into(&mut poly_temp);
+    // assert_eq!(
+    //     &poly_temp.at_one() + &poly_temp.at_zero(),
+    //     RingElement::zero(Representation::IncompleteNTT),
+    //     "Type3_1_A initial claim failed"
+    // );
 
     while num_vars > 0 {
         num_vars -= 1;

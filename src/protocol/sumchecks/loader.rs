@@ -149,6 +149,7 @@ pub fn load_sumcheck_data(
         if let Some(challenges) = challenges_batching_projection_1 {
             // Each batch gets its own (c_0_values, c_1_values, j_batched) tuple
             for (batch_idx, (type3_1_a_ctx, challenges)) in type3_1_a_contexts
+                .sumchecks
                 .iter_mut()
                 .zip(challenges.iter())
                 .enumerate()
@@ -178,13 +179,12 @@ pub fn load_sumcheck_data(
                     .lhs_flatter_1_times_matrix_sumcheck
                     .borrow_mut()
                     .load_from(&challenges.j_batched);
-
-                // RHS: fold_challenge (same for all batches, already loaded in folding_challenges_sumcheck)
-                type3_1_a_ctx
-                    .rhs_fold_challenge_sumcheck
-                    .borrow_mut()
-                    .load_from(folding_challenges);
             }
+            // RHS: fold_challenge (same for all batches, already loaded in folding_challenges_sumcheck)
+            type3_1_a_contexts
+                .rhs_fold_challenge_sumcheck
+                .borrow_mut()
+                .load_from(folding_challenges);
         }
     }
 
