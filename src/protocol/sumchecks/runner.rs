@@ -3,8 +3,8 @@ use std::vec;
 
 use crate::{
     common::{
-        arithmetic::{field_to_ring_element, field_to_ring_element_into, inner_product, ONE},
-        config::HALF_DEGREE,
+        arithmetic::{ONE, field_to_ring_element, field_to_ring_element_into, inner_product},
+        config::{HALF_DEGREE, NOF_BATCHES},
         hash::HashWrapper,
         matrix::new_vec_zero_preallocated,
         projection_matrix::ProjectionMatrix,
@@ -15,7 +15,7 @@ use crate::{
     protocol::{
         config::{Config, Projection},
         crs,
-        open::{evaluation_point_to_structured_row, Opening},
+        open::{Opening, evaluation_point_to_structured_row},
         project,
         sumcheck::{self, SumcheckContext},
         sumcheck_utils::{
@@ -250,6 +250,7 @@ pub fn sumcheck(
     combined_witness: &Vec<RingElement>,
     projection_matrix: &ProjectionMatrix,
     folding_challenges: &Vec<RingElement>,
+    challenges_batching_projection_1: &Option<&[(Vec<u64>, Vec<u64>, Vec<RingElement>); NOF_BATCHES]>,
     opening: &Opening,
     sumcheck_context: &mut SumcheckContext,
     hash_wrapper: &mut HashWrapper,

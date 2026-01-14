@@ -2,10 +2,13 @@ use num::traits::ops::mul_add;
 
 use crate::{
     common::{
-        arithmetic::{inner_product, inner_product_into, precompute_structured_values},
-        config::{DEGREE, MOD_Q},
+        arithmetic::{
+            inner_product, inner_product_into, precompute_structured_values,
+            precompute_structured_values_fast,
+        },
+        config::{DEGREE, MOD_Q, NOF_BATCHES},
         hash::HashWrapper,
-        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
+        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
         pool::preallocate_ring_element_vecs,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
@@ -166,7 +169,7 @@ fn batch_projection_into(
     witness: &VerticallyAlignedMatrix<RingElement>,
     projection_matrix: &ProjectionMatrix,
     hash_wrapper: &mut HashWrapper,
-) -> (Vec<u64>, Vec<u64>) {
+) -> (Vec<u64>, Vec<u64>, Vec<RingElement>) {
     // Sample structured challenge layers
     // c'_0 is over d (number of blocks in image_ct when viewed coefficient-wise)
     // c'_1 is over n_rp (projection height coefficients)
@@ -191,8 +194,8 @@ fn batch_projection_into(
     // Precompute all structured row values for c_0 and c_1
     // For k layers, we compute all 2^k values in O(2^k) time
 
-    let c_0_values = precompute_structured_values(&c_0_layers);
-    let c_1_values = precompute_structured_values(&c_1_layers);
+    let c_0_values = precompute_structured_values_fast(&c_0_layers);
+    let c_1_values = precompute_structured_values_fast(&c_1_layers);
 
     // ===== Step 1: Batch projection matrix with dual embedding =====
     // Compute J_batched = c'_1^T * J_embedded
@@ -280,7 +283,7 @@ fn batch_projection_into(
 
         result[col] = col_result;
     }
-    (c_0_layers, c_1_layers)
+    (c_0_values, c_1_values, j_batched)
 }
 
 pub fn batch_projection_n_times(
@@ -288,18 +291,33 @@ pub fn batch_projection_n_times(
     projection_matrix: &ProjectionMatrix,
     hash_wrapper: &mut HashWrapper,
     n: usize,
-) -> HorizontallyAlignedMatrix<RingElement> {
-    assert_eq!(n, 2, "Only n=2 is expected");
+) -> (HorizontallyAlignedMatrix<RingElement>, [(Vec<u64>, Vec<u64>, Vec<RingElement>); NOF_BATCHES]) {
+    assert_eq!(n, NOF_BATCHES, "Only n=NOF_BATCHES is expected");
     let mut result = HorizontallyAlignedMatrix::new_zero_preallocated(n, witness.width);
-    for i in 0..n {
+    let challenges = [
         batch_projection_into(
-            &mut result.row_slice_mut(i),
+            &mut result.row_slice_mut(0),
             witness,
             projection_matrix,
             hash_wrapper,
-        );
-    }
-    result
+        ),
+        batch_projection_into(
+            &mut result.row_slice_mut(1),
+            witness,
+            projection_matrix,
+            hash_wrapper,
+        ),
+    ];
+    // let mut challenges = Vec::with_capacity(n);
+    // for i in 0..n {
+    //     challenges.push(batch_projection_into(
+    //         &mut result.row_slice_mut(i),
+    //         witness,
+    //         projection_matrix,
+    //         hash_wrapper,
+    //     ));
+    // }
+    (result, challenges)
 }
 
 #[test]

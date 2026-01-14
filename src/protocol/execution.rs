@@ -103,7 +103,7 @@ pub fn prover_round(
             hash_wrapper.update_with_ring_element_slice(&rc_projection_ct.most_inner_commitment());
 
             let t4 = std::time::Instant::now();
-            let projection_batched = batch_projection_n_times(
+            let (projection_batched, challenges_batching_projection_1) = batch_projection_n_times(
                 &witness,
                 &projection_matrix,
                 &mut hash_wrapper,
@@ -122,7 +122,7 @@ pub fn prover_round(
             );
             println!("  rc_projection_batched: {} ms", t5.elapsed().as_millis());
 
-            Some((rc_projection_ct, rc_projection_batched))
+            Some((rc_projection_ct, rc_projection_batched, challenges_batching_projection_1))
         }
         _ => None,
     };
@@ -207,6 +207,7 @@ pub fn prover_round(
             &next_round_data,
             &projection_matrix,
             &fold_challenge,
+            &rcs_projection_1.as_ref().map(|(_, _, challenges)| challenges),
             &opening,
             sumcheck_context,
             &mut hash_wrapper,
@@ -232,7 +233,7 @@ pub fn prover_round(
         rc_projection_inner: rc_projection_image
             .as_ref()
             .map(|rc| rc.most_inner_commitment()),
-        rcs_projection_1_inner: rcs_projection_1.as_ref().map(|(rc_ct, rc_batched)| {
+        rcs_projection_1_inner: rcs_projection_1.as_ref().map(|(rc_ct, rc_batched, _)| {
             (
                 rc_ct.most_inner_commitment(),
                 rc_batched.most_inner_commitment(),
