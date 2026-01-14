@@ -180,6 +180,12 @@ impl<T> HorizontallyAlignedMatrix<T> {
         let end = start + self.width;
         &self.data[start..end]
     }
+
+    pub fn row_slice_mut(&mut self, r: usize) -> &mut [T] {
+        let start = r * self.width;
+        let end = start + self.width;
+        &mut self.data[start..end]
+    }
 }
 
 #[cfg(test)]

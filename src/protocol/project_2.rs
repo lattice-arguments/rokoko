@@ -5,7 +5,7 @@ use crate::{
         arithmetic::{inner_product, inner_product_into},
         config::{DEGREE, MOD_Q, PROJECTION_HEIGHT},
         hash::HashWrapper,
-        matrix::{new_vec_zero_preallocated, VerticallyAlignedMatrix},
+        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         pool::preallocate_ring_element_vecs,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
@@ -158,11 +158,12 @@ fn project_coefficients(
 // Each c'_i is structured as a tensor product: c'_i = ⊗ (1 - l_j, l_j)
 // This allows us to sample only log(|c'_i|) random values (the layers l_j)
 // and compute any c'_i[k] on-the-fly using the binary representation of k.
-fn batch_projection(
+fn batch_projection_into(
+    result: &mut [RingElement],
     witness: &VerticallyAlignedMatrix<RingElement>,
     projection_matrix: &ProjectionMatrix,
     hash_wrapper: &mut HashWrapper,
-) -> VerticallyAlignedMatrix<RingElement> {
+) {
     // Sample structured challenge layers
     // c'_0 is over d (number of blocks in image_ct when viewed coefficient-wise)
     // c'_1 is over n_rp (projection height coefficients)
@@ -253,7 +254,6 @@ fn batch_projection(
     // corresponds to one application of the projection matrix.
     // We compute for each column: result[col] = Σ_chunk c'_0[chunk] * <J_batched, W[chunk, col]>
     let num_chunks = witness.height / inner_width_ring;
-    let mut result = VerticallyAlignedMatrix::new_zero_preallocated(1, witness.width);
 
     for col in 0..witness.width {
         let mut col_result = RingElement::zero(Representation::IncompleteNTT);
@@ -278,9 +278,25 @@ fn batch_projection(
             }
         }
 
-        result[(0, col)] = col_result;
+        result[col] = col_result;
     }
+}
 
+fn batch_projection_n_times(
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    projection_matrix: &ProjectionMatrix,
+    hash_wrapper: &mut HashWrapper,
+    n: usize,
+) -> HorizontallyAlignedMatrix<RingElement> {
+    let mut result = HorizontallyAlignedMatrix::new_zero_preallocated(n, witness.width);
+    for i in 0..n {
+        batch_projection_into(
+            &mut result.row_slice_mut(i),
+            witness,
+            projection_matrix,
+            hash_wrapper,
+        );
+    }
     result
 }
 
@@ -377,11 +393,17 @@ fn test_batch_projection() {
     let mut hash_wrapper2 = HashWrapper::new();
     projection_matrix.sample(&mut hash_wrapper2); // Consume same randomness to sync state
 
-    let result = batch_projection(&witness, &projection_matrix, &mut hash_wrapper2);
+    let mut result = new_vec_zero_preallocated(witness.width);
+    batch_projection_into(
+        &mut result,
+        &witness,
+        &projection_matrix,
+        &mut hash_wrapper2,
+    );
 
     // Check each column separately
     for col in 0..witness.width {
-        let mut col_result = result[(0, col)].clone();
+        let mut col_result = result[col].clone();
         col_result.to_representation(Representation::Coefficients);
 
         assert_eq!(
