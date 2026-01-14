@@ -1,8 +1,10 @@
-use crate::common::{
-    config::PROJECTION_HEIGHT,
-    matrix::{VerticallyAlignedMatrix, ZeroNew},
-    projection_matrix::ProjectionMatrix,
-    ring_arithmetic::{Representation, RingElement},
+use crate::{
+    common::{
+        matrix::{VerticallyAlignedMatrix, ZeroNew},
+        projection_matrix::ProjectionMatrix,
+        ring_arithmetic::{Representation, RingElement},
+    },
+    protocol::project,
 };
 
 // TODO: this projection is very naive and unoptimized
@@ -44,20 +46,25 @@ pub fn project(
     );
 
     for col in 0..witness.width {
-        for rows_chunk in 0..projection_image.height / PROJECTION_HEIGHT {
+        for rows_chunk in 0..projection_image.height / projection_matrix.projection_height {
             let subwitness = witness.col_slice(
                 col,
-                rows_chunk * projection_matrix.projection_ratio * PROJECTION_HEIGHT,
-                (rows_chunk + 1) * projection_matrix.projection_ratio * PROJECTION_HEIGHT,
+                rows_chunk
+                    * projection_matrix.projection_ratio
+                    * projection_matrix.projection_height,
+                (rows_chunk + 1)
+                    * projection_matrix.projection_ratio
+                    * projection_matrix.projection_height,
             );
             let projection_subimage = projection_image.col_slice_mut(
                 col,
-                rows_chunk * PROJECTION_HEIGHT,
-                (rows_chunk + 1) * PROJECTION_HEIGHT,
+                rows_chunk * projection_matrix.projection_height,
+                (rows_chunk + 1) * projection_matrix.projection_height,
             );
-            for inner_row in 0..PROJECTION_HEIGHT {
+            for inner_row in 0..projection_matrix.projection_height {
                 // compute inner-product
-                for i in 0..projection_matrix.projection_ratio * PROJECTION_HEIGHT {
+                for i in 0..projection_matrix.projection_ratio * projection_matrix.projection_height
+                {
                     let (is_positive, is_non_zero) = &projection_matrix[(inner_row, i)];
                     if !*is_non_zero {
                         continue;
@@ -76,18 +83,9 @@ pub fn project(
 
 #[test]
 fn test_projection() {
-    let mut witness = VerticallyAlignedMatrix {
-        data: vec![RingElement::constant(1, Representation::IncompleteNTT); PROJECTION_HEIGHT * 8],
-        width: 2,
-        height: PROJECTION_HEIGHT * 4,
-    };
-
-    for i in 0..witness.height * witness.width {
-        witness.data[i] = RingElement::constant((i + 1) as u64, Representation::IncompleteNTT);
-    }
-
+    let projection_height = 8;
     let projection_matrix = ProjectionMatrix::from_i8({
-        let mut data = vec![vec![0i8; PROJECTION_HEIGHT * 2]; PROJECTION_HEIGHT];
+        let mut data = vec![vec![0i8; projection_height * 2]; projection_height];
         data[0][0] = -1;
         data[0][1] = -1;
         data[0][2] = 1;
@@ -101,6 +99,19 @@ fn test_projection() {
         data
     });
 
+    let mut witness = VerticallyAlignedMatrix {
+        data: vec![
+            RingElement::constant(1, Representation::IncompleteNTT);
+            projection_matrix.projection_height * 8
+        ],
+        width: 2,
+        height: projection_matrix.projection_height * 4,
+    };
+
+    for i in 0..witness.height * witness.width {
+        witness.data[i] = RingElement::constant((i + 1) as u64, Representation::IncompleteNTT);
+    }
+
     let projection_image = project(&witness, &projection_matrix);
 
     assert_eq!(
@@ -111,12 +122,12 @@ fn test_projection() {
         )
     );
     assert_eq!(
-        projection_image[(PROJECTION_HEIGHT, 0)],
+        projection_image[(projection_matrix.projection_height, 0)],
         RingElement::constant(
-            (-1 * (PROJECTION_HEIGHT as i64 * 2 + 1)
-                + -1 * (PROJECTION_HEIGHT as i64 * 2 + 2)
-                + 1 * (PROJECTION_HEIGHT as i64 * 2 + 3)
-                + 1 * (PROJECTION_HEIGHT as i64 * 2 + 4)) as u64,
+            (-1 * (projection_matrix.projection_height as i64 * 2 + 1)
+                + -1 * (projection_matrix.projection_height as i64 * 2 + 2)
+                + 1 * (projection_matrix.projection_height as i64 * 2 + 3)
+                + 1 * (projection_matrix.projection_height as i64 * 2 + 4)) as u64,
             Representation::IncompleteNTT
         )
     );
@@ -124,21 +135,21 @@ fn test_projection() {
     assert_eq!(
         projection_image[(0, 1)],
         RingElement::constant(
-            (-1 * (PROJECTION_HEIGHT as i64 * 4 + 1)
-                + -1 * (PROJECTION_HEIGHT as i64 * 4 + 2)
-                + 1 * (PROJECTION_HEIGHT as i64 * 4 + 3)
-                + 1 * (PROJECTION_HEIGHT as i64 * 4 + 4)) as u64,
+            (-1 * (projection_matrix.projection_height as i64 * 4 + 1)
+                + -1 * (projection_matrix.projection_height as i64 * 4 + 2)
+                + 1 * (projection_matrix.projection_height as i64 * 4 + 3)
+                + 1 * (projection_matrix.projection_height as i64 * 4 + 4)) as u64,
             Representation::IncompleteNTT
         )
     );
 
     assert_eq!(
-        projection_image[(PROJECTION_HEIGHT, 1)],
+        projection_image[(projection_matrix.projection_height, 1)],
         RingElement::constant(
-            (-1 * (PROJECTION_HEIGHT as i64 * 6 + 1)
-                + -1 * (PROJECTION_HEIGHT as i64 * 6 + 2)
-                + 1 * (PROJECTION_HEIGHT as i64 * 6 + 3)
-                + 1 * (PROJECTION_HEIGHT as i64 * 6 + 4)) as u64,
+            (-1 * (projection_matrix.projection_height as i64 * 6 + 1)
+                + -1 * (projection_matrix.projection_height as i64 * 6 + 2)
+                + 1 * (projection_matrix.projection_height as i64 * 6 + 3)
+                + 1 * (projection_matrix.projection_height as i64 * 6 + 4)) as u64,
             Representation::IncompleteNTT
         )
     );
@@ -152,12 +163,12 @@ fn test_projection() {
     );
 
     assert_eq!(
-        projection_image[(PROJECTION_HEIGHT + 3, 0)],
+        projection_image[(projection_matrix.projection_height + 3, 0)],
         RingElement::constant(
-            (-1 * (PROJECTION_HEIGHT as i64 * 2 + 2)
-                + 1 * (PROJECTION_HEIGHT as i64 * 2 + 3)
-                + 1 * (PROJECTION_HEIGHT as i64 * 2 + 7)
-                + 1 * (PROJECTION_HEIGHT as i64 * 2 + 8)) as u64,
+            (-1 * (projection_matrix.projection_height as i64 * 2 + 2)
+                + 1 * (projection_matrix.projection_height as i64 * 2 + 3)
+                + 1 * (projection_matrix.projection_height as i64 * 2 + 7)
+                + 1 * (projection_matrix.projection_height as i64 * 2 + 8)) as u64,
             Representation::IncompleteNTT
         )
     );
@@ -165,21 +176,21 @@ fn test_projection() {
     assert_eq!(
         projection_image[(3, 1)],
         RingElement::constant(
-            (-1 * (PROJECTION_HEIGHT as i64 * 4 + 2)
-                + 1 * (PROJECTION_HEIGHT as i64 * 4 + 3)
-                + 1 * (PROJECTION_HEIGHT as i64 * 4 + 7)
-                + 1 * (PROJECTION_HEIGHT as i64 * 4 + 8)) as u64,
+            (-1 * (projection_matrix.projection_height as i64 * 4 + 2)
+                + 1 * (projection_matrix.projection_height as i64 * 4 + 3)
+                + 1 * (projection_matrix.projection_height as i64 * 4 + 7)
+                + 1 * (projection_matrix.projection_height as i64 * 4 + 8)) as u64,
             Representation::IncompleteNTT
         )
     );
 
     assert_eq!(
-        projection_image[(PROJECTION_HEIGHT + 3, 1)],
+        projection_image[(projection_matrix.projection_height + 3, 1)],
         RingElement::constant(
-            (-1 * (PROJECTION_HEIGHT as i64 * 6 + 2)
-                + 1 * (PROJECTION_HEIGHT as i64 * 6 + 3)
-                + 1 * (PROJECTION_HEIGHT as i64 * 6 + 7)
-                + 1 * (PROJECTION_HEIGHT as i64 * 6 + 8)) as u64,
+            (-1 * (projection_matrix.projection_height as i64 * 6 + 2)
+                + 1 * (projection_matrix.projection_height as i64 * 6 + 3)
+                + 1 * (projection_matrix.projection_height as i64 * 6 + 7)
+                + 1 * (projection_matrix.projection_height as i64 * 6 + 8)) as u64,
             Representation::IncompleteNTT
         )
     );

@@ -255,7 +255,7 @@ pub(crate) fn projection_coefficients(
     witness_height: usize,
     projection_ratio: usize,
 ) -> Vec<RingElement> {
-    let height = crate::common::config::PROJECTION_HEIGHT;
+    let height = projection_matrix.projection_height;
     let height_log = height.ilog2() as usize;
     let tensor_layers = &projection_flatter.tensor_layers;
     debug_assert!(tensor_layers.len() >= height_log);
@@ -340,8 +340,9 @@ pub(crate) fn projection_coefficients(
 /// them separately.
 pub(crate) fn split_projection_flatter(
     projection_flatter: &StructuredRow,
+    projection_height: usize,
 ) -> (StructuredRow, StructuredRow) {
-    let height = crate::common::config::PROJECTION_HEIGHT;
+    let height = projection_height;
     let height_log = height.ilog2() as usize;
     let tensor_layers = &projection_flatter.tensor_layers;
 
@@ -382,7 +383,7 @@ pub(crate) fn projection_flatter_1_times_matrix(
     projection_matrix: &ProjectionMatrix,
     projection_flatter_1: &PreprocessedRow,
 ) -> Vec<QuadraticExtension> {
-    let height = crate::common::config::PROJECTION_HEIGHT;
+    let height = projection_matrix.projection_height;
     let projection_ratio = projection_matrix.projection_ratio;
     let inner_width = projection_ratio * height;
 

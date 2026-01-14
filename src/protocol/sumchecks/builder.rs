@@ -452,7 +452,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
             // Split projection coefficients into two parts:
             // 1. projection_flatter_0: elder variables (block indices)
             // 2. projection_flatter_1 · matrix: LS variables (within-block)
-            let height = crate::common::config::PROJECTION_HEIGHT;
+            let height = config.projection_height;
             let inner_width = config.projection_ratio * height;
             let blocks = config.witness_height / inner_width;
 

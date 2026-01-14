@@ -93,7 +93,10 @@ pub fn load_sumcheck_data(
     // LHS: Split into flatter_0 (elder/block variables) and flatter_1·matrix (LS/within-block variables)
     if let Some(type3_sc) = &mut sumcheck_context.type3sumcheck {
         let (projection_flatter_0_structured, projection_flatter_1_structured) =
-            split_projection_flatter(projection_matrix_flatter_structured);
+            split_projection_flatter(
+                projection_matrix_flatter_structured,
+                projection_matrix.projection_height,
+            );
 
         // Load flatter_0 (block-level weights)
         let projection_flatter_0_preprocessed =

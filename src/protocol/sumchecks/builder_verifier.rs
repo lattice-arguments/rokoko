@@ -450,7 +450,7 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
                 let projection_height_flat = config.witness_height / config.projection_ratio;
 
                 // Split LHS projection coefficients evaluations
-                let height = crate::common::config::PROJECTION_HEIGHT;
+                let height = config.projection_height;
                 let inner_width = config.projection_ratio * height;
                 let blocks = config.witness_height / inner_width;
 
