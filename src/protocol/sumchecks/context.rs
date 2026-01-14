@@ -38,13 +38,11 @@ pub struct SumcheckContext {
     pub commitment_key_rows_sumcheck: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
     pub opening_combiner_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub opening_combiner_constant_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
-    pub projection_combiner_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
-    pub projection_combiner_constant_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub type0sumchecks: Vec<Type0SumcheckContext>,
     pub type1sumchecks: Vec<Type1SumcheckContext>,
     pub type2sumchecks: Vec<Type2SumcheckContext>,
-    pub type3sumcheck: Type3SumcheckContext,
-    pub type4sumchecks: [Type4SumcheckContext; 3],
+    pub type3sumcheck: Option<Type3SumcheckContext>,
+    pub type4sumchecks: Vec<Type4SumcheckContext>,
     pub type5sumcheck: Type5SumcheckContext,
     pub combiner: ElephantCell<Combiner<RingElement>>,
     pub field_combiner: ElephantCell<RingToFieldCombiner>,
@@ -91,12 +89,6 @@ impl SumcheckContext {
         self.opening_combiner_constant_sumcheck
             .borrow_mut()
             .partial_evaluate(r);
-        self.projection_combiner_sumcheck
-            .borrow_mut()
-            .partial_evaluate(r);
-        self.projection_combiner_constant_sumcheck
-            .borrow_mut()
-            .partial_evaluate(r);
         for type1_sc in self.type1sumchecks.iter() {
             type1_sc
                 .inner_evaluation_sumcheck
@@ -113,26 +105,38 @@ impl SumcheckContext {
                 .borrow_mut()
                 .partial_evaluate(r);
         }
-        self.type3sumcheck
-            .lhs_flatter_0_sumcheck
-            .borrow_mut()
-            .partial_evaluate(r);
-        self.type3sumcheck
-            .lhs_flatter_1_times_matrix_sumcheck
-            .borrow_mut()
-            .partial_evaluate(r);
-        self.type3sumcheck
-            .rhs_fold_challenge_sumcheck
-            .borrow_mut()
-            .partial_evaluate(r);
-        self.type3sumcheck
-            .rhs_projection_flatter_sumcheck
-            .borrow_mut()
-            .partial_evaluate(r);
-        self.type3sumcheck
-            .projection_selector_sumcheck
-            .borrow_mut()
-            .partial_evaluate(r);
+
+        if let Some(type3_sc) = &mut self.type3sumcheck {
+            type3_sc
+                .projection_combiner_sumcheck
+                .borrow_mut()
+                .partial_evaluate(r);
+            type3_sc
+                .projection_combiner_constant_sumcheck
+                .borrow_mut()
+                .partial_evaluate(r);
+            type3_sc
+                .lhs_flatter_0_sumcheck
+                .borrow_mut()
+                .partial_evaluate(r);
+            type3_sc
+                .lhs_flatter_1_times_matrix_sumcheck
+                .borrow_mut()
+                .partial_evaluate(r);
+            type3_sc
+                .rhs_fold_challenge_sumcheck
+                .borrow_mut()
+                .partial_evaluate(r);
+            type3_sc
+                .rhs_projection_flatter_sumcheck
+                .borrow_mut()
+                .partial_evaluate(r);
+            type3_sc
+                .projection_selector_sumcheck
+                .borrow_mut()
+                .partial_evaluate(r);
+        }
+
         for type4_sc in self.type4sumchecks.iter_mut() {
             partial_evaluate_type4(type4_sc, r);
         }
@@ -309,6 +313,8 @@ pub struct Type2SumcheckContext {
 ///     from the combined witness.
 ///   - `output`: The final DiffSumcheck that the verifier checks.
 pub struct Type3SumcheckContext {
+    pub projection_combiner_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub projection_combiner_constant_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub lhs_flatter_0_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub lhs_flatter_1_times_matrix_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub rhs_fold_challenge_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,

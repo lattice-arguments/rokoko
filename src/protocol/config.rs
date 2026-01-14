@@ -9,10 +9,23 @@ use crate::{
 // 2^19 = 2^5 * 2^14
 
 #[derive(Clone)]
-enum ProjectionType {
-    Type1, // full ring elements + no batching
-    Type2, // coefficient-wise + batching + commit to image
-    Type3, // coefficient-wise + batching + no commit to image
+pub enum ProjectionType {
+    Type0, // full ring elements + no batching
+    Type1, // coefficient-wise + batching + commit to constant terms + commit to batched projection
+}
+
+#[derive(Clone)]
+pub struct Type1ProjectionConfig {
+    pub recursion_constant_term: RecursionConfig, // here we check the norm
+    pub recursion_batched_projection: RecursionConfig, // this one is for the actual projection and we need to show consistency
+}
+
+pub type Type0ProjectionConfig = RecursionConfig;
+
+#[derive(Clone)]
+pub enum Projection {
+    Type0(Type0ProjectionConfig),
+    Type1(Type1ProjectionConfig),
 }
 
 pub static REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
@@ -51,8 +64,7 @@ pub static REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
             length: 9, // 2^16 / 2^7 = 2^9
         },
     },
-    projection_type: ProjectionType::Type1,
-    projection_recursion: RecursionConfig {
+    projection_recursion: Projection::Type0(Type0ProjectionConfig {
         // 2^14 (witness_height) * 2^5 (witness_width) / 2^5 (projection_ratio) * 2^0 (decomp) = 2^14
         decomposition_base_log: 20, // no decomposition
         decomposition_chunks: 1,
@@ -62,7 +74,7 @@ pub static REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
             prefix: 0b10,
             length: 2, // 2^16 / 2^14 = 2^2
         },
-    },
+    }),
 
     folded_witness_prefix: Prefix {
         //  2^14 (witness_height) * 2^1 (decomp) = 2^15
@@ -113,8 +125,7 @@ pub static TOY_CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
             length: 5,
         }, // 2048 / 2^5 = 64
     },
-    projection_type: ProjectionType::Type1,
-    projection_recursion: RecursionConfig {
+    projection_recursion: Projection::Type0(Type0ProjectionConfig {
         decomposition_base_log: 15,
         decomposition_chunks: 2,
         rank: 1,
@@ -123,7 +134,7 @@ pub static TOY_CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
             prefix: 0b10,
             length: 2,
         }, // 2048 / 2^2 = 512
-    },
+    }),
 
     folded_witness_prefix: Prefix {
         prefix: 0b0,
@@ -157,10 +168,8 @@ pub struct Config {
     pub projection_ratio: usize, // shall be likely the witness_height
     pub commitment_recursion: RecursionConfig,
     pub opening_recursion: RecursionConfig,
-    pub projection_recursion: RecursionConfig,
+    pub projection_recursion: Projection,
     pub nof_openings: usize,
-
-    pub projection_type: ProjectionType,
 
     pub witness_decomposition_base_log: usize,
     pub witness_decomposition_chunks: usize,

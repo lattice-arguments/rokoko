@@ -1,5 +1,5 @@
 use crate::protocol::commitment::RecursionConfig;
-use crate::protocol::config::Config;
+use crate::protocol::config::{Config, Projection};
 
 pub fn is_prefix(a_prefix: usize, a_len: usize, b_prefix: usize, b_len: usize) -> bool {
     if a_len == 0 {
@@ -36,7 +36,15 @@ pub fn check_prefixing_correctness(config: &Config) {
         ));
         push_recursion_prefixes(&current_config.commitment_recursion, &mut prefixes);
         push_recursion_prefixes(&current_config.opening_recursion, &mut prefixes);
-        push_recursion_prefixes(&current_config.projection_recursion, &mut prefixes);
+        match &current_config.projection_recursion {
+            Projection::Type0(proj_config) => {
+                push_recursion_prefixes(&proj_config, &mut prefixes);
+            }
+            Projection::Type1(proj_config) => {
+                push_recursion_prefixes(&proj_config.recursion_constant_term, &mut prefixes);
+                push_recursion_prefixes(&proj_config.recursion_batched_projection, &mut prefixes);
+            }
+        }
 
         match &current_config.next {
             Some(next) => current_config = next,

@@ -17,7 +17,7 @@ use crate::{
     },
     protocol::{
         commitment::{commit_basic, recursive_commit, RecursiveCommitment},
-        config::{paste_by_prefix, paste_recursive_commitment, CONFIG},
+        config::{paste_by_prefix, paste_recursive_commitment, Projection, CONFIG},
         crs::{CK, CRS},
         fold::fold,
         open::{claim, evaluation_point_to_structured_row, open_at, Opening},
@@ -66,16 +66,24 @@ pub fn prover_round(
 
     projection_matrix.sample(&mut hash_wrapper);
 
-    let t2 = std::time::Instant::now();
-    let projection_image = project(&witness, &projection_matrix);
-    println!("  project: {} ms", t2.elapsed().as_millis());
+    let rc_projection_image = match &CONFIG.projection_recursion {
+        Projection::Type0(proj_config) => {
+            let t2 = std::time::Instant::now();
+            let projection_image = project(&witness, &projection_matrix);
+            println!("  project: {} ms", t2.elapsed().as_millis());
 
-    let t3 = std::time::Instant::now();
-    let rc_projection_image =
-        recursive_commit(&crs, &CONFIG.projection_recursion, &projection_image.data);
-    println!("  rc_projection: {} ms", t3.elapsed().as_millis());
+            let t3 = std::time::Instant::now();
+            let rc_projection_image = recursive_commit(&crs, &proj_config, &projection_image.data);
+            println!("  rc_projection: {} ms", t3.elapsed().as_millis());
 
-    hash_wrapper.update_with_ring_element_slice(&rc_projection_image.most_inner_commitment());
+            hash_wrapper
+                .update_with_ring_element_slice(&rc_projection_image.most_inner_commitment());
+            Some(rc_projection_image)
+        }
+        _ => None,
+    };
+
+    // TODO implement Type1 projection recursion
 
     let mut fold_challenge = vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
 
@@ -102,11 +110,27 @@ pub fn prover_round(
         &CONFIG.folded_witness_prefix,
     );
 
-    paste_recursive_commitment(
-        &mut next_round_data,
-        &rc_projection_image,
-        &CONFIG.projection_recursion,
-    );
+    match &CONFIG.projection_recursion {
+        Projection::Type0(projection_config) => {
+            paste_recursive_commitment(
+                &mut next_round_data,
+                &rc_projection_image.as_ref().unwrap(),
+                &projection_config,
+            );
+        }
+        Projection::Type1(projection_config) => {
+            //  paste_recursive_commitment(
+            //     &mut next_round_data,
+            //     &rc_projection_image,
+            //     &projection_config.recursion_constant_term,
+            // );
+            // paste_recursive_commitment(
+            //     &mut next_round_data,
+            //     &rc_projection_image,
+            //     &projection_config.recursion_batched_projection,
+            // );
+        }
+    }
 
     paste_recursive_commitment(&mut next_round_data, &rc_opening, &CONFIG.opening_recursion);
 
@@ -152,6 +176,8 @@ pub fn prover_round(
 
     // TODO: recurse
 
+    // let rc_proj_inner = rc_projection_image.as_ref().map(|rc| rc.most_inner_commitment());
+
     let rp = RoundProof {
         polys: &sumcheck_transcript,
         claim_over_witness: &claim_over_witness,
@@ -159,7 +185,9 @@ pub fn prover_round(
         norm_claim: &norm_claim,
         rc_commitment_inner: rc_commitment.most_inner_commitment(),
         rc_opening_inner: rc_opening.most_inner_commitment(),
-        rc_projection_inner: rc_projection_image.most_inner_commitment(),
+        rc_projection_inner: rc_projection_image
+            .as_ref()
+            .map(|rc| rc.most_inner_commitment()),
     };
 
     let elapsed = start.elapsed().as_nanos();

@@ -34,16 +34,13 @@ pub struct VerifierSumcheckContext {
     pub opening_combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub opening_combiner_constant_evaluation:
         ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-    pub projection_combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-    pub projection_combiner_constant_evaluation:
-        ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
 
     // Type-specific contexts
     pub type0evaluations: Vec<Type0VerifierContext>,
     pub type1evaluations: Vec<Type1VerifierContext>,
     pub type2evaluations: Vec<Type2VerifierContext>,
-    pub type3evaluation: Type3VerifierContext,
-    pub type4evaluations: [Type4VerifierContext; 3],
+    pub type3evaluation: Option<Type3VerifierContext>,
+    pub type4evaluations: Vec<Type4VerifierContext>,
     pub type5evaluation: Type5VerifierContext,
 
     // Top-level combiners
@@ -77,6 +74,9 @@ pub struct Type2VerifierContext {
 }
 
 pub struct Type3VerifierContext {
+    pub projection_combiner_constant_evaluation:
+        ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
+    pub projection_combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub lhs_flatter_0_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
     pub lhs_flatter_1_times_matrix_evaluation_field:
         ElephantCell<BasicEvaluationLinearSumcheck<QuadraticExtension>>,

@@ -31,7 +31,7 @@ pub fn load_verifier_sumcheck_data(
     evaluation_points_inner: &Vec<StructuredRow>,
     evaluation_points_outer: &Vec<StructuredRow>,
     projection_matrix: &ProjectionMatrix,
-    projection_matrix_flatter_structured: &StructuredRow,
+    projection_matrix_flatter_structured: Option<&StructuredRow>, // Only needed for type0 projection
     combination: &Vec<RingElement>,
     qe: &[QuadraticExtension; HALF_DEGREE],
 ) {
@@ -72,16 +72,15 @@ pub fn load_verifier_sumcheck_data(
             .borrow_mut()
             .load_from(point.clone());
     }
-    {
+    if let Some(type3_eval) = &mut verifier_sumcheck_context.type3evaluation {
         // Type3: projection image consistency with split LHS structure
         // LHS: Prod(flatter_0, flatter_1·matrix) where flatter_0 covers elder (block) variables
         // and flatter_1·matrix covers LS (within-block) variables
 
         let (projection_flatter_0_structured, projection_flatter_1_structured) =
-            split_projection_flatter(projection_matrix_flatter_structured);
+            split_projection_flatter(projection_matrix_flatter_structured.unwrap());
 
-        verifier_sumcheck_context
-            .type3evaluation
+        type3_eval
             .lhs_flatter_0_evaluation
             .borrow_mut()
             .load_from(projection_flatter_0_structured.clone());
@@ -94,21 +93,18 @@ pub fn load_verifier_sumcheck_data(
             &projection_flatter_1_preprocessed,
         );
 
-        verifier_sumcheck_context
-            .type3evaluation
+        type3_eval
             .lhs_flatter_1_times_matrix_evaluation_field
             .borrow_mut()
             .load_from(&flatter_1_times_matrix);
 
         // RHS: Split into projection_flatter and fold_challenge (Product)
-        verifier_sumcheck_context
-            .type3evaluation
+        type3_eval
             .rhs_projection_flatter_evaluation
             .borrow_mut()
-            .load_from(projection_matrix_flatter_structured.clone());
+            .load_from(projection_matrix_flatter_structured.unwrap().clone());
 
-        verifier_sumcheck_context
-            .type3evaluation
+        type3_eval
             .rhs_fold_challenge_evaluation
             .borrow_mut()
             .load_from(folding_challenges);

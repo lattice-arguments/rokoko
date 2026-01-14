@@ -13,7 +13,7 @@ use crate::{
         sumcheck_element::SumcheckElement,
     },
     protocol::{
-        config::Config,
+        config::{Config, Projection},
         crs,
         open::{evaluation_point_to_structured_row, Opening},
         project,
@@ -36,7 +36,7 @@ fn batch_claims(
     claims: &Vec<RingElement>,
     rc_commitment_inner: &Vec<RingElement>,
     rc_opening_inner: &Vec<RingElement>,
-    rc_projection_inner: &Vec<RingElement>,
+    rc_projection_inner: Option<&Vec<RingElement>>,
     norm_claim: &RingElement,
     combination: &Vec<RingElement>,
 ) -> RingElement {
@@ -64,14 +64,29 @@ fn batch_claims(
 
     // Type4: Three recursion trees (commitment, opening, projection)
     // Each tree has: (layers with rank each) + (output layer with rank)
-    for (recursion_idx, rc_inner) in [rc_commitment_inner, rc_opening_inner, rc_projection_inner]
-        .iter()
-        .enumerate()
+    for (recursion_idx, rc_inner) in [
+        Some(rc_commitment_inner),
+        Some(rc_opening_inner),
+        rc_projection_inner,
+    ]
+    .iter()
+    .enumerate()
     {
+        if rc_inner.is_none() {
+            continue;
+        }
+        let rc_inner = rc_inner.as_ref().unwrap();
         let recursion_config = match recursion_idx {
             0 => &config.commitment_recursion,
             1 => &config.opening_recursion,
-            2 => &config.projection_recursion,
+            2 => match &config.projection_recursion {
+                Projection::Type0(proj_config) => proj_config,
+                Projection::Type1(proj_config) => &proj_config.recursion_constant_term,
+            },
+            3 => match &config.projection_recursion {
+                Projection::Type1(proj_config) => &proj_config.recursion_batched_projection,
+                _ => unreachable!(),
+            },
             _ => unreachable!(),
         };
 
@@ -389,7 +404,7 @@ pub struct RoundProof<'a> {
     pub norm_claim: &'a RingElement,
     pub rc_commitment_inner: &'a Vec<RingElement>,
     pub rc_opening_inner: &'a Vec<RingElement>,
-    pub rc_projection_inner: &'a Vec<RingElement>,
+    pub rc_projection_inner: Option<&'a Vec<RingElement>>,
 }
 
 pub fn sumcheck_verifier(
@@ -406,7 +421,9 @@ pub fn sumcheck_verifier(
     let mut projection_matrix = ProjectionMatrix::new(config.projection_ratio);
 
     projection_matrix.sample(hash_wrapper);
-    hash_wrapper.update_with_ring_element_slice(&round_proof.rc_projection_inner);
+    if let Some(rc_projection_inner) = &round_proof.rc_projection_inner {
+        hash_wrapper.update_with_ring_element_slice(rc_projection_inner);
+    }
 
     let mut folding_challenges =
         vec![RingElement::zero(Representation::IncompleteNTT); config.witness_width];
@@ -499,7 +516,7 @@ pub fn sumcheck_verifier(
         evaluation_points_inner,
         evaluation_points_outer,
         &projection_matrix,
-        &projection_matrix_flatter_structured,
+        Some(&projection_matrix_flatter_structured), // assume type0 projection
         &combination,
         &qe,
     );

@@ -7,7 +7,11 @@ use crate::{
         ring_arithmetic::{QuadraticExtension, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
-    protocol::{config::Config, open::Opening},
+    protocol::{
+        config::Config,
+        open::Opening,
+        sumchecks::helpers::{projection_flatter_1_times_matrix, split_projection_flatter},
+    },
 };
 
 use super::context::SumcheckContext;
@@ -87,10 +91,7 @@ pub fn load_sumcheck_data(
 
     // Load projection data (type3)
     // LHS: Split into flatter_0 (elder/block variables) and flatter_1·matrix (LS/within-block variables)
-    let type3_sc = &mut sumcheck_context.type3sumcheck;
-    {
-        use super::helpers::{projection_flatter_1_times_matrix, split_projection_flatter};
-
+    if let Some(type3_sc) = &mut sumcheck_context.type3sumcheck {
         let (projection_flatter_0_structured, projection_flatter_1_structured) =
             split_projection_flatter(projection_matrix_flatter_structured);
 
