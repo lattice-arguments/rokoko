@@ -6,22 +6,26 @@ pub struct HypercubePoint {
 }
 
 impl HypercubePoint {
+    #[inline(always)]
     pub fn new(coordinates: usize) -> Self {
         HypercubePoint { coordinates }
     }
 
+    #[inline(always)]
     pub fn moved(&self, shift: usize) -> Self {
         HypercubePoint {
             coordinates: self.coordinates + shift,
         }
     }
 
+    #[inline(always)]
     pub fn shifted(&self, shift: usize) -> Self {
         HypercubePoint {
             coordinates: self.coordinates >> shift,
         }
     }
 
+    #[inline(always)]
     pub fn masked(&self, mask: usize) -> Self {
         HypercubePoint {
             coordinates: self.coordinates & mask,

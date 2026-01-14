@@ -2,7 +2,7 @@ use num::traits::ops::mul_add;
 
 use crate::{
     common::{
-        arithmetic::{inner_product, inner_product_into},
+        arithmetic::{inner_product, inner_product_into, precompute_structured_values},
         config::{DEGREE, MOD_Q},
         hash::HashWrapper,
         matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
@@ -166,7 +166,7 @@ fn batch_projection_into(
     witness: &VerticallyAlignedMatrix<RingElement>,
     projection_matrix: &ProjectionMatrix,
     hash_wrapper: &mut HashWrapper,
-) {
+) -> (Vec<u64>, Vec<u64>) {
     // Sample structured challenge layers
     // c'_0 is over d (number of blocks in image_ct when viewed coefficient-wise)
     // c'_1 is over n_rp (projection height coefficients)
@@ -188,22 +188,11 @@ fn batch_projection_into(
         .map(|_| 1u64)
         .collect();
 
-    // Helper function to compute structured row value from layers
-    let compute_structured_value = |layers: &[u64], index: usize| -> u64 {
-        let mut result = 1u64;
-        for (bit_pos, &layer) in layers.iter().enumerate() {
-            if (index >> bit_pos) & 1 == 1 {
-                unsafe {
-                    result = multiply_mod(result, layer, MOD_Q);
-                }
-            } else {
-                unsafe {
-                    result = multiply_mod(result, sub_mod(1, layer, MOD_Q), MOD_Q);
-                }
-            }
-        }
-        result
-    };
+    // Precompute all structured row values for c_0 and c_1
+    // For k layers, we compute all 2^k values in O(2^k) time
+
+    let c_0_values = precompute_structured_values(&c_0_layers);
+    let c_1_values = precompute_structured_values(&c_1_layers);
 
     // ===== Step 1: Batch projection matrix with dual embedding =====
     // Compute J_batched = c'_1^T * J_embedded
@@ -225,7 +214,7 @@ fn batch_projection_into(
             let col_index = i * DEGREE + j; // Flatten to coefficient space
                                             // Accumulate weighted sum over PROJECTION_HEIGHT rows using c'_1
             for k in 0..projection_matrix.projection_height {
-                let coeff = compute_structured_value(&c_1_layers, k);
+                let coeff = c_1_values[k];
                 unsafe {
                     let (is_positive, is_non_zero) = &projection_matrix[(k, col_index)];
                     if !*is_non_zero {
@@ -270,7 +259,7 @@ fn batch_projection_into(
         let mut col_result = RingElement::zero(Representation::IncompleteNTT);
 
         for chunk in 0..num_chunks {
-            let c_0_coeff = compute_structured_value(&c_0_layers, chunk);
+            let c_0_coeff = c_0_values[chunk];
             let mut chunk_result = RingElement::zero(Representation::IncompleteNTT);
 
             // Inner product of j_batched with the corresponding chunk of witness column
@@ -291,6 +280,7 @@ fn batch_projection_into(
 
         result[col] = col_result;
     }
+    (c_0_layers, c_1_layers)
 }
 
 pub fn batch_projection_n_times(
@@ -359,22 +349,32 @@ fn test_batch_projection() {
         .map(|_| 1u64)
         .collect();
 
-    // Helper function to compute structured row value from layers
-    let compute_structured_value = |layers: &[u64], index: usize| -> u64 {
-        let mut result = 1u64;
-        for (bit_pos, &layer) in layers.iter().enumerate() {
-            if (index >> bit_pos) & 1 == 1 {
-                unsafe {
-                    result = multiply_mod(result, layer, MOD_Q);
-                }
-            } else {
-                unsafe {
-                    result = multiply_mod(result, sub_mod(1, layer, MOD_Q), MOD_Q);
+    // Precompute all structured row values
+    let precompute_structured_values = |layers: &[u64]| -> Vec<u64> {
+        let size = 1 << layers.len();
+        let mut values = vec![1u64; size];
+
+        for (layer_idx, &layer) in layers.iter().enumerate() {
+            let layer_complement = unsafe { sub_mod(1, layer, MOD_Q) };
+
+            for i in 0..size {
+                if (i >> layer_idx) & 1 == 1 {
+                    unsafe {
+                        values[i] = multiply_mod(values[i], layer, MOD_Q);
+                    }
+                } else {
+                    unsafe {
+                        values[i] = multiply_mod(values[i], layer_complement, MOD_Q);
+                    }
                 }
             }
         }
-        result
+
+        values
     };
+
+    let c_0_values = precompute_structured_values(&c_0_layers);
+    let c_1_values = precompute_structured_values(&c_1_layers);
 
     let inner_width_ring =
         projection_matrix.projection_ratio * (projection_matrix.projection_height / DEGREE);
@@ -387,10 +387,10 @@ fn test_batch_projection() {
         let mut expected_ct = 0u64;
 
         for chunk_idx in 0..num_chunks_in_image {
-            let c_0_coeff = compute_structured_value(&c_0_layers, chunk_idx);
+            let c_0_coeff = c_0_values[chunk_idx];
             // Each chunk contains projection_matrix.projection_height coefficients
             for coeff_idx in 0..projection_matrix.projection_height {
-                let c_1_coeff = compute_structured_value(&c_1_layers, coeff_idx);
+                let c_1_coeff = c_1_values[coeff_idx];
                 // Map flat coefficient index to (row, degree) in the ring element matrix
                 let row_in_chunk = coeff_idx / DEGREE; // Which ring element in this chunk
                 let deg = coeff_idx % DEGREE; // Which coefficient in that ring element

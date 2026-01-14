@@ -541,8 +541,18 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
                 output,
             })
         }
-        Projection::Type1(projection_recursion) => None,
+        _ => None,
     };
+
+    // let type_3_1_a_sumchecks = match &config.projection_recursion {
+    //     Projection::Type1(projection_recursion) => {
+    //         let mut contexts = Vec::new();
+    //         for h in 0..projection_recursion.nof_batches {
+    //             todo!();
+    //         }
+    //     }
+    //     _ => None,
+    // }
 
     let conjugated_combined_witness_sumcheck = ElephantCell::new(
         LinearSumcheck::<RingElement>::new(config.composed_witness_length),
@@ -654,6 +664,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
         type3sumcheck,
         type4sumchecks,
         type5sumcheck,
+        type3_1_a_sumchecks: None,
         combiner,
         field_combiner,
     }

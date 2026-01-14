@@ -129,17 +129,6 @@ pub static TOY_CONFIG: LazyLock<Config> = LazyLock::new(|| {
 
         witness_decomposition_chunks: 2,
         witness_decomposition_base_log: 15,
-        // committed basic_commitment_len = basic_commitment_rank * witness_width * commitment_recursion.decomposition_chunks = 2 * 16 * 4 = 128
-
-        // commited basic_commitment_lev_1_len = commitment_recursion.rank * commitment_recursion.decomposition_chunks = 1 * 8 = 8
-
-        // committed projection_image_len = witness_height * witness_width / projection_ratio  * projection_recursion.decomposition_chunks = (512 * 16 / 32) * 2 = 512
-
-        // committed opening_len = nof_openings * witness_width * opening_recursion.decomposition_chunks = 1 * 16 * 4 = 64
-
-        // folded_witness len is witness_height * witness_decomposition_chunks = 512 * 2 = 1024
-
-        // in total, we fit into 2048 elements per round
     }
     .generate_config()
 });

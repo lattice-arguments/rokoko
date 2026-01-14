@@ -1,13 +1,16 @@
 use std::sync::LazyLock;
 
-use crate::common::{
-    config::HALF_DEGREE,
-    ring_arithmetic::{
-        incomplete_ntt_multiplication, QuadraticExtension, Representation, RingElement,
-        SHIFT_FACTORS,
+use crate::{
+    common::{
+        config::{HALF_DEGREE, MOD_Q},
+        ring_arithmetic::{
+            incomplete_ntt_multiplication, QuadraticExtension, Representation, RingElement,
+            SHIFT_FACTORS,
+        },
+        structured_row::StructuredRow,
+        sumcheck_element::SumcheckElement,
     },
-    structured_row::StructuredRow,
-    sumcheck_element::SumcheckElement,
+    hexl::bindings::{multiply_mod, sub_mod},
 };
 
 #[inline]
@@ -72,5 +75,139 @@ fn test_field_to_ring_roundtrip() {
     let fes = re.split_into_quadratic_extensions();
     for f in fes {
         assert_eq!(f, fe);
+    }
+}
+
+// this is only for u64
+pub fn precompute_structured_values(layers: &[u64]) -> Vec<u64> {
+    let size = 1 << layers.len();
+    let mut values = vec![1u64; size];
+
+    for (layer_idx, &layer) in layers.iter().enumerate() {
+        let layer_complement = unsafe { sub_mod(1, layer, MOD_Q) };
+
+        for i in 0..size {
+            if (i >> layer_idx) & 1 == 1 {
+                unsafe {
+                    values[i] = multiply_mod(values[i], layer, MOD_Q);
+                }
+            } else {
+                unsafe {
+                    values[i] = multiply_mod(values[i], layer_complement, MOD_Q);
+                }
+            }
+        }
+    }
+
+    values
+}
+
+// Vectorized version using eltwise_mult_mod for better performance
+pub fn precompute_structured_values_fast(layers: &[u64]) -> Vec<u64> {
+    let size = 1 << layers.len();
+    // TODO: can we use preallocated pool here? Does it make sense?
+    let mut values = vec![1u64; size];
+
+    for (layer_idx, &layer) in layers.iter().enumerate() {
+        let layer_complement = unsafe { sub_mod(1, layer, MOD_Q) };
+        let chunk_size = 1 << (layer_idx + 1);
+        let half_chunk = 1 << layer_idx;
+
+        // Process in chunks where bit pattern is uniform
+        for chunk_start in (0..size).step_by(chunk_size) {
+            // First half of chunk (bit layer_idx = 0): multiply by layer_complement
+            let start_0 = chunk_start;
+            let end_0 = chunk_start + half_chunk;
+
+            // Second half of chunk (bit layer_idx = 1): multiply by layer
+            let start_1 = chunk_start + half_chunk;
+            let end_1 = chunk_start + chunk_size;
+
+            // Multiply in-place by scalar
+            for i in start_0..end_0 {
+                unsafe {
+                    values[i] = multiply_mod(values[i], layer_complement, MOD_Q);
+                }
+            }
+
+            for i in start_1..end_1 {
+                unsafe {
+                    values[i] = multiply_mod(values[i], layer, MOD_Q);
+                }
+            }
+        }
+    }
+
+    values
+}
+
+#[test]
+fn test_precompute_structured_values() {
+    use crate::common::hash::HashWrapper;
+
+    // Test with different layer sizes
+    for num_layers in 1..=10 {
+        let mut hash = HashWrapper::new();
+        let layers: Vec<u64> = (0..num_layers).map(|_| hash.sample_u64_mod_q()).collect();
+
+        let result_slow = precompute_structured_values(&layers);
+        let result_fast = precompute_structured_values_fast(&layers);
+
+        assert_eq!(
+            result_slow.len(),
+            result_fast.len(),
+            "Length mismatch for {} layers",
+            num_layers
+        );
+
+        for (i, (slow, fast)) in result_slow.iter().zip(result_fast.iter()).enumerate() {
+            assert_eq!(
+                slow, fast,
+                "Mismatch at index {} for {} layers: slow={}, fast={}",
+                i, num_layers, slow, fast
+            );
+        }
+    }
+}
+
+#[test]
+fn test_precompute_structured_values_properties() {
+    use crate::common::hash::HashWrapper;
+
+    let mut hash = HashWrapper::new();
+    let layers: Vec<u64> = (0..5).map(|_| hash.sample_u64_mod_q()).collect();
+    let values = precompute_structured_values_fast(&layers);
+
+    // Size should be 2^k for k layers
+    assert_eq!(values.len(), 1 << layers.len());
+
+    // Test specific properties: values[i] should match the tensor product computation
+    // For index i with binary representation b_k...b_1b_0:
+    // values[i] = product of (layer[j] if b_j=1, else (1-layer[j]))
+
+    let manual_compute = |index: usize| -> u64 {
+        let mut result = 1u64;
+        for (bit_pos, &layer) in layers.iter().enumerate() {
+            if (index >> bit_pos) & 1 == 1 {
+                unsafe {
+                    result = multiply_mod(result, layer, MOD_Q);
+                }
+            } else {
+                unsafe {
+                    result = multiply_mod(result, sub_mod(1, layer, MOD_Q), MOD_Q);
+                }
+            }
+        }
+        result
+    };
+
+    for i in 0..values.len() {
+        assert_eq!(
+            values[i],
+            manual_compute(i),
+            "Value mismatch at index {} (binary: {:05b})",
+            i,
+            i
+        );
     }
 }
