@@ -48,11 +48,13 @@ pub fn commit_basic(
     commit_basic_internal(ck, witness, rank)
 }
 
+#[derive(Clone)]
 pub struct Prefix {
     pub prefix: usize,
     pub length: usize,
 }
 
+#[derive(Clone)]
 pub struct RecursionConfig {
     pub decomposition_base_log: usize,
     pub decomposition_chunks: usize,
@@ -61,6 +63,7 @@ pub struct RecursionConfig {
     pub next: Option<Box<RecursionConfig>>,
 }
 
+#[derive(Clone)]
 pub struct RecursiveCommitment {
     pub decomposition_base_log: usize,
     pub decomposition_chunks: usize,

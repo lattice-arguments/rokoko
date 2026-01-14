@@ -115,7 +115,7 @@ impl SumcheckElement for U64Wrapper {
     fn set_zero(&mut self) {
         self.0 = 0;
     }
-    
+
     fn allocate_zero_vec(len: usize) -> Vec<Self>
     where
         Self: Sized,

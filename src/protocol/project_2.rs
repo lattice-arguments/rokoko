@@ -15,7 +15,6 @@ use crate::{
     protocol::open::evaluation_point_to_structured_row,
 };
 
-
 // Compute the coefficient-wise projection: V = (I_d ⊗ J) * coeff(W)
 //
 // This function projects the witness W through a structured projection matrix.
@@ -85,21 +84,21 @@ fn project_coefficients(
                     * projection_matrix.projection_ratio
                     * (PROJECTION_HEIGHT / DEGREE),
             );
-            
+
             // Get mutable slice of the output for this chunk
             let projection_subimage = image_ct.col_slice_mut(
                 col,
                 rows_chunk * (PROJECTION_HEIGHT / DEGREE),
                 (rows_chunk + 1) * (PROJECTION_HEIGHT / DEGREE),
             );
-            
+
             // Apply projection matrix J to this chunk
             // J has PROJECTION_HEIGHT rows (output coefficients)
             for inner_row in 0..PROJECTION_HEIGHT {
                 // Map this output coefficient to its position in a ring element
-                let current_projection_row = inner_row / DEGREE;        // Which ring element
+                let current_projection_row = inner_row / DEGREE; // Which ring element
                 let current_projection_coeff_index = inner_row % DEGREE; // Which coeff in that element
-                
+
                 // Compute the inner product: projection_subimage[inner_row] = J[inner_row, :] · subwitness
                 // J has (projection_ratio * PROJECTION_HEIGHT) columns
                 for i in 0..projection_matrix.projection_ratio * PROJECTION_HEIGHT {
@@ -107,7 +106,7 @@ fn project_coefficients(
                     if !*is_non_zero {
                         continue;
                     }
-                    
+
                     // Add or subtract the witness coefficient depending on J's sign
                     if *is_positive {
                         unsafe {
@@ -166,22 +165,21 @@ fn batch_projection(
     projection_matrix: &ProjectionMatrix,
     hash_wrapper: &mut HashWrapper,
 ) -> RingElement {
-
     // Sample structured challenge layers
     // c'_0 is over the witness columns (r)
     // c'_1 is over d (number of blocks in image_ct when viewed coefficient-wise)
     // c'_2 is over n_rp (projection height coefficients)
-    
+
     let c_0_layers: Vec<u64> = (0..witness.width.ilog2())
         .map(|_| hash_wrapper.sample_u64_mod_q())
         .collect();
-    
+
     // d = image_ct.height * DEGREE / PROJECTION_HEIGHT
     let d = (witness.height / projection_matrix.projection_ratio) * DEGREE / PROJECTION_HEIGHT;
     let c_1_layers: Vec<u64> = (0..d.ilog2())
         .map(|_| hash_wrapper.sample_u64_mod_q())
         .collect();
-    
+
     let c_2_layers: Vec<u64> = (0..PROJECTION_HEIGHT.ilog2())
         .map(|_| hash_wrapper.sample_u64_mod_q())
         .collect();
@@ -208,26 +206,18 @@ fn batch_projection(
     // This reduces the witness from shape (witness.height, witness.width) to (witness.height, 1)
     // by taking a linear combination of columns weighted by c'_0
     let mut w_batched = VerticallyAlignedMatrix::new_zero_preallocated(witness.height, 1);
-    
+
     // for el in w_batched.data.iter_mut() {
     //     el.representation = Representation::Coefficients;
     // }
-    
+
     for row in 0..witness.height {
         for col in 0..witness.width {
             let coeff = compute_structured_value(&c_0_layers, col);
             for deg in 0..DEGREE {
                 unsafe {
-                    let temp = multiply_mod(
-                        witness[(row, col)].v[deg],
-                        coeff,
-                        MOD_Q,
-                    );
-                    w_batched[(row, 0)].v[deg] = add_mod(
-                        w_batched[(row, 0)].v[deg],
-                        temp,
-                        MOD_Q,
-                    );
+                    let temp = multiply_mod(witness[(row, col)].v[deg], coeff, MOD_Q);
+                    w_batched[(row, 0)].v[deg] = add_mod(w_batched[(row, 0)].v[deg], temp, MOD_Q);
                 }
             }
         }
@@ -240,17 +230,17 @@ fn batch_projection(
     // J_batched will be a vector of inner_width_ring ring elements
     let inner_width_ring = projection_matrix.projection_ratio * (PROJECTION_HEIGHT / DEGREE);
     let mut j_batched = new_vec_zero_preallocated(inner_width_ring);
-    
+
     for el in j_batched.iter_mut() {
         el.representation = Representation::Coefficients;
     }
-    
+
     // Iterate over each ring element in J_batched
     for i in 0..inner_width_ring {
         // For each coefficient position in the ring element
         for j in 0..DEGREE {
-            let col_index = i * DEGREE + j;  // Flatten to coefficient space
-            // Accumulate weighted sum over PROJECTION_HEIGHT rows using c'_2
+            let col_index = i * DEGREE + j; // Flatten to coefficient space
+                                            // Accumulate weighted sum over PROJECTION_HEIGHT rows using c'_2
             for k in 0..PROJECTION_HEIGHT {
                 let coeff = compute_structured_value(&c_2_layers, k);
                 unsafe {
@@ -265,13 +255,15 @@ fn batch_projection(
                         if j == 0 {
                             j_batched[i].v[0] = add_mod(j_batched[i].v[0], coeff, MOD_Q);
                         } else {
-                            j_batched[i].v[deg_idx] = sub_mod(j_batched[i].v[deg_idx], coeff, MOD_Q);
+                            j_batched[i].v[deg_idx] =
+                                sub_mod(j_batched[i].v[deg_idx], coeff, MOD_Q);
                         }
                     } else {
                         if j == 0 {
                             j_batched[i].v[0] = sub_mod(j_batched[i].v[0], coeff, MOD_Q);
                         } else {
-                            j_batched[i].v[deg_idx] = add_mod(j_batched[i].v[deg_idx], coeff, MOD_Q);
+                            j_batched[i].v[deg_idx] =
+                                add_mod(j_batched[i].v[deg_idx], coeff, MOD_Q);
                         }
                     }
                 }
@@ -283,25 +275,25 @@ fn batch_projection(
     for bp in j_batched.iter_mut() {
         bp.to_representation(Representation::IncompleteNTT);
     }
- 
+
     // ===== Step 3: Apply c'_1 batching and compute final inner product =====
     // The witness (after batching by c'_0) can be split into num_chunks chunks,
     // where each chunk corresponds to one application of the projection matrix.
     // We compute: result = Σ_chunk c'_1[chunk] * <J_batched, W_batched[chunk]>
     let num_chunks = witness.height / inner_width_ring;
     let mut result = RingElement::zero(Representation::IncompleteNTT);
-    
+
     for chunk in 0..num_chunks {
         let c_1_coeff = compute_structured_value(&c_1_layers, chunk);
         let mut chunk_result = RingElement::zero(Representation::IncompleteNTT);
-        
+
         // Inner product of j_batched with the corresponding chunk of w_batched
         for i in 0..inner_width_ring {
             let mut temp = RingElement::zero(Representation::IncompleteNTT);
             temp *= (&w_batched[(chunk * inner_width_ring + i, 0)], &j_batched[i]);
             chunk_result += &temp;
         }
-        
+
         // Multiply by c_1 coefficient and accumulate
         for deg in 0..DEGREE {
             unsafe {
@@ -315,9 +307,6 @@ fn batch_projection(
     result
 }
 
-  
-  
-
 #[test]
 fn test_batch_projection() {
     // Test that batch_projection correctly computes c'^t * vec(V)
@@ -328,7 +317,7 @@ fn test_batch_projection() {
     // 2. Sampling the same random challenges used in batch_projection
     // 3. Manually computing c'^t * vec(V) with the correct flattening structure
     // 4. Comparing the constant term with batch_projection's result
-    
+
     let mut witness = VerticallyAlignedMatrix {
         data: vec![RingElement::random(Representation::IncompleteNTT); 16],
         width: 2,
@@ -348,14 +337,14 @@ fn test_batch_projection() {
     let c_0_layers: Vec<u64> = (0..witness.width.ilog2())
         .map(|_| hash_wrapper.sample_u64_mod_q())
         .collect();
-    
+
     // c'_1: batches over d coefficient blocks in the image
     // d = (number of ring elements in image) * (coefficients per ring element) / (block size)
     let d = image_ct.height * DEGREE / PROJECTION_HEIGHT;
     let c_1_layers: Vec<u64> = (0..d.ilog2())
         .map(|_| hash_wrapper.sample_u64_mod_q())
         .collect();
-    
+
     // c'_2: batches over PROJECTION_HEIGHT coefficients within each block
     let c_2_layers: Vec<u64> = (0..PROJECTION_HEIGHT.ilog2())
         .map(|_| hash_wrapper.sample_u64_mod_q())
@@ -384,7 +373,7 @@ fn test_batch_projection() {
     let mut expected_ct = 0u64;
     let inner_width_ring = projection_matrix.projection_ratio * (PROJECTION_HEIGHT / DEGREE);
     let num_chunks_in_image = image_ct.height / (PROJECTION_HEIGHT / DEGREE);
-    
+
     // Iterate in the same order as the tensor product decomposition
     for col in 0..image_ct.width {
         let c_0_coeff = compute_structured_value(&c_0_layers, col);
@@ -394,19 +383,15 @@ fn test_batch_projection() {
             for coeff_idx in 0..PROJECTION_HEIGHT {
                 let c_2_coeff = compute_structured_value(&c_2_layers, coeff_idx);
                 // Map flat coefficient index to (row, degree) in the ring element matrix
-                let row_in_chunk = coeff_idx / DEGREE;  // Which ring element in this chunk
-                let deg = coeff_idx % DEGREE;           // Which coefficient in that ring element
+                let row_in_chunk = coeff_idx / DEGREE; // Which ring element in this chunk
+                let deg = coeff_idx % DEGREE; // Which coefficient in that ring element
                 let row = chunk_idx * (PROJECTION_HEIGHT / DEGREE) + row_in_chunk;
                 unsafe {
                     // The challenge at this position is c'_0[col] * c'_1[chunk] * c'_2[coeff]
                     let c_combined = multiply_mod(c_0_coeff, c_1_coeff, MOD_Q);
                     let c_combined = multiply_mod(c_combined, c_2_coeff, MOD_Q);
-                    
-                    let temp = multiply_mod(
-                        image_ct[(row, col)].v[deg],
-                        c_combined,
-                        MOD_Q,
-                    );
+
+                    let temp = multiply_mod(image_ct[(row, col)].v[deg], c_combined, MOD_Q);
                     expected_ct = add_mod(expected_ct, temp, MOD_Q);
                 }
             }
@@ -416,11 +401,14 @@ fn test_batch_projection() {
     // Create a fresh hash_wrapper to sample the same challenges in batch_projection
     let mut hash_wrapper2 = HashWrapper::new();
     projection_matrix.sample(&mut hash_wrapper2); // Consume same randomness to sync state
-    
+
     let mut result = batch_projection(&witness, &projection_matrix, &mut hash_wrapper2);
     result.to_representation(Representation::Coefficients);
-    
+
     // The result is a full ring element, but we only check the constant term
     // since that's what the batching computes (the higher degree terms depend on NTT operations)
-    assert_eq!(result.v[0], expected_ct, "Constant term of batch_projection should equal c'^t * vec(V)");
+    assert_eq!(
+        result.v[0], expected_ct,
+        "Constant term of batch_projection should equal c'^t * vec(V)"
+    );
 }
