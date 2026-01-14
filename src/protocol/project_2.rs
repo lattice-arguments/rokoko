@@ -3,7 +3,7 @@ use num::traits::ops::mul_add;
 use crate::{
     common::{
         arithmetic::{inner_product, inner_product_into},
-        config::{DEGREE, MOD_Q, PROJECTION_HEIGHT},
+        config::{DEGREE, MOD_Q},
         hash::HashWrapper,
         matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         pool::preallocate_ring_element_vecs,
@@ -33,7 +33,7 @@ use crate::{
 // V is in Z_q (coefficient space), but we represent it as ring elements for efficiency:
 // V' = embed_coefficients(V) ∈ R_q^{d·n_rp / DEGREE × r}
 // This packs DEGREE consecutive coefficients of V into each ring element.
-fn project_coefficients(
+pub fn project_coefficients(
     witness: &VerticallyAlignedMatrix<RingElement>,
     projection_matrix: &ProjectionMatrix,
 ) -> VerticallyAlignedMatrix<RingElement> {
@@ -74,34 +74,37 @@ fn project_coefficients(
         // Process the projection in chunks
         // Each chunk processes (PROJECTION_HEIGHT / DEGREE) ring elements of the output
         // which corresponds to PROJECTION_HEIGHT coefficients in the result
-        for rows_chunk in 0..image_ct.height / (PROJECTION_HEIGHT / DEGREE) {
+        for rows_chunk in 0..image_ct.height / (projection_matrix.projection_height / DEGREE) {
             // Extract the corresponding slice of witness coefficients for this chunk
             // This is the input to one application of the projection matrix J
             let subwitness = witness_coeff.col_slice(
                 col,
-                rows_chunk * projection_matrix.projection_ratio * (PROJECTION_HEIGHT / DEGREE),
+                rows_chunk
+                    * projection_matrix.projection_ratio
+                    * (projection_matrix.projection_height / DEGREE),
                 (rows_chunk + 1)
                     * projection_matrix.projection_ratio
-                    * (PROJECTION_HEIGHT / DEGREE),
+                    * (projection_matrix.projection_height / DEGREE),
             );
 
             // Get mutable slice of the output for this chunk
             let projection_subimage = image_ct.col_slice_mut(
                 col,
-                rows_chunk * (PROJECTION_HEIGHT / DEGREE),
-                (rows_chunk + 1) * (PROJECTION_HEIGHT / DEGREE),
+                rows_chunk * (projection_matrix.projection_height / DEGREE),
+                (rows_chunk + 1) * (projection_matrix.projection_height / DEGREE),
             );
 
             // Apply projection matrix J to this chunk
             // J has PROJECTION_HEIGHT rows (output coefficients)
-            for inner_row in 0..PROJECTION_HEIGHT {
+            for inner_row in 0..projection_matrix.projection_height {
                 // Map this output coefficient to its position in a ring element
                 let current_projection_row = inner_row / DEGREE; // Which ring element
                 let current_projection_coeff_index = inner_row % DEGREE; // Which coeff in that element
 
                 // Compute the inner product: projection_subimage[inner_row] = J[inner_row, :] · subwitness
                 // J has (projection_ratio * PROJECTION_HEIGHT) columns
-                for i in 0..projection_matrix.projection_ratio * PROJECTION_HEIGHT {
+                for i in 0..projection_matrix.projection_ratio * projection_matrix.projection_height
+                {
                     let (is_positive, is_non_zero) = &projection_matrix[(inner_row, i)];
                     if !*is_non_zero {
                         continue;
@@ -169,13 +172,20 @@ fn batch_projection_into(
     // c'_1 is over n_rp (projection height coefficients)
 
     // d = image_ct.height * DEGREE / PROJECTION_HEIGHT
-    let d = (witness.height / projection_matrix.projection_ratio) * DEGREE / PROJECTION_HEIGHT;
-    let c_0_layers: Vec<u64> = (0..d.ilog2())
-        .map(|_| hash_wrapper.sample_u64_mod_q())
-        .collect();
+    let d = (witness.height / projection_matrix.projection_ratio) * DEGREE
+        / projection_matrix.projection_height;
+    // let c_0_layers: Vec<u64> = (0..d.ilog2())
+    //     .map(|_| hash_wrapper.sample_u64_mod_q())
+    //     .collect();
 
-    let c_1_layers: Vec<u64> = (0..PROJECTION_HEIGHT.ilog2())
-        .map(|_| hash_wrapper.sample_u64_mod_q())
+    // let c_1_layers: Vec<u64> = (0..PROJECTION_HEIGHT.ilog2())
+    //     .map(|_| hash_wrapper.sample_u64_mod_q())
+    //     .collect();
+    // TODO: fix randomness consumption
+    let c_0_layers: Vec<u64> = (0..d.ilog2()).map(|_| 1u64).collect();
+
+    let c_1_layers: Vec<u64> = (0..projection_matrix.projection_height.ilog2())
+        .map(|_| 1u64)
         .collect();
 
     // Helper function to compute structured row value from layers
@@ -200,7 +210,8 @@ fn batch_projection_into(
     // J_embedded applies dual embedding: each coefficient j ∈ {-1,0,1} becomes a polynomial
     // where the constant term is j and non-constant terms are -j (to maintain inner product)
     // J_batched will be a vector of inner_width_ring ring elements
-    let inner_width_ring = projection_matrix.projection_ratio * (PROJECTION_HEIGHT / DEGREE);
+    let inner_width_ring =
+        projection_matrix.projection_ratio * (projection_matrix.projection_height / DEGREE);
     let mut j_batched = new_vec_zero_preallocated(inner_width_ring);
 
     for el in j_batched.iter_mut() {
@@ -213,7 +224,7 @@ fn batch_projection_into(
         for j in 0..DEGREE {
             let col_index = i * DEGREE + j; // Flatten to coefficient space
                                             // Accumulate weighted sum over PROJECTION_HEIGHT rows using c'_1
-            for k in 0..PROJECTION_HEIGHT {
+            for k in 0..projection_matrix.projection_height {
                 let coeff = compute_structured_value(&c_1_layers, k);
                 unsafe {
                     let (is_positive, is_non_zero) = &projection_matrix[(k, col_index)];
@@ -282,7 +293,7 @@ fn batch_projection_into(
     }
 }
 
-fn batch_projection_n_times(
+pub fn batch_projection_n_times(
     witness: &VerticallyAlignedMatrix<RingElement>,
     projection_matrix: &ProjectionMatrix,
     hash_wrapper: &mut HashWrapper,
@@ -319,7 +330,7 @@ fn test_batch_projection() {
         height: 8,
     };
 
-    let mut projection_matrix = ProjectionMatrix::new(2);
+    let mut projection_matrix = ProjectionMatrix::new(2, 256);
     let mut hash_wrapper = HashWrapper::new();
     projection_matrix.sample(&mut hash_wrapper);
 
@@ -331,14 +342,21 @@ fn test_batch_projection() {
 
     // c'_0: batches over d coefficient blocks in the image
     // d = (number of ring elements in image) * (coefficients per ring element) / (block size)
-    let d = image_ct.height * DEGREE / PROJECTION_HEIGHT;
-    let c_0_layers: Vec<u64> = (0..d.ilog2())
-        .map(|_| hash_wrapper.sample_u64_mod_q())
-        .collect();
+    let d = image_ct.height * DEGREE / projection_matrix.projection_height;
+    // let c_0_layers: Vec<u64> = (0..d.ilog2())
+    //     .map(|_| hash_wrapper.sample_u64_mod_q())
+    //     .collect();
 
-    // c'_1: batches over PROJECTION_HEIGHT coefficients within each block
-    let c_1_layers: Vec<u64> = (0..PROJECTION_HEIGHT.ilog2())
-        .map(|_| hash_wrapper.sample_u64_mod_q())
+    // // c'_1: batches over PROJECTION_HEIGHT coefficients within each block
+    // let c_1_layers: Vec<u64> = (0..PROJECTION_HEIGHT.ilog2())
+    //     .map(|_| hash_wrapper.sample_u64_mod_q())
+    //     .collect();
+
+    // TODO: fix randomness consumption
+    let c_0_layers: Vec<u64> = (0..d.ilog2()).map(|_| 1u64).collect();
+
+    let c_1_layers: Vec<u64> = (0..projection_matrix.projection_height.ilog2())
+        .map(|_| 1u64)
         .collect();
 
     // Helper function to compute structured row value from layers
@@ -358,8 +376,9 @@ fn test_batch_projection() {
         result
     };
 
-    let inner_width_ring = projection_matrix.projection_ratio * (PROJECTION_HEIGHT / DEGREE);
-    let num_chunks_in_image = image_ct.height / (PROJECTION_HEIGHT / DEGREE);
+    let inner_width_ring =
+        projection_matrix.projection_ratio * (projection_matrix.projection_height / DEGREE);
+    let num_chunks_in_image = image_ct.height / (projection_matrix.projection_height / DEGREE);
 
     // Compute expected results for each column separately
     let mut expected_cts = vec![0u64; witness.width];
@@ -369,13 +388,13 @@ fn test_batch_projection() {
 
         for chunk_idx in 0..num_chunks_in_image {
             let c_0_coeff = compute_structured_value(&c_0_layers, chunk_idx);
-            // Each chunk contains PROJECTION_HEIGHT coefficients
-            for coeff_idx in 0..PROJECTION_HEIGHT {
+            // Each chunk contains projection_matrix.projection_height coefficients
+            for coeff_idx in 0..projection_matrix.projection_height {
                 let c_1_coeff = compute_structured_value(&c_1_layers, coeff_idx);
                 // Map flat coefficient index to (row, degree) in the ring element matrix
                 let row_in_chunk = coeff_idx / DEGREE; // Which ring element in this chunk
                 let deg = coeff_idx % DEGREE; // Which coefficient in that ring element
-                let row = chunk_idx * (PROJECTION_HEIGHT / DEGREE) + row_in_chunk;
+                let row = chunk_idx * (projection_matrix.projection_height / DEGREE) + row_in_chunk;
                 unsafe {
                     // The challenge at this position is c'_0[chunk] * c'_1[coeff]
                     let c_combined = multiply_mod(c_0_coeff, c_1_coeff, MOD_Q);

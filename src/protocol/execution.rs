@@ -23,6 +23,7 @@ use crate::{
         open::{claim, evaluation_point_to_structured_row, open_at, Opening},
         prefix::check_prefixing_correctness,
         project::project,
+        project_2::{batch_projection_n_times, project_coefficients},
         proof::Proof,
         sumcheck::{self, init_sumcheck, sumcheck, SumcheckContext},
         sumcheck_utils::{
@@ -32,6 +33,7 @@ use crate::{
         sumchecks::{
             builder_verifier::init_verifier,
             context_verifier::VerifierSumcheckContext,
+            helpers::projection_coefficients,
             runner::{sumcheck_verifier, RoundProof},
         }, // sumcheck::sumcheck,
     },
@@ -62,7 +64,8 @@ pub fn prover_round(
 
     hash_wrapper.update_with_ring_element_slice(&rc_opening.most_inner_commitment());
 
-    let mut projection_matrix = ProjectionMatrix::new(CONFIG.projection_ratio);
+    let mut projection_matrix =
+        ProjectionMatrix::new(CONFIG.projection_ratio, CONFIG.projection_height);
 
     projection_matrix.sample(&mut hash_wrapper);
 
@@ -79,6 +82,43 @@ pub fn prover_round(
             hash_wrapper
                 .update_with_ring_element_slice(&rc_projection_image.most_inner_commitment());
             Some(rc_projection_image)
+        }
+        _ => None,
+    };
+
+    let rcs_projection_1 = match &CONFIG.projection_recursion {
+        Projection::Type1(proj_config) => {
+            // TODO implement Type1 projection recursion
+            let t2 = std::time::Instant::now();
+            let projection_image_ct = project_coefficients(&witness, &projection_matrix);
+            println!("  project_cf: {} ms", t2.elapsed().as_millis());
+            let t3 = std::time::Instant::now();
+            let rc_projection_ct = recursive_commit(
+                &crs,
+                &proj_config.recursion_constant_term,
+                &projection_image_ct.data,
+            );
+            println!("  rc_projection_ct: {} ms", t3.elapsed().as_millis());
+
+            hash_wrapper.update_with_ring_element_slice(&rc_projection_ct.most_inner_commitment());
+
+            let t4 = std::time::Instant::now();
+            let projection_batched =
+                batch_projection_n_times(&witness, &projection_matrix, &mut hash_wrapper, 2);
+            println!(
+                "  batch_projection_n_times: {} ms",
+                t4.elapsed().as_millis()
+            );
+
+            let t5 = std::time::Instant::now();
+            let rc_projection_batched = recursive_commit(
+                &crs,
+                &proj_config.recursion_batched_projection,
+                &projection_batched.data,
+            );
+            println!("  rc_projection_batched: {} ms", t5.elapsed().as_millis());
+
+            Some((rc_projection_ct, rc_projection_batched))
         }
         _ => None,
     };
@@ -119,16 +159,16 @@ pub fn prover_round(
             );
         }
         Projection::Type1(projection_config) => {
-            //  paste_recursive_commitment(
-            //     &mut next_round_data,
-            //     &rc_projection_image,
-            //     &projection_config.recursion_constant_term,
-            // );
-            // paste_recursive_commitment(
-            //     &mut next_round_data,
-            //     &rc_projection_image,
-            //     &projection_config.recursion_batched_projection,
-            // );
+            paste_recursive_commitment(
+                &mut next_round_data,
+                &rcs_projection_1.as_ref().unwrap().0,
+                &projection_config.recursion_constant_term,
+            );
+            paste_recursive_commitment(
+                &mut next_round_data,
+                &rcs_projection_1.as_ref().unwrap().1,
+                &projection_config.recursion_batched_projection,
+            );
         }
     }
 

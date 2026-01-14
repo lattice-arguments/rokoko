@@ -29,9 +29,10 @@ pub enum Projection {
 }
 
 pub static REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
-    witness_height: 2usize.pow(14),  // 2^14
-    witness_width: 2usize.pow(5),    // 2^5
-    projection_ratio: 2usize.pow(5), // 2^5
+    witness_height: 2usize.pow(14),   // 2^14
+    witness_width: 2usize.pow(5),     // 2^5
+    projection_ratio: 2usize.pow(5),  // 2^5
+    projection_height: 2usize.pow(8), // 2^8
     basic_commitment_rank: 4,
     nof_openings: 1,
 
@@ -92,7 +93,8 @@ pub static REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
 pub static TOY_CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
     witness_height: 512,
     witness_width: 16,
-    projection_ratio: 32,
+    projection_ratio: 64,
+    projection_height: 8,
     basic_commitment_rank: 2,
     nof_openings: 1,
 
@@ -135,7 +137,28 @@ pub static TOY_CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
             length: 2,
         }, // 2048 / 2^2 = 512
     }),
-
+    // projection_recursion: Projection::Type1(Type1ProjectionConfig {
+    //     recursion_constant_term: RecursionConfig { // witness.height * witness.width / projection_ratio * decomposition_chunks =  (512 * 16 / 32) * 4 = 1024
+    //         decomposition_base_log: 15,
+    //         decomposition_chunks: 4,
+    //         rank: 1,
+    //         next: None,
+    //         prefix: Prefix {
+    //             prefix: 0b10,
+    //             length: 2,
+    //         }, // 2048 / 2^2 = 512
+    //     },
+    //     recursion_batched_projection: RecursionConfig { // 2 (batching factor) * witness.height * witness.width / projection_ratio * decomposition_chunks / PROJECTION_HEIGHT = (2 * 1024) / 8 = 256
+    //         decomposition_base_log: 15,
+    //         decomposition_chunks: 4,
+    //         rank: 1,
+    //         next: None,
+    //         prefix: Prefix {
+    //             prefix: 0b11,
+    //             length: 2,
+    //         }, // 2048 / 2^2 = 512
+    //     },
+    // }),
     folded_witness_prefix: Prefix {
         prefix: 0b0,
         length: 1,
@@ -165,7 +188,8 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| TOY_CONFIG.clone());
 pub struct Config {
     pub witness_height: usize,
     pub witness_width: usize,
-    pub projection_ratio: usize, // shall be likely the witness_height
+    pub projection_ratio: usize,  // shall be likely the witness_height
+    pub projection_height: usize, // likely 256 unless for testing
     pub commitment_recursion: RecursionConfig,
     pub opening_recursion: RecursionConfig,
     pub projection_recursion: Projection,

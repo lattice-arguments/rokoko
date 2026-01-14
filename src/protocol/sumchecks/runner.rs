@@ -418,7 +418,8 @@ pub fn sumcheck_verifier(
 ) {
     hash_wrapper.update_with_ring_element_slice(&round_proof.rc_commitment_inner);
     hash_wrapper.update_with_ring_element_slice(&round_proof.rc_opening_inner);
-    let mut projection_matrix = ProjectionMatrix::new(config.projection_ratio);
+    let mut projection_matrix =
+        ProjectionMatrix::new(config.projection_ratio, config.projection_height);
 
     projection_matrix.sample(hash_wrapper);
     if let Some(rc_projection_inner) = &round_proof.rc_projection_inner {
