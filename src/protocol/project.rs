@@ -83,7 +83,7 @@ pub fn project(
 
 #[test]
 fn test_projection() {
-    let projection_height = 8;
+    let projection_height = 256;
     let projection_matrix = ProjectionMatrix::from_i8({
         let mut data = vec![vec![0i8; projection_height * 2]; projection_height];
         data[0][0] = -1;
