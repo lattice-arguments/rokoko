@@ -283,14 +283,14 @@ impl<E: SumcheckElement> EvaluationSumcheckData for BasicEvaluationLinearSumchec
 }
 
 pub struct RingToFieldWrapperEvaluation {
-    field_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<QuadraticExtension>>,
+    field_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = QuadraticExtension>>,
     result: RingElement,
     evaluated: bool,
 }
 
 impl RingToFieldWrapperEvaluation {
     pub fn new(
-        field_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<QuadraticExtension>>,
+        field_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = QuadraticExtension>>,
     ) -> Self {
         RingToFieldWrapperEvaluation {
             field_evaluation,
@@ -329,8 +329,8 @@ pub struct StructuredRowEvaluationLinearSumcheck<E: SumcheckElement = RingElemen
     variable_count: usize,
     suffix: usize,
     prefix: usize,
-    result: RingElement,
-    scratch: RingElement,
+    result: E,
+    scratch: E,
 }
 
 impl<E: SumcheckElement> StructuredRowEvaluationLinearSumcheck<E> {
@@ -348,8 +348,8 @@ impl<E: SumcheckElement> StructuredRowEvaluationLinearSumcheck<E> {
             variable_count: count.ilog2() as usize + prefix_size + suffix_size,
             suffix: suffix_size,
             prefix: prefix_size,
-            result: RingElement::constant(1, Representation::IncompleteNTT),
-            scratch: RingElement::constant(0, Representation::IncompleteNTT),
+            result: E::one(),
+            scratch: E::zero(),
         }
     }
 
@@ -359,11 +359,13 @@ impl<E: SumcheckElement> StructuredRowEvaluationLinearSumcheck<E> {
     }
 }
 
-impl EvaluationSumcheckData for StructuredRowEvaluationLinearSumcheck<RingElement> {
-    type Element = RingElement;
+impl<E: SumcheckElement + 'static> EvaluationSumcheckData
+    for StructuredRowEvaluationLinearSumcheck<E>
+{
+    type Element = E;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
-        self.result.set_from(&*ONE);
+        self.result.set_from(&*E::one_ref());
         if point.len() != self.variable_count {
             panic!(
                 "Point has incorrect number of variables, expected {}, got {}",
@@ -382,10 +384,10 @@ impl EvaluationSumcheckData for StructuredRowEvaluationLinearSumcheck<RingElemen
             // Compute: (1-layer)*(1-r) + layer*r = 1 - layer - r + 2*layer*r
             self.scratch.set_from(layer);
             self.scratch *= r; // layer*r
-            self.scratch *= &*TWO; // 2*layer*r
+            self.scratch *= &*E::two_ref(); // 2*layer*r
             self.scratch -= layer; // 2*layer*r - layer
             self.scratch -= r; // 2*layer*r - layer - r
-            self.scratch += &*ONE; // 1 - layer - r + 2*layer*r
+            self.scratch += &*E::one_ref(); // 1 - layer - r + 2*layer*r
 
             self.result *= &self.scratch;
         }

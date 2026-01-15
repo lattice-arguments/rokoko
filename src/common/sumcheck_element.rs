@@ -1,6 +1,10 @@
-use std::ops::{AddAssign, MulAssign, SubAssign};
+use std::{
+    ops::{AddAssign, MulAssign, SubAssign},
+    sync::LazyLock,
+};
 
 use crate::common::{
+    arithmetic::{ONE, ONE_QUAD, TWO, TWO_QUAD, ZERO, ZERO_QUAD},
     matrix::new_vec_zero_preallocated,
     ring_arithmetic::{Representation, RingElement},
     QuadraticExtension, SHIFT_FACTORS,
@@ -16,8 +20,12 @@ pub trait SumcheckElement:
     + for<'a> MulAssign<(&'a Self, &'a Self)>
 {
     fn zero() -> Self;
+    fn zero_ref() -> &'static Self;
     fn one() -> Self;
+    fn one_ref() -> &'static Self;
+    fn two_ref() -> &'static Self;
     fn set_zero(&mut self);
+    fn set_from(&mut self, other: &Self);
 
     /// Allocate a zero vector. Implementors can override to use preallocated pools.
     fn allocate_zero_vec(len: usize) -> Vec<Self>
@@ -33,8 +41,20 @@ impl SumcheckElement for RingElement {
         RingElement::zero(Representation::IncompleteNTT)
     }
 
+    fn zero_ref() -> &'static Self {
+        &ZERO
+    }
+
     fn one() -> Self {
         RingElement::one(Representation::IncompleteNTT)
+    }
+
+    fn one_ref() -> &'static Self {
+        &ONE
+    }
+
+    fn two_ref() -> &'static Self {
+        &TWO
     }
 
     fn set_zero(&mut self) {
@@ -43,6 +63,10 @@ impl SumcheckElement for RingElement {
 
     fn allocate_zero_vec(len: usize) -> Vec<Self> {
         new_vec_zero_preallocated(len)
+    }
+
+    fn set_from(&mut self, other: &Self) {
+        self.set_from(other);
     }
 }
 
@@ -61,6 +85,18 @@ impl SumcheckElement for QuadraticExtension {
         }
     }
 
+    fn one_ref() -> &'static Self {
+        &ONE_QUAD
+    }
+
+    fn two_ref() -> &'static Self {
+        &TWO_QUAD
+    }
+
+    fn zero_ref() -> &'static Self {
+        &ZERO_QUAD
+    }
+
     fn set_zero(&mut self) {
         self.coeffs = [0, 0];
     }
@@ -73,6 +109,11 @@ impl SumcheckElement for QuadraticExtension {
             };
             len
         ]
+    }
+
+    fn set_from(&mut self, other: &Self) {
+        self.coeffs = other.coeffs;
+        self.shift = other.shift;
     }
 }
 
@@ -100,26 +141,5 @@ impl MulAssign<&U64Wrapper> for U64Wrapper {
 impl MulAssign<(&U64Wrapper, &U64Wrapper)> for U64Wrapper {
     fn mul_assign(&mut self, (a, b): (&U64Wrapper, &U64Wrapper)) {
         self.0 = a.0 * b.0;
-    }
-}
-
-impl SumcheckElement for U64Wrapper {
-    fn zero() -> Self {
-        U64Wrapper(0)
-    }
-
-    fn one() -> Self {
-        U64Wrapper(1)
-    }
-
-    fn set_zero(&mut self) {
-        self.0 = 0;
-    }
-
-    fn allocate_zero_vec(len: usize) -> Vec<Self>
-    where
-        Self: Sized,
-    {
-        vec![U64Wrapper(0); len]
     }
 }

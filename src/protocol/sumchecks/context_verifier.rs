@@ -94,7 +94,9 @@ pub struct Type3VerifierContext {
 }
 
 pub struct Type3_1AVerifierContext {
-    pub lhs_flatter_0_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
+    pub lhs_flatter_0_evaluation_field:
+        ElephantCell<StructuredRowEvaluationLinearSumcheck<QuadraticExtension>>,
+    pub lhs_flatter_0_evaluation: ElephantCell<RingToFieldWrapperEvaluation>,
     pub lhs_flatter_1_times_matrix_evaluation:
         ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub projection_selector_evaluation: ElephantCell<SelectorEqEvaluation>,

@@ -4,7 +4,7 @@ use crate::{
         config::{HALF_DEGREE, NOF_BATCHES},
         matrix::new_vec_zero_preallocated,
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        ring_arithmetic::{QuadraticExtension, Representation, RingElement, SHIFT_FACTORS},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
@@ -131,17 +131,20 @@ pub fn load_verifier_sumcheck_data(
                 .load_from(&challenges.j_batched);
 
             // TODO make a smarter sumcheck over u64
-            let c_0_ring = evaluation_point_to_structured_row(
-                &challenges
+            let c_0_field = StructuredRow {
+                tensor_layers: challenges
                     .c_0_layers
                     .iter()
-                    .map(|e| RingElement::constant(*e, Representation::IncompleteNTT))
+                    .map(|e| QuadraticExtension {
+                        coeffs: [*e, 0],
+                        shift: SHIFT_FACTORS[0],
+                    })
                     .collect::<Vec<_>>(),
-            );
+            };
             type3_1_a_eval.sumchecks[batch_idx]
-                .lhs_flatter_0_evaluation
+                .lhs_flatter_0_evaluation_field
                 .borrow_mut()
-                .load_from(c_0_ring);
+                .load_from(c_0_field);
         }
     }
     // Load combiner challenges

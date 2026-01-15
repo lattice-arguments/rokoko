@@ -589,8 +589,8 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
                 let height = config.projection_height;
                 let inner_width = config.projection_ratio * height / DEGREE;
                 let blocks = config.witness_height / inner_width;
-                let lhs_flatter_0_evaluation = ElephantCell::new(
-                    StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
+                let lhs_flatter_0_evaluation_field = ElephantCell::new(
+                    StructuredRowEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
                         blocks,
                         total_vars
                             - blocks.ilog2() as usize
@@ -616,6 +616,10 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
                             + NOF_BATCHES.ilog2() as usize,
                     },
                     total_vars,
+                );
+
+                let lhs_flatter_0_evaluation = ElephantCell::new(
+                    RingToFieldWrapperEvaluation::new(lhs_flatter_0_evaluation_field.clone()),
                 );
 
                 let projection_coeff_product = ElephantCell::new(ProductSumcheckEvaluation::new(
@@ -650,10 +654,10 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
                 let output = ElephantCell::new(DiffSumcheckEvaluation::new(lhs, rhs));
 
                 Type3_1AVerifierContext {
-                    lhs_flatter_0_evaluation: lhs_flatter_0_evaluation.clone(),
-                    lhs_flatter_1_times_matrix_evaluation: lhs_flatter_1_times_matrix_evaluation
-                        .clone(),
-                    projection_selector_evaluation: projection_selector_evaluation.clone(),
+                    lhs_flatter_0_evaluation_field,
+                    lhs_flatter_0_evaluation,
+                    lhs_flatter_1_times_matrix_evaluation,
+                    projection_selector_evaluation,
                     output,
                 }
             });

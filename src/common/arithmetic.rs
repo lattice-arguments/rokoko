@@ -65,6 +65,19 @@ pub static TWO: LazyLock<RingElement> =
 pub static ZERO: LazyLock<RingElement> =
     LazyLock::new(|| RingElement::zero(Representation::IncompleteNTT));
 
+pub static ONE_QUAD: LazyLock<QuadraticExtension> = LazyLock::new(|| QuadraticExtension {
+    coeffs: [1, 0],
+    shift: SHIFT_FACTORS[0],
+});
+pub static TWO_QUAD: LazyLock<QuadraticExtension> = LazyLock::new(|| QuadraticExtension {
+    coeffs: [2, 0],
+    shift: SHIFT_FACTORS[0],
+});
+pub static ZERO_QUAD: LazyLock<QuadraticExtension> = LazyLock::new(|| QuadraticExtension {
+    coeffs: [0, 0],
+    shift: SHIFT_FACTORS[0],
+});
+
 #[test]
 fn test_field_to_ring_roundtrip() {
     let fe = QuadraticExtension {
