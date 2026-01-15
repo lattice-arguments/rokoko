@@ -5,10 +5,10 @@ use num::range;
 use crate::{
     common::{
         arithmetic::inner_product,
-        config::MOD_Q,
+        config::{self, MOD_Q},
         decomposition::{compose_from_decomposed, decompose},
         hash::HashWrapper,
-        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
+        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
         norms,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
@@ -16,16 +16,16 @@ use crate::{
         structured_row::{self, PreprocessedRow, StructuredRow},
     },
     protocol::{
-        commitment::{commit_basic, recursive_commit, RecursiveCommitment},
-        config::{paste_by_prefix, paste_recursive_commitment, Projection, CONFIG},
+        commitment::{RecursiveCommitment, commit_basic, recursive_commit},
+        config::{CONFIG, Config, Projection, paste_by_prefix, paste_recursive_commitment},
         crs::{CK, CRS},
         fold::fold,
-        open::{claim, evaluation_point_to_structured_row, open_at, Opening},
+        open::{Opening, claim, evaluation_point_to_structured_row, open_at},
         prefix::check_prefixing_correctness,
         project::project,
         project_2::{batch_projection_n_times, project_coefficients},
         proof::Proof,
-        sumcheck::{self, init_sumcheck, sumcheck, SumcheckContext},
+        sumcheck::{self, SumcheckContext, init_sumcheck, sumcheck},
         sumcheck_utils::{
             common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
             linear::{LinearSumcheck, StructuredRowEvaluationLinearSumcheck},
@@ -34,7 +34,7 @@ use crate::{
             builder_verifier::init_verifier,
             context_verifier::VerifierSumcheckContext,
             helpers::projection_coefficients,
-            runner::{sumcheck_verifier, RoundProof},
+            runner::{RoundProof, sumcheck_verifier},
         }, // sumcheck::sumcheck,
     },
 };
@@ -66,6 +66,7 @@ fn verifier_round(
 
 pub fn prover_round(
     crs: &CRS,
+    config: &Config,
     rc_commitment: &RecursiveCommitment,
     witness: &VerticallyAlignedMatrix<RingElement>,
     evaluation_points_inner: &Vec<StructuredRow>,
@@ -82,17 +83,17 @@ pub fn prover_round(
     println!("  open_at: {} ms", t0.elapsed().as_millis());
 
     let t1 = std::time::Instant::now();
-    let rc_opening = recursive_commit(crs, &CONFIG.opening_recursion, &opening.rhs.data);
+    let rc_opening = recursive_commit(crs, &config.opening_recursion, &opening.rhs.data);
     println!("  rc_opening: {} ms", t1.elapsed().as_millis());
 
     hash_wrapper.update_with_ring_element_slice(&rc_opening.most_inner_commitment());
 
     let mut projection_matrix =
-        ProjectionMatrix::new(CONFIG.projection_ratio, CONFIG.projection_height);
+        ProjectionMatrix::new(config.projection_ratio, config.projection_height);
 
     projection_matrix.sample(&mut hash_wrapper);
 
-    let rc_projection_image = match &CONFIG.projection_recursion {
+    let rc_projection_image = match &config.projection_recursion {
         Projection::Type0(proj_config) => {
             let t2 = std::time::Instant::now();
             let projection_image = project(&witness, &projection_matrix);
@@ -109,7 +110,7 @@ pub fn prover_round(
         _ => None,
     };
 
-    let rcs_projection_1 = match &CONFIG.projection_recursion {
+    let rcs_projection_1 = match &config.projection_recursion {
         Projection::Type1(proj_config) => {
             // TODO implement Type1 projection recursion
             let t2 = std::time::Instant::now();
@@ -163,23 +164,23 @@ pub fn prover_round(
     let folded_witness = fold(&witness, &fold_challenge);
     println!("  fold: {} ms", t4.elapsed().as_millis());
 
-    let mut next_round_data = new_vec_zero_preallocated(CONFIG.composed_witness_length);
+    let mut next_round_data = new_vec_zero_preallocated(config.composed_witness_length);
 
     let t5 = std::time::Instant::now();
     let folded_witness_decomposed = decompose(
         &folded_witness.data,
-        CONFIG.witness_decomposition_base_log as u64,
-        CONFIG.witness_decomposition_chunks,
+        config.witness_decomposition_base_log as u64,
+        config.witness_decomposition_chunks,
     );
     println!("  decompose: {} ms", t5.elapsed().as_millis());
 
     paste_by_prefix(
         &mut next_round_data,
         &folded_witness_decomposed,
-        &CONFIG.folded_witness_prefix,
+        &config.folded_witness_prefix,
     );
 
-    match &CONFIG.projection_recursion {
+    match &config.projection_recursion {
         Projection::Type0(projection_config) => {
             paste_recursive_commitment(
                 &mut next_round_data,
@@ -201,12 +202,12 @@ pub fn prover_round(
         }
     }
 
-    paste_recursive_commitment(&mut next_round_data, &rc_opening, &CONFIG.opening_recursion);
+    paste_recursive_commitment(&mut next_round_data, &rc_opening, &config.opening_recursion);
 
     paste_recursive_commitment(
         &mut next_round_data,
         &rc_commitment,
-        &CONFIG.commitment_recursion,
+        &config.commitment_recursion,
     );
 
     let ell_inf_norm = norms::inf_norm(&next_round_data);
@@ -226,10 +227,41 @@ pub fn prover_round(
     );
 
     let t6 = std::time::Instant::now();
+
+    // if let Some(config) = &config.next {
+    //     let new_commtment = commit_basic(crs, witness, rank);
+    // }
+
+
+
+    let next_round_witness = VerticallyAlignedMatrix {
+        height: if let Some(next_config) = &config.next {
+            next_config.witness_height
+        } else {
+            config.composed_witness_length // do nothing further
+        },
+        width: if let Some(next_config) = &config.next {
+            next_config.witness_width
+        } else {
+            1 // do nothing further
+        },
+        data: next_round_data,
+    };
+
+    let next_round_commitment = if let Some(next_config) = &config.next {
+        assert_eq!(
+            next_round_witness.data.len(),
+            next_config.witness_height * next_config.witness_width
+        );
+        Some(commit_basic(&crs, &next_round_witness, next_config.basic_commitment_rank))
+    } else {
+        None
+    };
+
     let (claim_over_witness, claim_over_witness_conjugate, norm_claim, sumcheck_transcript) =
         sumcheck(
             &CONFIG,
-            &next_round_data,
+            &next_round_witness.data,
             &projection_matrix,
             &fold_challenge,
             &rcs_projection_1
@@ -310,6 +342,7 @@ pub fn execute() {
     )];
     let proof = prover_round(
         &crs,
+        &CONFIG,
         &rc_commitment,
         &witness,
         &evaluation_points_inner,

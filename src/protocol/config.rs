@@ -129,6 +129,7 @@ pub static TOY_CONFIG: LazyLock<Config> = LazyLock::new(|| {
 
         witness_decomposition_chunks: 2,
         witness_decomposition_base_log: 15,
+        next: None,
     }
     .generate_config()
 });
@@ -138,7 +139,7 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
         witness_height: 1024,
         witness_width: 16,
         projection_ratio: 32,
-        projection_height: 256, // small for testing
+        projection_height: 256, 
         basic_commitment_rank: 2,
         nof_openings: 1,
 
@@ -155,7 +156,7 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
         },
         opening_recursion: AuxRecursionConfig {
             decomposition_base_log: 15,
-            decomposition_chunks: 4,
+            decomposition_chunks: 4, 
             rank: 1,
             next: None,
         },
@@ -168,7 +169,7 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
                 next: None,
             },
             recursion_batched_projection: AuxRecursionConfig {
-                decomposition_base_log: 15,
+                decomposition_base_log: 15, 
                 decomposition_chunks: 4,
                 rank: 1,
                 next: None,
@@ -177,6 +178,7 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
 
         witness_decomposition_chunks: 2,
         witness_decomposition_base_log: 15,
+        next: None,
     }
     .generate_config()
 });

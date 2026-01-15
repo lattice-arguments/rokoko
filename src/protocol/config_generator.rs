@@ -32,6 +32,7 @@ pub struct AuxConfig {
     pub projection_recursion: AuxProjection,
     pub witness_decomposition_base_log: usize,
     pub witness_decomposition_chunks: usize,
+    pub next: Option<Box<AuxConfig>>,
 }
 
 #[derive(Clone)]
