@@ -74,14 +74,12 @@ impl SumcheckElement for QuadraticExtension {
     fn zero() -> Self {
         QuadraticExtension {
             coeffs: [0, 0],
-            shift: SHIFT_FACTORS[0],
         }
     }
 
     fn one() -> Self {
         QuadraticExtension {
             coeffs: [1, 0],
-            shift: SHIFT_FACTORS[0],
         }
     }
 
@@ -105,7 +103,6 @@ impl SumcheckElement for QuadraticExtension {
         vec![
             QuadraticExtension {
                 coeffs: [0, 0],
-                shift: SHIFT_FACTORS[0],
             };
             len
         ]
@@ -113,7 +110,6 @@ impl SumcheckElement for QuadraticExtension {
 
     fn set_from(&mut self, other: &Self) {
         self.coeffs = other.coeffs;
-        self.shift = other.shift;
     }
 }
 

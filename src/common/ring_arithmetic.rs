@@ -298,13 +298,11 @@ impl RingElement {
 
         let mut result = [QuadraticExtension {
             coeffs: [0u64; 2],
-            shift: 0,
         }; HALF_DEGREE];
 
         for i in 0..HALF_DEGREE {
             result[i].coeffs[0] = self.v[i];
             result[i].coeffs[1] = self.v[i + HALF_DEGREE];
-            result[i].shift = SHIFT_FACTORS[0];
         }
 
         result
@@ -463,6 +461,10 @@ pub static SHIFT_FACTORS: LazyLock<[u64; HALF_DEGREE]> = LazyLock::new(|| {
     factors[1] = 1;
     unsafe { ntt_forward_in_place(factors.as_mut_ptr(), factors.len(), MOD_Q) };
     factors
+});
+
+pub static FIELD_SHIFT_FACTOR: LazyLock<u64> = LazyLock::new(|| {
+    SHIFT_FACTORS[0]
 });
 
 pub static INV_HALF_DEGREE: LazyLock<u64> =
@@ -1031,18 +1033,12 @@ impl MulAssign<(&RingElement, &RingElement)> for RingElement {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct QuadraticExtension {
     pub coeffs: [u64; 2],
-    // TODO: remove shift factor as it's always the same
-    pub(crate) shift: u64,
 }
 
 impl Add for QuadraticExtension {
     type Output = Self;
 
     fn add(self, other: Self) -> Self {
-        assert!(
-            self.shift == other.shift,
-            "Shifts must be the same for addition"
-        );
         let coeffs = unsafe {
             [
                 add_mod(self.coeffs[0], other.coeffs[0], MOD_Q as u64),
@@ -1051,7 +1047,6 @@ impl Add for QuadraticExtension {
         };
         Self {
             coeffs,
-            shift: self.shift, // Assuming shift remains unchanged
         }
     }
 }
@@ -1060,10 +1055,6 @@ impl Mul for QuadraticExtension {
     type Output = Self;
 
     fn mul(self, other: Self) -> Self {
-        assert!(
-            self.shift == other.shift,
-            "Shifts must be the same for multiplication"
-        );
         let a = self.coeffs[0];
         let b = self.coeffs[1];
         let c = other.coeffs[0];
@@ -1073,7 +1064,7 @@ impl Mul for QuadraticExtension {
             [
                 add_mod(
                     multiply_mod(a, c, MOD_Q as u64),
-                    multiply_mod(self.shift, multiply_mod(b, d, MOD_Q as u64), MOD_Q as u64),
+                    multiply_mod(*FIELD_SHIFT_FACTOR, multiply_mod(b, d, MOD_Q as u64), MOD_Q as u64),
                     MOD_Q as u64,
                 ),
                 add_mod(
@@ -1085,14 +1076,12 @@ impl Mul for QuadraticExtension {
         };
         Self {
             coeffs,
-            shift: self.shift, // Assuming shift remains unchanged
         }
     }
 }
 
 impl<'a> AddAssign<&'a QuadraticExtension> for QuadraticExtension {
     fn add_assign(&mut self, other: &'a QuadraticExtension) {
-        assert_eq!(self.shift, other.shift);
         unsafe {
             self.coeffs[0] = add_mod(self.coeffs[0], other.coeffs[0], MOD_Q);
             self.coeffs[1] = add_mod(self.coeffs[1], other.coeffs[1], MOD_Q);
@@ -1102,7 +1091,6 @@ impl<'a> AddAssign<&'a QuadraticExtension> for QuadraticExtension {
 
 impl<'a> SubAssign<&'a QuadraticExtension> for QuadraticExtension {
     fn sub_assign(&mut self, other: &'a QuadraticExtension) {
-        assert_eq!(self.shift, other.shift);
         unsafe {
             self.coeffs[0] = sub_mod(self.coeffs[0], other.coeffs[0], MOD_Q);
             self.coeffs[1] = sub_mod(self.coeffs[1], other.coeffs[1], MOD_Q);
@@ -1112,7 +1100,6 @@ impl<'a> SubAssign<&'a QuadraticExtension> for QuadraticExtension {
 
 impl<'a> MulAssign<&'a QuadraticExtension> for QuadraticExtension {
     fn mul_assign(&mut self, other: &'a QuadraticExtension) {
-        assert_eq!(self.shift, other.shift);
         let a = self.coeffs[0];
         let b = self.coeffs[1];
         let c = other.coeffs[0];
@@ -1120,7 +1107,7 @@ impl<'a> MulAssign<&'a QuadraticExtension> for QuadraticExtension {
         unsafe {
             self.coeffs[0] = add_mod(
                 multiply_mod(a, c, MOD_Q),
-                multiply_mod(self.shift, multiply_mod(b, d, MOD_Q), MOD_Q),
+                multiply_mod(*FIELD_SHIFT_FACTOR, multiply_mod(b, d, MOD_Q), MOD_Q),
                 MOD_Q,
             );
             self.coeffs[1] = add_mod(multiply_mod(a, d, MOD_Q), multiply_mod(b, c, MOD_Q), MOD_Q);
@@ -1266,30 +1253,12 @@ mod tests {
     }
 
     #[test]
-    fn test_quadratic_extension_addition() {
-        let qe1 = QuadraticExtension {
-            coeffs: [1, 2],
-            shift: 5,
-        };
-        let qe2 = QuadraticExtension {
-            coeffs: [3, 4],
-            shift: 5,
-        };
-        let result = qe1 + qe2;
-
-        assert_eq!(result.coeffs[0], (1 + 3) % MOD_Q);
-        assert_eq!(result.coeffs[1], (2 + 4) % MOD_Q);
-    }
-
-    #[test]
     fn test_quadratic_extension_multiplication() {
         let qe1 = QuadraticExtension {
             coeffs: [2, 3],
-            shift: SHIFT_FACTORS[0],
         };
         let qe2 = QuadraticExtension {
             coeffs: [4, 5],
-            shift: SHIFT_FACTORS[0],
         };
         let result = qe1 * qe2;
 
@@ -1297,7 +1266,7 @@ mod tests {
         let expected_c0 = unsafe {
             add_mod(
                 multiply_mod(2, 4, MOD_Q),
-                multiply_mod(SHIFT_FACTORS[0], multiply_mod(3, 5, MOD_Q), MOD_Q),
+                multiply_mod(*FIELD_SHIFT_FACTOR, multiply_mod(3, 5, MOD_Q), MOD_Q),
                 MOD_Q,
             )
         };

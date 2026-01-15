@@ -308,7 +308,6 @@ impl EvaluationSumcheckData for RingToFieldWrapperEvaluation {
             .iter()
             .map(|r| QuadraticExtension {
                 coeffs: [r.v[0], r.v[HALF_DEGREE]],
-                shift: SHIFT_FACTORS[0],
             })
             .collect();
 

@@ -67,22 +67,18 @@ pub static ZERO: LazyLock<RingElement> =
 
 pub static ONE_QUAD: LazyLock<QuadraticExtension> = LazyLock::new(|| QuadraticExtension {
     coeffs: [1, 0],
-    shift: SHIFT_FACTORS[0],
 });
 pub static TWO_QUAD: LazyLock<QuadraticExtension> = LazyLock::new(|| QuadraticExtension {
     coeffs: [2, 0],
-    shift: SHIFT_FACTORS[0],
 });
 pub static ZERO_QUAD: LazyLock<QuadraticExtension> = LazyLock::new(|| QuadraticExtension {
     coeffs: [0, 0],
-    shift: SHIFT_FACTORS[0],
 });
 
 #[test]
 fn test_field_to_ring_roundtrip() {
     let fe = QuadraticExtension {
         coeffs: [123456789, 987654321],
-        shift: SHIFT_FACTORS[0],
     };
     let re = field_to_ring_element(&fe);
     let fes = re.split_into_quadratic_extensions();

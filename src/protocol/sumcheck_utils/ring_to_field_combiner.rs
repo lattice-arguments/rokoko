@@ -134,13 +134,11 @@ fn test_ring_to_field_combiner() {
         poly.at_zero() + poly.at_one(),
         QuadraticExtension {
             coeffs: [claim as u64, 0],
-            shift: SHIFT_FACTORS[0],
         }
     );
 
     let r0qe = QuadraticExtension {
         coeffs: [7, 3],
-        shift: SHIFT_FACTORS[0],
     };
 
     let mut r0 = RingElement::constant(0, Representation::HomogenizedFieldExtensions);
@@ -158,7 +156,6 @@ fn test_ring_to_field_combiner() {
 
     let r1qe = QuadraticExtension {
         coeffs: [21, 37],
-        shift: SHIFT_FACTORS[0],
     };
 
     let mut r1 = RingElement::constant(0, Representation::HomogenizedFieldExtensions);
@@ -176,7 +173,6 @@ fn test_ring_to_field_combiner() {
 
     let r2qe = QuadraticExtension {
         coeffs: [53, 89],
-        shift: SHIFT_FACTORS[0],
     };
 
     let mut r2 = RingElement::constant(0, Representation::HomogenizedFieldExtensions);

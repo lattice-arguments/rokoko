@@ -142,7 +142,6 @@ pub fn load_verifier_sumcheck_data(
                     .iter()
                     .map(|e| QuadraticExtension {
                         coeffs: [*e, 0],
-                        shift: SHIFT_FACTORS[0],
                     })
                     .collect::<Vec<_>>(),
             };
