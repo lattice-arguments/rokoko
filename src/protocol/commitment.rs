@@ -24,7 +24,7 @@ pub fn commit_basic_internal(
     witness: &VerticallyAlignedMatrix<RingElement>,
     rank: usize,
 ) -> BasicCommitment {
-    let mut commitment = HorizontallyAlignedMatrix::new_zero_preallocated(ck.len(), witness.width);
+    let mut commitment = HorizontallyAlignedMatrix::new_zero_preallocated(rank, witness.width);
 
     for (i, row) in ck.iter().take(rank).enumerate() {
         for col in 0..witness.width {

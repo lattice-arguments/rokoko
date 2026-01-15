@@ -32,66 +32,89 @@ pub enum Projection {
     Type1(Type1ProjectionConfig),
 }
 
-pub static REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| Config {
-    witness_height: 2usize.pow(14),   // 2^14
-    witness_width: 2usize.pow(5),     // 2^5
-    projection_ratio: 2usize.pow(5),  // 2^5
-    projection_height: 2usize.pow(8), // 2^8
-    basic_commitment_rank: 4,
-    nof_openings: 1,
-
-    commitment_recursion: RecursionConfig {
-        decomposition_base_log: 15, // 2^5 (witness_width) * 2^2 (rank) * 2^2 (decomp) = 2^9
-        decomposition_chunks: 4,
-        rank: 1,
-        prefix: Prefix {
-            prefix: 0b1100000,
-            length: 7, // 2^16 / 2^9 = 2^7
-        },
-        next: Some(Box::new(RecursionConfig {
-            decomposition_base_log: 7,
-            decomposition_chunks: 8, // 1 (rank) * 8 (decomp) = 2^3
+pub static REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| {
+    AuxConfig {
+        witness_height: 2usize.pow(15),   // 2^15
+        witness_width: 2usize.pow(6),     // 2^6
+        projection_ratio: 2usize.pow(6),  // 2^6
+        projection_height: 2usize.pow(8), // 2^8
+        basic_commitment_rank: 4,
+        nof_openings: 1,
+        commitment_recursion: AuxRecursionConfig {
+            decomposition_base_log: 15, // 2^5 (witness_width) * 2^2 (rank) * 2^2 (decomp) = 2^9
+            decomposition_chunks: 4,
             rank: 1,
-            prefix: Prefix {
-                prefix: 0b1100001010000,
-                length: 13, // 2^16 / 2^3 = 2^13
+            next: Some(Box::new(AuxRecursionConfig {
+                decomposition_base_log: 7,
+                decomposition_chunks: 8, // 1 (rank) * 8 (decomp) = 2^3
+                rank: 1,
+                next: None,
+            })),
+        },
+        opening_recursion: AuxRecursionConfig {
+            decomposition_base_log: 15, // 2^5 (witness_width) * 2^0 (nof openings) * 2^2 (decomp) = 2^7
+            decomposition_chunks: 4, // for now, there's no reason why decomposition_chunks here shall be different from commitment_recursion.decomposition_chunks. I will use that assumption in sumcheck.
+            rank: 1,
+            next: None,
+        },
+        projection_recursion: AuxProjection::Type0(AuxRecursionConfig {
+            // 2^14 (witness_height) * 2^5 (witness_width) / 2^5 (projection_ratio) * 2^0 (decomp) = 2^14
+            decomposition_base_log: 20, // no decomposition
+            decomposition_chunks: 1,
+            rank: 1,
+            next: None,
+        }),
+
+        witness_decomposition_chunks: 2,
+        witness_decomposition_base_log: 10, // no decomposition
+
+        next: Some(Box::new(AuxConfig {
+            witness_height: 2usize.pow(10),
+            witness_width: 2usize.pow(7),
+            projection_ratio: 2usize.pow(7),
+            projection_height: 2usize.pow(8),
+            basic_commitment_rank: 2,
+            nof_openings: 2,
+            commitment_recursion: AuxRecursionConfig {
+                decomposition_base_log: 15, // 2^5 (witness_width) * 2^2 (rank) * 2^2 (decomp) = 2^9
+                decomposition_chunks: 4,
+                rank: 1,
+                next: Some(Box::new(AuxRecursionConfig {
+                    decomposition_base_log: 7,
+                    decomposition_chunks: 8, // 1 (rank) * 8 (decomp) = 2^3
+                    rank: 1,
+                    next: None,
+                })),
             },
+            opening_recursion: AuxRecursionConfig {
+                decomposition_base_log: 15, // 2^5 (witness_width) * 2^0 (nof openings) * 2^2 (decomp) = 2^7
+                decomposition_chunks: 4, // for now, there's no reason why decomposition_chunks here shall be different from commitment_recursion.decomposition_chunks. I will use that assumption in sumcheck.
+                rank: 1,
+                next: None,
+            },
+            projection_recursion: AuxProjection::Type1 {
+                nof_batches: 2,
+                recursion_constant_term: AuxRecursionConfig {
+                    decomposition_base_log: 15,
+                    decomposition_chunks: 4,
+                    rank: 1,
+                    next: None,
+                },
+                recursion_batched_projection: AuxRecursionConfig {
+                    decomposition_base_log: 15,
+                    decomposition_chunks: 4,
+                    rank: 1,
+                    next: None,
+                },
+            },
+
+            witness_decomposition_chunks: 2,
+            witness_decomposition_base_log: 10, // no decomposition
+
             next: None,
         })),
-    },
-    opening_recursion: RecursionConfig {
-        decomposition_base_log: 15, // 2^5 (witness_width) * 2^0 (nof openings) * 2^2 (decomp) = 2^7
-        decomposition_chunks: 4, // for now, there's no reason why decomposition_chunks here shall be different from commitment_recursion.decomposition_chunks. I will use that assumption in sumcheck.
-        rank: 1,
-        next: None,
-        prefix: Prefix {
-            prefix: 0b110000100,
-            length: 9, // 2^16 / 2^7 = 2^9
-        },
-    },
-    projection_recursion: Projection::Type0(Type0ProjectionConfig {
-        // 2^14 (witness_height) * 2^5 (witness_width) / 2^5 (projection_ratio) * 2^0 (decomp) = 2^14
-        decomposition_base_log: 20, // no decomposition
-        decomposition_chunks: 1,
-        rank: 1,
-        next: None,
-        prefix: Prefix {
-            prefix: 0b10,
-            length: 2, // 2^16 / 2^14 = 2^2
-        },
-    }),
-
-    folded_witness_prefix: Prefix {
-        //  2^14 (witness_height) * 2^1 (decomp) = 2^15
-        prefix: 0b0,
-        length: 1, // 2^16 / 2^15 = 2^1
-    },
-    witness_decomposition_chunks: 2,
-    witness_decomposition_base_log: 10, // no decomposition
-
-    composed_witness_length: 2usize.pow(16),
-
-    next: None, // for multiple rounds
+    }
+    .generate_config()
 });
 
 pub static TOY_CONFIG: LazyLock<Config> = LazyLock::new(|| {
@@ -139,7 +162,7 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
         witness_height: 1024,
         witness_width: 16,
         projection_ratio: 32,
-        projection_height: 256, 
+        projection_height: 256,
         basic_commitment_rank: 2,
         nof_openings: 1,
 
@@ -156,7 +179,7 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
         },
         opening_recursion: AuxRecursionConfig {
             decomposition_base_log: 15,
-            decomposition_chunks: 4, 
+            decomposition_chunks: 4,
             rank: 1,
             next: None,
         },
@@ -169,7 +192,7 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
                 next: None,
             },
             recursion_batched_projection: AuxRecursionConfig {
-                decomposition_base_log: 15, 
+                decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
                 next: None,
@@ -183,7 +206,7 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
     .generate_config()
 });
 
-pub static CONFIG: LazyLock<Config> = LazyLock::new(|| TOY_CONFIG_II.clone());
+pub static CONFIG: LazyLock<Config> = LazyLock::new(|| REAL_CONFIG.clone());
 
 #[derive(Clone)]
 pub struct Config {

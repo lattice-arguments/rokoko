@@ -50,6 +50,7 @@ pub struct VerifierSumcheckContext {
     // Top-level combiners
     pub combiner_evaluation: ElephantCell<CombinerEvaluation<RingElement>>,
     pub field_combiner_evaluation: ElephantCell<RingToFieldCombinerEvaluation>,
+    pub next: Option<Box<VerifierSumcheckContext>>,
 }
 
 impl VerifierSumcheckContext {

@@ -1,3 +1,4 @@
+use crate::common::config;
 use crate::protocol::commitment::{Prefix, RecursionConfig};
 use crate::protocol::config::{Config, Projection, Type0ProjectionConfig, Type1ProjectionConfig};
 
@@ -44,6 +45,9 @@ struct ComponentInfo {
 
 impl AuxConfig {
     pub fn generate_config(&self) -> Config {
+        self.generate_config_inner(0)
+    }
+    pub fn generate_config_inner(&self, depth: usize) -> Config {
         let mut components = Vec::new();
 
         // Collect all components that need prefixes
@@ -56,10 +60,13 @@ impl AuxConfig {
         // Sort by size (largest to smallest)
         components.sort_by(|a, b| b.size.cmp(&a.size));
 
-        println!("\n=== Prefix Assignment ===");
+        println!("\n=== Prefix Assignment level {} ===", depth);
         println!(
-            "Total size needed: {} -> Composed witness length: {}",
-            total_size, composed_witness_length
+            "Total size needed: {} -> Composed witness length: {} (compresion ratio {:.2}%)",
+            total_size,
+            composed_witness_length,
+            (composed_witness_length as f64 / (self.witness_width * self.witness_height) as f64)
+                * 100.0
         );
         println!("\nComponents sorted by size:");
 
@@ -113,8 +120,14 @@ impl AuxConfig {
             let prefix_binary = format!("{:0width$b}", prefix_value, width = prefix_length);
             let start = prefix_value << required_bits;
             let end = start + comp.size;
+
+            // Calculate indentation based on path depth
+            let indent_level = comp.path.iter().filter(|s| *s == "next").count();
+            let indent = "  ".repeat(indent_level + 1);
+
             println!(
-                "  {} (size={}): prefix=0b{} (len={}) -> indices [{}, {}]",
+                "{}{} (size={}): prefix=0b{} (len={}) -> indices [{}, {}]",
+                indent,
                 comp.name,
                 comp.size,
                 prefix_binary,
@@ -127,12 +140,12 @@ impl AuxConfig {
         // Calculate usage ratio
         let used_memory = used_prefixes.len();
         let usage_ratio = used_memory as f64 / composed_witness_length as f64;
-        println!("\n=== Memory Usage ===");
+        println!("\n=== Memory Usage level {} ===", depth);
         println!("Used: {} / {}", used_memory, composed_witness_length);
         println!("Usage ratio: {:.2}%\n", usage_ratio * 100.0);
 
         // Build the actual config with assigned prefixes
-        self.build_config_with_prefixes(&assigned_prefixes, composed_witness_length)
+        self.build_config_with_prefixes(&assigned_prefixes, composed_witness_length, 0)
     }
 
     fn collect_components(&self, components: &mut Vec<ComponentInfo>) {
@@ -240,6 +253,7 @@ impl AuxConfig {
         &self,
         assigned_prefixes: &[(ComponentInfo, Prefix)],
         composed_witness_length: usize,
+        depth: usize,
     ) -> Config {
         // Helper to find prefix by path
         let find_prefix = |path: &[String]| -> Prefix {
@@ -319,7 +333,10 @@ impl AuxConfig {
             witness_decomposition_chunks: self.witness_decomposition_chunks,
             folded_witness_prefix,
             composed_witness_length,
-            next: None,
+            next: self
+                .next
+                .as_ref()
+                .map(|next| Box::new(next.generate_config_inner(depth + 1))),
         }
     }
 
@@ -395,6 +412,7 @@ mod tests {
             }),
             witness_decomposition_base_log: 15,
             witness_decomposition_chunks: 2,
+            next: None,
         };
 
         let _config = aux_config.generate_config();
@@ -443,6 +461,7 @@ mod tests {
             },
             witness_decomposition_base_log: 15,
             witness_decomposition_chunks: 2,
+            next: None,
         };
 
         let _config = aux_config.generate_config();

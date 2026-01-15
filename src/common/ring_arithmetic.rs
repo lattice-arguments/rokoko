@@ -441,6 +441,12 @@ impl RingElement {
             result.v[HALF_DEGREE + transform.odd_permutation[i]] = temp[i];
         }
     }
+
+    pub fn conjugate(&self) -> RingElement {
+        let mut result = RingElement::new(self.representation);
+        self.conjugate_into(&mut result);
+        result
+    }
 }
 
 pub static SHIFT_FACTORS: LazyLock<[u64; HALF_DEGREE]> = LazyLock::new(|| {

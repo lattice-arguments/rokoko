@@ -44,8 +44,7 @@ pub fn load_sumcheck_data(
     challenges_batching_projection_1: &Option<&[BatchedProjectionChallenges; NOF_BATCHES]>,
     opening: &Opening,
     projection_matrix: &ProjectionMatrix,
-    projection_matrix_flatter_structured: &StructuredRow,
-    projection_matrix_flatter_preprocessed: &PreprocessedRow,
+    projection_matrix_flatter: &Option<(PreprocessedRow, StructuredRow)>,
     combination: &Vec<RingElement>,
     qe: &[QuadraticExtension; HALF_DEGREE],
 ) {
@@ -96,7 +95,7 @@ pub fn load_sumcheck_data(
     if let Some(type3_sc) = &mut sumcheck_context.type3sumcheck {
         let (projection_flatter_0_structured, projection_flatter_1_structured) =
             split_projection_flatter(
-                projection_matrix_flatter_structured,
+                &projection_matrix_flatter.as_ref().unwrap().1,
                 projection_matrix.projection_height,
             );
 
@@ -141,7 +140,13 @@ pub fn load_sumcheck_data(
         type3_sc
             .rhs_projection_flatter_sumcheck
             .borrow_mut()
-            .load_from(&projection_matrix_flatter_preprocessed.preprocessed_row);
+            .load_from(
+                &projection_matrix_flatter
+                    .as_ref()
+                    .unwrap()
+                    .0
+                    .preprocessed_row,
+            );
     }
 
     // Load type3_1_a_sumchecks if present (batched projections)

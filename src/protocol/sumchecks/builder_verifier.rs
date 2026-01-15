@@ -777,5 +777,9 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
         type5evaluation,
         combiner_evaluation,
         field_combiner_evaluation,
+        next: match &config.next {
+            Some(next_config) => Some(Box::new(init_verifier(crs, &next_config))),
+            None => None,
+        },
     }
 }

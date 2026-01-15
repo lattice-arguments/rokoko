@@ -13,7 +13,7 @@ use crate::{
         sumcheck_element::SumcheckElement,
     },
     protocol::{
-        config::{Config, Projection},
+        config::{Config, Projection, ProjectionType},
         crs,
         open::{evaluation_point_to_structured_row, Opening},
         project,
@@ -274,18 +274,29 @@ pub fn sumcheck(
     RingElement,
     RingElement,
     Vec<Polynomial<QuadraticExtension>>,
+    Vec<RingElement>,
 ) {
     // Removed: let mut hash_wrapper_clone = hash_wrapper.clone(); - unused
-    let projection_height_flat = config.witness_height / config.projection_ratio;
-    let mut projection_matrix_flatter_base =
-        new_vec_zero_preallocated(projection_height_flat.ilog2() as usize);
-    hash_wrapper.sample_ring_element_ntt_slots_same_vec_into(&mut projection_matrix_flatter_base);
+    let projection_matrix_flatter = match config.projection_recursion {
+        Projection::Type0(_) => {
+            let projection_height_flat = config.witness_height / config.projection_ratio;
+            let mut projection_matrix_flatter_base =
+                new_vec_zero_preallocated(projection_height_flat.ilog2() as usize);
+            hash_wrapper
+                .sample_ring_element_ntt_slots_same_vec_into(&mut projection_matrix_flatter_base);
 
-    let projection_matrix_flatter_structured =
-        evaluation_point_to_structured_row(&projection_matrix_flatter_base);
+            let projection_matrix_flatter_structured =
+                evaluation_point_to_structured_row(&projection_matrix_flatter_base);
+            let projection_matrix_flatter =
+                PreprocessedRow::from_structured_row(&projection_matrix_flatter_structured);
 
-    let projection_matrix_flatter =
-        PreprocessedRow::from_structured_row(&projection_matrix_flatter_structured);
+            Some((
+                projection_matrix_flatter,
+                projection_matrix_flatter_structured,
+            ))
+        }
+        Projection::Type1(_) => None,
+    };
 
     let mut conjugated_combined_witness = new_vec_zero_preallocated(combined_witness.len());
     combined_witness
@@ -321,7 +332,6 @@ pub fn sumcheck(
         challenges_batching_projection_1,
         opening,
         projection_matrix,
-        &projection_matrix_flatter_structured,
         &projection_matrix_flatter,
         &combination,
         &qe,
@@ -356,21 +366,6 @@ pub fn sumcheck(
     let t_loop = std::time::Instant::now();
     let mut time_poly = 0;
     let mut time_eval = 0;
-
-    let mut poly_temp = Polynomial::<RingElement>::new(0);
-    let c = &sumcheck_context
-        .type3_1_a_sumchecks
-        .as_ref()
-        .unwrap()
-        .sumchecks[0]
-        .output
-        .borrow()
-        .univariate_polynomial_into(&mut poly_temp);
-    assert_eq!(
-        &poly_temp.at_one() + &poly_temp.at_zero(),
-        RingElement::zero(Representation::IncompleteNTT),
-        "Type3_1_A initial claim failed"
-    );
 
     while num_vars > 0 {
         num_vars -= 1;
@@ -430,6 +425,7 @@ pub fn sumcheck(
         claim_over_witness_conjugate,
         norm_claim,
         polys,
+        evaluation_points,
     )
 }
 
@@ -442,6 +438,7 @@ pub struct RoundProof {
     pub rc_opening_inner: Vec<RingElement>,
     pub rc_projection_inner: Option<Vec<RingElement>>,
     pub rcs_projection_1_inner: Option<(Vec<RingElement>, Vec<RingElement>)>,
+    pub next: Option<Box<RoundProof>>,
 }
 
 pub fn sumcheck_verifier(
@@ -452,7 +449,7 @@ pub fn sumcheck_verifier(
     evaluation_points_outer: &Vec<StructuredRow>,
     claims: &Vec<RingElement>,
     hash_wrapper: &mut HashWrapper,
-) {
+) -> Vec<RingElement> {
     hash_wrapper.update_with_ring_element_slice(&round_proof.rc_commitment_inner);
     hash_wrapper.update_with_ring_element_slice(&round_proof.rc_opening_inner);
     let mut projection_matrix =
@@ -486,12 +483,20 @@ pub fn sumcheck_verifier(
     hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut folding_challenges);
 
     let projection_height_flat = config.witness_height / config.projection_ratio;
-    let mut projection_matrix_flatter_base =
-        new_vec_zero_preallocated(projection_height_flat.ilog2() as usize);
-    hash_wrapper.sample_ring_element_ntt_slots_same_vec_into(&mut projection_matrix_flatter_base);
 
-    let projection_matrix_flatter_structured =
-        evaluation_point_to_structured_row(&projection_matrix_flatter_base);
+    let projection_matrix_flatter_structured = match config.projection_recursion {
+        Projection::Type0(_) => {
+            let mut projection_matrix_flatter_base =
+                new_vec_zero_preallocated(projection_height_flat.ilog2() as usize);
+            hash_wrapper
+                .sample_ring_element_ntt_slots_same_vec_into(&mut projection_matrix_flatter_base);
+
+            Some(evaluation_point_to_structured_row(
+                &projection_matrix_flatter_base,
+            ))
+        }
+        Projection::Type1(_) => None,
+    };
 
     hash_wrapper.update_with_ring_element(&round_proof.norm_claim);
 
@@ -572,8 +577,8 @@ pub fn sumcheck_verifier(
         evaluation_points_inner,
         evaluation_points_outer,
         &projection_matrix,
-        Some(&projection_matrix_flatter_structured), // assume type0 projection TODO: make optional
-        &challenges_3_1_a,                           // for 1 projection type only
+        &projection_matrix_flatter_structured, // assume type0 projection TODO: make optional
+        &challenges_3_1_a,                     // for 1 projection type only
         &combination,
         &qe,
     );
@@ -585,4 +590,13 @@ pub fn sumcheck_verifier(
             .borrow_mut()
             .evaluate(&evaluation_points)
     );
+
+    evaluation_points
+        .iter()
+        .map(|f| {
+            let mut r = field_to_ring_element(f);
+            r.from_homogenized_field_extensions_to_incomplete_ntt();
+            r
+        })
+        .collect()
 }

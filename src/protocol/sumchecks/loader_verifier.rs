@@ -33,7 +33,7 @@ pub fn load_verifier_sumcheck_data(
     evaluation_points_inner: &Vec<StructuredRow>,
     evaluation_points_outer: &Vec<StructuredRow>,
     projection_matrix: &ProjectionMatrix,
-    projection_matrix_flatter_structured: Option<&StructuredRow>, // Only needed for type0 projection
+    projection_matrix_flatter_structured: &Option<StructuredRow>, // Only needed for type0 projection
     challenges_3_1_a: &Option<[BatchedProjectionChallengesSuccinct; NOF_BATCHES]>,
     combination: &Vec<RingElement>,
     qe: &[QuadraticExtension; HALF_DEGREE],
@@ -82,7 +82,7 @@ pub fn load_verifier_sumcheck_data(
 
         let (projection_flatter_0_structured, projection_flatter_1_structured) =
             split_projection_flatter(
-                projection_matrix_flatter_structured.unwrap(),
+                projection_matrix_flatter_structured.as_ref().unwrap(),
                 projection_matrix.projection_height,
             );
 
@@ -108,7 +108,12 @@ pub fn load_verifier_sumcheck_data(
         type3_eval
             .rhs_projection_flatter_evaluation
             .borrow_mut()
-            .load_from(projection_matrix_flatter_structured.unwrap().clone());
+            .load_from(
+                projection_matrix_flatter_structured
+                    .as_ref()
+                    .unwrap()
+                    .clone(),
+            );
 
         type3_eval
             .rhs_fold_challenge_evaluation

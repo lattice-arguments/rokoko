@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use crate::common::config::DEGREE;
 use crate::protocol::config::Projection;
+use crate::protocol::sumchecks::builder;
 use crate::protocol::sumchecks::context::Type3_1ASumcheckContextWrapper;
 use crate::{
     common::{config::NOF_BATCHES, ring_arithmetic::RingElement},
@@ -475,10 +476,6 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
                 ),
             );
 
-            println!(
-                "Type3 Sumcheck: blocks = {}, inner_width = {}",
-                blocks, inner_width
-            );
             // LS variables: projection_flatter_1 · matrix (length = inner_width)
             let lhs_flatter_1_times_matrix_sumcheck = ElephantCell::new(
                 LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
@@ -831,5 +828,9 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
         type3_1_a_sumchecks,
         combiner,
         field_combiner,
+        next: match &config.next {
+            Some(next_config) => Some(Box::new(init_sumcheck(crs, &next_config))),
+            None => None,
+        },
     }
 }

@@ -47,6 +47,7 @@ pub struct SumcheckContext {
     pub type3_1_a_sumchecks: Option<Type3_1ASumcheckContextWrapper>, // it should never go together with type3sumcheck TODO: refactor for enum I guess
     pub combiner: ElephantCell<Combiner<RingElement>>,
     pub field_combiner: ElephantCell<RingToFieldCombiner>,
+    pub next: Option<Box<SumcheckContext>>,
 }
 
 /// Encapsulates the bookkeeping required to fold every tracked sumcheck with
