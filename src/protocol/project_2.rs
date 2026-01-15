@@ -88,6 +88,7 @@ pub fn compute_j_batched(
     // Convert j_batched to NTT for efficient multiplication
     for bp in j_batched.iter_mut() {
         bp.to_representation(Representation::IncompleteNTT);
+        // bp.conjugate_in_place();
     }
 
     j_batched

@@ -83,7 +83,7 @@ pub fn precompute_structured_values(layers: &[u64]) -> Vec<u64> {
     let size = 1 << layers.len();
     let mut values = vec![1u64; size];
 
-    for (layer_idx, &layer) in layers.iter().enumerate() {
+    for (layer_idx, &layer) in layers.iter().rev().enumerate() {
         let layer_complement = unsafe { sub_mod(1, layer, MOD_Q) };
 
         for i in 0..size {
