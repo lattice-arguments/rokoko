@@ -458,6 +458,10 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
             let inner_width = config.projection_ratio * height;
             let blocks = config.witness_height / inner_width;
 
+            if blocks == 0 {
+                panic!("Type3 Sumcheck: Your type0 projection configuration is invalid. The number of blocks computed as witness_height / (projection_ratio * projection_height) is zero. Please check your configuration.");
+            }
+
             // Elder variables: projection_flatter_0 (length = blocks)
             let lhs_flatter_0_sumcheck = ElephantCell::new(
                 LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
