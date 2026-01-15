@@ -49,29 +49,20 @@ pub fn compute_j_batched(
         el.set_from(&HALF_WAY_MOD_Q_RING_CF);
     }
 
-    // Iterate over each ring element in J_batched
-    for i in 0..inner_width_ring {
-        // For each coefficient position in the ring element
-        for j in 0..DEGREE {
-            let col_index = i * DEGREE + j; // Flatten to coefficient space
-                                            // Accumulate weighted sum over PROJECTION_HEIGHT rows using c'_1
-            for k in 0..projection_matrix.projection_height {
-                let coeff = c_1_values[k];
-                unsafe {
-                    let (is_positive, is_non_zero) = &projection_matrix[(k, col_index)];
-                    if !*is_non_zero {
-                        continue;
-                    }
-                    if *is_positive {
-                            // j_batched[i].v[j] += coeff;
-                             j_batched[i].v[j] = add_mod(j_batched[i].v[j], coeff, MOD_Q);
-                    } else {
-                            // j_batched[i].v[j] -= coeff;
-                            j_batched[i].v[j] = sub_mod(j_batched[i].v[j], coeff, MOD_Q);
-                    }
-                }
+    #[cfg(target_arch = "x86_64")]
+    {
+        if is_x86_feature_detected!("avx512f") {
+            unsafe {
+                compute_j_batched_avx512(&mut j_batched, projection_matrix, c_1_values, inner_width_ring);
             }
+        } else {
+            compute_j_batched_scalar(&mut j_batched, projection_matrix, c_1_values, inner_width_ring);
         }
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        compute_j_batched_scalar(&mut j_batched, projection_matrix, c_1_values, inner_width_ring);
     }
 
     // Convert j_batched to NTT for efficient multiplication
@@ -84,6 +75,105 @@ pub fn compute_j_batched(
     }
 
     j_batched
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f")]
+unsafe fn compute_j_batched_avx512(
+    j_batched: &mut [RingElement],
+    projection_matrix: &ProjectionMatrix,
+    c_1_values: &[u64],
+    inner_width_ring: usize,
+) {
+    use core::arch::x86_64::*;
+
+    #[inline(always)]
+    unsafe fn masked_signed_add_epi64(acc: __m512i, a: __m512i, k_inc: u8, k_pos: u8) -> __m512i {
+        // signed = (k_pos ? +a : -a)
+        let neg = _mm512_sub_epi64(_mm512_setzero_si512(), a);
+        let signed = _mm512_mask_mov_epi64(neg, k_pos, a);
+
+        // Add signed values to accumulator, but only for included lanes
+        _mm512_mask_add_epi64(acc, k_inc, acc, signed)
+    }
+
+    for i in 0..inner_width_ring {
+        let base_ptr = j_batched[i].v.as_mut_ptr();
+        
+        // Process each chunk of 8 coefficients
+        for j_chunk in 0..DEGREE / 8 {
+            let j_base = j_chunk * 8;
+            
+            // Load current 8 values
+            let mut acc = _mm512_loadu_si512(base_ptr.add(j_base) as *const _);
+            
+            // Accumulate contributions from all projection rows
+            for k in 0..projection_matrix.projection_height {
+                let coeff = c_1_values[k];
+                
+                // Build masks for this row across 8 columns
+                let mut k_inc: u8 = 0; // which lanes to include (is_non_zero)
+                let mut k_pos: u8 = 0; // which lanes are positive (is_positive)
+                
+                for lane in 0..8 {
+                    let col_index = i * DEGREE + j_base + lane;
+                    let (is_positive, is_non_zero) = &projection_matrix[(k, col_index)];
+                    
+                    if *is_non_zero {
+                        k_inc |= 1 << lane;
+                        if *is_positive {
+                            k_pos |= 1 << lane;
+                        }
+                    }
+                }
+                
+                // Skip if no contribution from this row
+                if k_inc == 0 {
+                    continue;
+                }
+                
+                // Broadcast coefficient to all lanes
+                let coeff_vec = _mm512_set1_epi64(coeff as i64);
+                
+                // Add or subtract coefficient based on masks
+                acc = masked_signed_add_epi64(acc, coeff_vec, k_inc, k_pos);
+            }
+            
+            // Store result back
+            _mm512_storeu_si512(base_ptr.add(j_base) as *mut _, acc);
+        }
+    }
+}
+
+#[inline(always)]
+fn compute_j_batched_scalar(
+    j_batched: &mut [RingElement],
+    projection_matrix: &ProjectionMatrix,
+    c_1_values: &[u64],
+    inner_width_ring: usize,
+) {
+    for i in 0..inner_width_ring {
+        for k in 0..projection_matrix.projection_height {
+            for j_ in 0..DEGREE / 8 {
+                for bit in 0..8 {
+                    let j = j_ * 8 + bit;
+                    let col_index = i * DEGREE + j;
+                    let coeff = c_1_values[k];
+                    unsafe {
+                        let (is_positive, is_non_zero) = &projection_matrix[(k, col_index)];
+                        if !*is_non_zero {
+                            continue;
+                        }
+                        if *is_positive {
+                            j_batched[i].v[j] += coeff;
+                        } else {
+                            j_batched[i].v[j] -= coeff;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 // Compute the coefficient-wise projection: V = (I_d ⊗ J) * coeff(W)

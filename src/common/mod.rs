@@ -14,7 +14,8 @@ pub mod structured_row;
 pub mod sumcheck_element;
 use crate::common::{
     arithmetic::{
-        ADDITION_SUBTRACTION_BUDGET, HALF_WAY_MOD_Q, HALF_WAY_MOD_Q_RING_CF, ONE, ONE_QUAD, TWO, TWO_QUAD, ZERO, ZERO_QUAD
+        ADDITION_SUBTRACTION_BUDGET, HALF_WAY_MOD_Q, HALF_WAY_MOD_Q_RING_CF, ONE, ONE_QUAD, TWO,
+        TWO_QUAD, ZERO, ZERO_QUAD,
     },
     ring_arithmetic::*,
 };

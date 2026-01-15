@@ -471,7 +471,7 @@ pub fn sumcheck_verifier(
         let challenges_3_1_a: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] =
             std::array::from_fn(|_| {
                 // let challenges =
-                    verifier_sample_projection_challenges(&projection_matrix, config, hash_wrapper)
+                verifier_sample_projection_challenges(&projection_matrix, config, hash_wrapper)
                 // challenges
             });
 
