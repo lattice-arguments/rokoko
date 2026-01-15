@@ -63,24 +63,7 @@ pub fn compute_j_batched(
                 for j_ in 0..DEGREE / 8 {
                     let col_index_base = i * DEGREE + j_ * 8;
                     
-                    // Build 8-bit masks from projection matrix for this group of 8 coefficients
-                    // k_pos: bit i is 1 if projection_matrix entry is +1
-                    // k_inc: bit i is 1 if projection_matrix entry is non-zero (±1)
-                    let mut k_pos: u8 = 0;
-                    let mut k_inc: u8 = 0;
-                    
-                    // for bit in 0..8 { // TODO rework the matrix structure so rewriting this loop is easier
-                    //     let col_index = col_index_base + bit;
-                    //     let (is_positive, is_non_zero) = &projection_matrix[(k, col_index)];
-                    //     if *is_non_zero {
-                    //         k_inc |= 1 << bit;
-                    //         if *is_positive {
-                    //             k_pos |= 1 << bit;
-                    //         }
-                    //     }
-                    // }
-
-                    // projection_matrix.get_col_masks_u8(k, col_index_base);
+                    // Get masks for the 8 positions
                     let (k_pos, k_inc) = projection_matrix.get_row_masks_u8(k, col_index_base);
                     
                     // Apply masked signed addition using AVX-512
@@ -240,26 +223,71 @@ pub fn project_coefficients(
                 let current_projection_row = inner_row / DEGREE; // Which ring element
                 let current_projection_coeff_index = inner_row % DEGREE; // Which coeff in that element
 
+
+                let target = &mut projection_subimage[current_projection_row].v
+                    [current_projection_coeff_index];
                 // Compute the inner product: projection_subimage[inner_row] = J[inner_row, :] · subwitness
                 // J has (projection_ratio * PROJECTION_HEIGHT) columns
-                for i in 0..projection_matrix.projection_ratio * projection_matrix.projection_height
+                
+                #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
                 {
-                    let (is_positive, is_non_zero) = &projection_matrix[(inner_row, i)];
-                    if !*is_non_zero {
-                        continue;
+                    use std::arch::x86_64::*;
+                    
+                    let total_cols = projection_matrix.projection_ratio * projection_matrix.projection_height;
+                    debug_assert_eq!(total_cols % 8, 0, "total_cols must be a multiple of 8 for vectorization");
+                    
+                    unsafe {
+                        let mut accumulator = _mm512_setzero_si512();
+                        
+                        // Process 8 columns at a time
+                        for chunk_idx in 0..(total_cols / 8) {
+                            let col_base = chunk_idx * 8;
+                            
+                            // Get masks for these 8 columns
+                            let (k_pos, k_inc) = projection_matrix.get_row_masks_u8(inner_row, col_base);
+                            
+                            // Load 8 coefficients from subwitness
+                            // Since col_base is always a multiple of 8 and DEGREE is a multiple of 8,
+                            // all 8 coefficients are guaranteed to be in the same ring element
+                            let ring_idx = col_base / DEGREE;
+                            let coeff_offset = col_base % DEGREE;
+                            let coeff_vec = _mm512_loadu_epi64(subwitness[ring_idx].v.as_ptr().add(coeff_offset) as *const i64);
+                            
+                            // Compute masks for add and subtract
+                            let k_add = k_inc & k_pos;
+                            let k_sub = k_inc & !k_pos;
+                            
+                            // Start with positive contributions (where k_add is 1)
+                            let result = _mm512_maskz_mov_epi64(k_add, coeff_vec);
+                            
+                            // Subtract negative contributions (where k_sub is 1)
+                            let result = _mm512_mask_sub_epi64(result, k_sub, result, coeff_vec);
+                            
+                            // Accumulate
+                            accumulator = _mm512_add_epi64(accumulator, result);
+                        }
+                        
+                        // Horizontal sum using _mm512_reduce_add_epi64
+                        let sum = _mm512_reduce_add_epi64(accumulator);
+                        *target = (*target as i64 + sum) as u64;
                     }
+                }
+                
+                #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+                {
+                    let total_cols = projection_matrix.projection_ratio * projection_matrix.projection_height;
+                    for i in 0..total_cols {
+                        let (is_positive, is_non_zero) = &projection_matrix[(inner_row, i)];
+                        if !*is_non_zero {
+                            continue;
+                        }
 
-                    // Add or subtract the witness coefficient depending on J's sign
-                    if *is_positive {
-                        // TODO: use vectorisation
-                        projection_subimage[current_projection_row].v
-                            [current_projection_coeff_index] +=
-                            subwitness[i / DEGREE].v[i % DEGREE];
-                    } else {
-                        // TODO: use vectorisation
-                        projection_subimage[current_projection_row].v
-                            [current_projection_coeff_index] -=
-                            subwitness[i / DEGREE].v[i % DEGREE];
+                        // Add or subtract the witness coefficient depending on J's sign
+                        if *is_positive {
+                            *target += subwitness[i / DEGREE].v[i % DEGREE];
+                        } else {
+                            *target -= subwitness[i / DEGREE].v[i % DEGREE];
+                        }
                     }
                 }
             }
