@@ -206,7 +206,7 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
     .generate_config()
 });
 
-pub static CONFIG: LazyLock<Config> = LazyLock::new(|| REAL_CONFIG.clone());
+pub static CONFIG: LazyLock<Config> = LazyLock::new(|| TOY_CONFIG_II.clone());
 
 #[derive(Clone)]
 pub struct Config {

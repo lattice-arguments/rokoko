@@ -1,7 +1,7 @@
 use crate::{
     common::{
-        arithmetic::field_to_ring_element_into,
-        config::{HALF_DEGREE, NOF_BATCHES},
+        arithmetic::{field_to_ring_element_into, precompute_structured_values_fast},
+        config::{DEGREE, HALF_DEGREE, NOF_BATCHES},
         matrix::new_vec_zero_preallocated,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
@@ -11,7 +11,9 @@ use crate::{
         config::Config,
         open::Opening,
         project_2::BatchedProjectionChallenges,
-        sumchecks::helpers::{projection_flatter_1_times_matrix, split_projection_flatter},
+        sumchecks::helpers::{
+            projection_flatter_1_times_matrix, split_projection_flatter, tensor_product_u64,
+        },
     },
 };
 
@@ -178,6 +180,66 @@ pub fn load_sumcheck_data(
                     .lhs_flatter_1_times_matrix_sumcheck
                     .borrow_mut()
                     .load_from(&challenges.j_batched);
+
+                // consistency
+
+                let (e_0_values, e_1_values) = {
+                    let mut e_0_layers = Vec::new();
+                    let mut e_1_layers = Vec::new();
+                    for (i, &layer) in challenges.c_1_layers.iter().enumerate() {
+                        if i < challenges.c_1_layers.len() - DEGREE.ilog2() as usize {
+                            e_0_layers.push(layer);
+                        } else {
+                            e_1_layers.push(layer);
+                        }
+                    }
+                    (
+                        precompute_structured_values_fast(&e_0_layers),
+                        precompute_structured_values_fast(&e_1_layers),
+                    )
+                };
+
+                let lhs_multipier_ring = challenges
+                    .c_2_values
+                    .iter()
+                    .map(|&x| RingElement::constant(x, Representation::IncompleteNTT))
+                    .collect::<Vec<RingElement>>();
+
+                let rhs_multipier_ring = {
+                    // c_2 \otimes c_0 \otimes e_0
+                    // first over u64
+                    let values_0 =
+                        tensor_product_u64(&challenges.c_2_values, &challenges.c_0_values);
+                    let values_1 = tensor_product_u64(&values_0, &e_0_values);
+                    let vals_over_ring = values_1
+                        .iter()
+                        .map(|&x| RingElement::constant(x, Representation::IncompleteNTT))
+                        .collect::<Vec<RingElement>>();
+                    vals_over_ring
+                };
+                let e = {
+                    let mut e = RingElement::zero(Representation::Coefficients);
+                    for (i, &val) in e_1_values.iter().enumerate() {
+                        e.v[i as usize] = val;
+                    }
+                    e.from_coefficients_to_even_odd_coefficients();
+                    e.from_even_odd_coefficients_to_incomplete_ntt_representation();
+                    e.conjugate_in_place();
+                    e
+                };
+
+                type3_1_a_ctx
+                    .lhs_consistency_flatter_sumcheck
+                    .borrow_mut()
+                    .load_from(&lhs_multipier_ring);
+                type3_1_a_ctx
+                    .rhs_consistency_flatter_sumcheck
+                    .borrow_mut()
+                    .load_from(&rhs_multipier_ring);
+                type3_1_a_ctx
+                    .rhs_scalar_consistency_sumcheck
+                    .borrow_mut()
+                    .load_from(&vec![e]);
             }
             // RHS: fold_challenge (same for all batches, already loaded in folding_challenges_sumcheck)
             type3_1_a_contexts

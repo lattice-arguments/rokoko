@@ -49,6 +49,14 @@ pub trait HighOrderSumcheckData {
         }
     }
 
+    fn claim(&self) -> Self::Element {
+        let mut poly = self.get_scratch_poly().borrow_mut();
+        self.univariate_polynomial_into(&mut poly);
+        let mut res = poly.at_one();
+        res += &poly.at_zero();
+        res
+    }
+
     // this is similar to univariate_polynomial_into but evaluates the polynomial at a given point.
     fn univariate_polynomial_at_point_into(
         &self,

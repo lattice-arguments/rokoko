@@ -1,8 +1,10 @@
 use std::cell::{Ref, RefCell};
 use std::rc::Rc;
 
+use crate::common::arithmetic::ONE;
 use crate::common::config::DEGREE;
 use crate::protocol::config::Projection;
+use crate::protocol::project;
 use crate::protocol::sumchecks::builder;
 use crate::protocol::sumchecks::context::Type3_1ASumcheckContextWrapper;
 use crate::{
@@ -571,6 +573,42 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
                 )
             };
 
+            let (
+                projection_constant_term_combiner_sumcheck,
+                projection_constant_term_constant_sumcheck,
+            ) = composition_sumcheck(
+                projection_recursion
+                    .recursion_constant_term
+                    .decomposition_base_log as u64,
+                projection_recursion
+                    .recursion_constant_term
+                    .decomposition_chunks,
+                config.composed_witness_length.ilog2() as usize,
+            );
+            let recomposed_projection = ElephantCell::new(DiffSumcheck::new(
+                ElephantCell::new(ProductSumcheck::new(
+                    combined_witness_sumcheck.clone(),
+                    projection_combiner_sumcheck.clone(),
+                )),
+                projection_combiner_constant_sumcheck.clone(),
+            ));
+
+            let recomposed_constant_term_projection = ElephantCell::new(DiffSumcheck::new(
+                ElephantCell::new(ProductSumcheck::new(
+                    combined_witness_sumcheck.clone(),
+                    projection_constant_term_combiner_sumcheck.clone(),
+                )),
+                projection_constant_term_constant_sumcheck.clone(),
+            ));
+
+            let projection_contant_term_selector_sumcheck = sumcheck_from_prefix(
+                &Prefix {
+                    prefix: projection_recursion.recursion_constant_term.prefix.prefix,
+                    length: projection_recursion.recursion_constant_term.prefix.length,
+                },
+                total_vars,
+            );
+
             // RHS: fold_challenge (same for all batches)
             let rhs_fold_challenge_sumcheck = ElephantCell::new(
                 LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
@@ -651,19 +689,6 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
                     lhs_flatter_1_times_matrix_sumcheck.clone(),
                 ));
 
-                let recomposed_projection = ElephantCell::new(DiffSumcheck::new(
-                    ElephantCell::new(ProductSumcheck::new(
-                        combined_witness_sumcheck.clone(),
-                        projection_combiner_sumcheck.clone(),
-                    )),
-                    projection_combiner_constant_sumcheck.clone(),
-                ));
-
-                // let rhs_fold_tensor_product = ElephantCell::new(ProductSumcheck::new(
-                //     rhs_fold_challenge_sumcheck.clone(),
-                //     rhs_projection_flatter_sumcheck.clone(),
-                // ));
-
                 let lhs = ElephantCell::new(ProductSumcheck::new(
                     folded_witness_selector_sumcheck.clone(),
                     ElephantCell::new(ProductSumcheck::new(
@@ -682,11 +707,90 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
 
                 let output = ElephantCell::new(DiffSumcheck::new(lhs, rhs));
 
+                println!("total_vars: {}", total_vars);
+
+                let lhs_consistency_flatter_sumcheck = ElephantCell::new(
+                    LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                        config.witness_width,
+                        total_vars
+                            - config.witness_width.ilog2() as usize
+                            - projection_recursion
+                                .recursion_batched_projection
+                                .decomposition_chunks
+                                .ilog2() as usize,
+                        projection_recursion
+                            .recursion_batched_projection
+                            .decomposition_chunks
+                            .ilog2() as usize,
+                    ),
+                );
+
+                let mut lhs_scalar_consistency_sumcheck = ElephantCell::new(
+                    LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(1, total_vars, 0),
+                );
+
+                lhs_scalar_consistency_sumcheck
+                    .borrow_mut()
+                    .load_from(&[ONE.clone()]);
+
+                let lhs = ElephantCell::new(ProductSumcheck::new(
+                    lhs_scalar_consistency_sumcheck.clone(),
+                    ElephantCell::new(ProductSumcheck::new(
+                        projection_selector_sumcheck.clone(),
+                        ElephantCell::new(ProductSumcheck::new(
+                            lhs_consistency_flatter_sumcheck.clone(),
+                            recomposed_projection.clone(),
+                        )),
+                    )),
+                ));
+
+                // c_2 \otimes c_0 \otimes e_0
+                let rhs_flatter_len =
+                    config.witness_width * blocks * config.projection_height / DEGREE;
+
+                let rhs_consistency_flatter_sumcheck = ElephantCell::new(
+                    LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                        rhs_flatter_len,
+                        total_vars
+                            - rhs_flatter_len.ilog2() as usize
+                            - projection_recursion
+                                .recursion_constant_term
+                                .decomposition_chunks
+                                .ilog2() as usize,
+                        projection_recursion
+                            .recursion_constant_term
+                            .decomposition_chunks
+                            .ilog2() as usize,
+                    ),
+                );
+
+                let mut rhs_scalar_consistency_sumcheck = ElephantCell::new(
+                    LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(1, total_vars, 0),
+                );
+
+                let rhs = ElephantCell::new(ProductSumcheck::new(
+                    rhs_scalar_consistency_sumcheck.clone(),
+                    ElephantCell::new(ProductSumcheck::new(
+                        projection_contant_term_selector_sumcheck.clone(),
+                        ElephantCell::new(ProductSumcheck::new(
+                            rhs_consistency_flatter_sumcheck.clone(),
+                            recomposed_constant_term_projection.clone(),
+                        )),
+                    )),
+                ));
+
+                let output_consistency = ElephantCell::new(DiffSumcheck::new(lhs, rhs));
+
                 Type3_1ASumcheckContext {
                     lhs_flatter_0_sumcheck,
                     lhs_flatter_1_times_matrix_sumcheck,
                     projection_selector_sumcheck,
                     output,
+                    lhs_scalar_consistency_sumcheck,
+                    lhs_consistency_flatter_sumcheck,
+                    rhs_scalar_consistency_sumcheck,
+                    rhs_consistency_flatter_sumcheck,
+                    output_2: output_consistency,
                 }
             });
 

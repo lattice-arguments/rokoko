@@ -444,6 +444,9 @@ fn batch_projection_into(
 
         result[col] = col_result;
     }
+
+    //////
+
     BatchedProjectionChallenges {
         c_0_values,
         c_1_values,

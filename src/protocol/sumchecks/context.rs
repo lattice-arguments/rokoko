@@ -161,9 +161,24 @@ impl SumcheckContext {
                     .lhs_flatter_1_times_matrix_sumcheck
                     .borrow_mut()
                     .partial_evaluate(r);
-
                 type3_1_a_sc
                     .projection_selector_sumcheck
+                    .borrow_mut()
+                    .partial_evaluate(r);
+                type3_1_a_sc
+                    .lhs_consistency_flatter_sumcheck
+                    .borrow_mut()
+                    .partial_evaluate(r);
+                type3_1_a_sc
+                    .rhs_consistency_flatter_sumcheck
+                    .borrow_mut()
+                    .partial_evaluate(r);
+                type3_1_a_sc
+                    .lhs_scalar_consistency_sumcheck
+                    .borrow_mut()
+                    .partial_evaluate(r);
+                type3_1_a_sc
+                    .rhs_scalar_consistency_sumcheck
                     .borrow_mut()
                     .partial_evaluate(r);
             }
@@ -514,10 +529,26 @@ pub struct Type3_1ASumcheckContext {
     pub lhs_flatter_1_times_matrix_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub projection_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
     pub output: ElephantCell<DiffSumcheck<RingElement>>,
+
+    pub lhs_consistency_flatter_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub rhs_consistency_flatter_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub lhs_scalar_consistency_sumcheck: ElephantCell<LinearSumcheck<RingElement>>, // for 1 as to scale over all variables
+    pub rhs_scalar_consistency_sumcheck: ElephantCell<LinearSumcheck<RingElement>>, // for e
+    pub output_2: ElephantCell<DiffSumcheck<RingElement>>,
 }
+
+// see test_const_term_relation_to_prove
+// pub struct Type3_1BSumcheckContext {
+//     pub lhs_flatter_0_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+//     pub lhs_flatter_1_times_matrix_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+//     pub projection_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
+//     pub output: ElephantCell<DiffSumcheck<RingElement>>,
+
+// }
 
 pub struct Type3_1ASumcheckContextWrapper {
     pub sumchecks: [Type3_1ASumcheckContext; NOF_BATCHES],
+    // pub sumchecks_b: [Type3_1BSumcheckContext; NOF_BATCHES],
     pub projection_combiner_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub projection_combiner_constant_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub rhs_fold_challenge_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,

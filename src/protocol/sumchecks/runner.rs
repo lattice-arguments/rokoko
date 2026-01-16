@@ -3,10 +3,10 @@ use std::{array, vec};
 
 use crate::{
     common::{
-        arithmetic::{field_to_ring_element, field_to_ring_element_into, inner_product, ONE},
+        arithmetic::{ONE, field_to_ring_element, field_to_ring_element_into, inner_product},
         config::{HALF_DEGREE, NOF_BATCHES},
         hash::HashWrapper,
-        matrix::new_vec_zero_preallocated,
+        matrix::{self, new_vec_zero_preallocated},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
@@ -15,11 +15,10 @@ use crate::{
     protocol::{
         config::{Config, Projection, ProjectionType},
         crs,
-        open::{evaluation_point_to_structured_row, Opening},
+        open::{Opening, evaluation_point_to_structured_row},
         project,
         project_2::{
-            sample_layers, verifier_sample_projection_challenges, BatchedProjectionChallenges,
-            BatchedProjectionChallengesSuccinct,
+            BatchedProjectionChallenges, BatchedProjectionChallengesSuccinct, sample_layers, verifier_sample_projection_challenges
         },
         sumcheck::{self, SumcheckContext},
         sumcheck_utils::{
@@ -275,6 +274,7 @@ pub fn sumcheck(
     RingElement,
     Vec<Polynomial<QuadraticExtension>>,
     Vec<RingElement>,
+    Option<Vec<RingElement>>
 ) {
     // Removed: let mut hash_wrapper_clone = hash_wrapper.clone(); - unused
     let projection_matrix_flatter = match config.projection_recursion {
@@ -359,6 +359,21 @@ pub fn sumcheck(
         1u64 << (num_vars - 1)
     );
 
+    let constant_term_claims = sumcheck_context
+        .type3_1_a_sumchecks.as_ref()
+        .map(|type3_1_a_sumchecks| {
+            type3_1_a_sumchecks
+                .sumchecks
+                .iter()
+                .map(|type3_1_a_sc| {
+                    type3_1_a_sc
+                        .output_2
+                        .borrow()
+                        .claim()
+                })
+                .collect::<Vec<_>>()
+        });
+
     // Collect evaluation points during sumcheck
     let mut evaluation_points: Vec<RingElement> = vec![];
 
@@ -426,6 +441,7 @@ pub fn sumcheck(
         norm_claim,
         polys,
         evaluation_points,
+        constant_term_claims,
     )
 }
 
@@ -438,6 +454,7 @@ pub struct RoundProof {
     pub rc_opening_inner: Vec<RingElement>,
     pub rc_projection_inner: Option<Vec<RingElement>>,
     pub rcs_projection_1_inner: Option<(Vec<RingElement>, Vec<RingElement>)>,
+    pub constant_term_claims: Option<Vec<RingElement>>,
     pub next: Option<Box<RoundProof>>,
 }
 

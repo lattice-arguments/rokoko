@@ -326,6 +326,7 @@ pub fn prover_round(
         norm_claim,
         sumcheck_transcript,
         evaluation_points,
+        constant_term_claims,
     ) = sumcheck(
         &config,
         &next_round_witness.data,
@@ -402,6 +403,7 @@ pub fn prover_round(
                 rc_batched.most_inner_commitment().clone(),
             )
         }),
+        constant_term_claims,
         next: next_level_proof.map(Box::new),
     };
 
