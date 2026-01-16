@@ -72,10 +72,10 @@ fn batch_claims(
         // Type3_1_A: zero claim (difference sumcheck) + consistence between ct comm and bp comm
         for i in 0..NOF_BATCHES {
             idx += 1;
-            // let mut weighted = rcs_projection_1_constant_term_claims.as_ref().unwrap()[i].clone();
-            // weighted *= &combination[idx];
-            // batched_claim += &weighted;
-            // idx += 1;
+            let mut weighted = rcs_projection_1_constant_term_claims.as_ref().unwrap()[i].clone();
+            weighted *= &combination[idx];
+            batched_claim += &weighted;
+            idx += 1;
         }
     }
 
@@ -423,16 +423,6 @@ pub fn sumcheck(
         time_poly,
         time_eval
     );
-    
-    println!("fe {:?}", sumcheck_context
-        .type3_1_a_sumchecks
-        .as_ref()
-        .unwrap()
-        .sumchecks[1]
-        .output_2
-        .borrow()
-        .final_evaluations_test_only()
-    );
 
     // final round
     assert_eq!(sumcheck_context.field_combiner.borrow().variable_count(), 0);
@@ -576,7 +566,6 @@ pub fn sumcheck_verifier(
         result
     };
 
-
     let mut num_vars = round_proof.polys.len();
 
     let mut evaluation_points: Vec<QuadraticExtension> = vec![];
@@ -617,20 +606,7 @@ pub fn sumcheck_verifier(
         &qe,
     );
 
-    let mut sc31 = verifier_sumcheck_context.type3_1_a_evaluations.as_ref().map(|ctx| {
-        ctx.sumchecks[1].output_2.borrow_mut().evaluate(&evaluation_points.iter().map(|f| {
-            let mut r = field_to_ring_element(f);
-            r.from_homogenized_field_extensions_to_incomplete_ntt();
-            r
-        }).collect::<Vec<_>>()).clone()
-    }).unwrap();
 
-    {
-        println!("Type3_1_A claim: {:?}", sc31);
-        // sc31.from_incomplete_ntt_to_even_odd_coefficients();
-        // sc31.from_even_odd_coefficients_to_coefficients();
-        // println!("Type3_1_A constant term claim: {}", sc31.v[0]);   
-    }
 
     assert_eq!(
         &batched_claim_over_field,

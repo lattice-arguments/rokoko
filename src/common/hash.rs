@@ -1,4 +1,4 @@
-use crate::common::arithmetic::field_to_ring_element_into;
+use crate::common::arithmetic::{ONE, ZERO, field_to_ring_element_into};
 use crate::common::config::{DEGREE, MOD_Q};
 use crate::common::ring_arithmetic::*;
 use crate::common::sumcheck_element::SumcheckElement;
@@ -171,6 +171,8 @@ impl HashWrapper {
         for element in output.iter_mut() {
             self.sample_ring_element_into(element);
         }
+        // output[5].set_from(&ZERO);
+        // output[7].set_from(&ZERO);
     }
 
     pub fn sample_ring_element_ntt_slots_same_vec_into(&mut self, output: &mut [RingElement]) {

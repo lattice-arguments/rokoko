@@ -50,7 +50,7 @@ pub fn field_to_ring_element(fe: &QuadraticExtension) -> RingElement {
 pub fn field_to_ring_element_into(mut r: &mut RingElement, fe: &QuadraticExtension) {
     for i in 0..2 {
         for j in 0..HALF_DEGREE {
-            r.v[j + i * HALF_DEGREE] += fe.coeffs[i];
+            r.v[j + i * HALF_DEGREE] = fe.coeffs[i];
         }
     }
     r.representation = Representation::HomogenizedFieldExtensions;

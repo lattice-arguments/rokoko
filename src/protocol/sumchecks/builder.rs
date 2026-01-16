@@ -640,10 +640,6 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
                 // Split coefficients into block indices (elder vars) and within-block (LS vars)
                 let height = config.projection_height;
                 let inner_width = config.projection_ratio * height / DEGREE;
-                println!(
-                    "Type3_1_A Sumcheck Batch {}: inner_width = {}",
-                    i, inner_width
-                );
                 let blocks = config.witness_height / inner_width;
 
                 // Elder variables: c_0 coefficients (block indices)
@@ -884,7 +880,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
     if let Some(type3_1_a_contexts) = &type3_1_a_sumchecks {
         for type3_1_a_ctx in type3_1_a_contexts.sumchecks.iter() {
             all_outputs.push(type3_1_a_ctx.output.clone());
-            // all_outputs.push(type3_1_a_ctx.output_2.clone()); // HEREX
+            all_outputs.push(type3_1_a_ctx.output_2.clone());
         }
     }
 

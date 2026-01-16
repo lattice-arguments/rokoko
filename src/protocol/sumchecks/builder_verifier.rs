@@ -863,7 +863,7 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
     if let Some(type3_1_a_evaluations) = &type3_1_a_evaluations {
         for type3_1_a in &type3_1_a_evaluations.sumchecks {
             all_outputs.push(type3_1_a.output.clone());
-            // all_outputs.push(type3_1_a.output_2.clone()); // HEREX
+            all_outputs.push(type3_1_a.output_2.clone()); 
         }
     }
 
