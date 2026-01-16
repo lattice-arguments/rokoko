@@ -6,7 +6,7 @@ use crate::common::config::DEGREE;
 use crate::protocol::config::Projection;
 use crate::protocol::project;
 use crate::protocol::sumchecks::builder;
-use crate::protocol::sumchecks::context::Type3_1ASumcheckContextWrapper;
+use crate::protocol::sumchecks::context::Type3_1SumcheckContextWrapper;
 use crate::{
     common::{config::NOF_BATCHES, ring_arithmetic::RingElement},
     protocol::{
@@ -25,7 +25,7 @@ use crate::{
 use super::{
     context::{
         SumcheckContext, Type0SumcheckContext, Type1SumcheckContext, Type2SumcheckContext,
-        Type3SumcheckContext, Type3_1ASumcheckContext, Type4LayerSumcheckContext,
+        Type3SumcheckContext, Type3_1SumcheckContext, Type4LayerSumcheckContext,
         Type4OutputLayerSumcheckContext, Type4SumcheckContext,
     },
     helpers::{ck_sumcheck, composition_sumcheck, sumcheck_from_prefix},
@@ -633,7 +633,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
                 .load_from(&[ONE.clone()]);
             // Build one context per batch
             // Each batch has its own projection result stored at a different prefix location
-            let contexts: [Type3_1ASumcheckContext; NOF_BATCHES] = std::array::from_fn(|i| {
+            let contexts: [Type3_1SumcheckContext; NOF_BATCHES] = std::array::from_fn(|i| {
                 // Create selectors and combiners similar to type3
                 // Note: We'll load the actual challenge data (c_0, c_1, j_batched) in the loader
 
@@ -773,7 +773,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
 
                 let output_consistency = ElephantCell::new(DiffSumcheck::new(lhs, rhs));
 
-                Type3_1ASumcheckContext {
+                Type3_1SumcheckContext {
                     lhs_flatter_0_sumcheck,
                     lhs_flatter_1_times_matrix_sumcheck,
                     projection_selector_sumcheck,
@@ -785,7 +785,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &Config) -> SumcheckContext {
                 }
             });
 
-            Some(Type3_1ASumcheckContextWrapper {
+            Some(Type3_1SumcheckContextWrapper {
                 sumchecks: contexts,
                 projection_combiner_constant_sumcheck,
                 projection_combiner_sumcheck,

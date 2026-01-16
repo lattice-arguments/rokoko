@@ -43,7 +43,7 @@ pub struct VerifierSumcheckContext {
     pub type1evaluations: Vec<Type1VerifierContext>,
     pub type2evaluations: Vec<Type2VerifierContext>,
     pub type3evaluation: Option<Type3VerifierContext>,
-    pub type3_1_a_evaluations: Option<Type3_1AVerifierContextWrapper>,
+    pub type3_1_a_evaluations: Option<Type3_1VerifierContextWrapper>,
     pub type4evaluations: Vec<Type4VerifierContext>,
     pub type5evaluation: Type5VerifierContext,
 
@@ -94,7 +94,7 @@ pub struct Type3VerifierContext {
     pub output: ElephantCell<DiffSumcheckEvaluation>,
 }
 
-pub struct Type3_1AVerifierContext {
+pub struct Type3_1VerifierContext {
     pub lhs_flatter_0_evaluation_field:
         ElephantCell<StructuredRowEvaluationLinearSumcheck<QuadraticExtension>>,
     pub lhs_flatter_0_evaluation: ElephantCell<RingToFieldWrapperEvaluation>,
@@ -115,8 +115,8 @@ pub struct Type3_1AVerifierContext {
 
     pub output_2: ElephantCell<DiffSumcheckEvaluation>,
 }
-pub struct Type3_1AVerifierContextWrapper {
-    pub sumchecks: [Type3_1AVerifierContext; NOF_BATCHES],
+pub struct Type3_1VerifierContextWrapper {
+    pub sumchecks: [Type3_1VerifierContext; NOF_BATCHES],
     pub projection_combiner_constant_evaluation:
         ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub projection_combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,

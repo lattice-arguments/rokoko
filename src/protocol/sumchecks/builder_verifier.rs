@@ -24,7 +24,7 @@ use crate::{
         },
         sumchecks::context_verifier::{
             Type0VerifierContext, Type1VerifierContext, Type2VerifierContext, Type3VerifierContext,
-            Type3_1AVerifierContext, Type3_1AVerifierContextWrapper, Type4LayerVerifierContext,
+            Type3_1VerifierContext, Type3_1VerifierContextWrapper, Type4LayerVerifierContext,
             Type4OutputLayerVerifierContext, Type4VerifierContext, Type5VerifierContext,
             VerifierSumcheckContext,
         },
@@ -645,7 +645,7 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
                 RingToFieldWrapperEvaluation::new(lhs_scalar_consistency_evaluation_field.clone()),
             );
 
-            let contexts: [Type3_1AVerifierContext; NOF_BATCHES] = std::array::from_fn(|i| {
+            let contexts: [Type3_1VerifierContext; NOF_BATCHES] = std::array::from_fn(|i| {
                 // Split coefficients into block indices (elder vars) and within-block (LS vars)
                 let height = config.projection_height;
                 let inner_width = config.projection_ratio * height / DEGREE;
@@ -782,7 +782,7 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
 
                 let output_consistency = ElephantCell::new(DiffSumcheckEvaluation::new(lhs, rhs));
 
-                Type3_1AVerifierContext {
+                Type3_1VerifierContext {
                     lhs_flatter_0_evaluation_field,
                     lhs_flatter_0_evaluation,
                     lhs_flatter_1_times_matrix_evaluation,
@@ -796,7 +796,7 @@ pub fn init_verifier(crs: &CRS, config: &Config) -> VerifierSumcheckContext {
                     output_2: output_consistency,
                 }
             });
-            Some(Type3_1AVerifierContextWrapper {
+            Some(Type3_1VerifierContextWrapper {
                 sumchecks: contexts,
                 projection_combiner_constant_evaluation,
                 projection_combiner_evaluation,

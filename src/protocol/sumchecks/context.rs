@@ -44,7 +44,7 @@ pub struct SumcheckContext {
     pub type3sumcheck: Option<Type3SumcheckContext>,
     pub type4sumchecks: Vec<Type4SumcheckContext>,
     pub type5sumcheck: Type5SumcheckContext,
-    pub type3_1_a_sumchecks: Option<Type3_1ASumcheckContextWrapper>, // it should never go together with type3sumcheck TODO: refactor for enum I guess
+    pub type3_1_a_sumchecks: Option<Type3_1SumcheckContextWrapper>, // it should never go together with type3sumcheck TODO: refactor for enum I guess
     pub combiner: ElephantCell<Combiner<RingElement>>,
     pub field_combiner: ElephantCell<RingToFieldCombiner>,
     pub next: Option<Box<SumcheckContext>>,
@@ -537,7 +537,7 @@ pub struct Type5SumcheckContext {
 // is checks if
 // c^t ( I ⊗ projection_matrix ) · folded_witness =  c^t projection_image · fold_challenge
 // This time
-pub struct Type3_1ASumcheckContext {
+pub struct Type3_1SumcheckContext {
     pub lhs_flatter_0_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub lhs_flatter_1_times_matrix_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub projection_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
@@ -558,8 +558,8 @@ pub struct Type3_1ASumcheckContext {
 
 // }
 
-pub struct Type3_1ASumcheckContextWrapper {
-    pub sumchecks: [Type3_1ASumcheckContext; NOF_BATCHES],
+pub struct Type3_1SumcheckContextWrapper {
+    pub sumchecks: [Type3_1SumcheckContext; NOF_BATCHES],
     pub projection_combiner_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub projection_combiner_constant_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub projection_constant_terms_embedded_combiner_sumcheck:
