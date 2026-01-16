@@ -1,5 +1,3 @@
-use std::{process::exit, sync::LazyLock, time::Instant};
-
 use num::range;
 
 use crate::{
@@ -292,9 +290,7 @@ pub fn prover_round(
         data: next_round_data,
     };
 
-    let i16_witness_time = Instant::now();
     let next_round_witness_i16 = prepare_i16_witness(&mut next_round_witness);
-    println!("took {:?} to make next round witness_i16", i16_witness_time.elapsed());
 
     let next_round_commitment = if let Some(next_config) = &config.next {
         assert_eq!(
