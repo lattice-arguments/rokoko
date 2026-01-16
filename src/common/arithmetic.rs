@@ -2,7 +2,7 @@ use std::sync::LazyLock;
 
 use crate::{
     common::{
-        config::{HALF_DEGREE, MOD_Q},
+        config::{HALF_DEGREE, DEGREE, MOD_Q},
         ring_arithmetic::{
             incomplete_ntt_multiplication, QuadraticExtension, Representation, RingElement,
         },
@@ -10,6 +10,153 @@ use crate::{
     },
     hexl::bindings::{multiply_mod, sub_mod},
 };
+use std::arch::x86_64::{
+    __m128i, __m256i, __m512i,
+    _mm256_add_epi16, _mm256_castsi128_si256, _mm256_inserti128_si256,
+    _mm256_loadu_si256, _mm256_setzero_si256, _mm256_storeu_si256, _mm256_sub_epi16,
+    _mm512_add_epi16, _mm512_cvtsepi64_epi16, _mm512_loadu_si512, _mm512_setzero_si512,
+    _mm512_storeu_si512, _mm512_sub_epi16,
+};
+
+#[inline(always)]
+pub fn centered_i64_from_u64_mod_q_scalar(x: u64, q: u64, half_q: u64) -> i64 {
+    if x > half_q {
+        x.wrapping_sub(q) as i64
+    } else {
+        x as i64
+    }
+}
+
+
+// load 16x i64 registers, pack into 16x i16 register with _mm512_cvtsepi64_epi16
+// out of ranges values are "saturated",  they are cut to -2^15 or 2^15 respectively if value
+// does not fit in 16 bits
+#[inline(always)]
+pub unsafe fn pack_i64_to_i16_deg16(dst: &mut [i16], src: &[i64]) {
+    assert_eq!(dst.len(), src.len());
+    debug_assert!(src.len() % 16 == 0);
+
+    #[cfg(all(target_feature = "avx512f"))]
+    {
+        let mut i = 0usize;
+        while i < src.len() {
+            // Load 16 i64 (two zmm registers of 8 i64)
+            let a0 = _mm512_loadu_si512(src.as_ptr().add(i) as *const __m512i);
+            let a1 = _mm512_loadu_si512(src.as_ptr().add(i + 8) as *const __m512i);
+
+            // Narrow 8 i64 -> 8 i16 (SIGNED SATURATING), result is 128-bit each
+            let w0: __m128i = _mm512_cvtsepi64_epi16(a0);
+            let w1: __m128i = _mm512_cvtsepi64_epi16(a1);
+
+            // Combine to 16 i16 and store as 256-bit
+            let mut ymm: __m256i = _mm256_castsi128_si256(w0);
+            ymm = _mm256_inserti128_si256(ymm, w1, 1);
+            _mm256_storeu_si256(dst.as_mut_ptr().add(i) as *mut __m256i, ymm);
+
+            i += 16;
+        }
+    }
+
+    #[cfg(not(target_feature = "avx512f"))]
+    for (d, &s) in dst.iter_mut().zip(src.iter()) {
+        debug_assert!(s >= i16::MIN as i64 && s <= i16::MAX as i64);
+        *d = s as i16;
+    }
+    return;
+}
+
+
+// in_u64[i] ∈ [0, Q]
+// out_i64[i] ∈ [-Q/2, Q/2)
+#[inline(always)]
+pub fn centered_coeffs_u64_to_i64_inplace(
+    out_i64: &mut [i64; DEGREE],
+    in_u64: &[u64; DEGREE],
+    q: u64,
+) {
+    assert_eq!(out_i64.len(), in_u64.len());
+    let half_q = q >> 1;
+
+    #[cfg(all(target_feature = "avx512f"))]
+    unsafe {
+        use core::arch::x86_64::*;
+
+        let vq = _mm512_set1_epi64(q as i64);
+        let vhalfq = _mm512_set1_epi64(half_q as i64);
+
+        let mut i = 0usize;
+        let n = in_u64.len();
+
+        // 8 u64 lanes per __m512i
+        while i + 8 <= n {
+            let a = _mm512_loadu_si512(in_u64.as_ptr().add(i) as *const __m512i);
+
+            // neg lanes are ones where x > halfQ
+            let neg: __mmask8 = _mm512_cmpgt_epu64_mask(a, vhalfq);
+
+            // if neg: x = x - Q (wraps in u64 domain; interpreting as i64 gives negative)
+            let signed = _mm512_mask_sub_epi64(a, neg, a, vq);
+
+            // store as i64
+            _mm512_storeu_si512(out_i64.as_mut_ptr().add(i) as *mut __m512i, signed);
+
+            i += 8;
+        }
+
+        return;
+    }
+
+    // if avx512 not available
+    for (dst, &src) in out_i64.iter_mut().zip(in_u64.iter()) {
+        *dst = centered_i64_from_u64_mod_q_scalar(src, q, half_q);
+    }
+}
+
+#[cfg(all(target_feature = "avx512f"))]
+#[inline(always)]
+pub fn project_one_row_i16_to_u64<const DEGREE: usize>(
+    subwitness_i16: &[[i16; DEGREE]], // len = projection_ratio*PH
+    pos: &[u16],
+    neg: &[u16],
+    q: u64,
+    out_u64: &mut [u64; DEGREE],
+) {
+    debug_assert!(DEGREE % 32 == 0);
+
+    unsafe {
+        let mut k = 0usize;
+        while k + 32 <= DEGREE {
+            let mut acc = _mm512_setzero_si512();
+
+            for &ix in pos {
+                let v = _mm512_loadu_si512(subwitness_i16[ix as usize].as_ptr().add(k) as *const __m512i);
+                acc = _mm512_add_epi16(acc, v);
+            }
+            for &ix in neg {
+                let v = _mm512_loadu_si512(subwitness_i16[ix as usize].as_ptr().add(k) as *const __m512i);
+                acc = _mm512_sub_epi16(acc, v);
+            }
+
+            convert_i16_as_u64_modq(out_u64.as_mut_ptr().add(k), acc, q);
+            k += 32;
+        }
+    }
+}
+
+#[cfg(all(target_feature = "avx512f"))]
+#[inline(always)]
+unsafe fn convert_i16_as_u64_modq(dst_u64: *mut u64, v16x32: __m512i, q: u64) {
+    let mut tmp = [0i16; 32];
+    _mm512_storeu_si512(tmp.as_mut_ptr() as *mut __m512i, v16x32);
+
+    let q_i64 = q as i64;
+    for lane in 0..32 {
+        let x = tmp[lane] as i64;
+        let mut r = x % q_i64;
+        if r < 0 { r += q_i64; }
+        *dst_u64.add(lane) = r as u64;
+    }
+}
 
 #[inline]
 pub fn inner_product(a: &Vec<RingElement>, b: &Vec<RingElement>) -> RingElement {
