@@ -3,50 +3,8 @@ use crate::common::{
     arithmetic::{centered_coeffs_u64_to_i64_inplace, pack_i64_to_i16_deg16, project_one_row_i16_to_u64},
     config::{DEGREE, MOD_Q},
     projection_matrix::ProjectionMatrix,
-    ring_arithmetic::{Representation, RingElement},
+    ring_arithmetic::{RingElement},
 };
-
-#[derive(Clone)]
-pub struct RowPattern {
-    pub pos: Vec<u16>,
-    pub neg: Vec<u16>,
-}
-
-pub struct ProjectionPlan {
-    pub projection_ratio: usize,
-    pub rows: Vec<RowPattern>
-}
-
-pub fn build_plan(pm: &ProjectionMatrix) -> ProjectionPlan {
-    let row_len = pm.projection_ratio * pm.projection_height;
-
-
-    let rows: Vec<RowPattern> = (0..pm.projection_height)
-    .map(|inner_row| {
-        let mut pos = Vec::<u16>::new();
-        let mut neg = Vec::<u16>::new();
-
-        for i in 0..row_len {
-            let (is_positive, is_non_zero) = pm[(inner_row, i)];
-            if !is_non_zero {
-                continue;
-            }
-            if is_positive {
-                pos.push(i as u16);
-            } else {
-                neg.push(i as u16);
-            }
-        }
-
-        RowPattern { pos, neg }
-    })
-    .collect();
-
-    ProjectionPlan {
-        projection_ratio: pm.projection_ratio,
-        rows,
-    }
-}
 
 pub fn prepare_i16_witness(
     witness: &mut VerticallyAlignedMatrix<RingElement>
@@ -57,7 +15,7 @@ pub fn prepare_i16_witness(
     for (i, cr) in witness.data.iter_mut().enumerate() {
         let mut ring_el = [0 as i64; DEGREE];
         cr.from_incomplete_ntt_to_even_odd_coefficients();
-        centered_coeffs_u64_to_i64_inplace(&mut ring_el, &cr.v, MOD_Q);
+        centered_coeffs_u64_to_i64_inplace(&mut ring_el, &cr.v);
         witness_i64.push(ring_el);
         cr.from_even_odd_coefficients_to_incomplete_ntt_representation();
     }
@@ -94,14 +52,12 @@ pub fn project(
         i.from_incomplete_ntt_to_even_odd_coefficients();
     }
 
-    let plan = build_plan(projection_matrix);
-
     for col in 0..witness_16.width {
         for rows_chunk in 0..projection_image.height / projection_matrix.projection_height {
             let subwitness_i16 = witness_16.col_slice(
                 col,
-                rows_chunk * plan.projection_ratio * projection_matrix.projection_height,
-                (rows_chunk + 1) * plan.projection_ratio * projection_matrix.projection_height,
+                rows_chunk * projection_matrix.projection_ratio * projection_matrix.projection_height,
+                (rows_chunk + 1) * projection_matrix.projection_ratio * projection_matrix.projection_height,
             );
 
             let projection_subimage = projection_image.col_slice_mut(
@@ -116,12 +72,13 @@ pub fn project(
                 unsafe {
                     project_one_row_i16_to_u64::<DEGREE>(
                         subwitness_i16,
-                        &plan.rows[inner_row].pos,
-                        &plan.rows[inner_row].neg,
+                        projection_matrix,
+                        inner_row,
                         MOD_Q,
                         &mut out_u64,
                     );
                 }
+
 
                 projection_subimage[inner_row].v.copy_from_slice(&out_u64);
             }
