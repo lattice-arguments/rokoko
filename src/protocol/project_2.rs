@@ -276,8 +276,8 @@ pub fn project_coefficients(
                         }
 
                         // Horizontal sum using _mm512_reduce_add_epi64
-                        let sum = _mm512_reduce_add_epi64(accumulator);
-                        *target = (*target as i64 + sum) as u64;
+                        let sum = _mm512_reduce_add_epi64(accumulator) as u64;
+                        *target = target.wrapping_add(sum);
                     }
                 }
 

@@ -186,8 +186,8 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
         projection_recursion: AuxProjection::Type1 {
             nof_batches: 2,
             recursion_constant_term: AuxRecursionConfig {
-                decomposition_base_log: 15,
-                decomposition_chunks: 4,
+                decomposition_base_log: 10,
+                decomposition_chunks: 2,
                 rank: 1,
                 next: None,
             },
@@ -206,7 +206,7 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
     .generate_config()
 });
 
-pub static CONFIG: LazyLock<Config> = LazyLock::new(|| TOY_CONFIG_II.clone());
+pub static CONFIG: LazyLock<Config> = LazyLock::new(|| REAL_CONFIG.clone());
 
 #[derive(Clone)]
 pub struct Config {
