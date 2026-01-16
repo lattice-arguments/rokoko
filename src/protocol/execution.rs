@@ -1,11 +1,11 @@
-use std::{process::exit, sync::LazyLock};
+use std::{process::exit, sync::LazyLock, time::Instant};
 
 use num::range;
 
 use crate::{
     common::{
         arithmetic::inner_product,
-        config::{self, MOD_Q},
+        config::{self, DEGREE, MOD_Q},
         decomposition::{compose_from_decomposed, decompose},
         hash::HashWrapper,
         matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
@@ -22,7 +22,7 @@ use crate::{
         fold::fold,
         open::{claim, evaluation_point_to_structured_row, open_at, Opening},
         prefix::check_prefixing_correctness,
-        project::project,
+        project::{prepare_i16_witness, project},
         project_2::{batch_projection_n_times, project_coefficients},
         proof::Proof,
         sumcheck::{self, init_sumcheck, sumcheck, SumcheckContext},
@@ -110,7 +110,8 @@ pub fn prover_round(
     crs: &CRS,
     config: &Config,
     rc_commitment: &RecursiveCommitment,
-    witness: &mut VerticallyAlignedMatrix<RingElement>,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    witness_16: &VerticallyAlignedMatrix<[i16; DEGREE]>,
     evaluation_points_inner: &Vec<StructuredRow>,
     evaluation_points_outer: &Vec<StructuredRow>,
     sumcheck_context: &mut SumcheckContext,
@@ -138,7 +139,7 @@ pub fn prover_round(
     let rc_projection_image = match &config.projection_recursion {
         Projection::Type0(proj_config) => {
             let t2 = std::time::Instant::now();
-            let projection_image = project(witness, &projection_matrix);
+            let projection_image = project(witness_16, &projection_matrix);
             println!("  project: {} ms", t2.elapsed().as_millis());
 
             let t3 = std::time::Instant::now();
@@ -291,6 +292,10 @@ pub fn prover_round(
         data: next_round_data,
     };
 
+    let i16_witness_time = Instant::now();
+    let next_round_witness_i16 = prepare_i16_witness(&mut next_round_witness);
+    println!("took {:?} to make next round witness_i16", i16_witness_time.elapsed());
+
     let next_round_commitment = if let Some(next_config) = &config.next {
         assert_eq!(
             next_round_witness.data.len(),
@@ -355,7 +360,8 @@ pub fn prover_round(
                 &crs,
                 config.next.as_ref().unwrap(),
                 &rc_commitment,
-                &mut next_round_witness,
+                &next_round_witness,
+                &next_round_witness_i16,
                 &vec![
                     evaluation_point_to_structured_row(&new_evaluation_points_inner.to_vec()),
                     evaluation_point_to_structured_row(
@@ -460,11 +466,15 @@ pub fn execute() {
         &evaluation_points_inner[0],
         &evaluation_points_outer[0],
     )];
+
+    let witness_16 = prepare_i16_witness(&mut witness);
+
     let proof = prover_round(
         &crs,
         &CONFIG,
         &rc_commitment,
-        &mut witness,
+        &witness,
+        &witness_16,
         &evaluation_points_inner,
         &evaluation_points_outer,
         &mut sumcheck_context,

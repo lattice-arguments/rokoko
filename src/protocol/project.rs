@@ -6,30 +6,6 @@ use crate::common::{
     ring_arithmetic::{Representation, RingElement},
 };
 
-// TODO: this projection is very naive and unoptimized
-// Some idea:
-// (i) Convert witness into EvenOdd rep
-// (ii) Convert witness into i64 using e.g.
-//     // neg lanes are the big ones (Q - t)
-//    __mmask8 neg = _mm512_cmpgt_epu64_mask(a, halfQ);
-//
-//   // if neg: a = a - Q  (Q - t - Q = -t). else keep a = t
-//   __m512i signed64 = _mm512_mask_sub_epi64(a, neg, a, vQ);
-
-// (iii) _mm512_cvtsepi64_epi16 to convert i64 to i16 to 16 bits
-// (steps (i) to (iii) can be preprocessed during commitment computation so it doesn't have to be done during opening)
-// (iv) Compute the output rows in chunks of 32 (since __m512i holds 32 i16 values) with _mm512_add_epi16 and _mm512_sub_epi16
-// (v) _mm512_cvtusepi16_epi64 to convert i16 back to u64
-// (vi) Convert back to RingElement in IncompleteNTT representation
-//
-// Maybe create the same variant for 32 bit and 64 bit too. Add a helper to choose the right one based on the l-inf norm of the witness.
-
-// V = (I \otimes J)W
-
-// w \in [0, MOD_Q)
-// w \in [-MOD_Q/2, MOD_Q/2) \in i16 NOT i64
-
-
 #[derive(Clone)]
 pub struct RowPattern {
     pub pos: Vec<u16>,
@@ -72,27 +48,11 @@ pub fn build_plan(pm: &ProjectionMatrix) -> ProjectionPlan {
     }
 }
 
-pub fn project(
-    witness: &mut VerticallyAlignedMatrix<RingElement>,
-    projection_matrix: &ProjectionMatrix,
-) -> VerticallyAlignedMatrix<RingElement> {
-    let mut projection_image = VerticallyAlignedMatrix::new_zero_preallocated(
-        witness.height / projection_matrix.projection_ratio,
-        witness.width,
-    );
-    assert_eq!(projection_image.width, witness.width);
+pub fn prepare_i16_witness(
+    witness: &mut VerticallyAlignedMatrix<RingElement>
+) -> VerticallyAlignedMatrix<[i16; DEGREE]> {
 
-    assert_eq!(
-        projection_image.height * projection_matrix.projection_ratio,
-        witness.height
-    );
     let mut witness_i64 = Vec::<[i64; DEGREE]>::new();
-
-
-    // TODO: move this steps to commit phase
-    for i in projection_image.data.iter_mut() {
-        i.from_incomplete_ntt_to_even_odd_coefficients();
-    }
 
     for (i, cr) in witness.data.iter_mut().enumerate() {
         let mut ring_el = [0 as i64; DEGREE];
@@ -101,7 +61,6 @@ pub fn project(
         witness_i64.push(ring_el);
         cr.from_even_odd_coefficients_to_incomplete_ntt_representation();
     }
-
     let mut witness_i16: Vec<[i16; DEGREE]> = vec![[0i16; DEGREE]; witness_i64.len()];
 
     for (dst, src) in witness_i16.iter_mut().zip(witness_i64.iter()) {
@@ -109,20 +68,37 @@ pub fn project(
             pack_i64_to_i16_deg16(dst, src);
         }
     }
+    VerticallyAlignedMatrix::<[i16; DEGREE]> {
+            width: witness.width,
+            height: witness.height,
+            data: witness_i16,
+    }
+}
 
-    // build a list of positive and negative rows from projection matrix
+pub fn project(
+    witness_16: &VerticallyAlignedMatrix<[i16; DEGREE]>,
+    projection_matrix: &ProjectionMatrix,
+) -> VerticallyAlignedMatrix<RingElement> {
+    let mut projection_image = VerticallyAlignedMatrix::new_zero_preallocated(
+        witness_16.height / projection_matrix.projection_ratio,
+        witness_16.width,
+    );
+    assert_eq!(projection_image.width, witness_16.width);
+
+    assert_eq!(
+        projection_image.height * projection_matrix.projection_ratio,
+        witness_16.height
+    );
+
+    for i in projection_image.data.iter_mut() {
+        i.from_incomplete_ntt_to_even_odd_coefficients();
+    }
+
     let plan = build_plan(projection_matrix);
 
-    // Create a matrix view for col_slice access (adapt this to your real type)
-    let witness_i16_mat = VerticallyAlignedMatrix::<[i16; DEGREE]> {
-        width: witness.width,
-        height: witness.height,
-        data: witness_i16,
-    };
-
-    for col in 0..witness_i16_mat.width {
+    for col in 0..witness_16.width {
         for rows_chunk in 0..projection_image.height / projection_matrix.projection_height {
-            let subwitness_i16 = witness_i16_mat.col_slice(
+            let subwitness_i16 = witness_16.col_slice(
                 col,
                 rows_chunk * plan.projection_ratio * projection_matrix.projection_height,
                 (rows_chunk + 1) * plan.projection_ratio * projection_matrix.projection_height,
@@ -190,8 +166,9 @@ fn test_projection() {
     for i in 0..witness.height * witness.width {
         witness.data[i] = RingElement::constant((i + 1) as u64, Representation::IncompleteNTT);
     }
+    let witness_i16 = prepare_i16_witness(&mut witness);
 
-    let projection_image = project(&mut witness, &projection_matrix);
+    let projection_image = project(&witness_i16, &projection_matrix);
 
     assert_eq!(
         projection_image[(0, 0)],
