@@ -378,10 +378,17 @@ pub(crate) fn split_projection_flatter(
 /// multiplied with the elder-variable component to form the complete projection
 /// coefficient sumcheck.
 /// // TODO: this can be computed fast as projection_flatter_1: &PreprocessedRow. is over fields
-pub(crate) fn projection_flatter_1_times_matrix(
+pub fn projection_flatter_1_times_matrix(
     projection_matrix: &ProjectionMatrix,
     projection_flatter_1: &PreprocessedRow,
 ) -> Vec<QuadraticExtension> {
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+    {
+        return projection_flatter_1_times_matrix_ref(
+            projection_matrix,
+            projection_flatter_1,
+        );
+    }
     let height = projection_matrix.projection_height;
     let projection_ratio = projection_matrix.projection_ratio;
     let inner_width = projection_ratio * height;
@@ -474,21 +481,47 @@ pub(crate) fn projection_flatter_1_times_matrix(
                 }
             }
         }
+    }
 
-        #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
-        {
-            for i in 0..inner_width {
-                let (is_positive, is_non_zero) = projection_matrix[(inner_row, i)];
-                if !is_non_zero {
-                    continue;
-                }
-                if is_positive {
-                    result_field[i].coeffs[0] += weight_field.coeffs[0];
-                    result_field[i].coeffs[1] += weight_field.coeffs[1];
-                } else {
-                    result_field[i].coeffs[0] -= weight_field.coeffs[0];
-                    result_field[i].coeffs[1] -= weight_field.coeffs[1];
-                }
+
+    unsafe {
+        // this is a bit ugly but we want to avoid calling eltwise_reduce_mod separately
+        eltwise_reduce_mod(result_field[0].coeffs.as_mut_ptr(), result_field[0].coeffs.as_ptr(), 2 * inner_width as u64, MOD_Q);
+    }
+
+    result_field
+}
+
+pub fn projection_flatter_1_times_matrix_ref(
+    projection_matrix: &ProjectionMatrix,
+    projection_flatter_1: &PreprocessedRow,
+) -> Vec<QuadraticExtension> {
+    let height = projection_matrix.projection_height;
+    let projection_ratio = projection_matrix.projection_ratio;
+    let inner_width = projection_ratio * height;
+
+    let mut result_field = new_vec_zero_field_preallocated(inner_width);
+    for i in 0..inner_width {
+        result_field[i].coeffs.fill(*HALF_WAY_MOD_Q); // TODO: optimize this to be preallocated
+    }
+
+    for inner_row in 0..height {
+        let weight = &projection_flatter_1.preprocessed_row[inner_row];
+        let weight_field = QuadraticExtension {
+            coeffs: [weight.v[0], weight.v[HALF_DEGREE]],
+        };
+
+        for i in 0..inner_width {
+            let (is_positive, is_non_zero) = projection_matrix[(inner_row, i)];
+            if !is_non_zero {
+                continue;
+            }
+            if is_positive {
+                result_field[i].coeffs[0] += weight_field.coeffs[0];
+                result_field[i].coeffs[1] += weight_field.coeffs[1];
+            } else {
+                result_field[i].coeffs[0] -= weight_field.coeffs[0];
+                result_field[i].coeffs[1] -= weight_field.coeffs[1];
             }
         }
     }
