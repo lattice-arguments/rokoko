@@ -1,4 +1,4 @@
-use crate::common::arithmetic::{field_to_ring_element_into, ONE, ZERO};
+use crate::common::arithmetic::field_to_ring_element_into;
 use crate::common::config::{DEGREE, MOD_Q};
 use crate::common::ring_arithmetic::*;
 use crate::common::sumcheck_element::SumcheckElement;

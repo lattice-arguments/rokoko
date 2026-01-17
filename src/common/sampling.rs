@@ -1,5 +1,5 @@
 use super::ring_arithmetic::Representation;
-use crate::common::{matrix::VerticallyAlignedMatrix, ring_arithmetic::RingElement};
+use crate::common::ring_arithmetic::RingElement;
 
 pub fn sample_random_vector(size: usize, representation: Representation) -> Vec<RingElement> {
     let mut vec = Vec::with_capacity(size);

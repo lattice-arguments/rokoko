@@ -6,3 +6,4 @@ pub mod helpers;
 pub mod loader;
 pub mod loader_verifier;
 pub mod runner;
+pub mod runner_verifier;

@@ -1,5 +1,5 @@
 use crate::common::{
-    ring_arithmetic::{Representation, RingElement},
+    ring_arithmetic::Representation,
     sampling::sample_random_vector,
     structured_row::{PreprocessedRow, StructuredRow},
 };

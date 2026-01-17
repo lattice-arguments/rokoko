@@ -1,13 +1,10 @@
-use std::{
-    ops::{AddAssign, MulAssign, SubAssign},
-    sync::LazyLock,
-};
+use std::ops::{AddAssign, MulAssign, SubAssign};
 
 use crate::common::{
     arithmetic::{ONE, ONE_QUAD, TWO, TWO_QUAD, ZERO, ZERO_QUAD},
     matrix::new_vec_zero_preallocated,
     ring_arithmetic::{Representation, RingElement},
-    QuadraticExtension, SHIFT_FACTORS,
+    QuadraticExtension,
 };
 
 /// Minimal operations Sumcheck and Polynomial need from a field-like element.

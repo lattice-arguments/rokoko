@@ -3,29 +3,30 @@ use crate::{
         config::{self, MOD_Q},
         decomposition::{compose_from_decomposed, decompose},
         hash::HashWrapper,
-        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
+        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         norms,
         ring_arithmetic::{Representation, RingElement},
         sampling::sample_random_short_vector,
         structured_row::{self, PreprocessedRow, StructuredRow},
     },
     protocol::{
-        commitment::{RecursiveCommitmentWithAux, commit_basic, recursive_commit},
-        config::{CONFIG, Config, Projection, paste_by_prefix, paste_recursive_commitment},
+        commitment::{commit_basic, recursive_commit, RecursiveCommitmentWithAux},
+        config::{paste_by_prefix, paste_recursive_commitment, Config, Projection, CONFIG},
         crs::{CK, CRS},
         fold::fold,
-        open::{Opening, claim, evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate, open_at},
+        open::{
+            claim, evaluation_point_to_structured_row,
+            evaluation_point_to_structured_row_conjugate, open_at, Opening,
+        },
         prefix::check_prefixing_correctness,
         project::project,
         project_2::{batch_projection_n_times, project_coefficients},
         proof::Proof,
-        sumcheck::{self, SumcheckContext, init_sumcheck, sumcheck},
-        sumcheck_utils::{
-        },
+        sumcheck::{self, init_sumcheck, sumcheck, SumcheckContext},
         sumchecks::{
             builder_verifier::init_verifier,
             context_verifier::VerifierSumcheckContext,
-            runner::{RoundProof, sumcheck_verifier},
+            runner_verifier::{sumcheck_verifier, RoundProof},
         }, // sumcheck::sumcheck,
     },
 };
@@ -57,13 +58,15 @@ pub fn verifier_round(
     println!("Verifier: {} ns", elapsed);
     match &round_proof.next {
         Some(next_round_proof) => {
-            let next_round_commitment = round_proof.next_round_commitment.as_ref().unwrap_or_else(
-                || {
-                    panic!(
+            let next_round_commitment =
+                round_proof
+                    .next_round_commitment
+                    .as_ref()
+                    .unwrap_or_else(|| {
+                        panic!(
                         "Next round commitment must be present when next round proof is present."
                     )
-                },
-            );
+                    });
 
             let (new_evaluation_points_outer, new_evaluation_points_inner) = evaluation_points
                 .split_at(config.next.as_ref().unwrap().witness_width.ilog2() as usize);
@@ -75,11 +78,15 @@ pub fn verifier_round(
                 next_round_proof,
                 &vec![
                     evaluation_point_to_structured_row(&new_evaluation_points_inner.to_vec()),
-                    evaluation_point_to_structured_row_conjugate(&new_evaluation_points_inner.to_vec()),
+                    evaluation_point_to_structured_row_conjugate(
+                        &new_evaluation_points_inner.to_vec(),
+                    ),
                 ],
                 &vec![
                     evaluation_point_to_structured_row(&new_evaluation_points_outer.to_vec()),
-                    evaluation_point_to_structured_row_conjugate(&new_evaluation_points_outer.to_vec()),
+                    evaluation_point_to_structured_row_conjugate(
+                        &new_evaluation_points_outer.to_vec(),
+                    ),
                 ],
                 &vec![
                     round_proof.claim_over_witness.clone(),

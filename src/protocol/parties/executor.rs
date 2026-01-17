@@ -1,8 +1,20 @@
 use num::range;
 
-use crate::{common::{matrix::VerticallyAlignedMatrix, ring_arithmetic::{Representation, RingElement}, sampling::sample_random_short_vector}, protocol::{commitment::{commit_basic, recursive_commit}, config::CONFIG, crs::CRS, open::{claim, evaluation_point_to_structured_row}, parties::{commiter::commit, prover::prover_round, verifier::verifier_round}, sumcheck::init_sumcheck, sumchecks::builder_verifier::init_verifier}};
-
-
+use crate::{
+    common::{
+        matrix::VerticallyAlignedMatrix,
+        ring_arithmetic::{Representation, RingElement},
+        sampling::sample_random_short_vector,
+    },
+    protocol::{
+        config::CONFIG,
+        crs::CRS,
+        open::{claim, evaluation_point_to_structured_row},
+        parties::{commiter::commit, prover::prover_round, verifier::verifier_round},
+        sumcheck::init_sumcheck,
+        sumchecks::builder_verifier::init_verifier,
+    },
+};
 
 pub fn execute() {
     // check_prefixing_correctness(&CONFIG);
@@ -39,12 +51,11 @@ pub fn execute() {
             .collect::<Vec<RingElement>>(),
     )];
 
-     let claims_ = vec![claim(
+    let claims_ = vec![claim(
         &witness,
         &evaluation_points_inner[0],
         &evaluation_points_outer[0],
     )];
-
 
     let (proof, claims) = prover_round(
         &crs,
@@ -54,7 +65,7 @@ pub fn execute() {
         &evaluation_points_inner,
         &evaluation_points_outer,
         &mut sumcheck_context,
-        true
+        true,
     );
 
     assert_eq!(claims_[0], claims.as_ref().unwrap()[0]);

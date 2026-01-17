@@ -1,6 +1,5 @@
-use crate::common::config;
 use crate::protocol::commitment::{Prefix, RecursionConfig};
-use crate::protocol::config::{Config, Projection, Type0ProjectionConfig, Type1ProjectionConfig};
+use crate::protocol::config::{Config, Projection, Type1ProjectionConfig};
 
 #[derive(Clone)]
 pub struct AuxRecursionConfig {

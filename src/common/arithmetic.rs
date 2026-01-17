@@ -5,10 +5,8 @@ use crate::{
         config::{HALF_DEGREE, MOD_Q},
         ring_arithmetic::{
             incomplete_ntt_multiplication, QuadraticExtension, Representation, RingElement,
-            SHIFT_FACTORS,
         },
         structured_row::{PreprocessedRow, StructuredRow},
-        sumcheck_element::SumcheckElement,
     },
     hexl::bindings::{multiply_mod, sub_mod},
 };

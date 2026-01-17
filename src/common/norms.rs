@@ -1,7 +1,4 @@
-use crate::common::{
-    config::MOD_Q,
-    ring_arithmetic::{Representation, RingElement},
-};
+use crate::common::{config::MOD_Q, ring_arithmetic::RingElement};
 
 pub fn inf_norm(vec: &Vec<RingElement>) -> u64 {
     vec.iter()

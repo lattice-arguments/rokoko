@@ -1,5 +1,3 @@
-use num::traits::ops::inv;
-
 use crate::{
     common::{
         config::MOD_Q,

@@ -383,8 +383,6 @@ fn batch_projection_into(
     // c'_1 is over n_rp (projection height coefficients)
 
     // d = image_ct.height * DEGREE / PROJECTION_HEIGHT
-    let d = (witness.height / projection_matrix.projection_ratio) * DEGREE
-        / projection_matrix.projection_height;
     // let c_0_layers: Vec<u64> = (0..d.ilog2())
     //     .map(|_| hash_wrapper.sample_u64_mod_q())
     //     .collect();

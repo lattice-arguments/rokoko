@@ -1,10 +1,7 @@
-use crate::{
-    common::{
-        matrix::{VerticallyAlignedMatrix, ZeroNew},
-        projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{Representation, RingElement},
-    },
-    protocol::project,
+use crate::common::{
+    matrix::VerticallyAlignedMatrix,
+    projection_matrix::ProjectionMatrix,
+    ring_arithmetic::{Representation, RingElement},
 };
 
 // TODO: this projection is very naive and unoptimized

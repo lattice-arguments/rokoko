@@ -1,142 +1,26 @@
-use core::hash;
-use std::{array, vec};
-
 use crate::{
     common::{
-        arithmetic::{field_to_ring_element, field_to_ring_element_into, inner_product, ONE},
-        config::{HALF_DEGREE, NOF_BATCHES},
+        arithmetic::{field_to_ring_element_into, inner_product},
+        config::NOF_BATCHES,
         hash::HashWrapper,
-        matrix::{self, new_vec_zero_preallocated},
+        matrix::new_vec_zero_preallocated,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
-        structured_row::{PreprocessedRow, StructuredRow},
-        sumcheck_element::SumcheckElement,
+        structured_row::PreprocessedRow,
     },
     protocol::{
-        config::{Config, Projection, ProjectionType},
-        crs,
+        config::{Config, Projection},
         open::{evaluation_point_to_structured_row, Opening},
-        project,
-        project_2::{
-            sample_layers, verifier_sample_projection_challenges, BatchedProjectionChallenges,
-            BatchedProjectionChallengesSuccinct,
-        },
-        sumcheck::{self, SumcheckContext},
+        project_2::BatchedProjectionChallenges,
+        sumcheck::SumcheckContext,
         sumcheck_utils::{
-            common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
+            common::{HighOrderSumcheckData, SumcheckBaseData},
             polynomial::Polynomial,
-        },
-        sumchecks::{
-            context_verifier::VerifierSumcheckContext,
-            loader_verifier::{self, load_verifier_sumcheck_data},
         },
     },
 };
 
-use super::{builder::init_sumcheck, loader::load_sumcheck_data};
-
-fn batch_claims(
-    config: &Config,
-    claims: &Vec<RingElement>,
-    rc_commitment_inner: &Vec<RingElement>,
-    rc_opening_inner: &Vec<RingElement>,
-    rc_projection_inner: &Option<Vec<RingElement>>,
-    rcs_projection_1_inner: &Option<(Vec<RingElement>, Vec<RingElement>)>,
-    rcs_projection_1_constant_term_claims: &Option<Vec<RingElement>>,
-    norm_claim: &RingElement,
-    combination: &Vec<RingElement>,
-) -> RingElement {
-    let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
-    let mut idx = 0;
-
-    // Type0: zero claims (difference sumchecks)
-    idx += config.basic_commitment_rank;
-
-    // Type1: zero claims (difference sumchecks)
-    idx += config.nof_openings;
-
-    // Type2: claims for evaluations
-    for claim in claims.iter() {
-        let mut weighted = claim.clone();
-        weighted *= &combination[idx];
-        batched_claim += &weighted;
-        idx += 1;
-    }
-
-    if rc_projection_inner.is_some() {
-        // Type3: zero claim (difference sumcheck)
-        idx += 1;
-    }
-
-    if rcs_projection_1_inner.is_some() {
-        // Type3_1_A: zero claim (difference sumcheck) + consistence between ct comm and bp comm
-        for i in 0..NOF_BATCHES {
-            idx += 1;
-            let mut weighted = rcs_projection_1_constant_term_claims.as_ref().unwrap()[i].clone();
-            weighted *= &combination[idx];
-            batched_claim += &weighted;
-            idx += 1;
-        }
-    }
-
-    // Type4: Three recursion trees (commitment, opening, projection)
-    // Each tree has: (layers with rank each) + (output layer with rank)
-    for (recursion_idx, rc_inner) in [
-        Some(rc_commitment_inner),
-        Some(rc_opening_inner),
-        rc_projection_inner.as_ref(),
-        rcs_projection_1_inner.as_ref().map(|(rc_ct, _)| rc_ct),
-        rcs_projection_1_inner.as_ref().map(|(_, rc_bp)| rc_bp),
-    ]
-    .iter()
-    .enumerate()
-    {
-        if rc_inner.is_none() {
-            continue;
-        }
-        let rc_inner = rc_inner.as_ref().unwrap();
-        let recursion_config = match recursion_idx {
-            0 => &config.commitment_recursion,
-            1 => &config.opening_recursion,
-            2 => match &config.projection_recursion {
-                Projection::Type0(proj_config) => proj_config,
-                // Projection::Type1(proj_config) => &proj_config.recursion_constant_term,
-                _ => unreachable!(),
-            },
-            3 => match &config.projection_recursion {
-                Projection::Type1(proj_config) => &proj_config.recursion_constant_term,
-                _ => unreachable!(),
-            },
-            4 => match &config.projection_recursion {
-                Projection::Type1(proj_config) => &proj_config.recursion_batched_projection,
-                _ => unreachable!(),
-            },
-            _ => unreachable!(),
-        };
-
-        // Internal layers (zero claims)
-        let mut current = recursion_config;
-        while let Some(next) = current.next.as_deref() {
-            idx += current.rank; // Each layer has rank outputs, all zero claims
-            current = next;
-        }
-
-        // Output layer: rc_inner claims
-        for rc_value in rc_inner.iter() {
-            let mut weighted = rc_value.clone();
-            weighted *= &combination[idx];
-            batched_claim += &weighted;
-            idx += 1;
-        }
-    }
-
-    // Type5: norm claim
-    let mut weighted_norm = norm_claim.clone();
-    weighted_norm *= &combination[idx];
-    batched_claim += &weighted_norm;
-
-    batched_claim
-}
+use super::loader::load_sumcheck_data;
 
 pub use crate::protocol::proof::Proof;
 /// Executes the complete sumcheck protocol for all constraints in the prover's proof.
@@ -402,7 +286,7 @@ pub fn sumcheck(
         hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
 
         let mut r = RingElement::zero(Representation::IncompleteNTT);
-        let mut f = QuadraticExtension::zero();
+        let mut f = QuadraticExtension { coeffs: [0, 0] };
 
         hash_wrapper.sample_field_element_into(&mut f);
 
@@ -448,187 +332,4 @@ pub fn sumcheck(
         evaluation_points,
         constant_term_claims,
     )
-}
-
-pub struct RoundProof {
-    pub polys: Vec<Polynomial<QuadraticExtension>>,
-    pub claim_over_witness: RingElement,
-    pub claim_over_witness_conjugate: RingElement,
-    pub norm_claim: RingElement,
-    pub rc_opening_inner: Vec<RingElement>,
-    pub rc_projection_inner: Option<Vec<RingElement>>,
-    pub rcs_projection_1_inner: Option<(Vec<RingElement>, Vec<RingElement>)>,
-    pub constant_term_claims: Option<Vec<RingElement>>,
-    pub next_round_commitment: Option<Vec<RingElement>>,
-    pub next: Option<Box<RoundProof>>,
-}
-
-pub fn sumcheck_verifier(
-    config: &Config,
-    verifier_sumcheck_context: &mut VerifierSumcheckContext,
-    rc_commitment: &Vec<RingElement>,
-    round_proof: &RoundProof,
-    evaluation_points_inner: &Vec<StructuredRow>,
-    evaluation_points_outer: &Vec<StructuredRow>,
-    claims: &Vec<RingElement>,
-    hash_wrapper: &mut HashWrapper,
-) -> Vec<RingElement> {
-    hash_wrapper.update_with_ring_element_slice(rc_commitment);
-    hash_wrapper.update_with_ring_element_slice(&round_proof.rc_opening_inner);
-    let mut projection_matrix =
-        ProjectionMatrix::new(config.projection_ratio, config.projection_height);
-
-    projection_matrix.sample(hash_wrapper);
-    if let Some(rc_projection_inner) = &round_proof.rc_projection_inner {
-        hash_wrapper.update_with_ring_element_slice(rc_projection_inner);
-    }
-    let challenges_3_1 = if let Some((rcs_projection_1_ct, rcs_projection_1_batched)) =
-        &round_proof.rcs_projection_1_inner
-    {
-        hash_wrapper.update_with_ring_element_slice(rcs_projection_1_ct);
-        let challenges_3_1: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] =
-            std::array::from_fn(|_| {
-                // let challenges =
-                verifier_sample_projection_challenges(&projection_matrix, config, hash_wrapper)
-                // challenges
-            });
-
-        // verifier_sample_projection_challenges(&projection_matrix, config, hash_wrapper);
-        hash_wrapper.update_with_ring_element_slice(rcs_projection_1_batched);
-        Some(challenges_3_1)
-    } else {
-        None
-    };
-
-    let mut folding_challenges =
-        vec![RingElement::zero(Representation::IncompleteNTT); config.witness_width];
-
-    hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut folding_challenges);
-
-    let projection_height_flat = config.witness_height / config.projection_ratio;
-
-    let projection_matrix_flatter_structured = match config.projection_recursion {
-        Projection::Type0(_) => {
-            let mut projection_matrix_flatter_base =
-                new_vec_zero_preallocated(projection_height_flat.ilog2() as usize);
-            hash_wrapper
-                .sample_ring_element_ntt_slots_same_vec_into(&mut projection_matrix_flatter_base);
-
-            Some(evaluation_point_to_structured_row(
-                &projection_matrix_flatter_base,
-            ))
-        }
-        Projection::Type1(_) => None,
-    };
-
-    hash_wrapper.update_with_ring_element(&round_proof.norm_claim);
-
-    // Sample random batching coefficients from Fiat-Shamir
-    let num_sumchecks = verifier_sumcheck_context
-        .combiner_evaluation
-        .borrow()
-        .sumchecks_count();
-    let mut combination = new_vec_zero_preallocated(num_sumchecks);
-    hash_wrapper.sample_ring_element_vec_into(&mut combination);
-
-    let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
-    hash_wrapper.sample_ring_element_into(&mut combination_to_field);
-    combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
-    let qe = combination_to_field.split_into_quadratic_extensions();
-
-    // Compute batched claim matching the combiner's output order:
-    // type0 (rank many) -> type1 (nof_openings) -> type2 (nof_openings) ->
-    // type3 (1) -> type4[3 recursions, each with layers*rank + output_rank] -> type5 (1)
-
-    let mut batched_claim = batch_claims(
-        config,
-        claims,
-        rc_commitment,
-        &round_proof.rc_opening_inner,
-        &round_proof.rc_projection_inner,
-        &round_proof.rcs_projection_1_inner,
-        &round_proof.constant_term_claims,
-        &round_proof.norm_claim,
-        &combination,
-    );
-
-    if let Some(constant_term_claims) = &round_proof.constant_term_claims {
-        for ct_claim in constant_term_claims.iter() {
-            let mut c = ct_claim.clone();
-            c.from_incomplete_ntt_to_even_odd_coefficients();
-            assert_eq!(c.v[0], 0);
-        }
-    }
-
-    let mut batched_claim_over_field = {
-        let batched_claim = {
-            let mut temp = batched_claim.clone();
-            temp.from_incomplete_ntt_to_homogenized_field_extensions();
-            temp
-        };
-        let mut temp = batched_claim.split_into_quadratic_extensions();
-        let mut result = QuadraticExtension::zero();
-        for i in 0..HALF_DEGREE {
-            temp[i] *= &qe[i];
-            result += &temp[i];
-        }
-        result
-    };
-
-    let mut num_vars = round_proof.polys.len();
-
-    let mut evaluation_points: Vec<QuadraticExtension> = vec![];
-    while num_vars > 0 {
-        num_vars -= 1;
-
-        let poly_over_field = round_proof
-            .polys
-            .get(round_proof.polys.len() - num_vars - 1)
-            .unwrap();
-
-        hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
-
-        assert_eq!(
-            poly_over_field.at_zero() + poly_over_field.at_one(),
-            batched_claim_over_field
-        );
-
-        let mut f = QuadraticExtension::zero();
-
-        hash_wrapper.sample_field_element_into(&mut f);
-
-        batched_claim_over_field = poly_over_field.at(&f);
-        evaluation_points.push(f);
-    }
-
-    load_verifier_sumcheck_data(
-        verifier_sumcheck_context,
-        &folding_challenges,
-        &round_proof.claim_over_witness,
-        &round_proof.claim_over_witness_conjugate,
-        evaluation_points_inner,
-        evaluation_points_outer,
-        &projection_matrix,
-        &projection_matrix_flatter_structured, // assume type0 projection TODO: make optional
-        &challenges_3_1,                       // for 1 projection type only
-        &combination,
-        &qe,
-    );
-
-    assert_eq!(
-        &batched_claim_over_field,
-        verifier_sumcheck_context
-            .field_combiner_evaluation
-            .borrow_mut()
-            .evaluate(&evaluation_points)
-    );
-
-    evaluation_points
-        .iter()
-        .map(|f| {
-            let mut r = field_to_ring_element(f);
-            r.from_homogenized_field_extensions_to_incomplete_ntt();
-            r
-        })
-        .collect()
 }

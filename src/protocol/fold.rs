@@ -1,5 +1,5 @@
 use crate::common::{
-    matrix::{VerticallyAlignedMatrix, ZeroNew},
+    matrix::VerticallyAlignedMatrix,
     ring_arithmetic::{Representation, RingElement},
 };
 

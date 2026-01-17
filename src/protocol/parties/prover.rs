@@ -1,4 +1,3 @@
-
 use std::{process::exit, sync::LazyLock};
 
 use num::range;
@@ -9,7 +8,7 @@ use crate::{
         config::{self, MOD_Q},
         decomposition::{compose_from_decomposed, decompose},
         hash::HashWrapper,
-        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
+        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         norms,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
@@ -17,8 +16,10 @@ use crate::{
         structured_row::{self, PreprocessedRow, StructuredRow},
     },
     protocol::{
-        commitment::{RecursiveCommitmentWithAux, commit_basic, commit_basic_internal, recursive_commit},
-        config::{CONFIG, Config, Projection, paste_by_prefix, paste_recursive_commitment},
+        commitment::{
+            commit_basic, commit_basic_internal, recursive_commit, RecursiveCommitmentWithAux,
+        },
+        config::{paste_by_prefix, paste_recursive_commitment, Config, Projection, CONFIG},
         crs::{CK, CRS},
         fold::fold,
         open::{evaluation_point_to_structured_row, open_at},
@@ -26,7 +27,7 @@ use crate::{
         project::project,
         project_2::{batch_projection_n_times, project_coefficients},
         proof::Proof,
-        sumcheck::{self, SumcheckContext, init_sumcheck, sumcheck},
+        sumcheck::{self, init_sumcheck, sumcheck, SumcheckContext},
         sumcheck_utils::{
             common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
             linear::{LinearSumcheck, StructuredRowEvaluationLinearSumcheck},
@@ -35,7 +36,7 @@ use crate::{
             builder_verifier::init_verifier,
             context_verifier::VerifierSumcheckContext,
             helpers::projection_coefficients,
-            runner::{RoundProof, sumcheck_verifier},
+            runner_verifier::{sumcheck_verifier, RoundProof},
         }, // sumcheck::sumcheck,
     },
 };
@@ -47,7 +48,8 @@ pub fn claims(
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
     let mut result = new_vec_zero_preallocated(rhs.height);
     for i in 0..rhs.height {
-        let preprocessed_row_outer = PreprocessedRow::from_structured_row(&evaluation_points_outer[i]);
+        let preprocessed_row_outer =
+            PreprocessedRow::from_structured_row(&evaluation_points_outer[i]);
         for col in 0..rhs.width {
             temp *= (
                 &rhs[(i, col)],
@@ -78,7 +80,7 @@ pub fn prover_round(
     let opening = open_at(&witness, &evaluation_points_inner, &evaluation_points_outer);
 
     let claims = if with_claims {
-        let cc= claims(&opening.rhs, evaluation_points_outer);
+        let cc = claims(&opening.rhs, evaluation_points_outer);
         // assert_eq!(cc[0], opening);
         Some(cc)
     } else {
@@ -313,40 +315,43 @@ pub fn prover_round(
         Some(rc_commitment_with_aux) => {
             let (new_evaluation_points_outer, new_evaluation_points_inner) = evaluation_points
                 .split_at(config.next.as_ref().unwrap().witness_width.ilog2() as usize);
-            Some(prover_round(
-                &crs,
-                config.next.as_ref().unwrap(),
-                &rc_commitment_with_aux,
-                &next_round_witness,
-                &vec![
-                    evaluation_point_to_structured_row(&new_evaluation_points_inner.to_vec()),
-                    evaluation_point_to_structured_row(
-                        &new_evaluation_points_inner
-                            .iter()
-                            .map(|f| {
-                                let mut f = f.clone();
-                                f.conjugate_in_place();
-                                f
-                            })
-                            .collect::<Vec<_>>(),
-                    ),
-                ],
-                &vec![
-                    evaluation_point_to_structured_row(&new_evaluation_points_outer.to_vec()),
-                    evaluation_point_to_structured_row(
-                        &new_evaluation_points_outer
-                            .iter()
-                            .map(|f| {
-                                let mut f = f.clone();
-                                f.conjugate_in_place();
-                                f
-                            })
-                            .collect::<Vec<_>>(),
-                    ),
-                ],
-                sumcheck_context.next.as_mut().unwrap(),
-                false
-            ).0)
+            Some(
+                prover_round(
+                    &crs,
+                    config.next.as_ref().unwrap(),
+                    &rc_commitment_with_aux,
+                    &next_round_witness,
+                    &vec![
+                        evaluation_point_to_structured_row(&new_evaluation_points_inner.to_vec()),
+                        evaluation_point_to_structured_row(
+                            &new_evaluation_points_inner
+                                .iter()
+                                .map(|f| {
+                                    let mut f = f.clone();
+                                    f.conjugate_in_place();
+                                    f
+                                })
+                                .collect::<Vec<_>>(),
+                        ),
+                    ],
+                    &vec![
+                        evaluation_point_to_structured_row(&new_evaluation_points_outer.to_vec()),
+                        evaluation_point_to_structured_row(
+                            &new_evaluation_points_outer
+                                .iter()
+                                .map(|f| {
+                                    let mut f = f.clone();
+                                    f.conjugate_in_place();
+                                    f
+                                })
+                                .collect::<Vec<_>>(),
+                        ),
+                    ],
+                    sumcheck_context.next.as_mut().unwrap(),
+                    false,
+                )
+                .0,
+            )
         }
     };
 

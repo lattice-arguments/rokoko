@@ -1,7 +1,5 @@
-use crate::common::arithmetic::ZERO;
 use crate::common::config::*;
 use crate::hexl::bindings::*;
-use num::pow::Pow;
 use rand::Rng;
 use std::cell::RefCell;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};

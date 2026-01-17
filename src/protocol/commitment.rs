@@ -2,19 +2,13 @@ use std::ops::IndexMut;
 
 use crate::{
     common::{
-        config::{self, MOD_Q},
+        config::MOD_Q,
         decomposition::decompose,
-        matrix::{
-            new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix, ZeroNew,
-        },
+        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         ring_arithmetic::{Representation, RingElement},
-        structured_row::{PreprocessedRow, StructuredRow},
+        structured_row::PreprocessedRow,
     },
-    protocol::{
-        commitment,
-        crs::{CK, CRS},
-        open::Opening,
-    },
+    protocol::crs::{CK, CRS},
 };
 
 pub type BasicCommitment = HorizontallyAlignedMatrix<RingElement>;
