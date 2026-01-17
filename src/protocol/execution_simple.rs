@@ -50,7 +50,7 @@ pub struct Config {
     projection_opening_recursion: RecursionConfig,
 }
 
-// pub fn init_empty_recursive_commitment(config: &Vec<RecursionConfig>) -> RecursiveCommitment {
+// pub fn init_empty_recursive_commitment(config: &Vec<RecursionConfig>) -> RecursiveCommitmentWithAux {
 
 // }
 

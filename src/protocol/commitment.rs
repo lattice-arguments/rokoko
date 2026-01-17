@@ -64,16 +64,16 @@ pub struct RecursionConfig {
 }
 
 #[derive(Clone)]
-pub struct RecursiveCommitment {
+pub struct RecursiveCommitmentWithAux {
     pub decomposition_base_log: usize,
     pub decomposition_chunks: usize,
     pub committed_data: Vec<RingElement>,
     pub commitment: Vec<RingElement>,
-    pub next: Option<Box<RecursiveCommitment>>,
+    pub next: Option<Box<RecursiveCommitmentWithAux>>,
 }
 
-impl RecursiveCommitment {
-    pub fn most_inner_commitment(&self) -> &Vec<RingElement> {
+impl RecursiveCommitmentWithAux {
+    pub fn most_inner_commitment(&self) -> &RecursiveCommitment {
         match &self.next {
             Some(next_config) => next_config.most_inner_commitment(),
             None => &self.commitment,
@@ -81,11 +81,13 @@ impl RecursiveCommitment {
     }
 }
 
+pub type RecursiveCommitment = Vec<RingElement>;
+
 pub fn recursive_commit(
     crs: &CRS,
     config: &RecursionConfig,
     data: &Vec<RingElement>,
-) -> RecursiveCommitment {
+) -> RecursiveCommitmentWithAux {
     let committed_data = decompose(
         &data,
         config.decomposition_base_log as u64,
@@ -109,7 +111,7 @@ pub fn recursive_commit(
         None => None,
     };
 
-    RecursiveCommitment {
+    RecursiveCommitmentWithAux {
         decomposition_base_log: config.decomposition_base_log,
         decomposition_chunks: config.decomposition_chunks,
         committed_data,

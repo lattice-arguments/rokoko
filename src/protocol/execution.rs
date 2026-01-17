@@ -16,7 +16,7 @@ use crate::{
         structured_row::{self, PreprocessedRow, StructuredRow},
     },
     protocol::{
-        commitment::{commit_basic, recursive_commit, RecursiveCommitment},
+        commitment::{commit_basic, recursive_commit, RecursiveCommitmentWithAux},
         config::{paste_by_prefix, paste_recursive_commitment, Config, Projection, CONFIG},
         crs::{CK, CRS},
         fold::fold,
@@ -42,6 +42,7 @@ use crate::{
 fn verifier_round(
     crs: &CRS,
     config: &Config,
+    rc_commitment: &Vec<RingElement>,
     round_proof: &RoundProof,
     evaluation_points_inner: &Vec<StructuredRow>,
     evaluation_points_outer: &Vec<StructuredRow>,
@@ -54,6 +55,7 @@ fn verifier_round(
     let evaluation_points = sumcheck_verifier(
         &config,
         sumcheck_context_verifier,
+        &rc_commitment,
         &round_proof,
         &evaluation_points_inner,
         &evaluation_points_outer,
@@ -70,6 +72,14 @@ fn verifier_round(
                 ep.conjugate_into(&mut conjugated_evaluation_points[i]);
             }
 
+            let next_round_commitment = round_proof.next_round_commitment.as_ref().unwrap_or_else(
+                || {
+                    panic!(
+                        "Next round commitment must be present when next round proof is present."
+                    )
+                },
+            );
+
             let (new_evaluation_points_outer, new_evaluation_points_inner) = evaluation_points
                 .split_at(config.next.as_ref().unwrap().witness_width.ilog2() as usize);
             let (new_conjugated_evaluation_points_outer, new_conjugated_evaluation_points_inner) =
@@ -78,6 +88,7 @@ fn verifier_round(
             verifier_round(
                 crs,
                 &config.next.as_ref().unwrap(),
+                &next_round_commitment,
                 next_round_proof,
                 &vec![
                     StructuredRow {
@@ -109,7 +120,7 @@ fn verifier_round(
 pub fn prover_round(
     crs: &CRS,
     config: &Config,
-    rc_commitment: &RecursiveCommitment,
+    rc_commitment: &RecursiveCommitmentWithAux,
     witness: &VerticallyAlignedMatrix<RingElement>,
     evaluation_points_inner: &Vec<StructuredRow>,
     evaluation_points_outer: &Vec<StructuredRow>,
@@ -273,10 +284,6 @@ pub fn prover_round(
 
     let t6 = std::time::Instant::now();
 
-    // if let Some(config) = &config.next {
-    //     let new_commtment = commit_basic(crs, witness, rank);
-    // }
-
     let next_round_witness = VerticallyAlignedMatrix {
         height: if let Some(next_config) = &config.next {
             next_config.witness_height
@@ -291,7 +298,7 @@ pub fn prover_round(
         data: next_round_data,
     };
 
-    let next_round_commitment = if let Some(next_config) = &config.next {
+    let next_round_rc_commitment_with_aux = if let Some(next_config) = &config.next {
         assert_eq!(
             next_round_witness.data.len(),
             next_config.witness_height * next_config.witness_width
@@ -320,6 +327,10 @@ pub fn prover_round(
         None
     };
 
+    let next_round_commitment = next_round_rc_commitment_with_aux
+        .as_ref()
+        .map(|rc_commitment_with_aux| rc_commitment_with_aux.most_inner_commitment().clone());
+
     let (
         claim_over_witness,
         claim_over_witness_conjugate,
@@ -346,15 +357,15 @@ pub fn prover_round(
         "norm too large, aborting"
     );
 
-    let next_level_proof = match next_round_commitment {
+    let next_level_proof = match next_round_rc_commitment_with_aux {
         None => None,
-        Some(rc_commitment) => {
+        Some(rc_commitment_with_aux) => {
             let (new_evaluation_points_outer, new_evaluation_points_inner) = evaluation_points
                 .split_at(config.next.as_ref().unwrap().witness_width.ilog2() as usize);
             Some(prover_round(
                 &crs,
                 config.next.as_ref().unwrap(),
-                &rc_commitment,
+                &rc_commitment_with_aux,
                 &next_round_witness,
                 &vec![
                     evaluation_point_to_structured_row(&new_evaluation_points_inner.to_vec()),
@@ -392,7 +403,7 @@ pub fn prover_round(
         claim_over_witness: claim_over_witness,
         claim_over_witness_conjugate: claim_over_witness_conjugate,
         norm_claim: norm_claim,
-        rc_commitment_inner: rc_commitment.most_inner_commitment().clone(),
+        next_round_commitment,
         rc_opening_inner: rc_opening.most_inner_commitment().clone(),
         rc_projection_inner: rc_projection_image
             .as_ref()
@@ -440,7 +451,7 @@ pub fn execute() {
         basic_commitment.width, basic_commitment.height
     );
 
-    let rc_commitment =
+    let rc_commitment_with_aux =
         recursive_commit(&crs, &CONFIG.commitment_recursion, &basic_commitment.data);
 
     let evaluation_points_inner = vec![evaluation_point_to_structured_row(
@@ -460,10 +471,12 @@ pub fn execute() {
         &evaluation_points_inner[0],
         &evaluation_points_outer[0],
     )];
+
+    let rc_commitment = rc_commitment_with_aux.most_inner_commitment().clone();
     let proof = prover_round(
         &crs,
         &CONFIG,
-        &rc_commitment,
+        &rc_commitment_with_aux,
         &witness,
         &evaluation_points_inner,
         &evaluation_points_outer,
@@ -473,6 +486,7 @@ pub fn execute() {
     verifier_round(
         &crs,
         &CONFIG,
+        &rc_commitment,
         &proof,
         &evaluation_points_inner,
         &evaluation_points_outer,

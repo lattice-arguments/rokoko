@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use crate::{
     common::ring_arithmetic::RingElement,
     protocol::{
-        commitment::{Prefix, RecursionConfig, RecursiveCommitment},
+        commitment::{Prefix, RecursionConfig, RecursiveCommitmentWithAux},
         config_generator::{AuxConfig, AuxProjection, AuxRecursionConfig},
     },
 };
@@ -206,7 +206,7 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
     .generate_config()
 });
 
-pub static CONFIG: LazyLock<Config> = LazyLock::new(|| REAL_CONFIG.clone());
+pub static CONFIG: LazyLock<Config> = LazyLock::new(|| TOY_CONFIG_II.clone());
 
 #[derive(Clone)]
 pub struct Config {
@@ -246,7 +246,7 @@ pub fn paste_by_prefix(dest: &mut Vec<RingElement>, src: &Vec<RingElement>, pref
 
 pub fn paste_recursive_commitment(
     dest: &mut Vec<RingElement>,
-    commitment: &RecursiveCommitment,
+    commitment: &RecursiveCommitmentWithAux,
     config: &RecursionConfig,
 ) {
     paste_by_prefix(dest, &commitment.committed_data, &config.prefix);

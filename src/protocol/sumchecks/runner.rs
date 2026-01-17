@@ -455,24 +455,25 @@ pub struct RoundProof {
     pub claim_over_witness: RingElement,
     pub claim_over_witness_conjugate: RingElement,
     pub norm_claim: RingElement,
-    pub rc_commitment_inner: Vec<RingElement>,
     pub rc_opening_inner: Vec<RingElement>,
     pub rc_projection_inner: Option<Vec<RingElement>>,
     pub rcs_projection_1_inner: Option<(Vec<RingElement>, Vec<RingElement>)>,
     pub constant_term_claims: Option<Vec<RingElement>>,
+    pub next_round_commitment: Option<Vec<RingElement>>,
     pub next: Option<Box<RoundProof>>,
 }
 
 pub fn sumcheck_verifier(
     config: &Config,
     verifier_sumcheck_context: &mut VerifierSumcheckContext,
+    rc_commitment: &Vec<RingElement>,
     round_proof: &RoundProof,
     evaluation_points_inner: &Vec<StructuredRow>,
     evaluation_points_outer: &Vec<StructuredRow>,
     claims: &Vec<RingElement>,
     hash_wrapper: &mut HashWrapper,
 ) -> Vec<RingElement> {
-    hash_wrapper.update_with_ring_element_slice(&round_proof.rc_commitment_inner);
+    hash_wrapper.update_with_ring_element_slice(rc_commitment);
     hash_wrapper.update_with_ring_element_slice(&round_proof.rc_opening_inner);
     let mut projection_matrix =
         ProjectionMatrix::new(config.projection_ratio, config.projection_height);
@@ -542,7 +543,7 @@ pub fn sumcheck_verifier(
     let mut batched_claim = batch_claims(
         config,
         claims,
-        &round_proof.rc_commitment_inner,
+        rc_commitment,
         &round_proof.rc_opening_inner,
         &round_proof.rc_projection_inner,
         &round_proof.rcs_projection_1_inner,
@@ -609,7 +610,7 @@ pub fn sumcheck_verifier(
         evaluation_points_outer,
         &projection_matrix,
         &projection_matrix_flatter_structured, // assume type0 projection TODO: make optional
-        &challenges_3_1,                     // for 1 projection type only
+        &challenges_3_1,                       // for 1 projection type only
         &combination,
         &qe,
     );
