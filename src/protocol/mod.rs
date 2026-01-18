@@ -12,4 +12,5 @@ pub mod prover;
 pub mod sumcheck;
 pub mod sumcheck_utils;
 pub mod sumchecks;
+pub mod params;
 pub mod verifier;

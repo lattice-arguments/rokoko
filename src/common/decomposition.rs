@@ -27,6 +27,11 @@ impl RingElement {
 pub fn decompose(input: &Vec<RingElement>, base_log: u64, radix: usize) -> Vec<RingElement> {
     let mut decomposed = new_vec_zero_preallocated(input.len() * radix);
 
+    if base_log == 0 {
+        decomposed.clone_from_slice(input);
+        return decomposed;
+    }
+
     let big_shift = RingElement::all(
         1u64 << (base_log * radix as u64 - 1),
         Representation::EvenOddCoefficients,
