@@ -1,6 +1,8 @@
 use std::process::Command;
 use std::io;
 
+use crate::common::config::{DEGREE, MOD_Q};
+
 #[derive(Debug, Clone, Copy)]
 pub enum Norm {
     L2,
@@ -18,17 +20,37 @@ impl Norm {
 
 #[derive(Debug, Clone)]
 pub struct SISParameters {
-    pub n: u32,
-    pub m: u32,
-    pub q: u32,
-    pub length_bound: u32,
+    pub n: u64,
+    pub m: u64,
+    pub q: u64,
+    pub length_bound: u64,
     pub norm: Norm,
+}
+
+pub struct RSISParameters {
+    pub n: u64,
+    pub m: u64,
+    pub length_bound: u64,
 }
 
 #[derive(Debug)]
 pub struct EstimatorResult {
     pub secpar: f64,
 }
+
+pub fn estimate_rsis_security(params: &RSISParameters) -> Result<EstimatorResult, io::Error> {
+    let m_sis = params.m * DEGREE as u64;
+    let n_sis = params.n * DEGREE as u64;
+    let sis_params = SISParameters {
+        n: n_sis,
+        m: m_sis,
+        q: MOD_Q,
+        length_bound: params.length_bound,
+        norm: Norm::L2,
+    };
+    estimate_sis_security(&sis_params)
+}
+
 
 pub fn estimate_sis_security(params: &SISParameters) -> Result<EstimatorResult, io::Error> {
     let script_path = std::env::current_dir()?.join("run_sage_estimator.sh");
