@@ -369,7 +369,7 @@ pub fn prover_round(
                 .witness_decomposition_base_log
                 .pow((config.witness_decomposition_chunks - 1) as u32)) as f64;
 
-        let extracted_witness_bound = recomposed_witness_bound * DEGREE as f64 * 4.0; // factor 4 for difference in numerator and denominator in extraction and 2 for ISIS to SIS
+        let extracted_witness_bound = recomposed_witness_bound * DEGREE as f64 * 8.0; // factor 4 for difference in numerator and denominator in extraction and 2 for ISIS to SIS
         println!(
             "Extracted witness L_2 norm bound: {}",
             extracted_witness_bound
