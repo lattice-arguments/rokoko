@@ -1,5 +1,6 @@
 use crate::common::config::*;
 use crate::hexl::bindings::*;
+use num::traits::ops::inv;
 use rand::Rng;
 use std::cell::RefCell;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
@@ -442,36 +443,40 @@ impl RingElement {
         result
     }
 
-    // pub fn constant_term_from_incomplete_ntt_no_mod(&self) -> u64 { // TODO: I am still curious how to get the constant term without going back to coefficient space
-    //     assert_eq!(self.representation, Representation::IncompleteNTT);
-    //     let buf = &mut *get_temp_buffer();
-    //     buf.copy_from_slice(&self.v);
-    //     unsafe {
-    //         eltwise_mult_mod(
-    //             buf.as_mut_ptr(),
-    //             self.v.as_ptr(),
-    //             CONSTANT_TERM_FACTORS.as_ptr(),
-    //             HALF_DEGREE as u64,
-    //             MOD_Q,
-    //         );
-    //     }
-    //     let mut sum = 0u64;
-    //     for i in 0..DEGREE {
-    //         sum += buf[i];
-    //     }
-    //     sum
-    // }
+    pub fn constant_term_from_incomplete_ntt(&self) -> u64 {
+        assert_eq!(self.representation, Representation::IncompleteNTT);
+        let buf = &mut *get_temp_buffer();
+        buf.copy_from_slice(&self.v);
+        unsafe {
+            eltwise_mult_mod(
+                buf.as_mut_ptr(),
+                self.v.as_ptr(),
+                CONSTANT_TERM_FACTORS.as_ptr(),
+                HALF_DEGREE as u64,
+                MOD_Q,
+            );
+        }
+        let mut sum = 0u64;
+        for i in 0..HALF_DEGREE {
+            // TODO: vectorized sum
+            sum += buf[i];
+        }
+
+        // we call it once so it's probably fine
+        sum % MOD_Q
+    }
 }
 
-// pub static CONSTANT_TERM_FACTORS: LazyLock<[u64; DEGREE]> = LazyLock::new(|| {
-//     let mut factors = RingElement::one(Representation::IncompleteNTT);
-//     unsafe {
-//         for i in 0..factors.v.len() {
-//             factors.v[i] = inv_mod(factors.v[i], MOD_Q);
-//         }
-//     }
-//     factors.v
-// });
+pub static CONSTANT_TERM_FACTORS: LazyLock<[u64; HALF_DEGREE]> = LazyLock::new(|| {
+    let scale = unsafe { inv_mod(HALF_DEGREE as u64, MOD_Q) };
+    let mut factors = RingElement::one(Representation::IncompleteNTT);
+    unsafe {
+        for i in 0..factors.v.len() {
+            factors.v[i] = multiply_mod(scale, inv_mod(factors.v[i], MOD_Q), MOD_Q);
+        }
+    }
+    factors.v[..HALF_DEGREE].try_into().unwrap()
+});
 
 pub static SHIFT_FACTORS: LazyLock<[u64; HALF_DEGREE]> = LazyLock::new(|| {
     let mut factors = [0u64; HALF_DEGREE];
@@ -1135,7 +1140,7 @@ impl<'a> MulAssign<(&'a QuadraticExtension, &'a QuadraticExtension)> for Quadrat
 
 #[cfg(test)]
 mod tests {
-    use crate::common::init_common;
+    use crate::common::{init_common, norms};
 
     use super::*;
 
@@ -1389,16 +1394,18 @@ mod tests {
         assert_eq!(a, original);
     }
 
-    // #[test]
-    // fn test_constant_term_from_incomplete_ntt_no_mod() {
-    //     init_common();
+    #[test]
+    fn test_constant_term_from_incomplete_ntt() {
+        init_common();
 
-    //     let mut a = RingElement::constant(1, Representation::IncompleteNTT);
+        let mut a = RingElement::random(Representation::IncompleteNTT);
+        let computed_constant_term = a.constant_term_from_incomplete_ntt();
+        a.from_incomplete_ntt_to_even_odd_coefficients();
+        a.from_even_odd_coefficients_to_coefficients();
+        let expected_constant_term = a.v[0];
 
-    //     let computed_constant_term = a.constant_term_from_incomplete_ntt_no_mod() % MOD_Q;
-
-    //     assert_eq!(1, computed_constant_term);
-    // }
+        assert_eq!(expected_constant_term, computed_constant_term % MOD_Q);
+    }
 }
 
 // #[test]

@@ -1,17 +1,12 @@
+use std::array;
+
 use crate::{
     common::{
-        config::NOF_BATCHES,
-        hash::HashWrapper,
-        matrix::{
-            new_vec_zero_field_preallocated, new_vec_zero_preallocated, HorizontallyAlignedMatrix,
-            VerticallyAlignedMatrix,
-        },
-        projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{Representation, RingElement},
-        structured_row::{PreprocessedRow, StructuredRow},
-    },
-    protocol::{
-        commitment::{commit_basic, BasicCommitment},
+        arithmetic::precompute_structured_values_fast, config::{DEGREE, MOD_Q, NOF_BATCHES}, hash::HashWrapper, matrix::{
+            HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_field_preallocated, new_vec_zero_preallocated
+        }, norms::{l2_norm, l2_norm_coeffs}, projection_matrix::ProjectionMatrix, ring_arithmetic::{Representation, RingElement}, structured_row::{PreprocessedRow, StructuredRow}
+    }, hexl::bindings::eltwise_mult_mod, protocol::{
+        commitment::{BasicCommitment, commit_basic},
         config::{
             Config, NextRoundCommitment, RoundProof, SimpleConfig, SimpleRoundProof,
             SumcheckConfig, SumcheckRoundProof,
@@ -21,11 +16,11 @@ use crate::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
             open_at,
         },
-        project_2::{batch_projection_n_times, verifier_sample_projection_challenges},
+        project_2::{BatchedProjectionChallengesSuccinct, batch_projection_n_times, verifier_sample_projection_challenges},
         sumchecks::{
             context_verifier::VerifierSumcheckContext, runner_verifier::sumcheck_verifier,
         },
-    },
+    }
 };
 
 pub fn verifier_round(
@@ -182,10 +177,15 @@ pub fn verifier_round_simple(
 
     hash_wrapper.update_with_ring_element_slice(&round_proof.projection_image_ct.data);
 
-    let _challenges_0 =
-        verifier_sample_projection_challenges(&projection_matrix, config, &mut hash_wrapper);
-    let _challenges_1 =
-        verifier_sample_projection_challenges(&projection_matrix, config, &mut hash_wrapper);
+    let challenges: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] = array::from_fn(|_| {
+        verifier_sample_projection_challenges(&projection_matrix, config, &mut hash_wrapper)
+    });
+
+    assert_eq!(
+        challenges[0].c_0_layers.len(),
+        0,
+        "In simple verifier, projection challenges c_0_layers length must be zero. At least, this is unimplemented otherwise."
+    );
 
     hash_wrapper.update_with_ring_element_slice(&round_proof.batched_projection_image.data);
 
@@ -205,9 +205,10 @@ pub fn verifier_round_simple(
     let mut folded_commitment =
         HorizontallyAlignedMatrix::new_zero_preallocated(config.basic_commitment_rank, 1);
 
+    let mut temp = RingElement::zero(Representation::IncompleteNTT);
+
     for i in 0..ck.len() {
         for col in 0..commitment.width {
-            let mut temp = RingElement::zero(Representation::IncompleteNTT);
             temp *= (&commitment[(i, col)], &folding_challenges[col]);
             folded_commitment[(i, 0)] += &temp;
         }
@@ -225,7 +226,6 @@ pub fn verifier_round_simple(
         HorizontallyAlignedMatrix::new_zero_preallocated(round_proof.opening_rhs.height, 1);
 
     for i in 0..round_proof.opening_rhs.height {
-        let mut temp = RingElement::zero(Representation::IncompleteNTT);
         for col in 0..commitment.width {
             temp *= (&round_proof.opening_rhs[(i, col)], &folding_challenges[col]);
             folded_opening[(i, 0)] += &temp;
@@ -234,13 +234,69 @@ pub fn verifier_round_simple(
 
     assert_eq!(opening_to_folded_witness.rhs, folded_opening);
 
-    // TODO verify consistency of projections
+    let mut batched_projection_of_folded_witness = VerticallyAlignedMatrix::new_zero_preallocated(
+        round_proof.batched_projection_image.height,
+        1,
+    );
+
+    for i in 0..round_proof.batched_projection_image.height {
+        let j_batched = &challenges[i].j_batched;
+        for j in 0..j_batched.len() {
+            temp *= (&round_proof.folded_witness[(j, 0)], &j_batched[j]);
+            batched_projection_of_folded_witness[(i, 0)] += &temp;
+        }
+    }
+
+    let mut folded_batched_projection_image =
+        VerticallyAlignedMatrix::new_zero_preallocated(
+            round_proof.batched_projection_image.height,
+            1,
+        );
+    for i in 0..round_proof.batched_projection_image.height {
+        for j in 0..commitment.width {
+            temp *= (&round_proof.batched_projection_image[(i, j)], &folding_challenges[j]);
+            folded_batched_projection_image[(i, 0)] += &temp;
+        }
+    }
+
+    assert_eq!(
+        batched_projection_of_folded_witness,
+        folded_batched_projection_image
+    );
+
+    // check constant terms
+    for i in 0..NOF_BATCHES {
+        let c_1_layers = &challenges[i].c_1_layers;
+        let c_1_values = precompute_structured_values_fast(&c_1_layers);
+
+        assert_eq!(
+            c_1_values.len(),
+            round_proof.projection_image_ct.height * DEGREE,
+            "c_1_values length mismatch."
+        );
+
+        for k in 0..config.witness_width {
+            let mut expected_ct = 0;
+            for j in 0..c_1_values.len() / DEGREE {
+                unsafe {
+                    eltwise_mult_mod(temp.v.as_mut_ptr(), c_1_values.as_ptr().add(DEGREE * j), round_proof.projection_image_ct[(j, k)].v.as_ptr(), DEGREE as u64, MOD_Q);
+                }
+                for l in 0..DEGREE {
+                    // TODO: vectorize
+                    expected_ct += temp.v[l];
+                }
+            }
+            expected_ct %= MOD_Q;
+            
+            let ct = round_proof.batched_projection_image[(i, k)].constant_term_from_incomplete_ntt();
+            assert_eq!(ct, expected_ct);
+        }
+    }
 
     let mut evaluation = new_vec_zero_preallocated(round_proof.opening_rhs.height);
 
     for i in 0..round_proof.opening_rhs.height {
         let preprocessed_row = PreprocessedRow::from_structured_row(&evaluation_points_outer[i]);
-        let mut temp = RingElement::zero(Representation::IncompleteNTT);
         for col in 0..round_proof.opening_rhs.width {
             temp *= (
                 &round_proof.opening_rhs[(i, col)],
@@ -250,7 +306,19 @@ pub fn verifier_round_simple(
         }
     }
 
-    // TODO: verify norms
+    let mut witness_even_odd = new_vec_zero_preallocated(round_proof.folded_witness.height);
+    witness_even_odd.clone_from_slice(&round_proof.folded_witness.data);
+
+    for w in witness_even_odd.iter_mut() {
+        w.from_incomplete_ntt_to_even_odd_coefficients();
+    }
+
+    let l2_norm_witness = l2_norm_coeffs(&witness_even_odd);
+    let l2_norm_proj = l2_norm_coeffs(&round_proof.projection_image_ct.data);
+
+    println!("L2 norm of folded witness in simple verifier: {}", l2_norm_witness);
+    println!("L2 norm of projection image in simple verifier: {}", l2_norm_proj);
+
 
     assert_eq!(claims, &evaluation);
 }

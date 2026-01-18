@@ -364,7 +364,8 @@ pub fn sample_layers(
         .collect();
 
     let c_1_layers: Vec<u64> = (0..projection_matrix.projection_height.ilog2())
-        .map(|_| hash_wrapper.sample_u64_mod_q())
+        // .map(|_| hash_wrapper.sample_u64_mod_q())
+        .map(|_| 1)
         .collect();
 
     let c_2_layers: Vec<u64> = (0..witness_width.ilog2())
@@ -542,14 +543,10 @@ pub fn verifier_sample_projection_challenges(
         hash_wrapper,
     );
 
-    let c_1_values = precompute_structured_values_fast(&c_1_layers)
-        .iter()
-        .map(|&x| RingElement::constant(x, Representation::IncompleteNTT))
-        .collect::<Vec<RingElement>>(); // TODO: This seems to not make sense
-
+    let c_1_values = precompute_structured_values_fast(&c_1_layers);
     let j_batched = compute_j_batched(
         projection_matrix,
-        &c_1_values.iter().map(|el| el.v[0]).collect::<Vec<u64>>(),
+        &c_1_values
     );
 
     BatchedProjectionChallengesSuccinct {
@@ -636,6 +633,7 @@ fn test_batch_projection() {
         &witness,
         &projection_matrix,
         &mut hash_wrapper2,
+        false,
     );
 
     // Check each column separately
@@ -680,6 +678,7 @@ fn test_const_term_relation_to_prove() {
         &witness,
         &projection_matrix,
         &mut hash_wrapper,
+        false,
     );
 
     // Now, we want to check if

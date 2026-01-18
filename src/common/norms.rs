@@ -35,3 +35,14 @@ pub fn l2_norm(vec: &Vec<RingElement>) -> f64 {
     }
     (sum as f64).sqrt() as f64
 }
+
+pub fn l2_norm_coeffs(vec: &Vec<RingElement>) -> f64 {
+    let mut sum = 0u64;
+    for el in vec {
+        for &x in el.v.map(|x| x).iter() {
+            let centered = if x < MOD_Q / 2 { x } else { MOD_Q - x };
+            sum += centered * centered;
+        }
+    }
+    (sum as f64).sqrt() as f64
+}

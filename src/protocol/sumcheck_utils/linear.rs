@@ -65,8 +65,6 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
     }
     /// Populate the internal buffer with the provided values.
     pub fn load_from(&mut self, src: &[E]) {
-        print!("Loading linear sumcheck data... ");
-        println!("{} {} elements.", src.len(), self.data.len());
         self.data.clone_from_slice(src);
     }
 }
