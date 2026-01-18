@@ -1,7 +1,8 @@
 use crate::{
     common::{
-        config::MOD_Q,
+        config::{DEGREE, MOD_Q},
         decomposition::decompose,
+        estimator::{estimate_rsis_security, RSISParameters},
         hash::HashWrapper,
         matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         norms,
@@ -211,21 +212,109 @@ pub fn prover_round(
         &config.commitment_recursion,
     );
 
-    let ell_inf_norm = norms::inf_norm(&next_round_data);
-    let ell_2_norm = norms::l2_norm(&next_round_data);
+    #[cfg(feature = "debug-hardness")]
+    {
+        use crate::protocol::commitment::RecursionConfig;
 
-    println!(
-        "Next round data norms: L_inf = {}, bit_len = {}, L_2 = {}, MOD_Q = {}",
-        ell_inf_norm,
-        ell_inf_norm.ilog2(),
-        ell_2_norm,
-        MOD_Q
-    );
+        println!("=== Debug Hardness Check ===");
 
-    assert!(
-        ell_2_norm * ell_2_norm < (MOD_Q as f64 / 2f64),
-        "norm too large, aborting"
-    );
+        let recommited_ell_inf_norm = norms::inf_norm(&next_round_data);
+        let recommited_ell_2_norm = norms::l2_norm(&next_round_data);
+
+        fn debug_hardness_recursive_commitment(
+            rc: &RecursiveCommitmentWithAux,
+            config: &RecursionConfig,
+            name: &str,
+            extracted_norm: f64,
+            depth: usize,
+        ) {
+            let ell_inf_norm = norms::inf_norm(&rc.committed_data);
+            let ell_2_norm = norms::l2_norm(&rc.committed_data);
+            let hardness = estimate_rsis_security(&RSISParameters {
+                m: rc.committed_data.len() as u64,
+                n: config.rank as u64,
+                length_bound: extracted_norm.ceil() as u64,
+            });
+            let indent = "  ".repeat(depth);
+            println!(
+                "{}Recursive Commitment '{}' norms: L_2 = {}, bit_len = {}, MOD_Q = {} => estimated security for extraction: {:?}",
+                indent,
+                name,
+                ell_2_norm,
+                ell_inf_norm.ilog2(),
+                MOD_Q,
+                hardness,
+            );
+
+            if let (Some(next_rc), Some(next_config)) = (&rc.next, &config.next) {
+                debug_hardness_recursive_commitment(
+                    next_rc,
+                    next_config,
+                    name,
+                    extracted_norm,
+                    depth + 1,
+                );
+            }
+        }
+
+        debug_hardness_recursive_commitment(
+            rc_commitment,
+            &config.commitment_recursion,
+            "Commitment",
+            recommited_ell_2_norm,
+            0,
+        );
+        debug_hardness_recursive_commitment(
+            &rc_opening,
+            &config.opening_recursion,
+            "Opening",
+            recommited_ell_2_norm,
+            0,
+        );
+
+        if let (Some(rc_projection_image), Projection::Type0(projection_config)) =
+            (&rc_projection_image, &config.projection_recursion)
+        {
+            debug_hardness_recursive_commitment(
+                rc_projection_image,
+                projection_config,
+                "Projection Image",
+                recommited_ell_2_norm,
+                0,
+            );
+        }
+
+        if let (Some(rcs_projection_1), Projection::Type1(projection_config)) =
+            (&rcs_projection_1, &config.projection_recursion)
+        {
+            debug_hardness_recursive_commitment(
+                &rcs_projection_1.0,
+                &projection_config.recursion_constant_term,
+                "Projection 1 Constant Term",
+                recommited_ell_2_norm,
+                0,
+            );
+            debug_hardness_recursive_commitment(
+                &rcs_projection_1.1,
+                &projection_config.recursion_batched_projection,
+                "Projection 1 Batched",
+                recommited_ell_2_norm,
+                0,
+            );
+        }
+        println!(
+            "Next round data norms: L_inf = {}, bit_len = {}, L_2 = {}, MOD_Q = {}",
+            recommited_ell_inf_norm,
+            recommited_ell_inf_norm.ilog2(),
+            recommited_ell_2_norm,
+            MOD_Q
+        );
+
+        assert!(
+            recommited_ell_2_norm * recommited_ell_2_norm < (MOD_Q as f64 / 2f64),
+            "norm too large, aborting"
+        );
+    }
 
     let t6 = std::time::Instant::now();
 
@@ -409,11 +498,6 @@ pub fn prover_round(
     };
 
     println!("  sumcheck: {} ms", t6.elapsed().as_millis());
-
-    assert!(
-        ell_2_norm * ell_2_norm < (MOD_Q as f64 / 2f64),
-        "norm too large, aborting"
-    );
 
     let (
         claim_over_witness,

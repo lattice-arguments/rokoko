@@ -1,5 +1,5 @@
-use std::process::Command;
 use std::io;
+use std::process::Command;
 
 use crate::common::config::{DEGREE, MOD_Q};
 
@@ -51,10 +51,9 @@ pub fn estimate_rsis_security(params: &RSISParameters) -> Result<EstimatorResult
     estimate_sis_security(&sis_params)
 }
 
-
 pub fn estimate_sis_security(params: &SISParameters) -> Result<EstimatorResult, io::Error> {
     let script_path = std::env::current_dir()?.join("run_sage_estimator.sh");
-    
+
     let output = Command::new("bash")
         .arg(script_path)
         .arg(params.n.to_string())
@@ -68,18 +67,17 @@ pub fn estimate_sis_security(params: &SISParameters) -> Result<EstimatorResult, 
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(io::Error::new(
             io::ErrorKind::Other,
-            format!("Estimator script failed: {}", stderr)
+            format!("Estimator script failed: {}", stderr),
         ));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let secpar: f64 = stdout
-        .trim()
-        .parse()
-        .map_err(|e| io::Error::new(
+    let secpar: f64 = stdout.trim().parse().map_err(|e| {
+        io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("Failed to parse output: {}", e)
-        ))?;
+            format!("Failed to parse output: {}", e),
+        )
+    })?;
 
     Ok(EstimatorResult { secpar })
 }

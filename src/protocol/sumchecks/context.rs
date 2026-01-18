@@ -453,11 +453,11 @@ pub struct Type3SumcheckContext {
 /// from the sharing of sub-computations across multiple CK rows to minimize prover work.
 pub struct Type4LayerSumcheckContext {
     pub selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
-    pub child_selector_sumcheck: Option<ElephantCell<SelectorEq<RingElement>>>,
+    pub child_selector_sumcheck: Option<Vec<ElephantCell<SelectorEq<RingElement>>>>,
     pub combiner_sumcheck: Option<ElephantCell<LinearSumcheck<RingElement>>>,
     pub combiner_constant_sumcheck: Option<ElephantCell<LinearSumcheck<RingElement>>>,
     pub data_selected_sumcheck: ElephantCell<ProductSumcheck<RingElement>>,
-    pub rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
+    // pub rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
     pub commitment_sumcheck: Option<ElephantCell<LinearSumcheck<RingElement>>>,
     pub ck_sumchecks: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
     pub outputs: Vec<ElephantCell<DiffSumcheck<RingElement>>>,
@@ -575,7 +575,9 @@ fn partial_evaluate_type4(ctx: &mut Type4SumcheckContext, r: &RingElement) {
     for layer in ctx.layers.iter_mut() {
         layer.selector_sumcheck.borrow_mut().partial_evaluate(r);
         if let Some(child_sel) = &layer.child_selector_sumcheck {
-            child_sel.borrow_mut().partial_evaluate(r);
+            for sel in child_sel.iter() {
+                sel.borrow_mut().partial_evaluate(r);
+            }
         }
         if let Some(comb) = &layer.combiner_sumcheck {
             comb.borrow_mut().partial_evaluate(r);

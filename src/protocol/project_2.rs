@@ -39,10 +39,7 @@ pub fn compute_j_batched(
     projection_matrix: &ProjectionMatrix,
     c_1_values: &[u64],
 ) -> Vec<RingElement> {
-    use crate::{
-        common::matrix::new_vec_zero_preallocated,
-        hexl::bindings::{add_mod, sub_mod},
-    };
+    use crate::common::matrix::new_vec_zero_preallocated;
 
     let inner_width_ring =
         projection_matrix.projection_ratio * (projection_matrix.projection_height / DEGREE);
@@ -543,10 +540,7 @@ pub fn verifier_sample_projection_challenges(
     );
 
     let c_1_values = precompute_structured_values_fast(&c_1_layers);
-    let j_batched = compute_j_batched(
-        projection_matrix,
-        &c_1_values
-    );
+    let j_batched = compute_j_batched(projection_matrix, &c_1_values);
 
     BatchedProjectionChallengesSuccinct {
         c_0_layers,

@@ -2,11 +2,21 @@ use std::array;
 
 use crate::{
     common::{
-        arithmetic::precompute_structured_values_fast, config::{DEGREE, MOD_Q, NOF_BATCHES}, hash::HashWrapper, matrix::{
-            HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_field_preallocated, new_vec_zero_preallocated
-        }, norms::{l2_norm, l2_norm_coeffs}, projection_matrix::ProjectionMatrix, ring_arithmetic::{Representation, RingElement}, structured_row::{PreprocessedRow, StructuredRow}
-    }, hexl::bindings::eltwise_mult_mod, protocol::{
-        commitment::{BasicCommitment, commit_basic},
+        arithmetic::precompute_structured_values_fast,
+        config::{DEGREE, MOD_Q, NOF_BATCHES},
+        hash::HashWrapper,
+        matrix::{
+            new_vec_zero_field_preallocated, new_vec_zero_preallocated, HorizontallyAlignedMatrix,
+            VerticallyAlignedMatrix,
+        },
+        norms::{l2_norm, l2_norm_coeffs},
+        projection_matrix::ProjectionMatrix,
+        ring_arithmetic::{Representation, RingElement},
+        structured_row::{PreprocessedRow, StructuredRow},
+    },
+    hexl::bindings::eltwise_mult_mod,
+    protocol::{
+        commitment::{commit_basic, BasicCommitment},
         config::{
             Config, NextRoundCommitment, RoundProof, SimpleConfig, SimpleRoundProof,
             SumcheckConfig, SumcheckRoundProof,
@@ -16,11 +26,14 @@ use crate::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
             open_at,
         },
-        project_2::{BatchedProjectionChallengesSuccinct, batch_projection_n_times, verifier_sample_projection_challenges},
+        project_2::{
+            batch_projection_n_times, verifier_sample_projection_challenges,
+            BatchedProjectionChallengesSuccinct,
+        },
         sumchecks::{
             context_verifier::VerifierSumcheckContext, runner_verifier::sumcheck_verifier,
         },
-    }
+    },
 };
 
 pub fn verifier_round(
@@ -248,14 +261,16 @@ pub fn verifier_round_simple(
         }
     }
 
-    let mut folded_batched_projection_image =
-        VerticallyAlignedMatrix::new_zero_preallocated(
-            round_proof.batched_projection_image.height,
-            1,
-        );
+    let mut folded_batched_projection_image = VerticallyAlignedMatrix::new_zero_preallocated(
+        round_proof.batched_projection_image.height,
+        1,
+    );
     for i in 0..round_proof.batched_projection_image.height {
         for j in 0..commitment.width {
-            temp *= (&round_proof.batched_projection_image[(i, j)], &folding_challenges[j]);
+            temp *= (
+                &round_proof.batched_projection_image[(i, j)],
+                &folding_challenges[j],
+            );
             folded_batched_projection_image[(i, 0)] += &temp;
         }
     }
@@ -280,7 +295,13 @@ pub fn verifier_round_simple(
             let mut expected_ct = 0;
             for j in 0..c_1_values.len() / DEGREE {
                 unsafe {
-                    eltwise_mult_mod(temp.v.as_mut_ptr(), c_1_values.as_ptr().add(DEGREE * j), round_proof.projection_image_ct[(j, k)].v.as_ptr(), DEGREE as u64, MOD_Q);
+                    eltwise_mult_mod(
+                        temp.v.as_mut_ptr(),
+                        c_1_values.as_ptr().add(DEGREE * j),
+                        round_proof.projection_image_ct[(j, k)].v.as_ptr(),
+                        DEGREE as u64,
+                        MOD_Q,
+                    );
                 }
                 for l in 0..DEGREE {
                     // TODO: vectorize
@@ -288,8 +309,9 @@ pub fn verifier_round_simple(
                 }
             }
             expected_ct %= MOD_Q;
-            
-            let ct = round_proof.batched_projection_image[(i, k)].constant_term_from_incomplete_ntt();
+
+            let ct =
+                round_proof.batched_projection_image[(i, k)].constant_term_from_incomplete_ntt();
             assert_eq!(ct, expected_ct);
         }
     }
@@ -317,8 +339,14 @@ pub fn verifier_round_simple(
     let l2_norm_witness = l2_norm_coeffs(&witness_even_odd);
     let l2_norm_proj = l2_norm_coeffs(&round_proof.projection_image_ct.data);
 
-    println!("L2 norm of folded witness in simple verifier: {}", l2_norm_witness);
-    println!("L2 norm of projection image in simple verifier: {}", l2_norm_proj);
+    println!(
+        "L2 norm of folded witness in simple verifier: {}",
+        l2_norm_witness
+    );
+    println!(
+        "L2 norm of projection image in simple verifier: {}",
+        l2_norm_proj
+    );
 
     let elapsed = start.elapsed().as_nanos();
     println!("Simple verifier: {} ns", elapsed);

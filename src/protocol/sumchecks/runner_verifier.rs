@@ -225,7 +225,7 @@ pub fn sumcheck_verifier(
     }
 
     let norm_ct = round_proof.norm_claim.constant_term_from_incomplete_ntt();
-    println!("Norm claim via inner-product: {}", (norm_ct as f64).sqrt() );
+    println!("Norm claim via inner-product: {}", (norm_ct as f64).sqrt());
 
     let mut batched_claim_over_field = {
         let batched_claim = {

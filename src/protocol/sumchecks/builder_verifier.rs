@@ -123,7 +123,19 @@ fn build_type4_verifier_context(
 
     while let Some(next) = current.next.as_deref() {
         let selector_eval = selector_evaluation_from_prefix(&current.prefix, total_vars);
-        let child_selector_eval = selector_evaluation_from_prefix(&next.prefix, total_vars);
+        let child_selectors_evals = (0..current.rank)
+            .map(|i| {
+                selector_evaluation_from_prefix(
+                    &Prefix {
+                        prefix: next.prefix.prefix * current.rank + i,
+                        length: next.prefix.length + current.rank.ilog2() as usize,
+                    },
+                    total_vars,
+                )
+            })
+            .collect::<Vec<_>>();
+        
+        selector_evaluation_from_prefix(&next.prefix, total_vars);
 
         let combiner_eval = load_combiner_evaluation_data(
             next.decomposition_base_log as u64,
@@ -154,28 +166,50 @@ fn build_type4_verifier_context(
             recomposed_combiner.clone(),
             combiner_constant_eval.clone(),
         ));
-        let recomposed_child_eval = ElephantCell::new(ProductSumcheckEvaluation::new(
-            child_selector_eval.clone(),
-            recomposed_child_raw_eval.clone(),
-        ));
-
-        let outputs = ck_evals
-            .iter()
-            .map(|ck_eval| {
-                let ck_with_data = ElephantCell::new(ProductSumcheckEvaluation::new(
-                    ck_eval.clone(),
-                    data_selected_eval.clone(),
-                ));
-                ElephantCell::new(DiffSumcheckEvaluation::new(
-                    ck_with_data,
-                    recomposed_child_eval.clone(),
+        // let recomposed_child_evals  = ElephantCell::new(ProductSumcheckEvaluation::new(
+        //     child_selector_eval.clone(),
+        //     recomposed_child_raw_eval.clone(),
+        // ));
+        let recomposed_child_evals = (0..current.rank)
+            .map(|i| {
+                ElephantCell::new(ProductSumcheckEvaluation::new(
+                    child_selectors_evals[i].clone(),
+                    recomposed_child_raw_eval.clone(),
                 ))
             })
             .collect::<Vec<_>>();
 
+        let outputs = 
+           (0..current.rank)
+            .map(|i| {
+                let ck_with_data = ElephantCell::new(ProductSumcheckEvaluation::new(
+                    ck_evals[i].clone(),
+                    data_selected_eval.clone(),
+                ));
+                ElephantCell::new(DiffSumcheckEvaluation::new(
+                    ck_with_data,
+                    recomposed_child_evals[i].clone(),
+                ))
+            })
+            .collect::<Vec<_>>();
+
+        // ck_evals
+        //     .iter()
+        //     .map(|ck_eval| {
+        //         let ck_with_data = ElephantCell::new(ProductSumcheckEvaluation::new(
+        //             ck_eval.clone(),
+        //             data_selected_eval.clone(),
+        //         ));
+        //         ElephantCell::new(DiffSumcheckEvaluation::new(
+        //             ck_with_data,
+        //             recomposed_child_evals[i].clone(),
+        //         ))
+        //     })
+        //     .collect::<Vec<_>>();
+
         layers.push(Type4LayerVerifierContext {
             selector_evaluation: selector_eval,
-            child_selector_evaluation: child_selector_eval,
+            child_selector_evaluations: child_selectors_evals,
             combiner_evaluation: combiner_eval,
             combiner_constant_evaluation: combiner_constant_eval,
             ck_evaluations: ck_evals,

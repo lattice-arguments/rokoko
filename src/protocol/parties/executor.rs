@@ -7,7 +7,7 @@ use crate::{
         sampling::sample_random_short_vector,
     },
     protocol::{
-        config::{CONFIG, Config, SizeableProof, to_kb},
+        config::{to_kb, Config, SizeableProof, CONFIG},
         crs::CRS,
         open::{claim, evaluation_point_to_structured_row},
         parties::{commiter::commit, prover::prover_round, verifier::verifier_round},

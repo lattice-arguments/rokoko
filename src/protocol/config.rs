@@ -6,7 +6,10 @@ use crate::{
         ring_arithmetic::{QuadraticExtension, RingElement},
     },
     protocol::{
-        commitment::{Prefix, RecursionConfig, RecursiveCommitment, RecursiveCommitmentWithAux}, config_generator::{AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig}, params::P28, sumcheck_utils::polynomial::Polynomial
+        commitment::{Prefix, RecursionConfig, RecursiveCommitment, RecursiveCommitmentWithAux},
+        config_generator::{AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig},
+        params::P28,
+        sumcheck_utils::polynomial::Polynomial,
     },
 };
 
@@ -364,7 +367,10 @@ impl SizeableProof for SumcheckRoundProof {
         }
 
         size += rc_opening_inner_size;
-        println!("RC opening inner size: {} KB, ", to_kb(rc_opening_inner_size));
+        println!(
+            "RC opening inner size: {} KB, ",
+            to_kb(rc_opening_inner_size)
+        );
 
         if let Some(rc_projection_inner) = &self.rc_projection_inner {
             let mut rc_projection_inner_size = 0;
@@ -372,7 +378,10 @@ impl SizeableProof for SumcheckRoundProof {
                 rc_projection_inner_size += el.size_in_bits();
             }
             size += rc_projection_inner_size;
-            println!("RC projection 0 inner size: {} KB, ", to_kb(rc_projection_inner_size));
+            println!(
+                "RC projection 0 inner size: {} KB, ",
+                to_kb(rc_projection_inner_size)
+            );
         }
 
         if let Some((rcs_projection_1_inner_0, rcs_projection_1_inner_1)) =
@@ -398,7 +407,10 @@ impl SizeableProof for SumcheckRoundProof {
                 constant_term_claims_size += el.size_in_bits();
             }
             size += constant_term_claims_size;
-            println!("Constant term claims size: {} KB, ", to_kb(constant_term_claims_size));
+            println!(
+                "Constant term claims size: {} KB, ",
+                to_kb(constant_term_claims_size)
+            );
         }
 
         let next_round_size = if let Some(next_round_commitment) = &self.next_round_commitment {
@@ -409,7 +421,7 @@ impl SizeableProof for SumcheckRoundProof {
                         rc_size += el.size_in_bits();
                     }
                     rc_size
-                },
+                }
                 NextRoundCommitment::Simple(mat) => {
                     let mut mat_size = 0;
                     for el in &mat.data {
@@ -422,7 +434,10 @@ impl SizeableProof for SumcheckRoundProof {
             0
         };
         size += next_round_size;
-        println!("Next round commitment size: {} KB, ", to_kb(next_round_size));
+        println!(
+            "Next round commitment size: {} KB, ",
+            to_kb(next_round_size)
+        );
         println!("Total sumcheck round proof size: {} KB \n\n\n", to_kb(size));
 
         size + if let Some(next) = &self.next {
@@ -456,14 +471,20 @@ impl SizeableProof for SimpleRoundProof {
             projection_image_ct_size += el.size_in_bits();
         }
         size += projection_image_ct_size;
-        println!("Projection image ct size: {} KB, ", to_kb(projection_image_ct_size));
+        println!(
+            "Projection image ct size: {} KB, ",
+            to_kb(projection_image_ct_size)
+        );
 
         let mut batched_projection_image_size = 0;
         for el in &self.batched_projection_image.data {
             batched_projection_image_size += el.size_in_bits();
         }
         size += batched_projection_image_size;
-        println!("Batched projection image size: {} KB, ", to_kb(batched_projection_image_size));
+        println!(
+            "Batched projection image size: {} KB, ",
+            to_kb(batched_projection_image_size)
+        );
 
         let mut opening_rhs_size = 0;
         for el in &self.opening_rhs.data {

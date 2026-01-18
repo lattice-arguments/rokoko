@@ -27,7 +27,7 @@ impl RingElement {
 pub fn decompose(input: &Vec<RingElement>, base_log: u64, radix: usize) -> Vec<RingElement> {
     let mut decomposed = new_vec_zero_preallocated(input.len() * radix);
 
-    if base_log == 0 {
+    if base_log == 1 {
         decomposed.clone_from_slice(input);
         return decomposed;
     }
@@ -55,6 +55,23 @@ pub fn decompose(input: &Vec<RingElement>, base_log: u64, radix: usize) -> Vec<R
             );
             decomposed[index * radix + i] -= &small_shift;
             decomposed[index * radix + i].to_representation(Representation::IncompleteNTT);
+        }
+        #[cfg(feature = "debug-hardness")]
+        {
+            // check that recomposition works
+            let mut recomposed = RingElement::all(0, Representation::IncompleteNTT);
+            for j in 0..radix {
+                let mut term = decomposed[index * radix + j].clone();
+                let shift = RingElement::constant(
+                    1u64 << (j as u64 * base_log),
+                    Representation::IncompleteNTT,
+                );
+                term *= &shift;
+                recomposed += &term;
+            }
+            let offset = get_composer_offset(base_log, radix);
+            recomposed -= &RingElement::all(offset, Representation::IncompleteNTT);
+            assert_eq!(&recomposed, el, "Recomposition failed in decomposition. Perhaps base_log and radix are not chosen properly?");
         }
     }
 

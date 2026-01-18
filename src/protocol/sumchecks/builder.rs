@@ -111,7 +111,21 @@ fn build_type4_sumcheck_context(
     let mut current = config;
     while let Some(next) = current.next.as_deref() {
         let selector_sumcheck = sumcheck_from_prefix(&current.prefix, total_vars);
-        let child_selector_sumcheck = sumcheck_from_prefix(&next.prefix, total_vars);
+        // let child_selector_sumcheck = sumcheck_from_prefix(&next.prefix, total_vars);
+
+        let child_selector_sumchecks = (0..current.rank)
+            .into_iter()
+            .map(|i| {
+                sumcheck_from_prefix(
+                    &Prefix {
+                        prefix: next.prefix.prefix * current.rank + i,
+                        length: next.prefix.length + current.rank.ilog2() as usize,
+                    },
+                    total_vars,
+                )
+            })
+            .collect::<Vec<_>>();
+
 
         let data_len = 1 << (total_vars - current.prefix.length);
 
@@ -134,35 +148,59 @@ fn build_type4_sumcheck_context(
             combiner_constant_sumcheck.clone(),
         ));
 
-        let recomposed_child_sumcheck = ElephantCell::new(ProductSumcheck::new(
-            child_selector_sumcheck.clone(),
-            recomposed_child_raw,
-        ));
+        // let recomposed_child_sumcheck = ElephantCell::new(ProductSumcheck::new(
+        //     child_selector_sumcheck.clone(),
+        //     recomposed_child_raw,
+        // ));
+
+        let recomposed_child_sumchecks = (0..current.rank)
+            .into_iter()
+            .map(|i| {
+                ElephantCell::new(ProductSumcheck::new(
+                    child_selector_sumchecks[i].clone(),
+                    recomposed_child_raw.clone(),
+                ))
+            })
+            .collect::<Vec<_>>();
+
 
         let mut ck_sumchecks = Vec::with_capacity(current.rank);
         for i in 0..current.rank {
             ck_sumchecks.push(ck_sumcheck(crs, total_vars, data_len, i, 0));
         }
 
-        let outputs = ck_sumchecks
-            .iter()
-            .map(|ck_row| {
+        // let outputs = ck_sumchecks
+        //     .iter()
+        //     .map(|ck_row| {
+        //         let lhs = ElephantCell::new(ProductSumcheck::new(
+        //             ck_row.clone(),
+        //             data_selected_sumcheck.clone(),
+        //         ));
+        //         let rhs = recomposed_child_sumcheck.clone();
+        //         ElephantCell::new(DiffSumcheck::new(lhs, rhs))
+        //     })
+        //     .collect::<Vec<_>>();
+
+        let outputs = 
+            (0..current.rank)
+            .map(|i| {
                 let lhs = ElephantCell::new(ProductSumcheck::new(
-                    ck_row.clone(),
+                    ck_sumchecks[i].clone(),
                     data_selected_sumcheck.clone(),
                 ));
-                let rhs = recomposed_child_sumcheck.clone();
+
+                let rhs = recomposed_child_sumchecks[i].clone();
                 ElephantCell::new(DiffSumcheck::new(lhs, rhs))
             })
             .collect::<Vec<_>>();
-
+        
         layers.push(Type4LayerSumcheckContext {
             selector_sumcheck,
-            child_selector_sumcheck: Some(child_selector_sumcheck),
+            child_selector_sumcheck: Some(child_selector_sumchecks),
             combiner_sumcheck: Some(combiner_sumcheck),
             combiner_constant_sumcheck: Some(combiner_constant_sumcheck),
             data_selected_sumcheck,
-            rhs_sumcheck: recomposed_child_sumcheck,
+            // rhs_sumcheck: recomposed_child_sumcheck,
             commitment_sumcheck: None,
             ck_sumchecks,
             outputs,
