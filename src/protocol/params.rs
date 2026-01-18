@@ -14,8 +14,8 @@ pub static P28: LazyLock<Config> = LazyLock::new(|| {
         basic_commitment_rank: 4,
         nof_openings: 1,
         commitment_recursion: AuxRecursionConfig {
-            decomposition_base_log: 15,
-            decomposition_chunks: 4,
+            decomposition_base_log: 7,
+            decomposition_chunks: 8,
             rank: 2,
             next: Some(Box::new(AuxRecursionConfig {
                 decomposition_base_log: 7,
@@ -25,8 +25,8 @@ pub static P28: LazyLock<Config> = LazyLock::new(|| {
             })),
         },
         opening_recursion: AuxRecursionConfig {
-            decomposition_base_log: 15,
-            decomposition_chunks: 4,
+            decomposition_base_log: 7,
+            decomposition_chunks: 8,
             rank: 2,
             next: None,
         },
@@ -38,7 +38,7 @@ pub static P28: LazyLock<Config> = LazyLock::new(|| {
         }),
 
         witness_decomposition_chunks: 2,
-        witness_decomposition_base_log: 10,
+        witness_decomposition_base_log: 8,
 
         next: None,
     }
