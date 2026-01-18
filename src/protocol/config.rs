@@ -36,7 +36,7 @@ pub enum Projection {
     Type1(Type1ProjectionConfig),
 }
 
-pub static REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| {
+pub static SOMEWHAT_REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| {
     AuxSumcheckConfig {
         witness_height: 2usize.pow(15),   // 2^15
         witness_width: 2usize.pow(6),     // 2^6
