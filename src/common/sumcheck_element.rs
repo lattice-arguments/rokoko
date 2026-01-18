@@ -35,7 +35,7 @@ pub trait SumcheckElement:
 
 impl SumcheckElement for RingElement {
     fn zero() -> Self {
-        RingElement::zero(Representation::IncompleteNTT)
+        ZERO.clone()
     }
 
     fn zero_ref() -> &'static Self {
@@ -43,7 +43,7 @@ impl SumcheckElement for RingElement {
     }
 
     fn one() -> Self {
-        RingElement::one(Representation::IncompleteNTT)
+        ONE.clone()
     }
 
     fn one_ref() -> &'static Self {

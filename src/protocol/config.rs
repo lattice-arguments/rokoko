@@ -218,7 +218,7 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
     .generate_config()
 });
 
-pub static CONFIG: LazyLock<Config> = LazyLock::new(|| SOMEWHAT_REAL_CONFIG.clone());
+pub static CONFIG: LazyLock<Config> = LazyLock::new(|| P28.clone());
 
 #[derive(Clone)]
 pub enum Config {

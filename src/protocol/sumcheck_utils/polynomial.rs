@@ -90,7 +90,8 @@ pub fn mul_poly_into<E: SumcheckElement>(
         return;
     }
 
-    if poly_0.num_coefficients == 2 && poly_1.num_coefficients == 3 {
+    // we handle the case of one linear and one quadratic polynomial separately for efficiency
+    if poly_1.num_coefficients == 3 && poly_0.num_coefficients == 2 {
         // First is linear, second is quadratic: (a0 + a1*x) * (b0 + b1*x + b2*x^2) = a0*b0 + (a0*b1 + a1*b0)*x + (a0*b2 + a1*b1)*x^2 + a1*b2*x^3
 
         let (first, rest) = result.coefficients.split_at_mut(1);
