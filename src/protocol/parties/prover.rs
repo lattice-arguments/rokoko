@@ -11,7 +11,10 @@ use crate::{
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
-        commitment::{commit_basic, recursive_commit, BasicCommitment, CommitmentWithAux, RecursiveCommitmentWithAux},
+        commitment::{
+            commit_basic, recursive_commit, BasicCommitment, CommitmentWithAux,
+            RecursiveCommitmentWithAux,
+        },
         config::{
             paste_by_prefix, paste_recursive_commitment, Config, ConfigBase, NextRoundCommitment,
             Projection, RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig,
@@ -110,7 +113,10 @@ pub fn prover_round(
     let rc_projection_image = match &config.projection_recursion {
         Projection::Type0(proj_config) => {
             let t2 = std::time::Instant::now();
-            let witness_i16 = &commitment_with_aux.witness_i16.as_ref().unwrap();
+            let witness_i16 = match &commitment_with_aux.witness_i16 {
+                Some(witness_i16) => witness_i16,
+                None => &prepare_i16_witness(witness)
+            };
             let projection_image = project(witness_i16, &projection_matrix);
             println!("  project: {} ms", t2.elapsed().as_millis());
 
@@ -227,7 +233,7 @@ pub fn prover_round(
     );
 
     #[cfg(feature = "debug-hardness")]
-    if get_and_increment_round_id() >= DEBUG_HARDNESS_FROM_ROUND{
+    if get_and_increment_round_id() >= DEBUG_HARDNESS_FROM_ROUND {
         use crate::protocol::commitment::RecursionConfig;
 
         println!("=== Debug Hardness Check ===");
@@ -270,8 +276,8 @@ pub fn prover_round(
         );
 
         // we subtract the most inner commitment data norm from the recommited norm to get the rest, including the witness
-        let recommited_ell_2_norm_rest = (recommited_ell_2_norm.powf(2.0)
-            - most_inner_commitment_data_ell_2.powf(2.0)).sqrt();
+        let recommited_ell_2_norm_rest =
+            (recommited_ell_2_norm.powf(2.0) - most_inner_commitment_data_ell_2.powf(2.0)).sqrt();
 
         fn debug_hardness_recursive_commitment(
             rc: &RecursiveCommitmentWithAux,
@@ -429,8 +435,7 @@ pub fn prover_round(
         });
         println!(
             "Basic commitment estimated security for extraction: {:?} with rank {}",
-            basic_commitment_security,
-            config.basic_commitment_rank
+            basic_commitment_security, config.basic_commitment_rank
         );
     }
 
@@ -507,10 +512,9 @@ pub fn prover_round(
                         .clone();
 
                     let next_round_commitment_with_aux =
-                        CommitmentWithAux {
-                            rc_commitment_with_aux: next_round_rc_commitment_with_aux,
-                            witness_i16: None
-                        };
+                        CommitmentWithAux::from_rc_commitment_with_aux(
+                            next_round_rc_commitment_with_aux,
+                        );
 
                     let sumcheck_output = sumcheck(
                         &config,

@@ -1,5 +1,7 @@
 use crate::common::{
-    arithmetic::{centered_coeffs_u64_to_i64_inplace, pack_i64_to_i16_deg16, project_one_row_i16_to_u64},
+    arithmetic::{
+        centered_coeffs_u64_to_i64_inplace, pack_i64_to_i16_deg16, project_one_row_i16_to_u64,
+    },
     config::{DEGREE, MOD_Q},
     matrix::VerticallyAlignedMatrix,
     projection_matrix::ProjectionMatrix,
@@ -10,9 +12,8 @@ pub type Signed16RingElement = [i16; DEGREE];
 pub type Signed64RingElement = [i64; DEGREE];
 
 pub fn prepare_i16_witness(
-    witness: &VerticallyAlignedMatrix<RingElement>
+    witness: &VerticallyAlignedMatrix<RingElement>,
 ) -> VerticallyAlignedMatrix<Signed16RingElement> {
-
     let mut witness_i16: Vec<Signed16RingElement> = vec![[0i16; DEGREE]; witness.data.len()];
 
     let mut ring_el = [0 as i64; DEGREE];
@@ -27,10 +28,10 @@ pub fn prepare_i16_witness(
     }
 
     VerticallyAlignedMatrix::<Signed16RingElement> {
-            width: witness.width,
-            height: witness.height,
-            data: witness_i16,
-            used_cols: witness.width
+        width: witness.width,
+        height: witness.height,
+        data: witness_i16,
+        used_cols: witness.width,
     }
 }
 
@@ -57,8 +58,12 @@ pub fn project(
         for rows_chunk in 0..projection_image.height / projection_matrix.projection_height {
             let subwitness_i16 = witness_16.col_slice(
                 col,
-                rows_chunk * projection_matrix.projection_ratio * projection_matrix.projection_height,
-                (rows_chunk + 1) * projection_matrix.projection_ratio * projection_matrix.projection_height,
+                rows_chunk
+                    * projection_matrix.projection_ratio
+                    * projection_matrix.projection_height,
+                (rows_chunk + 1)
+                    * projection_matrix.projection_ratio
+                    * projection_matrix.projection_height,
             );
 
             let mut projection_subimage = projection_image.col_slice_mut(

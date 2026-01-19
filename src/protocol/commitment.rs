@@ -8,7 +8,11 @@ use crate::{
         ring_arithmetic::{Representation, RingElement},
         structured_row::PreprocessedRow,
     },
-    protocol::{commitment, crs::{CK, CRS}, project::Signed16RingElement},
+    protocol::{
+        commitment,
+        crs::{CK, CRS},
+        project::{prepare_i16_witness, Signed16RingElement},
+    },
 };
 
 pub type BasicCommitment = HorizontallyAlignedMatrix<RingElement>;
@@ -16,7 +20,16 @@ pub type BasicCommitment = HorizontallyAlignedMatrix<RingElement>;
 // precompute auxiliary witness stored as i16 faster type 0 projections
 pub struct CommitmentWithAux {
     pub rc_commitment_with_aux: RecursiveCommitmentWithAux,
-    pub witness_i16: Option<VerticallyAlignedMatrix<Signed16RingElement>>
+    pub witness_i16: Option<VerticallyAlignedMatrix<Signed16RingElement>>,
+}
+
+impl CommitmentWithAux {
+    pub fn from_rc_commitment_with_aux(rc_commitment_with_aux: RecursiveCommitmentWithAux) -> Self {
+        CommitmentWithAux {
+            rc_commitment_with_aux,
+            witness_i16: None,
+        }
+    }
 }
 
 pub fn commit_basic_internal(

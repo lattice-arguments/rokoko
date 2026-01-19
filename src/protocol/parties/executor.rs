@@ -7,11 +7,11 @@ use crate::{
         sampling::sample_random_short_vector,
     },
     protocol::{
-        project::prepare_i16_witness,
         config::{to_kb, Config, SizeableProof, CONFIG},
         crs::CRS,
         open::{claim, evaluation_point_to_structured_row},
         parties::{commiter::commit, prover::prover_round, verifier::verifier_round},
+        project::prepare_i16_witness,
         sumcheck::init_sumcheck,
         sumchecks::builder_verifier::init_verifier,
     },
@@ -61,7 +61,6 @@ pub fn execute() {
             .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 2))
             .collect::<Vec<RingElement>>(),
     )];
-
 
     let start = std::time::Instant::now();
 

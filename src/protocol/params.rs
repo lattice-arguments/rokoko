@@ -172,8 +172,6 @@ pub static P28_4: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConf
     next: Some(Box::new(AuxConfig::Sumcheck(P28_5.clone()))),
 });
 
-
-
 // pub static P28_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig{
 //     witness_height: 2usize.pow(9),
 //     witness_width: 2usize.pow(3),
@@ -256,7 +254,6 @@ pub static P28_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConf
 
     next: Some(Box::new(AuxConfig::Simple(P28_LAST.clone()))),
 });
-
 
 pub static P28_LAST: LazyLock<SimpleConfig> = LazyLock::new(|| SimpleConfig {
     witness_height: 2usize.pow(7),

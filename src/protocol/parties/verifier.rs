@@ -229,9 +229,11 @@ pub fn verifier_round_simple(
     }
 
     for i in 0..config.basic_commitment_rank {
-        assert_eq!(commitment_of_folded_witness[(i, 0)], folded_commitment[(i, 0)]);
+        assert_eq!(
+            commitment_of_folded_witness[(i, 0)],
+            folded_commitment[(i, 0)]
+        );
     }
-
 
     let opening_to_folded_witness = open_at(
         &round_proof.folded_witness,

@@ -1,9 +1,12 @@
 use crate::{
     common::{matrix::VerticallyAlignedMatrix, ring_arithmetic::RingElement},
     protocol::{
-        commitment::{commit_basic, recursive_commit, CommitmentWithAux, RecursiveCommitmentWithAux},
+        commitment::{
+            commit_basic, recursive_commit, CommitmentWithAux, RecursiveCommitmentWithAux,
+        },
         config::{ConfigBase, SumcheckConfig},
-        crs::CRS, project::{prepare_i16_witness, Signed16RingElement},
+        crs::CRS,
+        project::{prepare_i16_witness, Signed16RingElement},
     },
 };
 
@@ -20,7 +23,10 @@ pub fn commit(
     let rc_commitment = rc_commitment_with_aux.most_inner_commitment().clone();
     let witness_i16 = prepare_i16_witness(witness);
 
-    let commitment_with_aux = CommitmentWithAux { rc_commitment_with_aux, witness_i16: Some(witness_i16) };
+    let commitment_with_aux = CommitmentWithAux {
+        rc_commitment_with_aux,
+        witness_i16: Some(witness_i16),
+    };
 
     (commitment_with_aux, rc_commitment)
 }
