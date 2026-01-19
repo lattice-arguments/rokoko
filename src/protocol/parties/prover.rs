@@ -84,7 +84,7 @@ pub fn prover_round(
     with_claims: bool,
     hash_wrapper: Option<HashWrapper>,
 ) -> (SumcheckRoundProof, Option<Vec<RingElement>>) {
-    let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new); // TODO: there should be one hash wrapper per prover
+    let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     let rc_commitment = &commitment_with_aux.rc_commitment_with_aux;
 
     let start = std::time::Instant::now();
@@ -118,7 +118,7 @@ pub fn prover_round(
             let t2 = std::time::Instant::now();
             let witness_i16 = match &commitment_with_aux.witness_i16 {
                 Some(witness_i16) => witness_i16,
-                None => &prepare_i16_witness(witness)
+                None => &prepare_i16_witness(witness),
             };
             let projection_image = project(witness_i16, &projection_matrix);
             println!("  project: {} ms", t2.elapsed().as_millis());
@@ -482,8 +482,6 @@ pub fn prover_round(
             (None, sumcheck_output, None) // this should never happen, but we let it be for test purposes
         }
         Some(next_config) => {
-            println!("Starting next round prover...");
-
             match &next_config.as_ref() {
                 Config::Sumcheck(next_sumcheck_config) => {
                     // let next_round_rc_commitment_with_aux =
@@ -503,7 +501,9 @@ pub fn prover_round(
                         &next_sumcheck_config.commitment_recursion,
                         &basic_commitment.data,
                     );
-                    // TODO: we should update FS here!
+                    hash_wrapper.update_with_ring_element_slice(
+                        &next_round_rc_commitment_with_aux.most_inner_commitment(),
+                    );
 
                     println!(
                         "Next round commitment created of length {}.",
@@ -563,7 +563,7 @@ pub fn prover_round(
                                 ],
                                 sumcheck_context.next.as_mut().unwrap(),
                                 false,
-                                Some(hash_wrapper)
+                                Some(hash_wrapper),
                             )
                             .0,
                         )),
@@ -582,7 +582,7 @@ pub fn prover_round(
                         next_simple_config.basic_commitment_rank,
                     );
 
-                    // TODO: we should update FS here!
+                    hash_wrapper.update_with_ring_element_slice(&basic_commitment.data);
 
                     let sumcheck_output = sumcheck(
                         &config,
@@ -721,17 +721,12 @@ pub fn prover_round_simple(
     #[cfg(feature = "debug-hardness")]
     {
         let folded_witness_l2_norm = norms::l2_norm(&folded_witness.data);
-        
-        println!(
-            "Folded witness norm: {}",
-            folded_witness_l2_norm
-        );
+
+        println!("Folded witness norm: {}", folded_witness_l2_norm);
 
         let projection_l2_norm = norms::l2_norm_coeffs(&projection_image_ct.data);
 
-        let extracted_witness_bound = folded_witness_l2_norm
-            * DEGREE as f64
-            * 8.0; // factor 4 for difference in numerator and denominator in extraction and 2 for ISIS to SIS
+        let extracted_witness_bound = folded_witness_l2_norm * DEGREE as f64 * 8.0; // factor 4 for difference in numerator and denominator in extraction and 2 for ISIS to SIS
 
         let argued_witness_bound = projection_l2_norm / 5.477f64; // sqrt(30) as in the paper
         let worse_bound = if extracted_witness_bound > argued_witness_bound {

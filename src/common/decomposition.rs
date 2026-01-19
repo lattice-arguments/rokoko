@@ -101,7 +101,7 @@ pub fn get_composer_offset(base_log: u64, radix: usize) -> u64 {
 pub fn get_decomposed_offset_scaled(base_log: u64, radix: usize) -> u64 {
     let mut offset = get_composer_offset(base_log, radix);
     unsafe {
-        // TODO: cache the inverses of powers of two if used online
+        // no need to cache as this is only used in preprocessing
         let inv_radix = inv_mod(radix as u64, MOD_Q);
         multiply_mod(offset, inv_radix, MOD_Q)
     }

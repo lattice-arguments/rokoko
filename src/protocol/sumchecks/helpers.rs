@@ -391,7 +391,6 @@ pub(crate) fn split_projection_flatter(
 /// The result is then used in the LS-variable linear sumcheck component, which gets
 /// multiplied with the elder-variable component to form the complete projection
 /// coefficient sumcheck.
-/// // TODO: this can be computed fast as projection_flatter_1: &PreprocessedRow. is over fields
 pub fn projection_flatter_1_times_matrix(
     projection_matrix: &ProjectionMatrix,
     projection_flatter_1: &PreprocessedRow,

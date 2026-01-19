@@ -139,7 +139,6 @@ pub fn verifier_round(
                         NextRoundCommitment::Simple(basic_commitment) => basic_commitment,
                         _ => panic!("Expected simple commitment for next round."),
                     };
-                    // TODO: implement simple next round verifier
                     verifier_round_simple(
                         &crs,
                         next_simple_config,
@@ -165,7 +164,7 @@ pub fn verifier_round(
                             round_proof.claim_over_witness.clone(),
                             round_proof.claim_over_witness_conjugate.conjugate(),
                         ],
-                        Some(hash_wrapper_verifier)
+                        Some(hash_wrapper_verifier),
                     );
                 }
             }

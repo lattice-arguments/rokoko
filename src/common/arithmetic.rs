@@ -276,7 +276,6 @@ pub fn precompute_structured_values(layers: &[u64]) -> Vec<u64> {
 // Vectorized version using eltwise_mult_mod for better performance
 pub fn precompute_structured_values_fast(layers: &[u64]) -> Vec<u64> {
     let size = 1 << layers.len();
-    // TODO: can we use preallocated pool here? Does it make sense?
     let mut values = vec![1u64; size];
 
     for (layer_idx, &layer) in layers.iter().rev().enumerate() {

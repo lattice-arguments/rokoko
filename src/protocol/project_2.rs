@@ -402,7 +402,6 @@ fn batch_projection_into(
     // let c_1_layers: Vec<u64> = (0..PROJECTION_HEIGHT.ilog2())
     //     .map(|_| hash_wrapper.sample_u64_mod_q())
     //     .collect();
-    // TODO: fix randomness consumption
     let (c_0_layers, c_1_layers, c_2_layers) = sample_layers(
         projection_matrix,
         if is_simple_config { 1 } else { witness.width },

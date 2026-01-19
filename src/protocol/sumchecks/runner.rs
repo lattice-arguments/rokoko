@@ -199,7 +199,6 @@ pub fn sumcheck(
             orig.conjugate_into(conj);
         });
 
-    // let norm_claim = RingElement::zero(Representation::IncompleteNTT);
     let norm_claim = inner_product(&combined_witness, &conjugated_combined_witness);
 
     hash_wrapper.update_with_ring_element(&norm_claim);
@@ -241,7 +240,6 @@ pub fn sumcheck(
         .borrow_mut()
         .load_challenges_from(&combination);
 
-    // TODO: can we avoid cloning?
     sumcheck_context
         .field_combiner
         .borrow_mut()

@@ -14,7 +14,7 @@ use crate::{
         sumcheck_element::SumcheckElement,
     },
     protocol::{
-        config::{Config, Projection, SumcheckConfig, SumcheckRoundProof},
+        config::{Config, NextRoundCommitment, Projection, SumcheckConfig, SumcheckRoundProof},
         open::evaluation_point_to_structured_row,
         project_2::{
             verifier_sample_projection_challenges, BatchedProjectionChallenges,
@@ -178,6 +178,29 @@ pub fn sumcheck_verifier(
 
     let projection_height_flat = config.witness_height / config.projection_ratio;
 
+    // hash_wrapper.update_with_ring_element_slice(round_proof.next_round_commitment.as_ref().unwrap());
+
+    // if Some(next_round_commitment_most_inner) !=
+    //     round_proof
+    //         .next_round_commitment
+    //         .as_ref()
+    //         .map(|nrc| nrc.most_inner_commitment())
+
+    // {
+    //     panic!("Next round most inner commitment does not match the last commitment in rc_commitment!");
+    // }
+
+    if let Some(next_round_commitment) = round_proof.next_round_commitment.as_ref() {
+        match &next_round_commitment {
+            NextRoundCommitment::Recursive(recursive) => {
+                hash_wrapper.update_with_ring_element_slice(&recursive);
+            }
+            NextRoundCommitment::Simple(basic_commitment) => {
+                hash_wrapper.update_with_ring_element_slice(&basic_commitment.data);
+            }
+        }
+    }
+
     let projection_matrix_flatter_structured = match config.projection_recursion {
         Projection::Type0(_) => {
             let mut projection_matrix_flatter_base =
@@ -291,8 +314,8 @@ pub fn sumcheck_verifier(
         evaluation_points_inner,
         evaluation_points_outer,
         &projection_matrix,
-        &projection_matrix_flatter_structured, // assume type0 projection TODO: make optional
-        &challenges_3_1,                       // for 1 projection type only
+        &projection_matrix_flatter_structured,
+        &challenges_3_1, // for 1 projection type only
         &combination,
         &qe,
     );
