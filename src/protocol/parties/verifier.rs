@@ -1,3 +1,4 @@
+use core::hash;
 use std::array;
 
 use crate::{
@@ -45,9 +46,10 @@ pub fn verifier_round(
     evaluation_points_outer: &Vec<StructuredRow>,
     claims: &Vec<RingElement>,
     sumcheck_context_verifier: &mut VerifierSumcheckContext,
+    hash_wrapper_verifier: Option<HashWrapper>,
 ) {
     let start = std::time::Instant::now();
-    let mut hash_wrapper_verifier = HashWrapper::new();
+    let mut hash_wrapper_verifier = hash_wrapper_verifier.unwrap_or_else(HashWrapper::new);
 
     let evaluation_points = sumcheck_verifier(
         &config,
@@ -117,6 +119,7 @@ pub fn verifier_round(
                             round_proof.claim_over_witness_conjugate.conjugate(),
                         ],
                         sumcheck_context_verifier.next.as_mut().unwrap(),
+                        Some(hash_wrapper_verifier),
                     );
                 }
                 RoundProof::Simple(next_simple_round_proof) => {
@@ -162,6 +165,7 @@ pub fn verifier_round(
                             round_proof.claim_over_witness.clone(),
                             round_proof.claim_over_witness_conjugate.conjugate(),
                         ],
+                        Some(hash_wrapper_verifier)
                     );
                 }
             }
@@ -178,9 +182,10 @@ pub fn verifier_round_simple(
     evaluation_points_inner: &Vec<StructuredRow>,
     evaluation_points_outer: &Vec<StructuredRow>,
     claims: &Vec<RingElement>,
+    hash_wrapper: Option<HashWrapper>,
 ) {
     let start = std::time::Instant::now();
-    let mut hash_wrapper = HashWrapper::new();
+    let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
     hash_wrapper.update_with_ring_element_slice(&round_proof.opening_rhs.data);
 

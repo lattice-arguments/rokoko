@@ -1,3 +1,5 @@
+use core::hash;
+
 use crate::{
     common::{
         config::{DEGREE, MOD_Q},
@@ -80,8 +82,9 @@ pub fn prover_round(
     evaluation_points_outer: &Vec<StructuredRow>,
     sumcheck_context: &mut SumcheckContext,
     with_claims: bool,
+    hash_wrapper: Option<HashWrapper>,
 ) -> (SumcheckRoundProof, Option<Vec<RingElement>>) {
-    let mut hash_wrapper = HashWrapper::new(); // TODO: there should be one hash wrapper per prover
+    let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new); // TODO: there should be one hash wrapper per prover
     let rc_commitment = &commitment_with_aux.rc_commitment_with_aux;
 
     let start = std::time::Instant::now();
@@ -560,6 +563,7 @@ pub fn prover_round(
                                 ],
                                 sumcheck_context.next.as_mut().unwrap(),
                                 false,
+                                Some(hash_wrapper)
                             )
                             .0,
                         )),
@@ -620,6 +624,7 @@ pub fn prover_round(
                                     &new_evaluation_points_outer.to_vec(),
                                 ),
                             ],
+                            Some(hash_wrapper),
                         ))),
                         sumcheck_output,
                         Some(NextRoundCommitment::Simple(basic_commitment)),
@@ -674,8 +679,9 @@ pub fn prover_round_simple(
     witness: &VerticallyAlignedMatrix<RingElement>,
     evaluation_points_inner: &Vec<StructuredRow>,
     evaluation_points_outer: &Vec<StructuredRow>,
+    hash_wrapper: Option<HashWrapper>,
 ) -> SimpleRoundProof {
-    let mut hash_wrapper = HashWrapper::new();
+    let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
 
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
 
@@ -711,6 +717,52 @@ pub fn prover_round_simple(
     hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut fold_challenge);
 
     let folded_witness = fold(&witness, &fold_challenge);
+
+    #[cfg(feature = "debug-hardness")]
+    {
+        let folded_witness_l2_norm = norms::l2_norm(&folded_witness.data);
+        
+        println!(
+            "Folded witness norm: {}",
+            folded_witness_l2_norm
+        );
+
+        let projection_l2_norm = norms::l2_norm_coeffs(&projection_image_ct.data);
+
+        let extracted_witness_bound = folded_witness_l2_norm
+            * DEGREE as f64
+            * 8.0; // factor 4 for difference in numerator and denominator in extraction and 2 for ISIS to SIS
+
+        let argued_witness_bound = projection_l2_norm / 5.477f64; // sqrt(30) as in the paper
+        let worse_bound = if extracted_witness_bound > argued_witness_bound {
+            println!(
+                "Using extracted witness bound {} for security estimation.",
+                extracted_witness_bound
+            );
+            extracted_witness_bound
+        } else {
+            println!(
+                "Using projection-argued witness bound {} for security estimation.",
+                argued_witness_bound
+            );
+            argued_witness_bound
+        };
+
+        assert!(
+            argued_witness_bound * argued_witness_bound < (MOD_Q as f64 / 2f64),
+            "Witness bound too large for inner-product norm extraction!"
+        );
+
+        let basic_commitment_security = estimate_rsis_security(&RSISParameters {
+            m: config.witness_height as u64,
+            n: config.basic_commitment_rank as u64,
+            length_bound: worse_bound.ceil() as u64,
+        });
+        println!(
+            "Basic commitment estimated security for extraction: {:?} with rank {}",
+            basic_commitment_security, config.basic_commitment_rank
+        );
+    }
 
     SimpleRoundProof {
         folded_witness,

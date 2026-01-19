@@ -75,6 +75,7 @@ pub fn execute() {
         &evaluation_points_outer,
         &mut sumcheck_context,
         true,
+        None,
     );
     println!("==== PROVER DONE ===");
     let prover_duration = start.elapsed().as_nanos();
@@ -96,6 +97,7 @@ pub fn execute() {
         &evaluation_points_outer,
         &claims.unwrap(),
         &mut sumcheck_context_verifier,
+        None,
     );
     println!("==== VERIFIER DONE ===");
     let verifier_duration = start.elapsed().as_nanos();

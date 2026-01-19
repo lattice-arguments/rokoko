@@ -260,6 +260,6 @@ pub static P28_LAST: LazyLock<SimpleConfig> = LazyLock::new(|| SimpleConfig {
     witness_width: 2usize.pow(3),
     projection_ratio: 2usize.pow(6),
     projection_height: 2usize.pow(8),
-    basic_commitment_rank: 6,
+    basic_commitment_rank: 7,
     projection_nof_batches: 2,
 });
