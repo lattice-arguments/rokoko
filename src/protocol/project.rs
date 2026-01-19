@@ -61,25 +61,21 @@ pub fn project(
                 (rows_chunk + 1) * projection_matrix.projection_ratio * projection_matrix.projection_height,
             );
 
-            let projection_subimage = projection_image.col_slice_mut(
+            let mut projection_subimage = projection_image.col_slice_mut(
                 col,
                 rows_chunk * projection_matrix.projection_height,
                 (rows_chunk + 1) * projection_matrix.projection_height,
             );
 
             for inner_row in 0..projection_matrix.projection_height {
-                let mut out_u64 = [0u64; DEGREE];
-
                 unsafe {
                     project_one_row_i16_to_u64::<DEGREE>(
                         subwitness_i16,
                         projection_matrix,
                         inner_row,
-                        &mut out_u64,
+                        &mut projection_subimage[inner_row].v,
                     );
                 }
-
-                projection_subimage[inner_row].v.copy_from_slice(&out_u64);
             }
         }
     }
