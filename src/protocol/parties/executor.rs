@@ -7,6 +7,7 @@ use crate::{
         sampling::sample_random_short_vector,
     },
     protocol::{
+        project::prepare_i16_witness,
         config::{to_kb, Config, SizeableProof, CONFIG},
         crs::CRS,
         open::{claim, evaluation_point_to_structured_row},
@@ -34,7 +35,7 @@ pub fn execute() {
     let mut sumcheck_context_verifier = init_verifier(&crs, &config);
     println!("Sumcheck contexts initialized.");
 
-    let witness = VerticallyAlignedMatrix {
+    let mut witness = VerticallyAlignedMatrix {
         height: config.witness_height,
         width: config.witness_width,
         data: sample_random_short_vector(
@@ -61,6 +62,9 @@ pub fn execute() {
             .collect::<Vec<RingElement>>(),
     )];
 
+
+    let witness_16 = prepare_i16_witness(&mut witness);
+
     let start = std::time::Instant::now();
 
     println!("==== PROVER STARTING ===");
@@ -70,6 +74,7 @@ pub fn execute() {
         &config,
         &rc_commitment_with_aux,
         &witness,
+        &witness_16,
         &evaluation_points_inner,
         &evaluation_points_outer,
         &mut sumcheck_context,

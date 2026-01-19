@@ -40,7 +40,8 @@ pub unsafe fn pack_i64_to_i16_deg16(dst: &mut [i16], src: &[i64]) {
     #[cfg(all(target_feature = "avx512f"))]
     {
         let mut i = 0usize;
-        while i < src.len() {
+        for k in (0..src.len()/16) {
+            let i = k * 16;
             // Load 16 i64 (two zmm registers of 8 i64)
             let a0 = _mm512_loadu_si512(src.as_ptr().add(i) as *const __m512i);
             let a1 = _mm512_loadu_si512(src.as_ptr().add(i + 8) as *const __m512i);
@@ -51,8 +52,6 @@ pub unsafe fn pack_i64_to_i16_deg16(dst: &mut [i16], src: &[i64]) {
 
             _mm_storeu_si128(dst.as_mut_ptr().add(i) as *mut __m128i, w0);
             _mm_storeu_si128(dst.as_mut_ptr().add(i + 8) as *mut __m128i, w1);
-
-            i += 16;
         }
     }
 
@@ -87,7 +86,8 @@ pub fn centered_coeffs_u64_to_i64_inplace(
         let n = in_u64.len();
 
         // 8 u64 lanes per __m512i
-        for i in 0..n / 8 {
+        for k in 0..(n/8) {
+            let i = k * 8;
             let a = _mm512_loadu_si512(in_u64.as_ptr().add(i) as *const __m512i);
 
             // neg lanes are ones where x > halfQ
@@ -98,7 +98,6 @@ pub fn centered_coeffs_u64_to_i64_inplace(
 
             // store as i64
             _mm512_storeu_si512(out_i64.as_mut_ptr().add(i) as *mut __m512i, signed);
-
         }
 
         return;
