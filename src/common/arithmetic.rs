@@ -58,7 +58,7 @@ pub fn pack_i64_to_i16_deg16(dst: &mut [i16], src: &[i64]) {
         }
     }
 
-    #[cfg(not(target_feature = "avx512f"))]
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
     for (d, &s) in dst.iter_mut().zip(src.iter()) {
         debug_assert!(s >= i16::MIN as i64 && s <= i16::MAX as i64);
         *d = s as i16;
@@ -100,8 +100,6 @@ pub fn centered_coeffs_u64_to_i64_inplace(
             // store as i64
             _mm512_storeu_si512(out_i64.as_mut_ptr().add(i) as *mut __m512i, signed);
         }
-
-        return;
     }
 
     #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]

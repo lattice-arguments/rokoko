@@ -46,7 +46,7 @@ pub fn execute() {
         used_cols: config.witness_width,
     };
 
-    let (rc_commitment_with_aux, rc_commitment, witness_i16) = commit(&crs, &config, &witness);
+    let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness);
 
     println!("Witness generated.");
 
@@ -70,9 +70,8 @@ pub fn execute() {
     let (proof, claims) = prover_round(
         &crs,
         &config,
-        &rc_commitment_with_aux,
+        &commitment_with_aux,
         &witness,
-        &witness_i16,
         &evaluation_points_inner,
         &evaluation_points_outer,
         &mut sumcheck_context,

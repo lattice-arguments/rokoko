@@ -13,24 +13,19 @@ pub fn prepare_i16_witness(
     witness: &VerticallyAlignedMatrix<RingElement>
 ) -> VerticallyAlignedMatrix<Signed16RingElement> {
 
-    let mut witness_i64 = Vec::<Signed64RingElement>::new();
+    let mut witness_i16: Vec<Signed16RingElement> = vec![[0i16; DEGREE]; witness.data.len()];
 
+    let mut ring_el = [0 as i64; DEGREE];
+    let mut temp = RingElement::zero(Representation::IncompleteNTT);
     for (i, cr) in witness.data.iter().enumerate() {
-        let mut ring_el = [0 as i64; DEGREE];
-        let mut temp = RingElement::zero(Representation::IncompleteNTT);
         temp.set_from(cr);
         temp.from_incomplete_ntt_to_even_odd_coefficients();
         centered_coeffs_u64_to_i64_inplace(&mut ring_el, &temp.v);
-        witness_i64.push(ring_el);
-    }
-
-    let mut witness_i16: Vec<Signed16RingElement> = vec![[0i16; DEGREE]; witness_i64.len()];
-
-    for (dst, src) in witness_i16.iter_mut().zip(witness_i64.iter()) {
         unsafe {
-            pack_i64_to_i16_deg16(dst, src);
+            pack_i64_to_i16_deg16(&mut witness_i16[i], &mut ring_el);
         }
     }
+
     VerticallyAlignedMatrix::<Signed16RingElement> {
             width: witness.width,
             height: witness.height,
@@ -83,7 +78,6 @@ pub fn project(
                         &mut out_u64,
                     );
                 }
-
 
                 projection_subimage[inner_row].v.copy_from_slice(&out_u64);
             }

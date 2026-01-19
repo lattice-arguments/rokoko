@@ -11,7 +11,7 @@ use crate::{
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
-        commitment::{commit_basic, recursive_commit, BasicCommitment, BasicCommitmentAux, RecursiveCommitmentWithAux},
+        commitment::{commit_basic, recursive_commit, BasicCommitment, CommitmentWithAux, RecursiveCommitmentWithAux},
         config::{
             paste_by_prefix, paste_recursive_commitment, Config, ConfigBase, NextRoundCommitment,
             Projection, RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig,
@@ -71,15 +71,15 @@ static DEBUG_HARDNESS_FROM_ROUND: usize = 0;
 pub fn prover_round(
     crs: &CRS,
     config: &SumcheckConfig,
-    rc_commitment: &RecursiveCommitmentWithAux,
+    commitment_with_aux: &CommitmentWithAux,
     witness: &VerticallyAlignedMatrix<RingElement>,
-    witness_16: &VerticallyAlignedMatrix<Signed16RingElement>,
     evaluation_points_inner: &Vec<StructuredRow>,
     evaluation_points_outer: &Vec<StructuredRow>,
     sumcheck_context: &mut SumcheckContext,
     with_claims: bool,
 ) -> (SumcheckRoundProof, Option<Vec<RingElement>>) {
     let mut hash_wrapper = HashWrapper::new(); // TODO: there should be one hash wrapper per prover
+    let rc_commitment = &commitment_with_aux.rc_commitment_with_aux;
 
     let start = std::time::Instant::now();
     hash_wrapper.update_with_ring_element_slice(&rc_commitment.most_inner_commitment());
@@ -110,7 +110,8 @@ pub fn prover_round(
     let rc_projection_image = match &config.projection_recursion {
         Projection::Type0(proj_config) => {
             let t2 = std::time::Instant::now();
-            let projection_image = project(&witness_16, &projection_matrix);
+            let witness_i16 = &commitment_with_aux.witness_i16.as_ref().unwrap();
+            let projection_image = project(witness_i16, &projection_matrix);
             println!("  project: {} ms", t2.elapsed().as_millis());
 
             let t3 = std::time::Instant::now();
@@ -492,7 +493,7 @@ pub fn prover_round(
                     let next_round_rc_commitment_with_aux = recursive_commit(
                         &crs,
                         &next_sumcheck_config.commitment_recursion,
-                        &basic_commitment.commitment.data,
+                        &basic_commitment.data,
                     );
                     // TODO: we should update FS here!
 
@@ -504,6 +505,12 @@ pub fn prover_round(
                     let next_round_rc_commitment = next_round_rc_commitment_with_aux
                         .most_inner_commitment()
                         .clone();
+
+                    let next_round_commitment_with_aux =
+                        CommitmentWithAux {
+                            rc_commitment_with_aux: next_round_rc_commitment_with_aux,
+                            witness_i16: None
+                        };
 
                     let sumcheck_output = sumcheck(
                         &config,
@@ -529,9 +536,8 @@ pub fn prover_round(
                             prover_round(
                                 &crs,
                                 next_sumcheck_config,
-                                &next_round_rc_commitment_with_aux,
+                                &next_round_commitment_with_aux,
                                 &next_round_witness,
-                                &basic_commitment.witness_i16.unwrap(),
                                 &vec![
                                     evaluation_point_to_structured_row(
                                         &new_evaluation_points_inner.to_vec(),
@@ -612,7 +618,7 @@ pub fn prover_round(
                             ],
                         ))),
                         sumcheck_output,
-                        Some(NextRoundCommitment::Simple(basic_commitment.commitment)),
+                        Some(NextRoundCommitment::Simple(basic_commitment)),
                     )
                 }
             }
@@ -660,14 +666,14 @@ pub fn prover_round(
 // this is only for the last round
 pub fn prover_round_simple(
     config: &SimpleConfig,
-    commitment: &BasicCommitmentAux,
+    commitment: &BasicCommitment,
     witness: &VerticallyAlignedMatrix<RingElement>,
     evaluation_points_inner: &Vec<StructuredRow>,
     evaluation_points_outer: &Vec<StructuredRow>,
 ) -> SimpleRoundProof {
     let mut hash_wrapper = HashWrapper::new();
 
-    hash_wrapper.update_with_ring_element_slice(&commitment.commitment.data);
+    hash_wrapper.update_with_ring_element_slice(&commitment.data);
 
     let opening = open_at(&witness, &evaluation_points_inner, &evaluation_points_outer);
 
