@@ -33,7 +33,7 @@ pub fn centered_i64_from_u64_mod_q_scalar(x: u64) -> i64 {
 // load 16x i64 registers, pack into 16x i16 register with _mm512_cvtsepi64_epi16
 // directly loads the low 16 bit of i64 registers (signed truncating)
 #[inline(always)]
-pub unsafe fn pack_i64_to_i16_deg16(dst: &mut [i16], src: &[i64]) {
+pub fn pack_i64_to_i16_deg16(dst: &mut [i16], src: &[i64]) {
     assert_eq!(dst.len(), src.len());
     debug_assert!(src.len() % 16 == 0);
 
@@ -41,17 +41,19 @@ pub unsafe fn pack_i64_to_i16_deg16(dst: &mut [i16], src: &[i64]) {
     {
         let mut i = 0usize;
         for k in (0..src.len()/16) {
-            let i = k * 16;
-            // Load 16 i64 (two zmm registers of 8 i64)
-            let a0 = _mm512_loadu_si512(src.as_ptr().add(i) as *const __m512i);
-            let a1 = _mm512_loadu_si512(src.as_ptr().add(i + 8) as *const __m512i);
+            unsafe {
+                let i = k * 16;
+                // Load 16 i64 (two zmm registers of 8 i64)
+                let a0 = _mm512_loadu_si512(src.as_ptr().add(i) as *const __m512i);
+                let a1 = _mm512_loadu_si512(src.as_ptr().add(i + 8) as *const __m512i);
 
-            // Narrow 8 i64 -> 8 i16 (signed truncating), result is 128-bit each
-            let w0: __m128i = _mm512_cvtepi64_epi16(a0);
-            let w1: __m128i = _mm512_cvtepi64_epi16(a1);
+                // Narrow 8 i64 -> 8 i16 (signed truncating), result is 128-bit each
+                let w0: __m128i = _mm512_cvtepi64_epi16(a0);
+                let w1: __m128i = _mm512_cvtepi64_epi16(a1);
 
-            _mm_storeu_si128(dst.as_mut_ptr().add(i) as *mut __m128i, w0);
-            _mm_storeu_si128(dst.as_mut_ptr().add(i + 8) as *mut __m128i, w1);
+                _mm_storeu_si128(dst.as_mut_ptr().add(i) as *mut __m128i, w0);
+                _mm_storeu_si128(dst.as_mut_ptr().add(i + 8) as *mut __m128i, w1);
+            }
         }
     }
 
