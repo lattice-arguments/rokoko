@@ -11,7 +11,7 @@ use crate::{
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
-        commitment::{commit_basic, recursive_commit, BasicCommitment, RecursiveCommitmentWithAux},
+        commitment::{commit_basic, recursive_commit, BasicCommitment, BasicCommitmentAux, RecursiveCommitmentWithAux},
         config::{
             paste_by_prefix, paste_recursive_commitment, Config, ConfigBase, NextRoundCommitment,
             Projection, RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig,
@@ -23,7 +23,7 @@ use crate::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
             open_at,
         },
-        project::{prepare_i16_witness, project},
+        project::{prepare_i16_witness, project, Signed16RingElement},
         project_2::{batch_projection_n_times, project_coefficients},
         sumcheck::{sumcheck, SumcheckContext},
     },
@@ -73,7 +73,7 @@ pub fn prover_round(
     config: &SumcheckConfig,
     rc_commitment: &RecursiveCommitmentWithAux,
     witness: &VerticallyAlignedMatrix<RingElement>,
-    witness_16: &VerticallyAlignedMatrix<[i16; DEGREE]>,
+    witness_16: &VerticallyAlignedMatrix<Signed16RingElement>,
     evaluation_points_inner: &Vec<StructuredRow>,
     evaluation_points_outer: &Vec<StructuredRow>,
     sumcheck_context: &mut SumcheckContext,
@@ -110,7 +110,7 @@ pub fn prover_round(
     let rc_projection_image = match &config.projection_recursion {
         Projection::Type0(proj_config) => {
             let t2 = std::time::Instant::now();
-            let projection_image = project(witness_16, &projection_matrix);
+            let projection_image = project(&witness_16, &projection_matrix);
             println!("  project: {} ms", t2.elapsed().as_millis());
 
             let t3 = std::time::Instant::now();
@@ -456,8 +456,6 @@ pub fn prover_round(
         data: next_round_data,
     };
 
-    let next_round_witness_16 = prepare_i16_witness(&mut next_round_witness);
-
     let next_level_data = match &config.next {
         None => {
             let sumcheck_output = sumcheck(
@@ -494,7 +492,7 @@ pub fn prover_round(
                     let next_round_rc_commitment_with_aux = recursive_commit(
                         &crs,
                         &next_sumcheck_config.commitment_recursion,
-                        &basic_commitment.data,
+                        &basic_commitment.commitment.data,
                     );
                     // TODO: we should update FS here!
 
@@ -533,7 +531,7 @@ pub fn prover_round(
                                 next_sumcheck_config,
                                 &next_round_rc_commitment_with_aux,
                                 &next_round_witness,
-                                &next_round_witness_16,
+                                &basic_commitment.witness_i16.unwrap(),
                                 &vec![
                                     evaluation_point_to_structured_row(
                                         &new_evaluation_points_inner.to_vec(),
@@ -614,7 +612,7 @@ pub fn prover_round(
                             ],
                         ))),
                         sumcheck_output,
-                        Some(NextRoundCommitment::Simple(basic_commitment)),
+                        Some(NextRoundCommitment::Simple(basic_commitment.commitment)),
                     )
                 }
             }
@@ -662,14 +660,14 @@ pub fn prover_round(
 // this is only for the last round
 pub fn prover_round_simple(
     config: &SimpleConfig,
-    commitment: &BasicCommitment,
+    commitment: &BasicCommitmentAux,
     witness: &VerticallyAlignedMatrix<RingElement>,
     evaluation_points_inner: &Vec<StructuredRow>,
     evaluation_points_outer: &Vec<StructuredRow>,
 ) -> SimpleRoundProof {
     let mut hash_wrapper = HashWrapper::new();
 
-    hash_wrapper.update_with_ring_element_slice(&commitment.data);
+    hash_wrapper.update_with_ring_element_slice(&commitment.commitment.data);
 
     let opening = open_at(&witness, &evaluation_points_inner, &evaluation_points_outer);
 

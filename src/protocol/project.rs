@@ -6,35 +6,41 @@ use crate::common::{
     ring_arithmetic::{Representation, RingElement},
 };
 
+pub type Signed16RingElement = [i16; DEGREE];
+pub type Signed64RingElement = [i64; DEGREE];
+
 pub fn prepare_i16_witness(
-    witness: &mut VerticallyAlignedMatrix<RingElement>
-) -> VerticallyAlignedMatrix<[i16; DEGREE]> {
+    witness: &VerticallyAlignedMatrix<RingElement>
+) -> VerticallyAlignedMatrix<Signed16RingElement> {
 
-    let mut witness_i64 = Vec::<[i64; DEGREE]>::new();
+    let mut witness_i64 = Vec::<Signed64RingElement>::new();
 
-    for (i, cr) in witness.data.iter_mut().enumerate() {
+    for (i, cr) in witness.data.iter().enumerate() {
         let mut ring_el = [0 as i64; DEGREE];
-        cr.from_incomplete_ntt_to_even_odd_coefficients();
-        centered_coeffs_u64_to_i64_inplace(&mut ring_el, &cr.v);
+        let mut temp = RingElement::zero(Representation::IncompleteNTT);
+        temp.set_from(cr);
+        temp.from_incomplete_ntt_to_even_odd_coefficients();
+        centered_coeffs_u64_to_i64_inplace(&mut ring_el, &temp.v);
         witness_i64.push(ring_el);
-        cr.from_even_odd_coefficients_to_incomplete_ntt_representation();
     }
-    let mut witness_i16: Vec<[i16; DEGREE]> = vec![[0i16; DEGREE]; witness_i64.len()];
+
+    let mut witness_i16: Vec<Signed16RingElement> = vec![[0i16; DEGREE]; witness_i64.len()];
 
     for (dst, src) in witness_i16.iter_mut().zip(witness_i64.iter()) {
         unsafe {
             pack_i64_to_i16_deg16(dst, src);
         }
     }
-    VerticallyAlignedMatrix::<[i16; DEGREE]> {
+    VerticallyAlignedMatrix::<Signed16RingElement> {
             width: witness.width,
             height: witness.height,
             data: witness_i16,
+            used_cols: witness.width
     }
 }
 
 pub fn project(
-    witness_16: &VerticallyAlignedMatrix<[i16; DEGREE]>,
+    witness_16: &VerticallyAlignedMatrix<Signed16RingElement>,
     projection_matrix: &ProjectionMatrix,
 ) -> VerticallyAlignedMatrix<RingElement> {
     let mut projection_image = VerticallyAlignedMatrix::new_zero_preallocated(

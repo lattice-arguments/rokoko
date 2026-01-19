@@ -12,11 +12,12 @@ use crate::{
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 use std::arch::x86_64::{
-    __m128i, __m256i, __m512i,
+    __m128i, __m256i, __m512i, __mmask8,
     _mm256_add_epi16, _mm256_castsi128_si256, _mm256_inserti128_si256,
     _mm256_loadu_si256, _mm256_setzero_si256, _mm256_storeu_si256, _mm256_sub_epi16,
     _mm512_add_epi16, _mm512_cvtsepi64_epi16, _mm512_loadu_si512, _mm512_setzero_si512,
-    _mm512_storeu_si512, _mm512_sub_epi16, _mm_storeu_si128, _mm512_cvtepi64_epi16
+    _mm512_storeu_si512, _mm512_sub_epi16, _mm_storeu_si128, _mm512_cvtepi64_epi16,
+    _mm512_mask_sub_epi64, _mm512_cmpgt_epu64_mask, _mm512_set1_epi64
 };
 
 #[inline(always)]
@@ -77,8 +78,6 @@ pub fn centered_coeffs_u64_to_i64_inplace(
 
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     unsafe {
-        use core::arch::x86_64::*;
-
 
         let half_q = MOD_Q >> 1;
         let vq = _mm512_set1_epi64(MOD_Q as i64);
@@ -141,7 +140,7 @@ pub fn project_one_row_i16_to_u64<const DEGREE: usize>(
     }
 
     unsafe {
-        for j  in 0..(DEGREE/32) {
+        for j in 0..(DEGREE/32) {
             let k = j * 32;
             let mut acc = _mm512_setzero_si512();
 

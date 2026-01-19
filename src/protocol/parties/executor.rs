@@ -46,7 +46,7 @@ pub fn execute() {
         used_cols: config.witness_width,
     };
 
-    let (rc_commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness);
+    let (rc_commitment_with_aux, rc_commitment, witness_i16) = commit(&crs, &config, &witness);
 
     println!("Witness generated.");
 
@@ -63,8 +63,6 @@ pub fn execute() {
     )];
 
 
-    let witness_16 = prepare_i16_witness(&mut witness);
-
     let start = std::time::Instant::now();
 
     println!("==== PROVER STARTING ===");
@@ -74,7 +72,7 @@ pub fn execute() {
         &config,
         &rc_commitment_with_aux,
         &witness,
-        &witness_16,
+        &witness_i16,
         &evaluation_points_inner,
         &evaluation_points_outer,
         &mut sumcheck_context,
