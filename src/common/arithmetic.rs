@@ -9,17 +9,20 @@ use crate::{
     },
     hexl::bindings::{multiply_mod, sub_mod},
 };
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 use std::arch::x86_64::{
     __m128i, __m256i, __m512i,
     _mm256_add_epi16, _mm256_castsi128_si256, _mm256_inserti128_si256,
     _mm256_loadu_si256, _mm256_setzero_si256, _mm256_storeu_si256, _mm256_sub_epi16,
     _mm512_add_epi16, _mm512_cvtsepi64_epi16, _mm512_loadu_si512, _mm512_setzero_si512,
-    _mm512_storeu_si512, _mm512_sub_epi16,
+    _mm512_storeu_si512, _mm512_sub_epi16, _mm_storeu_si128, _mm512_cvtepi64_epi16
 };
 
 #[inline(always)]
 pub fn centered_i64_from_u64_mod_q_scalar(x: u64) -> i64 {
-    if x > *HALF_WAY_MOD_Q {
+    let half_q = MOD_Q >> 1;
+    if x > half_q {
         x.wrapping_sub(MOD_Q) as i64
     } else {
         x as i64
@@ -28,8 +31,7 @@ pub fn centered_i64_from_u64_mod_q_scalar(x: u64) -> i64 {
 
 
 // load 16x i64 registers, pack into 16x i16 register with _mm512_cvtsepi64_epi16
-// out of ranges values are "saturated",  they are cut to -2^15 or 2^15 respectively if value
-// does not fit in 16 bits
+// directly loads the low 16 bit of i64 registers (signed truncating)
 #[inline(always)]
 pub unsafe fn pack_i64_to_i16_deg16(dst: &mut [i16], src: &[i64]) {
     assert_eq!(dst.len(), src.len());
@@ -43,9 +45,9 @@ pub unsafe fn pack_i64_to_i16_deg16(dst: &mut [i16], src: &[i64]) {
             let a0 = _mm512_loadu_si512(src.as_ptr().add(i) as *const __m512i);
             let a1 = _mm512_loadu_si512(src.as_ptr().add(i + 8) as *const __m512i);
 
-            // Narrow 8 i64 -> 8 i16 (SIGNED SATURATING), result is 128-bit each
-            let w0: __m128i = _mm512_cvtsepi64_epi16(a0);
-            let w1: __m128i = _mm512_cvtsepi64_epi16(a1);
+            // Narrow 8 i64 -> 8 i16 (signed truncating), result is 128-bit each
+            let w0: __m128i = _mm512_cvtepi64_epi16(a0);
+            let w1: __m128i = _mm512_cvtepi64_epi16(a1);
 
             _mm_storeu_si128(dst.as_mut_ptr().add(i) as *mut __m128i, w0);
             _mm_storeu_si128(dst.as_mut_ptr().add(i + 8) as *mut __m128i, w1);
@@ -76,8 +78,10 @@ pub fn centered_coeffs_u64_to_i64_inplace(
     unsafe {
         use core::arch::x86_64::*;
 
+
+        let half_q = MOD_Q >> 1;
         let vq = _mm512_set1_epi64(MOD_Q as i64);
-        let vhalfq = _mm512_set1_epi64(HALF_WAY_MOD_Q as i64);
+        let vhalfq = _mm512_set1_epi64(half_q as i64);
 
         let mut i = 0usize;
         let n = in_u64.len();
@@ -106,71 +110,70 @@ pub fn centered_coeffs_u64_to_i64_inplace(
     }
 }
 
+
 #[cfg(all(target_arch="x86_64", target_feature = "avx512f"))]
-pub unsafe fn project_one_row_i16_to_u64<const DEGREE: usize>(
-    subwitness_i16: &[[i16; DEGREE]],
+pub fn project_one_row_i16_to_u64<const DEGREE: usize>(
+    subwitness_i16: &[[i16; DEGREE]], // len = projection_ratio*H
     projection_matrix: &ProjectionMatrix,
     inner_row: usize,
     out_u64: &mut [u64; DEGREE],
 ) {
-    use std::arch::x86_64::*;
     use crate::hexl::bindings::eltwise_reduce_mod;
 
     let row_len = projection_matrix.projection_ratio * projection_matrix.projection_height;
-    debug_assert!(DEGREE % 32 == 0);
     debug_assert_eq!(subwitness_i16.len(), row_len);
+    debug_assert!(DEGREE % 16 == 0);
 
-    for kb in 0..(DEGREE / 32) {
-        let k32 = kb * 32;
-        let mut acc = _mm512_setzero_si512();
-
-        let mut i_base = 0usize;
-        while i_base < row_len {
-            let (k_pos_u8, k_inc_u8) =
-                projection_matrix.get_row_masks_u8_for_i(inner_row, i_base);
-
-            if k_inc_u8 != 0 {
-                // iterate set bits in k_inc_u8
-                let mut m = k_inc_u8;
-                while m != 0 {
-                    let bit = m.trailing_zeros() as usize;
-                    m &= m - 1;
-
-                    let i = i_base + bit;
-
-                    let v = _mm512_loadu_si512(
-                        subwitness_i16[i].as_ptr().add(k32) as *const __m512i
-                    );
-
-                    let is_positive = ((k_pos_u8 >> bit) & 1) != 0;
-                    acc = if is_positive {
-                        _mm512_add_epi16(acc, v)
-                    } else {
-                        _mm512_sub_epi16(acc, v)
-                    };
-                }
-            }
-
-            i_base += 8;
+    let mut k = 0usize;
+    let mut pos_idx = Vec::new();
+    let mut neg_idx = Vec::new();
+    for i in 0..row_len {
+        let (is_positive, is_non_zero) = projection_matrix[(inner_row, i)];
+        if !is_non_zero {
+            continue;
         }
-
-        convert_i16_as_u64(out_u64.as_mut_ptr().add(k32), acc, MOD_Q);
+        if is_positive {
+            pos_idx.push(i);
+        } else {
+            neg_idx.push(i);
+        }
     }
 
-    eltwise_reduce_mod(out_u64.as_mut_ptr(), out_u64.as_ptr(), DEGREE as u64, MOD_Q);
+    unsafe {
+        for j  in 0..(DEGREE/32) {
+            let k = j * 32;
+            let mut acc = _mm512_setzero_si512();
+
+            for &i in &pos_idx {
+                let v = _mm512_loadu_si512(subwitness_i16[i].as_ptr().add(k) as *const __m512i);
+                acc = _mm512_add_epi16(acc, v);
+            }
+
+            for &i in &neg_idx {
+                let v = _mm512_loadu_si512(subwitness_i16[i].as_ptr().add(k) as *const __m512i);
+                acc = _mm512_sub_epi16(acc, v);
+            }
+
+            convert_i16_as_u64(out_u64.as_mut_ptr().add(k), acc);
+        }
+
+        eltwise_reduce_mod(out_u64.as_mut_ptr(), out_u64.as_ptr(), out_u64.len() as u64, MOD_Q);
+    }
 }
 
-#[cfg(all(target_feature = "avx512f"))]
+#[cfg(all(target_arch="x86_64", target_feature = "avx512f"))]
 #[inline(always)]
-unsafe fn convert_i16_as_u64(dst_u64: *mut u64, v16x32: __m512i, q: u64) {
-    let mut tmp = [0i16; 32];
-    _mm512_storeu_si512(tmp.as_mut_ptr() as *mut __m512i, v16x32);
+fn convert_i16_as_u64(dst_u64: *mut u64, v16x32: __m512i) {
+    unsafe {
+        let mut tmp = [0i16; 32];
+        _mm512_storeu_si512(tmp.as_mut_ptr() as *mut __m512i, v16x32);
 
-    let q_i64 = q as i64;
-    for lane in 0..32 {
-        let x = tmp[lane] as i64;
-        if r < 0 { r += q_i64; }
-        *dst_u64.add(lane) = r as u64;
+        let q_i64 = MOD_Q as i64;
+        for lane in 0..32 {
+            let mut r = tmp[lane] as i64;
+            if r < 0 { r += q_i64; }
+            *dst_u64.add(lane) = r as u64;
+        }
     }
 }
 

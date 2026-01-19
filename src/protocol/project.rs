@@ -1,9 +1,9 @@
 use crate::common::{
-    matrix::VerticallyAlignedMatrix,
     arithmetic::{centered_coeffs_u64_to_i64_inplace, pack_i64_to_i16_deg16, project_one_row_i16_to_u64},
     config::{DEGREE, MOD_Q},
+    matrix::VerticallyAlignedMatrix,
     projection_matrix::ProjectionMatrix,
-    ring_arithmetic::{RingElement},
+    ring_arithmetic::{Representation, RingElement},
 };
 
 pub fn prepare_i16_witness(
@@ -74,7 +74,6 @@ pub fn project(
                         subwitness_i16,
                         projection_matrix,
                         inner_row,
-                        MOD_Q,
                         &mut out_u64,
                     );
                 }
