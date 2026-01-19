@@ -66,7 +66,7 @@ fn get_and_increment_round_id() -> usize {
     }
 }
 
-static DEBUG_HARDNESS_FROM_ROUND: usize = 1;
+static DEBUG_HARDNESS_FROM_ROUND: usize = 0;
 
 pub fn prover_round(
     crs: &CRS,
@@ -426,8 +426,9 @@ pub fn prover_round(
             length_bound: worse_bound.ceil() as u64,
         });
         println!(
-            "Basic commitment estimated security for extraction: {:?}",
-            basic_commitment_security
+            "Basic commitment estimated security for extraction: {:?} with rank {}",
+            basic_commitment_security,
+            config.basic_commitment_rank
         );
     }
 

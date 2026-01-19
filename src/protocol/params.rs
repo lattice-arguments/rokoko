@@ -52,7 +52,7 @@ pub static P28_2: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConf
     witness_width: 2usize.pow(5),
     projection_ratio: 2usize.pow(8),
     projection_height: 2usize.pow(8), // this costs a lot a verification time
-    basic_commitment_rank: 5,
+    basic_commitment_rank: 6,
     nof_openings: 2,
     commitment_recursion: AuxRecursionConfig {
         decomposition_base_log: 7,
