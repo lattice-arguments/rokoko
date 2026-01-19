@@ -37,7 +37,7 @@ pub fn pack_i64_to_i16_deg16(dst: &mut [i16], src: &[i64]) {
     assert_eq!(dst.len(), src.len());
     debug_assert!(src.len() % 16 == 0);
 
-    #[cfg(all(target_feature = "avx512f"))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     {
         let mut i = 0usize;
         for k in (0..src.len()/16) {
