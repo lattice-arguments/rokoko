@@ -226,13 +226,13 @@ pub static P28_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConf
     commitment_recursion: AuxRecursionConfig {
         decomposition_base_log: 13,
         decomposition_chunks: 4,
-        rank: 4,
+        rank: 3,
         next: None,
     },
     opening_recursion: AuxRecursionConfig {
         decomposition_base_log: 13,
         decomposition_chunks: 4,
-        rank: 4,
+        rank: 3,
         next: None,
     },
     projection_recursion: AuxProjection::Type1 {
@@ -240,13 +240,13 @@ pub static P28_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConf
         recursion_constant_term: AuxRecursionConfig {
             decomposition_base_log: 10,
             decomposition_chunks: 2,
-            rank: 4, // TODO: can it be 3?
+            rank: 3, // TODO: can it be 3?
             next: None,
         },
         recursion_batched_projection: AuxRecursionConfig {
             decomposition_base_log: 13,
             decomposition_chunks: 4,
-            rank: 4,
+            rank: 3,
             next: None,
         },
     },
@@ -256,7 +256,6 @@ pub static P28_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConf
 
     next: Some(Box::new(AuxConfig::Simple(P28_LAST.clone()))),
 });
-
 
 
 pub static P28_LAST: LazyLock<SimpleConfig> = LazyLock::new(|| SimpleConfig {

@@ -66,7 +66,7 @@ fn get_and_increment_round_id() -> usize {
     }
 }
 
-static DEBUG_HARDNESS_FROM_ROUND: usize = 4;
+static DEBUG_HARDNESS_FROM_ROUND: usize = 1;
 
 pub fn prover_round(
     crs: &CRS,
