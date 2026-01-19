@@ -358,27 +358,56 @@ pub fn prover_round(
             MOD_Q
         );
 
-        // this is a bit too conservative as this is norm for the projection image, so the witness is around 3 bits shorter, but we keep it for safety
-        assert!(
-            recommited_ell_2_norm * recommited_ell_2_norm < (MOD_Q as f64 / 2f64),
-            "norm too large, aborting"
-        );
-
         let recomposed_witness_bound = recommited_ell_2_norm
             * (config
                 .witness_decomposition_base_log
                 .pow((config.witness_decomposition_chunks - 1) as u32)) as f64;
 
         let extracted_witness_bound = recomposed_witness_bound * DEGREE as f64 * 8.0; // factor 4 for difference in numerator and denominator in extraction and 2 for ISIS to SIS
-        println!(
-            "Extracted witness L_2 norm bound: {}",
+
+        let recomposed_projection_bound = match &config.projection_recursion {
+            Projection::Type0(proj_config) => {
+                recommited_ell_2_norm
+                    * (proj_config
+                        .decomposition_base_log
+                        .pow((proj_config.decomposition_chunks - 1) as u32))
+                        as f64
+            }
+            Projection::Type1(proj_config) => {
+                recommited_ell_2_norm
+                    * (proj_config
+                        .recursion_constant_term
+                        .decomposition_base_log
+                        .pow((proj_config.recursion_constant_term.decomposition_chunks - 1) as u32))
+                        as f64
+            }
+        };
+
+        let argued_witness_bound = recomposed_projection_bound / 5.477f64; // sqrt(30) as in the paper
+
+        let worse_bound = if extracted_witness_bound > argued_witness_bound {
+            println!(
+                "Using extracted witness bound {} for security estimation.",
+                extracted_witness_bound
+            );
             extracted_witness_bound
-        ); // we set hardness based on this
+        } else {
+            println!(
+                "Using projection-argued witness bound {} for security estimation.",
+                argued_witness_bound
+            );
+            argued_witness_bound
+        };
+
+        assert!(
+            argued_witness_bound * argued_witness_bound < (MOD_Q as f64 / 2f64),
+            "Witness bound too large for inner-product norm extraction!"
+        );
 
         let basic_commitment_security = estimate_rsis_security(&RSISParameters {
             m: config.witness_height as u64,
             n: config.basic_commitment_rank as u64,
-            length_bound: extracted_witness_bound.ceil() as u64,
+            length_bound: worse_bound.ceil() as u64,
         });
         println!(
             "Basic commitment estimated security for extraction: {:?}",
@@ -398,6 +427,11 @@ pub fn prover_round(
         },
         width: if let Some(next_config) = &base_next_roung_config {
             next_config.witness_width()
+        } else {
+            1 // do nothing further
+        },
+        used_cols: if let Some(next_config) = &base_next_roung_config {
+            (next_config.witness_width() as f64 * config.next_level_usage_ratio).ceil() as usize
         } else {
             1 // do nothing further
         },

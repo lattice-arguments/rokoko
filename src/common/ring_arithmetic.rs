@@ -1161,6 +1161,9 @@ impl SizeableProof for QuadraticExtension {
         let mut size = 0;
         for v in &self.coeffs {
             let centered = if *v > MOD_Q / 2 { MOD_Q - *v } else { *v };
+            if centered == 0 {
+                continue; // zero contributes 0 bits
+            }
             size += centered.ilog2() as usize + 1; // +1 for the sign bit
         }
         size

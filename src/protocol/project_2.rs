@@ -11,6 +11,7 @@ use crate::{
         config::{self, DEGREE, MOD_Q, NOF_BATCHES},
         hash::HashWrapper,
         matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
+        norms::{l2_norm, l2_norm_coeffs},
         pool::preallocate_ring_element_vecs,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
@@ -158,8 +159,6 @@ pub fn project_coefficients(
     witness: &VerticallyAlignedMatrix<RingElement>,
     projection_matrix: &ProjectionMatrix,
 ) -> VerticallyAlignedMatrix<RingElement> {
-    // Convert witness from NTT representation to coefficient representation
-    // Each ring element contains DEGREE coefficients that we'll project separately
     let mut witness_coeff =
         VerticallyAlignedMatrix::new_zero_preallocated(witness.height, witness.width);
 
@@ -168,6 +167,13 @@ pub fn project_coefficients(
     for i in 0..witness_coeff.data.len() {
         witness_coeff.data[i].from_incomplete_ntt_to_even_odd_coefficients();
         witness_coeff.data[i].from_even_odd_coefficients_to_coefficients(); // TODO: even-odd is enough
+    }
+
+    #[cfg(feature = "debug-hardness")]
+    {
+        println!("Projecting coefficients with projection matrix:");
+        let norm = l2_norm_coeffs(&witness_coeff.data);
+        println!("L2 norm of witness coefficients: {}", norm);
     }
 
     // Allocate the output matrix for the projected result
@@ -191,7 +197,7 @@ pub fn project_coefficients(
     );
 
     // Process each column independently (no interaction between columns)
-    for col in 0..witness.width {
+    for col in 0..witness.used_cols {
         // Process the projection in chunks
         // Each chunk processes (PROJECTION_HEIGHT / DEGREE) ring elements of the output
         // which corresponds to PROJECTION_HEIGHT coefficients in the result
@@ -305,6 +311,12 @@ pub fn project_coefficients(
             eltwise_reduce_mod(el.v.as_mut_ptr(), el.v.as_mut_ptr(), DEGREE as u64, MOD_Q);
         }
     }
+
+    #[cfg(feature = "debug-hardness")]
+    {
+        let norm = l2_norm_coeffs(&image_ct.data);
+        println!("L2 norm of projected witness coefficients: {}", norm);
+    }
     image_ct
 }
 
@@ -416,7 +428,7 @@ fn batch_projection_into(
     // We compute for each column: result[col] = Σ_chunk c'_0[chunk] * <J_batched, W[chunk, col]>
     let num_chunks = witness.height / inner_width_ring;
 
-    for col in 0..witness.width {
+    for col in 0..witness.used_cols {
         let mut col_result = RingElement::zero(Representation::IncompleteNTT);
 
         for chunk in 0..num_chunks {

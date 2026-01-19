@@ -22,7 +22,7 @@ pub fn commit_basic_internal(
         HorizontallyAlignedMatrix::new_zero_preallocated(rank.next_power_of_two(), witness.width);
 
     for (i, row) in ck.iter().take(rank).enumerate() {
-        for col in 0..witness.width {
+        for col in 0..witness.used_cols {
             let mut temp = RingElement::zero(Representation::IncompleteNTT);
             for (elem, w_elem) in row.preprocessed_row.iter().zip(witness.col(col).iter()) {
                 temp *= (elem, w_elem);

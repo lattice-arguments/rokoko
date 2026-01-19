@@ -71,7 +71,12 @@ pub fn decompose(input: &Vec<RingElement>, base_log: u64, radix: usize) -> Vec<R
             }
             let offset = get_composer_offset(base_log, radix);
             recomposed -= &RingElement::all(offset, Representation::IncompleteNTT);
-            assert_eq!(&recomposed, el, "Recomposition failed in decomposition. Perhaps base_log and radix are not chosen properly?");
+            let el_incomplete_ntt = {
+                let mut temp_el = el.clone();
+                temp_el.to_representation(Representation::IncompleteNTT);
+                temp_el
+            };
+            assert_eq!(&recomposed, &el_incomplete_ntt, "Recomposition failed in decomposition. Perhaps base_log and radix are not chosen properly?");
         }
     }
 

@@ -25,7 +25,10 @@ pub fn execute() {
         _ => panic!("Expected sumcheck config at the top level."),
     };
 
-    let crs = CRS::gen_crs(config.composed_witness_length, config.basic_commitment_rank);
+    let crs = CRS::gen_crs(
+        config.composed_witness_length,
+        config.basic_commitment_rank + 2,
+    );
 
     let mut sumcheck_context = init_sumcheck(&crs, &config);
     let mut sumcheck_context_verifier = init_verifier(&crs, &config);
@@ -39,6 +42,7 @@ pub fn execute() {
             2,
             Representation::IncompleteNTT,
         ),
+        used_cols: config.witness_width,
     };
 
     let (rc_commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness);
@@ -57,6 +61,8 @@ pub fn execute() {
             .collect::<Vec<RingElement>>(),
     )];
 
+    println!("==== PROVER STARTING ===");
+
     let (proof, claims) = prover_round(
         &crs,
         &config,
@@ -67,12 +73,14 @@ pub fn execute() {
         &mut sumcheck_context,
         true,
     );
+    println!("==== PROVER DONE ===");
 
     print!("==== PROOF SIZE ====\n");
     let proof_size_bits = proof.size_in_bits();
     println!("Total proof size: {} KB", to_kb(proof_size_bits));
     println!("====================\n");
 
+    println!("==== VERIFIER STARTING ===");
     verifier_round(
         &crs,
         &config,
@@ -83,4 +91,5 @@ pub fn execute() {
         &claims.unwrap(),
         &mut sumcheck_context_verifier,
     );
+    println!("==== VERIFIER DONE ===");
 }

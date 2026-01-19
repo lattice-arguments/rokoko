@@ -42,7 +42,7 @@ pub fn project(
         witness.height
     );
 
-    for col in 0..witness.width {
+    for col in 0..witness.used_cols {
         for rows_chunk in 0..projection_image.height / projection_matrix.projection_height {
             let subwitness = witness.col_slice(
                 col,

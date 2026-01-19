@@ -152,7 +152,12 @@ impl AuxSumcheckConfig {
         println!("Usage ratio: {:.2}%\n", usage_ratio * 100.0);
 
         // Build the actual config with assigned prefixes
-        self.build_config_with_prefixes(&assigned_prefixes, composed_witness_length, 0)
+        self.build_config_with_prefixes(
+            &assigned_prefixes,
+            composed_witness_length,
+            usage_ratio,
+            depth,
+        )
     }
 
     fn collect_components(&self, components: &mut Vec<ComponentInfo>) {
@@ -260,6 +265,7 @@ impl AuxSumcheckConfig {
         &self,
         assigned_prefixes: &[(ComponentInfo, Prefix)],
         composed_witness_length: usize,
+        usage_ratio: f64,
         depth: usize,
     ) -> Config {
         // Helper to find prefix by path
@@ -334,6 +340,7 @@ impl AuxSumcheckConfig {
             basic_commitment_rank: self.basic_commitment_rank,
             nof_openings: self.nof_openings,
             commitment_recursion,
+            next_level_usage_ratio: usage_ratio,
             opening_recursion,
             projection_recursion,
             witness_decomposition_base_log: self.witness_decomposition_base_log,

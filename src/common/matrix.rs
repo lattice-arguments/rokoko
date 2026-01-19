@@ -14,8 +14,9 @@ pub trait ZeroNew<T> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct VerticallyAlignedMatrix<T> {
     pub data: Vec<T>,
-    pub width: usize,  // number of cols
-    pub height: usize, // number of rows
+    pub width: usize,     // number of cols
+    pub height: usize,    // number of rows
+    pub used_cols: usize, // number of used cols. This is used when witness width is expanded to be power of two but only part of it is used. Optimisation trick. Otherwise same as width.
 }
 
 impl<T> Index<(usize, usize)> for VerticallyAlignedMatrix<T> {
@@ -62,6 +63,7 @@ where
             data: vec![zero.clone(); height * width],
             width,
             height,
+            used_cols: width,
         }
     }
 }
@@ -73,6 +75,7 @@ impl VerticallyAlignedMatrix<RingElement> {
             data,
             width,
             height,
+            used_cols: width,
         }
     }
 }
@@ -198,6 +201,7 @@ mod tests {
             data: Vec::from([0, 3, 6, 1, 4, 7, 2, 5, 8]),
             width: 3,
             height: 3,
+            used_cols: 3,
         };
 
         assert_eq!(m[(0, 0)], 0);
@@ -217,6 +221,7 @@ mod tests {
             data: vec![0; 4],
             width: 2,
             height: 2,
+            used_cols: 2,
         };
         let _ = m[(2, 0)];
     }

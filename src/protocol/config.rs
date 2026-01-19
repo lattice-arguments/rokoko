@@ -241,6 +241,7 @@ pub struct SumcheckConfig {
     pub projection_ratio: usize,  // shall be likely the witness_height
     pub projection_height: usize, // likely 256 unless for testing
     pub commitment_recursion: RecursionConfig,
+    pub next_level_usage_ratio: f64, // we always assume that width is a power of two, but next_level_usage_ratio can be less than 1. I.e. for width = 16, and next_level_usage_ratio = 0.51, we only use 9 elements in the next level.
     pub opening_recursion: RecursionConfig,
     pub projection_recursion: Projection,
     pub nof_openings: usize,
