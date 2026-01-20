@@ -1,8 +1,7 @@
 CC = g++
 INCLUDE_DIRS = ./hexl-bindings/hexl/hexl/include/
 FLAGS = -Wall -Wno-unused-function -Wno-unused-result -funroll-all-loops -march=native -lm -Wno-sign-compare -Wno-write-strings
-FLAGS += -mavx512f -mavx512dq
-FLAGS += -fno-exceptions -fno-rtti -fno-semantic-interposition -fno-plt -fomit-frame-pointer
+FLAGS += -mavx512f -mavx512dq -fno-exceptions -fno-rtti -fno-semantic-interposition -fno-plt -fomit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-stack-protector -fdata-sections -ffunction-sections -fvisibility-inlines-hidden -pipe
 
 OPT_FLAGS = -O3 -fwhole-program -flto $(FLAGS)
 DEBUG_FLAGS = -O0 -g $(FLAGS)
@@ -19,10 +18,10 @@ SRC=polynomial.cpp misc.cpp
 ALL_SRC = $(addprefix ./, $(SRC))
 
 wrapper:
-	$(CC) -std=c++17 -fPIC -shared -o libhexl_wrapper.so hexl-bindings/hexl_wrapper.cpp $(OPT_FLAGS) $(LIBS)
+	$(CC) -std=c++17 -fPIC -shared -o libhexl_wrapper.so hexl-bindings/hexl_wrapper.cpp $(OPT_FLAGS) $(LIBS) $(LDFLAGS)
 
 wrapper_alt:
-	$(CC) -std=c++17 -fPIC -shared -o libhexl_wrapper.so hexl-bindings/hexl_wrapper_alt.cpp $(OPT_FLAGS)
+	$(CC) -std=c++17 -fPIC -shared -o libhexl_wrapper.so hexl-bindings/hexl_wrapper_alt.cpp $(OPT_FLAGS) $(LDFLAGS)
 
 hexl: hexl/build
 	cmake --build ./hexl-bindings/hexl/build
