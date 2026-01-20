@@ -2,6 +2,7 @@ CC = g++
 INCLUDE_DIRS = ./hexl-bindings/hexl/hexl/include/
 FLAGS = -Wall -Wno-unused-function -Wno-unused-result -funroll-all-loops -march=native -lm -Wno-sign-compare -Wno-write-strings
 FLAGS += -mavx512f -mavx512dq
+FLAGS += -fno-exceptions -fno-rtti -fno-semantic-interposition -fno-plt -fomit-frame-pointer
 
 OPT_FLAGS = -O3 -fwhole-program -flto $(FLAGS)
 DEBUG_FLAGS = -O0 -g $(FLAGS)
