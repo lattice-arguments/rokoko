@@ -430,7 +430,6 @@ unsafe fn eltwise_reduce_mod_avx512<const BITSHIFT: i32>(
     }
 }
 
-#[inline(always)]
 pub fn eltwise_mult_mod(
     result: &mut [u64],
     operand1: &[u64],
@@ -845,359 +844,34 @@ unsafe fn eltwise_mult_mod_avx512_float_loop<const INPUT_MOD_FACTOR: i32>(
 ) {
     const ROUND_MODE: i32 = _MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC;
 
-    let v_zero = _mm512_setzero_pd();
     let mut res_ptr = vp_result;
     let mut op1_ptr = vp_operand1;
     let mut op2_ptr = vp_operand2;
 
-    macro_rules! float_loop_step {
-        () => {{
-            let mut v_op1 = _mm512_loadu_si512(op1_ptr);
-            v_op1 = mm512_hexl_small_mod_epu64::<INPUT_MOD_FACTOR>(
-                v_op1,
-                v_modulus,
-                Some(&v_twice_mod),
-                None,
-            );
-            let mut v_op2 = _mm512_loadu_si512(op2_ptr);
-            v_op2 = mm512_hexl_small_mod_epu64::<INPUT_MOD_FACTOR>(
-                v_op2,
-                v_modulus,
-                Some(&v_twice_mod),
-                None,
-            );
+    for _ in (0..n).step_by(8) {
+        let mut v_op1 = _mm512_loadu_si512(op1_ptr);
+        v_op1 = mm512_hexl_small_mod_epu64::<INPUT_MOD_FACTOR>(v_op1, v_modulus, Some(&v_twice_mod), None);
+        let mut v_op2 = _mm512_loadu_si512(op2_ptr);
+        v_op2 = mm512_hexl_small_mod_epu64::<INPUT_MOD_FACTOR>(v_op2, v_modulus, Some(&v_twice_mod), None);
 
-            let v_x = _mm512_cvt_roundepu64_pd(v_op1, ROUND_MODE);
-            let v_y = _mm512_cvt_roundepu64_pd(v_op2, ROUND_MODE);
+        let v_x = _mm512_cvt_roundepu64_pd(v_op1, ROUND_MODE);
+        let v_y = _mm512_cvt_roundepu64_pd(v_op2, ROUND_MODE);
 
-            let v_h = _mm512_mul_pd(v_x, v_y);
-            let v_l = _mm512_fmsub_pd(v_x, v_y, v_h);
-            let v_b = _mm512_mul_pd(v_h, v_u);
-            let v_c = _mm512_roundscale_pd(v_b, _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC);
-            let v_d = _mm512_fnmadd_pd(v_c, v_p, v_h);
-            let mut v_g = _mm512_add_pd(v_d, v_l);
-            let m = _mm512_cmp_pd_mask(v_g, v_zero, _CMP_LT_OQ);
-            v_g = _mm512_mask_add_pd(v_g, m, v_g, v_p);
+        let v_h = _mm512_mul_pd(v_x, v_y);
+        let v_l = _mm512_fmsub_pd(v_x, v_y, v_h);
+        let v_b = _mm512_mul_pd(v_h, v_u);
+        let v_c = _mm512_roundscale_pd(v_b, _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC);
+        let v_d = _mm512_fnmadd_pd(v_c, v_p, v_h);
+        let mut v_g = _mm512_add_pd(v_d, v_l);
+        let m = _mm512_cmp_pd_mask(v_g, _mm512_setzero_pd(), _CMP_LT_OQ);
+        v_g = _mm512_mask_add_pd(v_g, m, v_g, v_p);
 
-            let v_result = _mm512_cvt_roundpd_epu64(v_g, ROUND_MODE);
-            _mm512_storeu_si512(res_ptr, v_result);
+        let v_result = _mm512_cvt_roundpd_epu64(v_g, ROUND_MODE);
+        _mm512_storeu_si512(res_ptr, v_result);
 
-            res_ptr = res_ptr.add(1);
-            op1_ptr = op1_ptr.add(1);
-            op2_ptr = op2_ptr.add(1);
-        }};
-    }
-
-    let mut i = n / 8;
-    while i >= 4 {
-        float_loop_step!();
-        float_loop_step!();
-        float_loop_step!();
-        float_loop_step!();
-        i -= 4;
-    }
-    while i > 0 {
-        float_loop_step!();
-        i -= 1;
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq")]
-#[inline(always)]
-unsafe fn eltwise_mult_mod_avx512_float_loop_unroll<
-    const INPUT_MOD_FACTOR: i32,
-    const COEFF_COUNT: usize,
->(
-    mut vp_result: *mut __m512i,
-    mut vp_operand1: *const __m512i,
-    mut vp_operand2: *const __m512i,
-    v_u: __m512d,
-    v_p: __m512d,
-    v_modulus: __m512i,
-    v_twice_mod: __m512i,
-) {
-    const ROUND_MODE: i32 = _MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC;
-    const MANUAL_UNROLL_FACTOR: usize = 4;
-    const AVX512_64BIT_COUNT: usize = 8;
-    let loop_count = COEFF_COUNT / (MANUAL_UNROLL_FACTOR * AVX512_64BIT_COUNT);
-
-    debug_assert!(COEFF_COUNT % (MANUAL_UNROLL_FACTOR * AVX512_64BIT_COUNT) == 0);
-    debug_assert!(loop_count > 0);
-
-    let v_zero = _mm512_setzero_pd();
-
-    for _ in 0..loop_count {
-        let mut op1_1 = _mm512_loadu_si512(vp_operand1);
-        vp_operand1 = vp_operand1.add(1);
-        let mut op1_2 = _mm512_loadu_si512(vp_operand1);
-        vp_operand1 = vp_operand1.add(1);
-        let mut op1_3 = _mm512_loadu_si512(vp_operand1);
-        vp_operand1 = vp_operand1.add(1);
-        let mut op1_4 = _mm512_loadu_si512(vp_operand1);
-        vp_operand1 = vp_operand1.add(1);
-
-        let mut op2_1 = _mm512_loadu_si512(vp_operand2);
-        vp_operand2 = vp_operand2.add(1);
-        let mut op2_2 = _mm512_loadu_si512(vp_operand2);
-        vp_operand2 = vp_operand2.add(1);
-        let mut op2_3 = _mm512_loadu_si512(vp_operand2);
-        vp_operand2 = vp_operand2.add(1);
-        let mut op2_4 = _mm512_loadu_si512(vp_operand2);
-        vp_operand2 = vp_operand2.add(1);
-
-        op1_1 = mm512_hexl_small_mod_epu64::<INPUT_MOD_FACTOR>(
-            op1_1,
-            v_modulus,
-            Some(&v_twice_mod),
-            None,
-        );
-        op1_2 = mm512_hexl_small_mod_epu64::<INPUT_MOD_FACTOR>(
-            op1_2,
-            v_modulus,
-            Some(&v_twice_mod),
-            None,
-        );
-        op1_3 = mm512_hexl_small_mod_epu64::<INPUT_MOD_FACTOR>(
-            op1_3,
-            v_modulus,
-            Some(&v_twice_mod),
-            None,
-        );
-        op1_4 = mm512_hexl_small_mod_epu64::<INPUT_MOD_FACTOR>(
-            op1_4,
-            v_modulus,
-            Some(&v_twice_mod),
-            None,
-        );
-
-        op2_1 = mm512_hexl_small_mod_epu64::<INPUT_MOD_FACTOR>(
-            op2_1,
-            v_modulus,
-            Some(&v_twice_mod),
-            None,
-        );
-        op2_2 = mm512_hexl_small_mod_epu64::<INPUT_MOD_FACTOR>(
-            op2_2,
-            v_modulus,
-            Some(&v_twice_mod),
-            None,
-        );
-        op2_3 = mm512_hexl_small_mod_epu64::<INPUT_MOD_FACTOR>(
-            op2_3,
-            v_modulus,
-            Some(&v_twice_mod),
-            None,
-        );
-        op2_4 = mm512_hexl_small_mod_epu64::<INPUT_MOD_FACTOR>(
-            op2_4,
-            v_modulus,
-            Some(&v_twice_mod),
-            None,
-        );
-
-        let v_x_1 = _mm512_cvt_roundepu64_pd(op1_1, ROUND_MODE);
-        let v_x_2 = _mm512_cvt_roundepu64_pd(op1_2, ROUND_MODE);
-        let v_x_3 = _mm512_cvt_roundepu64_pd(op1_3, ROUND_MODE);
-        let v_x_4 = _mm512_cvt_roundepu64_pd(op1_4, ROUND_MODE);
-
-        let v_y_1 = _mm512_cvt_roundepu64_pd(op2_1, ROUND_MODE);
-        let v_y_2 = _mm512_cvt_roundepu64_pd(op2_2, ROUND_MODE);
-        let v_y_3 = _mm512_cvt_roundepu64_pd(op2_3, ROUND_MODE);
-        let v_y_4 = _mm512_cvt_roundepu64_pd(op2_4, ROUND_MODE);
-
-        let v_h_1 = _mm512_mul_pd(v_x_1, v_y_1);
-        let v_h_2 = _mm512_mul_pd(v_x_2, v_y_2);
-        let v_h_3 = _mm512_mul_pd(v_x_3, v_y_3);
-        let v_h_4 = _mm512_mul_pd(v_x_4, v_y_4);
-
-        let v_b_1 = _mm512_mul_pd(v_h_1, v_u);
-        let v_b_2 = _mm512_mul_pd(v_h_2, v_u);
-        let v_b_3 = _mm512_mul_pd(v_h_3, v_u);
-        let v_b_4 = _mm512_mul_pd(v_h_4, v_u);
-
-        let v_l_1 = _mm512_fmsub_pd(v_x_1, v_y_1, v_h_1);
-        let v_l_2 = _mm512_fmsub_pd(v_x_2, v_y_2, v_h_2);
-        let v_l_3 = _mm512_fmsub_pd(v_x_3, v_y_3, v_h_3);
-        let v_l_4 = _mm512_fmsub_pd(v_x_4, v_y_4, v_h_4);
-
-        let v_c_1 = _mm512_roundscale_pd(v_b_1, _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC);
-        let v_c_2 = _mm512_roundscale_pd(v_b_2, _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC);
-        let v_c_3 = _mm512_roundscale_pd(v_b_3, _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC);
-        let v_c_4 = _mm512_roundscale_pd(v_b_4, _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC);
-
-        let v_d_1 = _mm512_fnmadd_pd(v_c_1, v_p, v_h_1);
-        let v_d_2 = _mm512_fnmadd_pd(v_c_2, v_p, v_h_2);
-        let v_d_3 = _mm512_fnmadd_pd(v_c_3, v_p, v_h_3);
-        let v_d_4 = _mm512_fnmadd_pd(v_c_4, v_p, v_h_4);
-
-        let mut v_g_1 = _mm512_add_pd(v_d_1, v_l_1);
-        let mut v_g_2 = _mm512_add_pd(v_d_2, v_l_2);
-        let mut v_g_3 = _mm512_add_pd(v_d_3, v_l_3);
-        let mut v_g_4 = _mm512_add_pd(v_d_4, v_l_4);
-
-        let m_1 = _mm512_cmp_pd_mask(v_g_1, v_zero, _CMP_LT_OQ);
-        let m_2 = _mm512_cmp_pd_mask(v_g_2, v_zero, _CMP_LT_OQ);
-        let m_3 = _mm512_cmp_pd_mask(v_g_3, v_zero, _CMP_LT_OQ);
-        let m_4 = _mm512_cmp_pd_mask(v_g_4, v_zero, _CMP_LT_OQ);
-
-        v_g_1 = _mm512_mask_add_pd(v_g_1, m_1, v_g_1, v_p);
-        v_g_2 = _mm512_mask_add_pd(v_g_2, m_2, v_g_2, v_p);
-        v_g_3 = _mm512_mask_add_pd(v_g_3, m_3, v_g_3, v_p);
-        v_g_4 = _mm512_mask_add_pd(v_g_4, m_4, v_g_4, v_p);
-
-        let v_out_1 = _mm512_cvt_roundpd_epu64(v_g_1, ROUND_MODE);
-        let v_out_2 = _mm512_cvt_roundpd_epu64(v_g_2, ROUND_MODE);
-        let v_out_3 = _mm512_cvt_roundpd_epu64(v_g_3, ROUND_MODE);
-        let v_out_4 = _mm512_cvt_roundpd_epu64(v_g_4, ROUND_MODE);
-
-        _mm512_storeu_si512(vp_result, v_out_1);
-        vp_result = vp_result.add(1);
-        _mm512_storeu_si512(vp_result, v_out_2);
-        vp_result = vp_result.add(1);
-        _mm512_storeu_si512(vp_result, v_out_3);
-        vp_result = vp_result.add(1);
-        _mm512_storeu_si512(vp_result, v_out_4);
-        vp_result = vp_result.add(1);
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq")]
-#[inline(always)]
-unsafe fn eltwise_mult_mod_avx512_float_loop_dispatch<const INPUT_MOD_FACTOR: i32>(
-    vp_result: *mut __m512i,
-    vp_operand1: *const __m512i,
-    vp_operand2: *const __m512i,
-    v_u: __m512d,
-    v_p: __m512d,
-    v_modulus: __m512i,
-    v_twice_mod: __m512i,
-    n: u64,
-) {
-    match n {
-        1024 => eltwise_mult_mod_avx512_float_loop_unroll::<INPUT_MOD_FACTOR, 1024>(
-            vp_result,
-            vp_operand1,
-            vp_operand2,
-            v_u,
-            v_p,
-            v_modulus,
-            v_twice_mod,
-        ),
-        2048 => eltwise_mult_mod_avx512_float_loop_unroll::<INPUT_MOD_FACTOR, 2048>(
-            vp_result,
-            vp_operand1,
-            vp_operand2,
-            v_u,
-            v_p,
-            v_modulus,
-            v_twice_mod,
-        ),
-        4096 => eltwise_mult_mod_avx512_float_loop_unroll::<INPUT_MOD_FACTOR, 4096>(
-            vp_result,
-            vp_operand1,
-            vp_operand2,
-            v_u,
-            v_p,
-            v_modulus,
-            v_twice_mod,
-        ),
-        8192 => eltwise_mult_mod_avx512_float_loop_unroll::<INPUT_MOD_FACTOR, 8192>(
-            vp_result,
-            vp_operand1,
-            vp_operand2,
-            v_u,
-            v_p,
-            v_modulus,
-            v_twice_mod,
-        ),
-        16384 => eltwise_mult_mod_avx512_float_loop_unroll::<INPUT_MOD_FACTOR, 16384>(
-            vp_result,
-            vp_operand1,
-            vp_operand2,
-            v_u,
-            v_p,
-            v_modulus,
-            v_twice_mod,
-        ),
-        32768 => eltwise_mult_mod_avx512_float_loop_unroll::<INPUT_MOD_FACTOR, 32768>(
-            vp_result,
-            vp_operand1,
-            vp_operand2,
-            v_u,
-            v_p,
-            v_modulus,
-            v_twice_mod,
-        ),
-        _ => eltwise_mult_mod_avx512_float_loop::<INPUT_MOD_FACTOR>(
-            vp_result,
-            vp_operand1,
-            vp_operand2,
-            v_u,
-            v_p,
-            v_modulus,
-            v_twice_mod,
-            n,
-        ),
-    }
-}
-
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq")]
-#[inline(always)]
-unsafe fn eltwise_mult_mod_avx512_float_loop_no_reduce(
-    vp_result: *mut __m512i,
-    vp_operand1: *const __m512i,
-    vp_operand2: *const __m512i,
-    v_u: __m512d,
-    v_p: __m512d,
-    n: u64,
-) {
-    const ROUND_MODE: i32 = _MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC;
-
-    let v_zero = _mm512_setzero_pd();
-    let mut res_ptr = vp_result;
-    let mut op1_ptr = vp_operand1;
-    let mut op2_ptr = vp_operand2;
-
-    macro_rules! float_loop_step_no_reduce {
-        () => {{
-            let v_op1 = _mm512_loadu_si512(op1_ptr);
-            let v_op2 = _mm512_loadu_si512(op2_ptr);
-
-            let v_x = _mm512_cvt_roundepu64_pd(v_op1, ROUND_MODE);
-            let v_y = _mm512_cvt_roundepu64_pd(v_op2, ROUND_MODE);
-
-            let v_h = _mm512_mul_pd(v_x, v_y);
-            let v_l = _mm512_fmsub_pd(v_x, v_y, v_h);
-            let v_b = _mm512_mul_pd(v_h, v_u);
-            let v_c = _mm512_roundscale_pd(v_b, _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC);
-            let v_d = _mm512_fnmadd_pd(v_c, v_p, v_h);
-            let mut v_g = _mm512_add_pd(v_d, v_l);
-            let m = _mm512_cmp_pd_mask(v_g, v_zero, _CMP_LT_OQ);
-            v_g = _mm512_mask_add_pd(v_g, m, v_g, v_p);
-
-            let v_result = _mm512_cvt_roundpd_epu64(v_g, ROUND_MODE);
-            _mm512_storeu_si512(res_ptr, v_result);
-
-            res_ptr = res_ptr.add(1);
-            op1_ptr = op1_ptr.add(1);
-            op2_ptr = op2_ptr.add(1);
-        }};
-    }
-
-    let mut i = n / 8;
-    while i >= 4 {
-        float_loop_step_no_reduce!();
-        float_loop_step_no_reduce!();
-        float_loop_step_no_reduce!();
-        float_loop_step_no_reduce!();
-        i -= 4;
-    }
-    while i > 0 {
-        float_loop_step_no_reduce!();
-        i -= 1;
+        res_ptr = res_ptr.add(1);
+        op1_ptr = op1_ptr.add(1);
+        op2_ptr = op2_ptr.add(1);
     }
 }
 
@@ -1245,16 +919,18 @@ unsafe fn eltwise_mult_mod_avx512_float<const INPUT_MOD_FACTOR: i32>(
 
     let no_input_reduce_mod = (INPUT_MOD_FACTOR as u64 * INPUT_MOD_FACTOR as u64 * modulus) < (1u64 << 50);
     if no_input_reduce_mod {
-        eltwise_mult_mod_avx512_float_loop_no_reduce(
+        eltwise_mult_mod_avx512_float_loop::<1>(
             vp_result,
             vp_operand1,
             vp_operand2,
             v_u,
             v_p,
+            v_modulus,
+            v_twice_mod,
             n,
         );
     } else {
-        eltwise_mult_mod_avx512_float_loop_dispatch::<INPUT_MOD_FACTOR>(
+        eltwise_mult_mod_avx512_float_loop::<INPUT_MOD_FACTOR>(
             vp_result,
             vp_operand1,
             vp_operand2,
