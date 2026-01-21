@@ -79,7 +79,7 @@ pub fn estimate_sis_security(params: &SISParameters) -> Result<EstimatorResult, 
         )
     })?;
 
-    Ok(EstimatorResult { secpar })
+    Ok(EstimatorResult { secpar: secpar.ceil() })
 }
 
 #[cfg(test)]

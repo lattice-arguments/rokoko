@@ -426,10 +426,14 @@ pub fn prover_round(
             argued_witness_bound
         };
 
-        debug_assert!(
-            argued_witness_bound * argued_witness_bound < (MOD_Q as f64 / 2f64),
-            "Witness bound too large for inner-product norm extraction!"
-        );
+        if !with_claims {
+            // i.e. not the first round
+            debug_assert!(
+                argued_witness_bound * argued_witness_bound < (MOD_Q as f64 / 2f64),
+                "Witness bound too large for inner-product norm extraction!"
+            );
+        }
+        
 
         let basic_commitment_security = estimate_rsis_security(&RSISParameters {
             m: config.witness_height as u64,

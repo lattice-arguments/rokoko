@@ -40,7 +40,7 @@ pub fn execute() {
         width: config.witness_width,
         data: sample_random_short_vector(
             config.witness_height * config.witness_width,
-            2,
+            31,
             Representation::IncompleteNTT,
         ),
         used_cols: config.witness_width,
