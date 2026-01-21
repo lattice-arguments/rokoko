@@ -35,6 +35,49 @@ pub fn prepare_i16_witness(
     }
 }
 
+
+#[derive(Clone)]
+pub struct RowPattern {
+    pub pos: Vec<u16>,
+    pub neg: Vec<u16>,
+}
+
+#[derive(Clone)]
+pub struct ProjectionPlan {
+    pub projection_ratio: usize,
+    pub rows: Vec<RowPattern>,
+}
+
+pub fn build_plan(pm: &ProjectionMatrix) -> ProjectionPlan {
+    let row_len = pm.projection_ratio * pm.projection_height;
+
+    let rows: Vec<RowPattern> = (0..pm.projection_height)
+        .map(|inner_row| {
+            let mut pos = Vec::<u16>::new();
+            let mut neg = Vec::<u16>::new();
+
+            for i in 0..row_len {
+                let (is_positive, is_non_zero) = pm[(inner_row, i)];
+                if !is_non_zero {
+                    continue;
+                }
+                if is_positive {
+                    pos.push(i as u16);
+                } else {
+                    neg.push(i as u16);
+                }
+            }
+
+            RowPattern { pos, neg }
+        })
+        .collect();
+
+    ProjectionPlan {
+        projection_ratio: pm.projection_ratio,
+        rows,
+    }
+}
+
 pub fn project(
     witness_16: &VerticallyAlignedMatrix<Signed16RingElement>,
     projection_matrix: &ProjectionMatrix,
@@ -53,6 +96,8 @@ pub fn project(
     for i in projection_image.data.iter_mut() {
         i.from_incomplete_ntt_to_even_odd_coefficients();
     }
+
+    let plan = build_plan(projection_matrix);
 
     for col in 0..witness_16.width {
         for rows_chunk in 0..projection_image.height / projection_matrix.projection_height {
@@ -76,8 +121,8 @@ pub fn project(
                 unsafe {
                     project_one_row_i16_to_u64::<DEGREE>(
                         subwitness_i16,
-                        projection_matrix,
-                        inner_row,
+                        &plan.rows[inner_row].pos,
+                        &plan.rows[inner_row].neg,
                         &mut projection_subimage[inner_row].v,
                     );
                 }

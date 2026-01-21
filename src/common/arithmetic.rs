@@ -108,43 +108,26 @@ pub fn centered_coeffs_u64_to_i64_inplace(out_i64: &mut [i64; DEGREE], in_u64: &
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 pub fn project_one_row_i16_to_u64<const DEGREE: usize>(
     subwitness_i16: &[[i16; DEGREE]], // len = projection_ratio*H
-    projection_matrix: &ProjectionMatrix,
-    inner_row: usize,
+    pos: &[u16],
+    neg: &[u16],
     out_u64: &mut [u64; DEGREE],
 ) {
     use crate::hexl::bindings::eltwise_reduce_mod;
 
-    let row_len = projection_matrix.projection_ratio * projection_matrix.projection_height;
-    debug_assert_eq!(subwitness_i16.len(), row_len);
     debug_assert!(DEGREE % 16 == 0);
-
-    let mut k = 0usize;
-    let mut pos_idx = Vec::new();
-    let mut neg_idx = Vec::new();
-    for i in 0..row_len {
-        let (is_positive, is_non_zero) = projection_matrix[(inner_row, i)];
-        if !is_non_zero {
-            continue;
-        }
-        if is_positive {
-            pos_idx.push(i);
-        } else {
-            neg_idx.push(i);
-        }
-    }
 
     unsafe {
         for j in 0..(DEGREE / 32) {
             let k = j * 32;
             let mut acc = _mm512_setzero_si512();
 
-            for &i in &pos_idx {
-                let v = _mm512_loadu_si512(subwitness_i16[i].as_ptr().add(k) as *const __m512i);
+            for &i in pos {
+                let v = _mm512_loadu_si512(subwitness_i16[i as usize].as_ptr().add(k) as *const __m512i);
                 acc = _mm512_add_epi16(acc, v);
             }
 
-            for &i in &neg_idx {
-                let v = _mm512_loadu_si512(subwitness_i16[i].as_ptr().add(k) as *const __m512i);
+            for &i in neg {
+                let v = _mm512_loadu_si512(subwitness_i16[i as usize].as_ptr().add(k) as *const __m512i);
                 acc = _mm512_sub_epi16(acc, v);
             }
 
