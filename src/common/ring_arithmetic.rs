@@ -471,8 +471,9 @@ impl RingElement {
 pub static CONSTANT_TERM_FACTORS: LazyLock<[u64; HALF_DEGREE]> = LazyLock::new(|| {
     let scale = unsafe { inv_mod(HALF_DEGREE as u64, MOD_Q) };
     let mut factors = RingElement::one(Representation::IncompleteNTT);
+    println!("factors {:?}", factors);
     unsafe {
-        for i in 0..factors.v.len() {
+        for i in 0..HALF_DEGREE {
             factors.v[i] = multiply_mod(scale, inv_mod(factors.v[i], MOD_Q), MOD_Q);
         }
     }

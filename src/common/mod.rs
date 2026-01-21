@@ -38,6 +38,7 @@ pub fn init_common() {
     LazyLock::force(&ADDITION_SUBTRACTION_BUDGET);
     LazyLock::force(&HALF_WAY_MOD_Q);
     LazyLock::force(&HALF_WAY_MOD_Q_RING_CF);
+    LazyLock::force(&CONSTANT_TERM_FACTORS);
 
     unsafe { LazyLock::force_mut(&mut crate::common::ring_arithmetic::temp_buffer) };
     unsafe { LazyLock::force_mut(&mut crate::common::ring_arithmetic::aux) };
