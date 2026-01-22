@@ -184,7 +184,7 @@ pub fn prover_round(
 
     match &config.projection_recursion {
         Projection::Skip => {
-            println!("Skipping projection recursion as per configuration. Likely the first round\n");
+            println!("  Skipping projection recursion as per configuration. Likely the first round\n");
         }
         _ => {}
     }

@@ -14,10 +14,10 @@ pub static DECOMP_8_LAST_LEVEL: AuxRecursionConfig = AuxRecursionConfig {
 
 pub static P28: LazyLock<Config> = LazyLock::new(|| {
     AuxSumcheckConfig {
-        witness_height: 2usize.pow(15),
-        witness_width: 2usize.pow(6),
-        projection_ratio: 0,
-        projection_height: 0,
+        witness_height: 2usize.pow(15), // 2^29 total size, but ths is 2^28 of 2^32 els (as we sample from 2^16 els)
+        witness_width: 2usize.pow(7),
+        projection_ratio: 1, // no-op
+        projection_height: 2usize.pow(8), // no-op, TODO: make sure this is not used
         basic_commitment_rank: 8,
         nof_openings: 1,
         commitment_recursion: AuxRecursionConfig {
@@ -37,7 +37,7 @@ pub static P28: LazyLock<Config> = LazyLock::new(|| {
         witness_decomposition_chunks: 4,
         witness_decomposition_base_log: 7,
 
-        next: None,
+        next: Some(Box::new(AuxConfig::Sumcheck(P28_1.clone()))),
     }
     .generate_config()
 });

@@ -40,15 +40,23 @@ pub fn execute() {
         width: config.witness_width,
         data: sample_random_short_vector(
             config.witness_height * config.witness_width,
-            31,
+            2u64.pow(15),
             Representation::IncompleteNTT,
         ),
         used_cols: config.witness_width,
     };
 
+
+    println!("===== COMMITTING WITNESS =====");
+    let start = std::time::Instant::now();
+
     let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness);
 
-    println!("Witness generated.");
+    let commit_duration = start.elapsed().as_nanos();
+    println!("TOTAL Commit time: {:?} ns", commit_duration);
+
+    println!("===== COMMITTING WITNESS DONE =====");
+
 
     let evaluation_points_inner = vec![evaluation_point_to_structured_row(
         &range(0, witness.height.ilog2() as usize)

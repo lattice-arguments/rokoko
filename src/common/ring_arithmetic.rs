@@ -111,10 +111,13 @@ impl RingElement {
         RNG.with(|cell| {
             let mut rng = cell.borrow_mut();
             for i in 0..DEGREE {
-                element.v[i] = rng.random_range(0..bound);
-                if rng.random_bool(0.5) {
-                    element.v[i] = MOD_Q - element.v[i];
-                }
+                let val = rng.random_range(0..bound);
+                // Use a single random u64 bit to decide sign
+                element.v[i] = if (rng.random::<u8>() & 1) == 0 {
+                    val
+                } else {
+                    MOD_Q - val
+                };
             }
         });
         unsafe {
