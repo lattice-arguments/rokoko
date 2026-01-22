@@ -19,6 +19,7 @@ pub enum AuxProjection {
         recursion_constant_term: AuxRecursionConfig,
         recursion_batched_projection: AuxRecursionConfig,
     },
+    Skip
 }
 
 #[derive(Clone)]
@@ -229,6 +230,9 @@ impl AuxSumcheckConfig {
                     ],
                 );
             }
+            AuxProjection::Skip => {
+                // No components to collect
+            }
         }
     }
 
@@ -327,6 +331,7 @@ impl AuxSumcheckConfig {
                     recursion_batched_projection: batched_projection,
                 })
             }
+            AuxProjection::Skip => Projection::Skip,
         };
 
         // Get folded witness prefix

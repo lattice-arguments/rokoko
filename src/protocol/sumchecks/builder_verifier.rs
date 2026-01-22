@@ -592,6 +592,7 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                 })
             }
             Projection::Type1(projection_recursion) => None,
+            Projection::Skip => None,
         }
     };
 
@@ -882,6 +883,9 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                 &proj_config.recursion_batched_projection,
             ));
         }
+        Projection::Skip => {
+            // Do nothing
+        }
     }
     let conjugated_combined_witness_evaluation =
         ElephantCell::new(FakeEvaluationLinearSumcheck::<RingElement>::new());
@@ -928,6 +932,9 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                 total_vars,
             );
             most_inner_commitments_selectors.push(most_inner_batched_projection_recursion);
+        }
+        Projection::Skip => {
+            // Do nothing
         }
     }
 

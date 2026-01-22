@@ -213,6 +213,7 @@ pub fn sumcheck_verifier(
             ))
         }
         Projection::Type1(_) => None,
+        Projection::Skip => None,
     };
 
     hash_wrapper.update_with_ring_element(&round_proof.norm_claim);

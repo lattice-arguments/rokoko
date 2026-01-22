@@ -35,6 +35,7 @@ pub type Type0ProjectionConfig = RecursionConfig;
 pub enum Projection {
     Type0(Type0ProjectionConfig),
     Type1(Type1ProjectionConfig),
+    Skip,
 }
 
 pub static SOMEWHAT_REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| {

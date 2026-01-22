@@ -819,6 +819,9 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
             );
             most_inner_commitments_selectors.push(most_inner_batched_projection_recursion);
         }
+        Projection::Skip => {
+            // No type4 sumcheck for projection
+        }
     }
 
     let mut sum_of_selectors: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>> =
@@ -889,6 +892,9 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                 combined_witness_sumcheck.clone(),
                 &recursion_config.recursion_batched_projection,
             ));
+        }
+        Projection::Skip => {
+            // No type4 sumcheck for projection
         }
     }
 

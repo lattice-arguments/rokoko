@@ -80,6 +80,7 @@ pub fn sumcheck(
             ))
         }
         Projection::Type1(_) => None,
+        Projection::Skip => None,
     };
 
     let mut conjugated_combined_witness = new_vec_zero_preallocated(combined_witness.len());

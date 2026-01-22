@@ -16,8 +16,8 @@ pub static P28: LazyLock<Config> = LazyLock::new(|| {
     AuxSumcheckConfig {
         witness_height: 2usize.pow(15),
         witness_width: 2usize.pow(6),
-        projection_ratio: 2usize.pow(7),
-        projection_height: 2usize.pow(8),
+        projection_ratio: 0,
+        projection_height: 0,
         basic_commitment_rank: 8,
         nof_openings: 1,
         commitment_recursion: AuxRecursionConfig {
@@ -32,17 +32,12 @@ pub static P28: LazyLock<Config> = LazyLock::new(|| {
             rank: 2,
             next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
         },
-        projection_recursion: AuxProjection::Type0(AuxRecursionConfig {
-            decomposition_base_log: 7,
-            decomposition_chunks: 4,
-            rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
-        }),
+        projection_recursion: AuxProjection::Skip,
 
         witness_decomposition_chunks: 4,
         witness_decomposition_base_log: 7,
 
-        next: Some(Box::new(AuxConfig::Sumcheck(P28_1.clone()))),
+        next: None,
     }
     .generate_config()
 });

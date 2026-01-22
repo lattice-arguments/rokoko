@@ -181,6 +181,13 @@ pub fn prover_round(
         }
         _ => None,
     };
+
+    match &config.projection_recursion {
+        Projection::Skip => {
+            println!("Skipping projection recursion as per configuration. Likely the first round\n");
+        }
+        _ => {}
+    }
     let mut fold_challenge = vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
 
     hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut fold_challenge);
@@ -225,6 +232,9 @@ pub fn prover_round(
                 &projection_config.recursion_batched_projection,
             );
         }
+        Projection::Skip => {
+            // Do nothing
+        }
     }
 
     paste_recursive_commitment(&mut next_round_data, &rc_opening, &config.opening_recursion);
@@ -240,6 +250,8 @@ pub fn prover_round(
         use crate::protocol::commitment::RecursionConfig;
 
         println!("=== Debug Hardness Check ===");
+        // let witness_norm = norms::l2_norm(&witness.data);
+        // println!("Original witness L_2 norm: {}", witness_norm);
 
         let recommited_ell_inf_norm = norms::inf_norm(&next_round_data);
         let recommited_ell_2_norm = norms::l2_norm(&next_round_data);
@@ -267,6 +279,7 @@ pub fn prover_round(
                     norms::l2_norm(&proj_ct_data).powf(2.0) as u64
                         + norms::l2_norm(&proj_batched_data).powf(2.0) as u64
                 }
+                Projection::Skip => 0,
             };
             ((norm_commitment_data_ell_2_sq
                 + norm_opening_data_ell_2_sq
@@ -408,6 +421,7 @@ pub fn prover_round(
                         .pow((proj_config.recursion_constant_term.decomposition_chunks - 1) as u32))
                         as f64
             }
+            Projection::Skip => 0.0, // not used
         };
 
         let argued_witness_bound = recomposed_projection_bound / 5.477f64; // sqrt(30) as in the paper
