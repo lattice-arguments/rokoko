@@ -2,6 +2,7 @@ use num::range;
 
 use crate::{
     common::{
+        decomposition::decompose,
         matrix::VerticallyAlignedMatrix,
         ring_arithmetic::{Representation, RingElement},
         sampling::sample_random_short_vector,
@@ -10,7 +11,7 @@ use crate::{
         config::{to_kb, Config, SizeableProof, CONFIG},
         crs::CRS,
         open::{claim, evaluation_point_to_structured_row},
-        params::witness_sampler,
+        params::{decompose_witness, witness_sampler, WITNESS_CONFIG},
         parties::{commiter::commit, prover::prover_round, verifier::verifier_round},
         project::prepare_i16_witness,
         sumcheck::init_sumcheck,
@@ -41,7 +42,9 @@ pub fn execute() {
     println!("===== COMMITTING WITNESS =====");
     let start = std::time::Instant::now();
 
-    let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness);
+    let witness_decomposed = decompose_witness(&witness);
+
+    let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness_decomposed);
 
     let commit_duration = start.elapsed().as_nanos();
     println!("TOTAL Commit time: {:?} ns", commit_duration);
@@ -49,13 +52,13 @@ pub fn execute() {
     println!("===== COMMITTING WITNESS DONE =====");
 
     let evaluation_points_inner = vec![evaluation_point_to_structured_row(
-        &range(0, witness.height.ilog2() as usize)
+        &range(0, witness_decomposed.height.ilog2() as usize)
             .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 2))
             .collect::<Vec<RingElement>>(),
     )];
 
     let evaluation_points_outer = vec![evaluation_point_to_structured_row(
-        &range(0, witness.width.ilog2() as usize)
+        &range(0, witness_decomposed.width.ilog2() as usize)
             .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 2))
             .collect::<Vec<RingElement>>(),
     )];
@@ -68,7 +71,7 @@ pub fn execute() {
         &crs,
         &config,
         &commitment_with_aux,
-        &witness,
+        &witness_decomposed,
         &evaluation_points_inner,
         &evaluation_points_outer,
         &mut sumcheck_context,

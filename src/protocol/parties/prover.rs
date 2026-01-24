@@ -442,7 +442,6 @@ pub fn prover_round(
 
         if !with_claims {
             // i.e. not the first round
-            
         }
         match &config.projection_recursion {
             Projection::Skip => {
@@ -451,8 +450,8 @@ pub fn prover_round(
             _ => {
                 assert!(
                     argued_witness_bound * argued_witness_bound < (MOD_Q as f64 / 2f64),
-                "Witness bound too large for inner-product norm extraction!"
-            );
+                    "Witness bound too large for inner-product norm extraction!"
+                );
             }
         }
 

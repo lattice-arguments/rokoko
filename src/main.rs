@@ -6,7 +6,6 @@ use cowboys_and_aliens::protocol::parties::executor::execute;
 // use cowboys_and_aliens::protocol::execution::execute;
 
 fn main() {
-
     #[cfg(feature = "p-26")]
     {
         println!("Using p26...");

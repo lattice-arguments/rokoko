@@ -2,6 +2,7 @@ use std::sync::LazyLock;
 
 use crate::{
     common::{
+        decomposition::decompose,
         matrix::VerticallyAlignedMatrix,
         ring_arithmetic::{Representation, RingElement},
         sampling::sample_random_short_vector,
@@ -319,19 +320,52 @@ pub static P_LAST: LazyLock<SimpleConfig> = LazyLock::new(|| SimpleConfig {
 // => 2^22 R_q elements
 // => height 2^15, width 2^7
 
+pub struct InitialWitnessParams {
+    pub height: usize,
+    pub width: usize,
+    pub decomposition_base_log: usize,
+    pub decomposition_chunks: usize,
+    pub initial_norm_log: usize,
+}
+
+pub static WITNESS_CONFIG: LazyLock<InitialWitnessParams> = LazyLock::new(|| match &*P {
+    Config::Sumcheck(config) => InitialWitnessParams {
+        height: config.witness_height / 2,
+        width: config.witness_width,
+        decomposition_base_log: 16,
+        decomposition_chunks: 2,
+        initial_norm_log: 32,
+    },
+    _ => panic!("Expected sumcheck config at the top level."),
+});
+
 pub fn witness_sampler() -> VerticallyAlignedMatrix<RingElement> {
-    let config = &*P;
-    match config {
-        Config::Sumcheck(config) => VerticallyAlignedMatrix {
-            height: config.witness_height,
-            width: config.witness_width,
-            data: sample_random_short_vector(
-                config.witness_height * config.witness_width,
-                2u64.pow(15),
-                Representation::IncompleteNTT,
-            ),
-            used_cols: config.witness_width,
-        },
-        _ => panic!("Expected sumcheck config at the top level."),
+    let config = &*WITNESS_CONFIG;
+    VerticallyAlignedMatrix {
+        height: config.height,
+        width: config.width,
+        data: sample_random_short_vector(
+            config.height * config.width,
+            2u64.pow(config.initial_norm_log as u32 - 1),
+            Representation::IncompleteNTT,
+        ),
+        used_cols: config.width,
+    }
+}
+
+pub fn decompose_witness(
+    witness: &VerticallyAlignedMatrix<RingElement>,
+) -> VerticallyAlignedMatrix<RingElement> {
+    let config = &*WITNESS_CONFIG;
+    let decomposed_data = decompose(
+        &witness.data,
+        config.decomposition_base_log as u64,
+        config.decomposition_chunks,
+    );
+    VerticallyAlignedMatrix {
+        height: witness.height * config.decomposition_chunks,
+        width: witness.width,
+        data: decomposed_data,
+        used_cols: witness.width,
     }
 }
