@@ -27,15 +27,15 @@ use super::context_verifier::VerifierSumcheckContext;
 /// evaluation points in their structured form.
 pub fn load_verifier_sumcheck_data(
     verifier_sumcheck_context: &mut VerifierSumcheckContext,
-    folding_challenges: &Vec<RingElement>,
+    folding_challenges: &[RingElement],
     claim_over_witness: &RingElement,
     claim_over_witness_conjugate: &RingElement,
-    evaluation_points_inner: &Vec<StructuredRow>,
-    evaluation_points_outer: &Vec<StructuredRow>,
+    evaluation_points_inner: &[StructuredRow],
+    evaluation_points_outer: &[StructuredRow],
     projection_matrix: &ProjectionMatrix,
     projection_matrix_flatter_structured: &Option<StructuredRow>, // Only needed for type0 projection
     challenges_3_1: &Option<[BatchedProjectionChallengesSuccinct; NOF_BATCHES]>,
-    combination: &Vec<RingElement>,
+    combination: &[RingElement],
     qe: &[QuadraticExtension; HALF_DEGREE],
 ) {
     verifier_sumcheck_context

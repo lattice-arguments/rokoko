@@ -40,11 +40,11 @@ use crate::{
 pub fn verifier_round(
     crs: &CRS,
     config: &SumcheckConfig,
-    rc_commitment: &Vec<RingElement>,
+    rc_commitment: &[RingElement],
     round_proof: &SumcheckRoundProof,
-    evaluation_points_inner: &Vec<StructuredRow>,
-    evaluation_points_outer: &Vec<StructuredRow>,
-    claims: &Vec<RingElement>,
+    evaluation_points_inner: &[StructuredRow],
+    evaluation_points_outer: &[StructuredRow],
+    claims: &[RingElement],
     sumcheck_context_verifier: &mut VerifierSumcheckContext,
     hash_wrapper_verifier: Option<HashWrapper>,
 ) {
@@ -61,19 +61,17 @@ pub fn verifier_round(
         &claims,
         &mut hash_wrapper_verifier,
     );
+
     let elapsed = start.elapsed().as_nanos();
     println!("Verifier: {} ns", elapsed);
+
     match &round_proof.next {
         Some(next_round_proof) => {
             let next_round_commitment =
-                round_proof
-                    .next_round_commitment
-                    .as_ref()
-                    .unwrap_or_else(|| {
-                        panic!(
-                        "Next round commitment must be present when next round proof is present."
-                    )
-                    });
+                round_proof.next_round_commitment.as_ref().unwrap_or_else(|| {
+                    panic!("Next round commitment must be present when next round proof is present.")
+                });
+
             match next_round_proof.as_ref() {
                 RoundProof::Sumcheck(next_sumcheck_round_proof) => {
                     let next_sumcheck_config = match &config.next {
@@ -85,43 +83,43 @@ pub fn verifier_round(
                     };
 
                     let (new_evaluation_points_outer, new_evaluation_points_inner) =
-                        evaluation_points
-                            .split_at(next_sumcheck_config.witness_width.ilog2() as usize);
+                        evaluation_points.split_at(next_sumcheck_config.witness_width.ilog2() as usize);
 
                     let next_round_commiments_recursive = match &next_round_commitment {
                         NextRoundCommitment::Recursive(rc) => rc,
                         _ => panic!("Expected recursive commitment for next round."),
                     };
 
+                    // Build the underlying vectors ONCE each (instead of to_vec() twice).
+                    let inner_vec = new_evaluation_points_inner.to_vec();
+                    let outer_vec = new_evaluation_points_outer.to_vec();
+
+                    let inner_rows = [
+                        evaluation_point_to_structured_row(&inner_vec),
+                        evaluation_point_to_structured_row_conjugate(&inner_vec),
+                    ];
+                    let outer_rows = [
+                        evaluation_point_to_structured_row(&outer_vec),
+                        evaluation_point_to_structured_row_conjugate(&outer_vec),
+                    ];
+                    let new_claims = [
+                        round_proof.claim_over_witness.clone(),
+                        round_proof.claim_over_witness_conjugate.conjugate(),
+                    ];
+
                     verifier_round(
                         crs,
                         &next_sumcheck_config,
-                        &next_round_commiments_recursive,
+                        next_round_commiments_recursive.as_slice(),
                         next_sumcheck_round_proof,
-                        &vec![
-                            evaluation_point_to_structured_row(
-                                &new_evaluation_points_inner.to_vec(),
-                            ),
-                            evaluation_point_to_structured_row_conjugate(
-                                &new_evaluation_points_inner.to_vec(),
-                            ),
-                        ],
-                        &vec![
-                            evaluation_point_to_structured_row(
-                                &new_evaluation_points_outer.to_vec(),
-                            ),
-                            evaluation_point_to_structured_row_conjugate(
-                                &new_evaluation_points_outer.to_vec(),
-                            ),
-                        ],
-                        &vec![
-                            round_proof.claim_over_witness.clone(),
-                            round_proof.claim_over_witness_conjugate.conjugate(),
-                        ],
+                        &inner_rows,
+                        &outer_rows,
+                        &new_claims,
                         sumcheck_context_verifier.next.as_mut().unwrap(),
                         Some(hash_wrapper_verifier),
                     );
                 }
+
                 RoundProof::Simple(next_simple_round_proof) => {
                     let next_simple_config = match &config.next {
                         Some(next_config) => match next_config.as_ref() {
@@ -132,38 +130,37 @@ pub fn verifier_round(
                     };
 
                     let (new_evaluation_points_outer, new_evaluation_points_inner) =
-                        evaluation_points
-                            .split_at(next_simple_config.witness_width.ilog2() as usize);
+                        evaluation_points.split_at(next_simple_config.witness_width.ilog2() as usize);
 
                     let commitment = match &next_round_commitment {
                         NextRoundCommitment::Simple(basic_commitment) => basic_commitment,
                         _ => panic!("Expected simple commitment for next round."),
                     };
+
+                    let inner_vec = new_evaluation_points_inner.to_vec();
+                    let outer_vec = new_evaluation_points_outer.to_vec();
+
+                    let inner_rows = [
+                        evaluation_point_to_structured_row(&inner_vec),
+                        evaluation_point_to_structured_row_conjugate(&inner_vec),
+                    ];
+                    let outer_rows = [
+                        evaluation_point_to_structured_row(&outer_vec),
+                        evaluation_point_to_structured_row_conjugate(&outer_vec),
+                    ];
+                    let new_claims = [
+                        round_proof.claim_over_witness.clone(),
+                        round_proof.claim_over_witness_conjugate.conjugate(),
+                    ];
+
                     verifier_round_simple(
-                        &crs,
+                        crs,
                         next_simple_config,
                         commitment,
                         next_simple_round_proof,
-                        &vec![
-                            evaluation_point_to_structured_row(
-                                &new_evaluation_points_inner.to_vec(),
-                            ),
-                            evaluation_point_to_structured_row_conjugate(
-                                &new_evaluation_points_inner.to_vec(),
-                            ),
-                        ],
-                        &vec![
-                            evaluation_point_to_structured_row(
-                                &new_evaluation_points_outer.to_vec(),
-                            ),
-                            evaluation_point_to_structured_row_conjugate(
-                                &new_evaluation_points_outer.to_vec(),
-                            ),
-                        ],
-                        &vec![
-                            round_proof.claim_over_witness.clone(),
-                            round_proof.claim_over_witness_conjugate.conjugate(),
-                        ],
+                        &inner_rows,
+                        &outer_rows,
+                        &new_claims,
                         Some(hash_wrapper_verifier),
                     );
                 }
@@ -173,14 +170,16 @@ pub fn verifier_round(
     }
 }
 
+
+
 pub fn verifier_round_simple(
     crs: &CRS,
     config: &SimpleConfig,
     commitment: &BasicCommitment,
     round_proof: &SimpleRoundProof,
-    evaluation_points_inner: &Vec<StructuredRow>,
-    evaluation_points_outer: &Vec<StructuredRow>,
-    claims: &Vec<RingElement>,
+    evaluation_points_inner: &[StructuredRow],
+    evaluation_points_outer: &[StructuredRow],
+    claims: &[RingElement],
     hash_wrapper: Option<HashWrapper>,
 ) {
     let start = std::time::Instant::now();

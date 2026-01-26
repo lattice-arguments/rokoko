@@ -30,8 +30,8 @@ pub fn evaluation_point_to_structured_row_conjugate(
 
 pub fn open_at(
     witness: &VerticallyAlignedMatrix<RingElement>,
-    structured_points_inner: &Vec<StructuredRow>,
-    structured_points_outer: &Vec<StructuredRow>,
+    structured_points_inner: &[StructuredRow],
+    structured_points_outer: &[StructuredRow],
 ) -> Opening {
     debug_assert_eq!(
         structured_points_inner[0].tensor_layers.len(),

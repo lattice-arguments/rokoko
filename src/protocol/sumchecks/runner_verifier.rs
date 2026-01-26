@@ -29,15 +29,15 @@ use crate::{
 
 fn batch_claims(
     config: &SumcheckConfig,
-    claims: &Vec<RingElement>,
-    rc_commitment_inner: &Vec<RingElement>,
-    rc_opening_inner: &Vec<RingElement>,
-    rc_projection_inner: &Option<Vec<RingElement>>,
-    rcs_projection_1_inner: &Option<(Vec<RingElement>, Vec<RingElement>)>,
-    rcs_projection_1_constant_term_claims: &Option<Vec<RingElement>>,
+    claims: &[RingElement],
+    rc_commitment_inner: &[RingElement],
+    rc_opening_inner: &[RingElement],
+    rc_projection_inner: Option<&[RingElement]>,
+    rcs_projection_1_inner: Option<(&[RingElement], &[RingElement])>,
+    rcs_projection_1_constant_term_claims: Option<&[RingElement]>,
     norm_claim: &RingElement,
     most_inner_norm_claim: &RingElement,
-    combination: &Vec<RingElement>,
+    combination: &[RingElement],
 ) -> RingElement {
     let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
     let mut idx = 0;
@@ -77,9 +77,9 @@ fn batch_claims(
     for (recursion_idx, rc_inner) in [
         Some(rc_commitment_inner),
         Some(rc_opening_inner),
-        rc_projection_inner.as_ref(),
-        rcs_projection_1_inner.as_ref().map(|(rc_ct, _)| rc_ct),
-        rcs_projection_1_inner.as_ref().map(|(_, rc_bp)| rc_bp),
+        rc_projection_inner,
+        rcs_projection_1_inner.map(|(rc_ct, _)| rc_ct),
+        rcs_projection_1_inner.map(|(_, rc_bp)| rc_bp),
     ]
     .iter()
     .enumerate()
@@ -139,11 +139,11 @@ fn batch_claims(
 pub fn sumcheck_verifier(
     config: &SumcheckConfig,
     verifier_sumcheck_context: &mut VerifierSumcheckContext,
-    rc_commitment: &Vec<RingElement>,
+    rc_commitment: &[RingElement],
     round_proof: &SumcheckRoundProof,
-    evaluation_points_inner: &Vec<StructuredRow>,
-    evaluation_points_outer: &Vec<StructuredRow>,
-    claims: &Vec<RingElement>,
+    evaluation_points_inner: &[StructuredRow],
+    evaluation_points_outer: &[StructuredRow],
+    claims: &[RingElement],
     hash_wrapper: &mut HashWrapper,
 ) -> Vec<RingElement> {
     hash_wrapper.update_with_ring_element_slice(rc_commitment);
@@ -164,7 +164,6 @@ pub fn sumcheck_verifier(
                 verifier_sample_projection_challenges(&projection_matrix, config, hash_wrapper)
             });
 
-        // verifier_sample_projection_challenges(&projection_matrix, config, hash_wrapper);
         hash_wrapper.update_with_ring_element_slice(rcs_projection_1_batched);
         Some(challenges_3_1)
     } else {
@@ -173,8 +172,6 @@ pub fn sumcheck_verifier(
 
     let mut folding_challenges =
         vec![RingElement::zero(Representation::IncompleteNTT); config.witness_width];
-
-    hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut folding_challenges);
 
     let projection_height_flat = config.witness_height / config.projection_ratio;
 
@@ -240,9 +237,9 @@ pub fn sumcheck_verifier(
         claims,
         rc_commitment,
         &round_proof.rc_opening_inner,
-        &round_proof.rc_projection_inner,
-        &round_proof.rcs_projection_1_inner,
-        &round_proof.constant_term_claims,
+        round_proof.rc_projection_inner.as_deref(),
+        round_proof.rcs_projection_1_inner.as_ref().map(|(a, b)| (a.as_slice(), b.as_slice())),
+        round_proof.constant_term_claims.as_deref(),
         &round_proof.norm_claim,
         &round_proof.most_inner_norm_claim,
         &combination,
