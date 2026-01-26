@@ -18,6 +18,7 @@ pub enum Representation {
 
 // DO NOT derive Copy here, as RingElement is large.
 #[derive(PartialEq, Clone, Debug)]
+#[repr(align(64))]
 pub struct RingElement {
     pub v: [u64; DEGREE],
     pub representation: Representation,
