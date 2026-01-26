@@ -121,22 +121,36 @@ pub fn project_one_row_i16_to_u64<const DEGREE: usize>(
     unsafe {
         for j in 0..(DEGREE / 32) {
             let k = j * 32;
-            let mut acc = _mm512_setzero_si512();
+
+            let mut acc0 = _mm512_setzero_si512();
+            let mut acc1 = _mm512_setzero_si512();
+            let mut toggle = 0u32;
 
             for &i in pos {
                 let v = _mm512_loadu_si512(
                     subwitness_i16[i as usize].0.as_ptr().add(k) as *const __m512i
                 );
-                acc = _mm512_add_epi16(acc, v);
+                if (toggle & 1) == 0 {
+                    acc0 = _mm512_add_epi16(acc0, v);
+                } else {
+                    acc1 = _mm512_add_epi16(acc1, v);
+                }
+                toggle ^= 1;
             }
 
             for &i in neg {
                 let v = _mm512_loadu_si512(
                     subwitness_i16[i as usize].0.as_ptr().add(k) as *const __m512i
                 );
-                acc = _mm512_sub_epi16(acc, v);
+                if (toggle & 1) == 0 {
+                    acc0 = _mm512_sub_epi16(acc0, v);
+                } else {
+                    acc1 = _mm512_sub_epi16(acc1, v);
+                }
+                toggle ^= 1;
             }
 
+            let acc = _mm512_add_epi16(acc0, acc1);
             convert_i16_as_u64(out_u64.as_mut_ptr().add(k), acc);
         }
 

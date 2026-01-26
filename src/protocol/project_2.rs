@@ -76,8 +76,8 @@ pub fn compute_j_batched(
                         let base_ptr0 = row_ptr.add(j_ * 8);
                         let base_ptr1 = row_ptr.add((j_ + 1) * 8);
 
-                        let current0 = _mm512_loadu_epi64(base_ptr0 as *const i64);
-                        let current1 = _mm512_loadu_epi64(base_ptr1 as *const i64);
+                        let current0 = _mm512_load_epi64(base_ptr0 as *const i64);
+                        let current1 = _mm512_load_epi64(base_ptr1 as *const i64);
 
                         let k_add0 = k_inc0 & k_pos0;
                         let k_sub0 = k_inc0 & !k_pos0;
@@ -89,8 +89,8 @@ pub fn compute_j_batched(
                         let result1 = _mm512_mask_add_epi64(current1, k_add1, current1, coeff_vec);
                         let result1 = _mm512_mask_sub_epi64(result1, k_sub1, result1, coeff_vec);
 
-                        _mm512_storeu_epi64(base_ptr0 as *mut i64, result0);
-                        _mm512_storeu_epi64(base_ptr1 as *mut i64, result1);
+                        _mm512_store_epi64(base_ptr0 as *mut i64, result0);
+                        _mm512_store_epi64(base_ptr1 as *mut i64, result1);
                     }
                     j_ += 2;
                 }
@@ -101,7 +101,7 @@ pub fn compute_j_batched(
 
                     unsafe {
                         let base_ptr = row_ptr.add(j_ * 8);
-                        let current = _mm512_loadu_epi64(base_ptr as *const i64);
+                        let current = _mm512_load_epi64(base_ptr as *const i64);
 
                         let k_add = k_inc & k_pos;
                         let k_sub = k_inc & !k_pos;
@@ -109,7 +109,7 @@ pub fn compute_j_batched(
                         let result = _mm512_mask_add_epi64(current, k_add, current, coeff_vec);
                         let result = _mm512_mask_sub_epi64(result, k_sub, result, coeff_vec);
 
-                        _mm512_storeu_epi64(base_ptr as *mut i64, result);
+                        _mm512_store_epi64(base_ptr as *mut i64, result);
                     }
                 }
             }
@@ -297,50 +297,78 @@ pub fn project_coefficients(
                 {
                     use std::arch::x86_64::*;
 
-                    let total_cols =
-                        projection_matrix.projection_ratio * projection_matrix.projection_height;
-                    debug_assert_eq!(
-                        total_cols % 8,
-                        0,
-                        "total_cols must be a multiple of 8 for vectorization"
-                    );
+                    let total_cols = projection_matrix.projection_width;
+                    debug_assert!(total_cols % 8 == 0);
+                    let chunks_per_row = projection_matrix.chunks_per_row;
+                    let blocks_per_ring = DEGREE / 8;
+
 
                     unsafe {
-                        let mut accumulator = _mm512_setzero_si512();
+                        let row_base = inner_row * chunks_per_row;
+                        let kpos_row = projection_matrix.k_pos_plan.as_ptr().add(row_base);
+                        let kinc_row = projection_matrix.k_inc_plan.as_ptr().add(row_base);
 
-                        // Process 8 columns at a time
-                        for chunk_idx in 0..(total_cols / 8) {
-                            let col_base = chunk_idx * 8;
+                        let mut acc0 = _mm512_setzero_si512();
+                        let mut acc1 = _mm512_setzero_si512();
 
-                            // Get masks for these 8 columns
-                            let (k_pos, k_inc) =
-                                projection_matrix.get_row_masks_u8(inner_row, col_base);
+                        let mut chunk_idx = 0usize;
 
-                            // Load 8 coefficients from subwitness
-                            // Since col_base is always a multiple of 8 and DEGREE is a multiple of 8,
-                            // all 8 coefficients are guaranteed to be in the same ring element
-                            let ring_idx = col_base / DEGREE;
-                            let coeff_offset = col_base % DEGREE;
-                            let coeff_vec = _mm512_loadu_epi64(
-                                subwitness[ring_idx].v.as_ptr().add(coeff_offset) as *const i64,
+                        while chunk_idx + 1 < chunks_per_row {
+                            let k_pos0 = *kpos_row.add(chunk_idx);
+                            let k_inc0 = *kinc_row.add(chunk_idx);
+
+                            let add0: __mmask8 = (k_inc0 &  k_pos0) as __mmask8;
+                            let sub0: __mmask8 = (k_inc0 & !k_pos0) as __mmask8;
+
+                            let ring0 = chunk_idx / blocks_per_ring;
+                            let off0  = (chunk_idx - ring0 * blocks_per_ring) * 8;
+
+                            let coeff0 = _mm512_load_epi64(
+                                subwitness.get_unchecked(ring0).v.as_ptr().add(off0) as *const i64
                             );
 
-                            // Compute masks for add and subtract
-                            let k_add = k_inc & k_pos;
-                            let k_sub = k_inc & !k_pos;
+                            acc0 = _mm512_mask_add_epi64(acc0, add0, acc0, coeff0);
+                            acc0 = _mm512_mask_sub_epi64(acc0, sub0, acc0, coeff0);
 
-                            // Start with positive contributions (where k_add is 1)
-                            let result = _mm512_maskz_mov_epi64(k_add, coeff_vec);
+                            let k_pos1 = *kpos_row.add(chunk_idx + 1);
+                            let k_inc1 = *kinc_row.add(chunk_idx + 1);
 
-                            // Subtract negative contributions (where k_sub is 1)
-                            let result = _mm512_mask_sub_epi64(result, k_sub, result, coeff_vec);
+                            let add1: __mmask8 = (k_inc1 &  k_pos1) as __mmask8;
+                            let sub1: __mmask8 = (k_inc1 & !k_pos1) as __mmask8;
 
-                            // Accumulate
-                            accumulator = _mm512_add_epi64(accumulator, result);
+                            let ring1 = (chunk_idx + 1) / blocks_per_ring;
+                            let off1  = ((chunk_idx + 1) - ring1 * blocks_per_ring) * 8;
+
+                            let coeff1 = _mm512_load_epi64(
+                                subwitness.get_unchecked(ring1).v.as_ptr().add(off1) as *const i64
+                            );
+
+                            acc1 = _mm512_mask_add_epi64(acc1, add1, acc1, coeff1);
+                            acc1 = _mm512_mask_sub_epi64(acc1, sub1, acc1, coeff1);
+
+                            chunk_idx += 2;
                         }
 
-                        // Horizontal sum using _mm512_reduce_add_epi64
-                        let sum = _mm512_reduce_add_epi64(accumulator) as u64;
+                        if chunk_idx < chunks_per_row {
+                            let k_pos = *kpos_row.add(chunk_idx);
+                            let k_inc = *kinc_row.add(chunk_idx);
+
+                            let add: __mmask8 = (k_inc &  k_pos) as __mmask8;
+                            let sub: __mmask8 = (k_inc & !k_pos) as __mmask8;
+
+                            let ring = chunk_idx / blocks_per_ring;
+                            let off  = (chunk_idx - ring * blocks_per_ring) * 8;
+
+                            let coeff = _mm512_load_epi64(
+                                subwitness.get_unchecked(ring).v.as_ptr().add(off) as *const i64
+                            );
+
+                            acc0 = _mm512_mask_add_epi64(acc0, add, acc0, coeff);
+                            acc0 = _mm512_mask_sub_epi64(acc0, sub, acc0, coeff);
+                        }
+
+                        let acc = _mm512_add_epi64(acc0, acc1);
+                        let sum = _mm512_reduce_add_epi64(acc) as u64;
                         *target = target.wrapping_add(sum);
                     }
                 }

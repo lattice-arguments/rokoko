@@ -94,7 +94,6 @@ pub fn verifier_round(
                         _ => panic!("Expected recursive commitment for next round."),
                     };
 
-                    // Build the underlying vectors ONCE each (instead of to_vec() twice).
                     let inner_vec = new_evaluation_points_inner.to_vec();
                     let outer_vec = new_evaluation_points_outer.to_vec();
 
