@@ -33,12 +33,19 @@ pub fn centered_i64_from_u64_mod_q_scalar(x: u64) -> i64 {
     }
 }
 
-// load 16x i64 registers, pack into 16x i16 register with _mm512_cvtsepi64_epi16
+// load 16x i64 registers, pack into 16x i16 register with _mm512_cvtepi64_epi16
 // directly loads the low 16 bit of i64 registers (signed truncating)
 #[inline(always)]
 pub fn pack_i64_to_i16_deg16(dst: &mut [i16], src: &[i64]) {
     debug_assert_eq!(dst.len(), src.len());
     debug_assert!(src.len() % 16 == 0);
+
+    #[cfg(feature = "debug-decomp")] 
+    {
+        for &s in src.iter() {
+            debug_assert!(s >= i16::MIN as i64 && s <= i16::MAX as i64);
+        }
+    }
 
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     {

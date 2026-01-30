@@ -56,7 +56,7 @@ pub fn decompose(input: &Vec<RingElement>, base_log: u64, radix: usize) -> Vec<R
             decomposed[index * radix + i] -= &small_shift;
             decomposed[index * radix + i].to_representation(Representation::IncompleteNTT);
         }
-        #[cfg(feature = "debug-hardness")]
+        #[cfg(feature = "debug-decomp")]
         {
             // check that recomposition works
             let mut recomposed = RingElement::all(0, Representation::IncompleteNTT);
