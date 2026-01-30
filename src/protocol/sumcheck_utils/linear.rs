@@ -115,8 +115,8 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
         // value of the highest-order variable.
         let len = 1 << self.variable_count;
         let half = len / 2;
-        polynomial.coefficients[0].set_zero();
-        polynomial.coefficients[0] += &self[point]; // constant term
+        polynomial.coefficients[0].set_from(&self[point]); // constant term
+                                                           // polynomial.coefficients[0] += &self[point]; // constant term
 
         if self.variable_count > self.data.len().trailing_zeros() as usize + self.suffix {
             // we have some prefixed variables
@@ -130,8 +130,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
             return;
         }
 
-        polynomial.coefficients[1].set_zero();
-        polynomial.coefficients[1] += &self[point.moved(half)]; // coeff of x
+        polynomial.coefficients[1].set_from(&self[point.moved(half)]); // coeff of x
         polynomial.coefficients[1] -= &self[point]; // coeff of x
         polynomial.num_coefficients = 2;
     }

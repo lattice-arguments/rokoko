@@ -22,19 +22,19 @@ pub static DECOMP_8_LAST_LEVEL: AuxRecursionConfig = AuxRecursionConfig {
 
 pub static P: LazyLock<Config> = LazyLock::new(|| {
     AuxSumcheckConfig {
-        witness_height: 2usize.pow(15), // 2^29 total size, but ths is 2^28 of 2^32 els (as we sample from 2^16 els)
+        witness_height: 2usize.pow(14), // 2^29 total size, but ths is 2^28 of 2^32 els (as we sample from 2^16 els)
         witness_width: {
             #[cfg(feature = "p-26")]
             {
-                2usize.pow(5) // 2^27 total size, but ths is 2^26 of 2^32 els (as we sample from 2^16 els)
+                2usize.pow(6) // 2^27 total size, but ths is 2^26 of 2^32 els (as we sample from 2^16 els)
             }
             #[cfg(feature = "p-30")]
             {
-                2usize.pow(9) // 2^31 total size, but ths is 2^30 of 2^32 els (as we sample from 2^16 els)
+                2usize.pow(10) // 2^31 total size, but ths is 2^30 of 2^32 els (as we sample from 2^16 els)
             }
             #[cfg(not(any(feature = "p-26", feature = "p-30")))]
             {
-                2usize.pow(7) // 2^29 total size, but ths is 2^28 of 2^32 els (as we sample from 2^16 els)
+                2usize.pow(8) // 2^29 total size, but ths is 2^28 of 2^32 els (as we sample from 2^16 els)
             }
         },
         projection_ratio: 1,              // no-op
@@ -65,9 +65,9 @@ pub static P: LazyLock<Config> = LazyLock::new(|| {
 
 pub static P_1: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| {
     AuxSumcheckConfig {
-        witness_height: 2usize.pow(14),
+        witness_height: 2usize.pow(13),
         witness_width: 2usize.pow(4),
-        projection_ratio: 2usize.pow(6),
+        projection_ratio: 2usize.pow(5),
         projection_height: 2usize.pow(8),
         basic_commitment_rank: 6,
         nof_openings: 2,
@@ -99,7 +99,7 @@ pub static P_1: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| {
 });
 
 pub static P_2: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
-    witness_height: 2usize.pow(11),
+    witness_height: 2usize.pow(10),
     witness_width: 2usize.pow(5),
     projection_ratio: 2usize.pow(8),
     projection_height: 2usize.pow(8), // this costs a lot a verification time
@@ -134,7 +134,7 @@ pub static P_2: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
     },
 
     witness_decomposition_chunks: 2,
-    witness_decomposition_base_log: 8,
+    witness_decomposition_base_log: 9,
 
     next: Some(Box::new(AuxConfig::Sumcheck(P_3.clone()))),
     // To stop here:

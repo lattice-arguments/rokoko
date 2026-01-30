@@ -43,6 +43,7 @@ pub fn execute() {
     let start = std::time::Instant::now();
 
     let witness_decomposed = decompose_witness(&witness);
+    print!("Witness decomposed. ");
 
     let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness_decomposed);
 
