@@ -40,10 +40,10 @@ pub fn pack_i64_to_i16_deg16(dst: &mut [i16], src: &[i64]) {
     debug_assert_eq!(dst.len(), src.len());
     debug_assert!(src.len() % 16 == 0);
 
-    #[cfg(feature = "debug-decomp")] 
+    #[cfg(feature = "debug-decomp")]
     {
         for &s in src.iter() {
-            debug_assert!(s >= i16::MIN as i64 && s <= i16::MAX as i64);
+            assert!(s >= i16::MIN as i64 && s <= i16::MAX as i64);
         }
     }
 
@@ -147,23 +147,78 @@ pub fn project_one_row_i16_to_u64<const DEGREE: usize>(
 
             for &i in &pos_idx {
                 let v = _mm512_loadu_si512(subwitness_i16[i].as_ptr().add(k) as *const __m512i);
-                acc = _mm512_add_epi16(acc, v);
+                acc = add_epi16_checked(acc, v);
             }
 
             for &i in &neg_idx {
                 let v = _mm512_loadu_si512(subwitness_i16[i].as_ptr().add(k) as *const __m512i);
-                acc = _mm512_sub_epi16(acc, v);
+                acc = sub_epi16_checked(acc, v);
             }
 
             convert_i16_as_u64(out_u64.as_mut_ptr().add(k), acc);
         }
-
         eltwise_reduce_mod(
             out_u64.as_mut_ptr(),
             out_u64.as_ptr(),
             out_u64.len() as u64,
             MOD_Q,
         );
+    }
+}
+
+/// Wrapper for _mm512_add_epi16 that checks for overflows in debug-decomp, otherwise just adds.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[inline(always)]
+pub unsafe fn add_epi16_checked(a: __m512i, b: __m512i) -> __m512i {
+    #[cfg(feature = "debug-decomp")]
+    {
+        use std::arch::x86_64::{_mm512_add_epi16, _mm512_cmpgt_epi16_mask, _mm512_set1_epi16};
+        let sum = _mm512_add_epi16(a, b);
+        let sign_a = _mm512_cmpgt_epi16_mask(a, _mm512_set1_epi16(-1));
+        let sign_b = _mm512_cmpgt_epi16_mask(b, _mm512_set1_epi16(-1));
+        let sign_sum = _mm512_cmpgt_epi16_mask(sum, _mm512_set1_epi16(-1));
+        let same_sign = !(sign_a ^ sign_b); // 1 where same sign
+        let overflow = same_sign & (sign_a ^ sign_sum); // 1 where overflow
+        if overflow != 0 {
+            panic!(
+                "add_epi16_checked: overflow detected in SIMD lane(s): {:032b}",
+                overflow
+            );
+        }
+        sum
+    }
+    #[cfg(not(feature = "debug-decomp"))]
+    {
+        use std::arch::x86_64::_mm512_add_epi16;
+        _mm512_add_epi16(a, b)
+    }
+}
+
+/// Wrapper for _mm512_sub_epi16 that checks for overflows in debug-decomp, otherwise just subtracts.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[inline(always)]
+pub unsafe fn sub_epi16_checked(a: __m512i, b: __m512i) -> __m512i {
+    #[cfg(feature = "debug-decomp")]
+    {
+        use std::arch::x86_64::{_mm512_cmpgt_epi16_mask, _mm512_set1_epi16, _mm512_sub_epi16};
+        let diff = _mm512_sub_epi16(a, b);
+        let sign_a = _mm512_cmpgt_epi16_mask(a, _mm512_set1_epi16(-1));
+        let sign_b = _mm512_cmpgt_epi16_mask(b, _mm512_set1_epi16(-1));
+        let sign_diff = _mm512_cmpgt_epi16_mask(diff, _mm512_set1_epi16(-1));
+        let diff_sign = sign_a ^ sign_b; // 1 where different sign
+        let overflow = diff_sign & (sign_a ^ sign_diff); // 1 where overflow
+        if overflow != 0 {
+            panic!(
+                "sub_epi16_checked: overflow detected in SIMD lane(s): {:032b}",
+                overflow
+            );
+        }
+        diff
+    }
+    #[cfg(not(feature = "debug-decomp"))]
+    {
+        use std::arch::x86_64::_mm512_sub_epi16;
+        _mm512_sub_epi16(a, b)
     }
 }
 
