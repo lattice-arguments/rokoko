@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use crate::{
     common::{
-        arithmetic::{ONE, TWO},
+        arithmetic::ONE,
         ring_arithmetic::{Representation, RingElement},
         sumcheck_element::SumcheckElement,
     },

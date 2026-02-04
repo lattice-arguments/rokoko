@@ -1,7 +1,6 @@
 use crate::common::config::*;
 use crate::hexl::bindings::*;
 use crate::protocol::config::SizeableProof;
-use num::traits::ops::inv;
 use rand::Rng;
 use std::cell::RefCell;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
@@ -25,7 +24,7 @@ pub struct RingElement {
 
 thread_local! {
     static RNG: RefCell<rand::rngs::ThreadRng> =
-        RefCell::new(rand::thread_rng());
+        RefCell::new(rand::rng());
 }
 
 // TODO: handle better the case when ring element is zero.
@@ -46,7 +45,7 @@ impl RingElement {
         RNG.with(|cell| {
             let mut rng = cell.borrow_mut();
             for i in 0..DEGREE {
-                element.v[i] = rng.gen_range(0..MOD_Q);
+                element.v[i] = rng.random_range(0..MOD_Q);
             }
         });
 
@@ -393,7 +392,7 @@ impl RingElement {
         debug_assert_eq!(self.representation, Representation::IncompleteNTT);
 
         let transform = &*CONJUGATION_NTT_TRANSFORM;
-        let mut temp = get_temp_buffer();
+        let temp = get_temp_buffer();
 
         // Apply even part permutation
         for i in 0..HALF_DEGREE {
@@ -422,7 +421,7 @@ impl RingElement {
         result.representation = self.representation;
 
         let transform = &*CONJUGATION_NTT_TRANSFORM;
-        let mut temp = get_temp_buffer();
+        let temp = get_temp_buffer();
         for i in 0..HALF_DEGREE {
             temp[transform.even_permutation[i]] = self.v[i];
         }
@@ -509,19 +508,19 @@ pub struct ConjugationTransform {
     pub odd_factors: [u64; HALF_DEGREE],
 }
 
-pub static mut temp_buffer: LazyLock<[u64; DEGREE]> = LazyLock::new(|| [0u64; DEGREE]);
+pub static mut TEMP_BUFFER: LazyLock<[u64; DEGREE]> = LazyLock::new(|| [0u64; DEGREE]);
 
 #[inline(always)]
 fn get_temp_buffer() -> &'static mut [u64; DEGREE] {
-    unsafe { &mut temp_buffer }
+    unsafe { &mut TEMP_BUFFER }
 }
 
-pub static mut aux: LazyLock<RingElement> =
+pub static mut AUX: LazyLock<RingElement> =
     LazyLock::new(|| RingElement::new(Representation::IncompleteNTT));
 
 #[inline(always)]
 fn get_aux() -> &'static mut RingElement {
-    unsafe { &mut aux }
+    unsafe { &mut AUX }
 }
 
 /// Empirically derive the conjugation transformation in NTT domain
@@ -745,7 +744,7 @@ pub fn incomplete_ntt_multiplication_inner(
     operand2: &RingElement,
     homogenized: bool,
 ) {
-    let mut temp = get_temp_buffer();
+    let temp = get_temp_buffer();
 
     let op1_data = &operand1.v;
     let op2_data = &operand2.v;
@@ -834,7 +833,7 @@ pub fn incomplete_ntt_multiplication_in_place_inner(
     operand1: &RingElement,
     homogenized: bool,
 ) {
-    let mut temp = get_temp_buffer();
+    let temp = get_temp_buffer();
 
     let op1_data = &operand1.v;
 

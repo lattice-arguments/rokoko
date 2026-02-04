@@ -10,7 +10,7 @@ use crate::{
         sumcheck_element::SumcheckElement,
     },
     protocol::{
-        config::{Config, Projection, SumcheckConfig},
+        config::{Projection, SumcheckConfig},
         open::{evaluation_point_to_structured_row, Opening},
         project_2::BatchedProjectionChallenges,
         sumcheck::SumcheckContext,

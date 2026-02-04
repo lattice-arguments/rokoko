@@ -1,28 +1,19 @@
 use std::any::Any;
 
-use num::traits::ops::mul_add;
 
 use crate::{
     common::{
         arithmetic::{
-            inner_product, inner_product_into, precompute_structured_values,
             precompute_structured_values_fast, HALF_WAY_MOD_Q_RING_CF,
         },
-        config::{self, DEGREE, MOD_Q, NOF_BATCHES},
+        config::{DEGREE, MOD_Q, NOF_BATCHES},
         hash::HashWrapper,
-        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
-        norms::{l2_norm, l2_norm_coeffs},
-        pool::preallocate_ring_element_vecs,
+        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
-        structured_row::StructuredRow,
     },
-    hexl::bindings::{add_mod, eltwise_reduce_mod, multiply_mod, sub_mod},
-    protocol::{
-        config::{Config, ConfigBase, SimpleConfig},
-        open::evaluation_point_to_structured_row,
-        sumchecks::helpers::{tensor_product, tensor_product_u64},
-    },
+    hexl::bindings::{add_mod, eltwise_reduce_mod, multiply_mod},
+    protocol::config::{ConfigBase, SimpleConfig},
 };
 
 /// Computes J_batched = c'_1^T * J_embedded

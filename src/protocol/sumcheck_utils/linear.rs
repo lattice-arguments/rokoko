@@ -1,26 +1,22 @@
 use std::{
-    cell::{Ref, RefCell},
+    cell::RefCell,
     ops::Index,
-    rc::Rc,
 };
 
 use crate::{
     common::{
-        arithmetic::{field_to_ring_element_into, ONE, TWO},
+        arithmetic::field_to_ring_element_into,
         config::HALF_DEGREE,
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement, SHIFT_FACTORS},
-        structured_row::{PreprocessedRow, StructuredRow},
+        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        structured_row::StructuredRow,
         sumcheck_element::SumcheckElement,
     },
-    protocol::{
-        sumcheck,
-        sumcheck_utils::{
+    protocol::sumcheck_utils::{
             common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
             elephant_cell::ElephantCell,
             hypercube_point::HypercubePoint,
             polynomial::Polynomial,
         },
-    },
 };
 
 #[cfg(test)]

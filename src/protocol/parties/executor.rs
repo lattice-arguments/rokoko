@@ -1,19 +1,13 @@
 use num::range;
 
 use crate::{
-    common::{
-        decomposition::decompose,
-        matrix::VerticallyAlignedMatrix,
-        ring_arithmetic::{Representation, RingElement},
-        sampling::sample_random_short_vector,
-    },
+    common::ring_arithmetic::{Representation, RingElement},
     protocol::{
         config::{to_kb, Config, SizeableProof, CONFIG},
         crs::CRS,
-        open::{claim, evaluation_point_to_structured_row},
-        params::{decompose_witness, witness_sampler, WITNESS_CONFIG},
+        open::evaluation_point_to_structured_row,
+        params::{decompose_witness, witness_sampler},
         parties::{commiter::commit, prover::prover_round, verifier::verifier_round},
-        project::prepare_i16_witness,
         sumcheck::init_sumcheck,
         sumchecks::builder_verifier::init_verifier,
     },
@@ -37,7 +31,7 @@ pub fn execute() {
     let mut sumcheck_context_verifier = init_verifier(&crs, &config);
     println!("Sumcheck contexts initialized.");
 
-    let mut witness = witness_sampler();
+    let witness = witness_sampler();
 
     println!("===== COMMITTING WITNESS =====");
     let start = std::time::Instant::now();

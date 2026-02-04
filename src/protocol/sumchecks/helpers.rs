@@ -2,12 +2,12 @@ use num::range;
 
 use crate::{
     common::{
-        arithmetic::{field_to_ring_element_into, HALF_WAY_MOD_Q},
+        arithmetic::HALF_WAY_MOD_Q,
         config::{HALF_DEGREE, MOD_Q},
         decomposition::get_decomposed_offset_scaled,
         matrix::{new_vec_zero_field_preallocated, new_vec_zero_preallocated},
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement, SHIFT_FACTORS},
+        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     hexl::bindings::{eltwise_reduce_mod, multiply_mod},
@@ -15,7 +15,7 @@ use crate::{
         commitment::Prefix,
         crs::CRS,
         sumcheck_utils::{
-            elephant_cell::ElephantCell, linear::LinearSumcheck, product::ProductSumcheck,
+            elephant_cell::ElephantCell, linear::LinearSumcheck,
             selector_eq::SelectorEq,
         },
     },

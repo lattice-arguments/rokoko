@@ -24,16 +24,16 @@ pub struct ElephantCell<T: ?Sized> {
 
 #[cfg(not(feature = "unsafe-sumcheck"))]
 impl<T: ?Sized> ElephantCell<T> {
-    pub fn borrow(&self) -> Ref<T> {
+    pub fn borrow(&self) -> Ref<'_, T> {
         self.inner.borrow()
     }
 
-    pub fn borrow_mut(&self) -> RefMut<T> {
+    pub fn borrow_mut(&self) -> RefMut<'_, T> {
         self.inner.borrow_mut()
     }
 
     #[inline(always)]
-    pub fn get_ref(&self) -> Ref<T> {
+    pub fn get_ref(&self) -> Ref<'_, T> {
         self.inner.borrow()
     }
 }

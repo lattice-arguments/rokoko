@@ -99,7 +99,7 @@ pub fn get_composer_offset(base_log: u64, radix: usize) -> u64 {
 // similar to get_composer_offset but scaled by 1/radix mod MOD_Q
 // this is done so that we can write sumcheck claims on the recomposed values divided by radix (as the radix will correspond to unused variables used in other context for composition)
 pub fn get_decomposed_offset_scaled(base_log: u64, radix: usize) -> u64 {
-    let mut offset = get_composer_offset(base_log, radix);
+    let offset = get_composer_offset(base_log, radix);
     unsafe {
         // no need to cache as this is only used in preprocessing
         let inv_radix = inv_mod(radix as u64, MOD_Q);

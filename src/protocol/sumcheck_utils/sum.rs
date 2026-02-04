@@ -8,7 +8,6 @@ use crate::{
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
         polynomial::{add_poly_in_place, Polynomial},
-        selector_eq::SelectorEq,
     },
 };
 use std::{cell::RefCell, cmp::max};

@@ -6,21 +6,15 @@ use crate::{
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{
             incomplete_ntt_multiplication, QuadraticExtension, Representation, RingElement,
-            SHIFT_FACTORS,
         },
-        structured_row::{PreprocessedRow, StructuredRow},
-        sumcheck_element::SumcheckElement,
     },
     hexl::bindings::{multiply_mod, sub_mod},
 };
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 use std::arch::x86_64::{
-    __m128i, __m256i, __m512i, __mmask8, _mm256_add_epi16, _mm256_castsi128_si256,
-    _mm256_inserti128_si256, _mm256_loadu_si256, _mm256_setzero_si256, _mm256_storeu_si256,
-    _mm256_sub_epi16, _mm512_add_epi16, _mm512_cmpgt_epu64_mask, _mm512_cvtepi64_epi16,
-    _mm512_cvtsepi64_epi16, _mm512_loadu_si512, _mm512_mask_sub_epi64, _mm512_set1_epi64,
-    _mm512_setzero_si512, _mm512_storeu_si512, _mm512_sub_epi16, _mm_storeu_si128,
+    __m128i, __m512i, __mmask8, _mm512_cmpgt_epu64_mask, _mm512_cvtepi64_epi16, _mm512_loadu_si512, _mm512_mask_sub_epi64, _mm512_set1_epi64,
+    _mm512_setzero_si512, _mm512_storeu_si512, _mm_storeu_si128,
 };
 
 #[inline(always)]
@@ -49,8 +43,8 @@ pub fn pack_i64_to_i16_deg16(dst: &mut [i16], src: &[i64]) {
 
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     {
-        let mut i = 0usize;
-        for k in (0..src.len() / 16) {
+        let _i = 0usize;
+        for k in 0..src.len() / 16  {
             unsafe {
                 let i = k * 16;
                 // Load 16 i64 (two zmm registers of 8 i64)
@@ -87,7 +81,7 @@ pub fn centered_coeffs_u64_to_i64_inplace(out_i64: &mut [i64; DEGREE], in_u64: &
         let vq = _mm512_set1_epi64(MOD_Q as i64);
         let vhalfq = _mm512_set1_epi64(half_q as i64);
 
-        let mut i = 0usize;
+        let _i = 0usize;
         let n = in_u64.len();
 
         // 8 u64 lanes per __m512i
@@ -125,7 +119,7 @@ pub fn project_one_row_i16_to_u64<const DEGREE: usize>(
     debug_assert_eq!(subwitness_i16.len(), row_len);
     debug_assert!(DEGREE % 16 == 0);
 
-    let mut k = 0usize;
+    let _k = 0usize;
     let mut pos_idx = Vec::new();
     let mut neg_idx = Vec::new();
     for i in 0..row_len {
@@ -253,7 +247,7 @@ pub fn inner_product(a: &Vec<RingElement>, b: &Vec<RingElement>) -> RingElement 
 }
 
 #[inline]
-pub fn inner_product_into(mut r: &mut RingElement, a: &Vec<RingElement>, b: &Vec<RingElement>) {
+pub fn inner_product_into(r: &mut RingElement, a: &Vec<RingElement>, b: &Vec<RingElement>) {
     debug_assert_eq!(a.len(), b.len());
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
     for (x, y) in a.iter().zip(b.iter()) {
@@ -274,7 +268,7 @@ pub fn field_to_ring_element(fe: &QuadraticExtension) -> RingElement {
 }
 
 #[inline]
-pub fn field_to_ring_element_into(mut r: &mut RingElement, fe: &QuadraticExtension) {
+pub fn field_to_ring_element_into(r: &mut RingElement, fe: &QuadraticExtension) {
     for i in 0..2 {
         for j in 0..HALF_DEGREE {
             r.v[j + i * HALF_DEGREE] = fe.coeffs[i];

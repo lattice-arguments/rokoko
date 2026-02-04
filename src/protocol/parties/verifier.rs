@@ -1,4 +1,3 @@
-use core::hash;
 use std::array;
 
 use crate::{
@@ -7,10 +6,10 @@ use crate::{
         config::{DEGREE, MOD_Q, NOF_BATCHES},
         hash::HashWrapper,
         matrix::{
-            new_vec_zero_field_preallocated, new_vec_zero_preallocated, HorizontallyAlignedMatrix,
+            new_vec_zero_preallocated, HorizontallyAlignedMatrix,
             VerticallyAlignedMatrix,
         },
-        norms::{l2_norm, l2_norm_coeffs},
+        norms::l2_norm_coeffs,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
@@ -28,7 +27,7 @@ use crate::{
             open_at,
         },
         project_2::{
-            batch_projection_n_times, verifier_sample_projection_challenges,
+            verifier_sample_projection_challenges,
             BatchedProjectionChallengesSuccinct,
         },
         sumchecks::{

@@ -2,11 +2,10 @@ use crate::{
     common::{matrix::VerticallyAlignedMatrix, ring_arithmetic::RingElement},
     protocol::{
         commitment::{
-            commit_basic, recursive_commit, CommitmentWithAux, RecursiveCommitmentWithAux,
+            commit_basic, recursive_commit, CommitmentWithAux,
         },
-        config::{ConfigBase, SumcheckConfig},
+        config::SumcheckConfig,
         crs::CRS,
-        project::{prepare_i16_witness, Signed16RingElement},
     },
 };
 

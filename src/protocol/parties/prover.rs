@@ -1,13 +1,9 @@
-use core::hash;
 
 use crate::{
     common::{
-        config::{DEGREE, MOD_Q},
         decomposition::decompose,
-        estimator::{estimate_rsis_security, RSISParameters},
         hash::HashWrapper,
         matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
-        norms,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
@@ -15,7 +11,6 @@ use crate::{
     protocol::{
         commitment::{
             commit_basic, recursive_commit, BasicCommitment, CommitmentWithAux,
-            RecursiveCommitmentWithAux,
         },
         config::{
             paste_by_prefix, paste_recursive_commitment, Config, ConfigBase, NextRoundCommitment,
@@ -28,7 +23,7 @@ use crate::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
             open_at,
         },
-        project::{prepare_i16_witness, project, Signed16RingElement},
+        project::{prepare_i16_witness, project},
         project_2::{batch_projection_n_times, project_coefficients},
         sumcheck::{sumcheck, SumcheckContext},
     },
@@ -470,7 +465,7 @@ pub fn prover_round(
 
     let base_next_roung_config = config.next.as_ref().map(|c| config_base_from_config(c));
 
-    let mut next_round_witness = VerticallyAlignedMatrix {
+    let next_round_witness = VerticallyAlignedMatrix {
         height: if let Some(next_config) = &base_next_roung_config {
             next_config.witness_height()
         } else {

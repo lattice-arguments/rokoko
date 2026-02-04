@@ -2,7 +2,7 @@ use crate::{
     common::{config::NOF_BATCHES, ring_arithmetic::RingElement},
     protocol::sumcheck_utils::{
         combiner::Combiner,
-        common::{HighOrderSumcheckData, SumcheckBaseData},
+        common::SumcheckBaseData,
         diff::DiffSumcheck,
         elephant_cell::ElephantCell,
         linear::LinearSumcheck,

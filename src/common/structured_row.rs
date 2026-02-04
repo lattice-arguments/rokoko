@@ -1,6 +1,5 @@
 use crate::common::{
-    config::MOD_Q,
-    ring_arithmetic::{Representation, RingElement},
+    ring_arithmetic::RingElement,
     sumcheck_element::SumcheckElement,
 };
 

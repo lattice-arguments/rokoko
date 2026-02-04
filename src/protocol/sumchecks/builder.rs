@@ -1,12 +1,8 @@
-use std::cell::{Ref, RefCell};
-use std::rc::Rc;
 
 use crate::common::arithmetic::ONE;
 use crate::common::config::DEGREE;
 use crate::protocol::config::{Projection, SumcheckConfig};
-use crate::protocol::project;
 use crate::protocol::sumcheck_utils::sum::SumSumcheck;
-use crate::protocol::sumchecks::builder;
 use crate::protocol::sumchecks::context::Type3_1SumcheckContextWrapper;
 use crate::{
     common::{config::NOF_BATCHES, ring_arithmetic::RingElement},
@@ -17,7 +13,7 @@ use crate::{
         sumcheck_utils::{
             combiner::Combiner, common::HighOrderSumcheckData, diff::DiffSumcheck,
             elephant_cell::ElephantCell, linear::LinearSumcheck, product::ProductSumcheck,
-            ring_to_field_combiner::RingToFieldCombiner, selector_eq::SelectorEq,
+            ring_to_field_combiner::RingToFieldCombiner,
         },
         sumchecks::context::Type5SumcheckContext,
     },
@@ -203,7 +199,7 @@ fn build_type4_sumcheck_context(
 pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext {
     let total_vars = config.composed_witness_length.ilog2() as usize;
 
-    let mut combined_witness_sumcheck = ElephantCell::new(LinearSumcheck::<RingElement>::new(
+    let combined_witness_sumcheck = ElephantCell::new(LinearSumcheck::<RingElement>::new(
         config.composed_witness_length,
     ));
 
@@ -222,14 +218,14 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         })
         .collect::<Vec<ElephantCell<LinearSumcheck<RingElement>>>>();
 
-    let (mut folded_witness_combiner_sumcheck, mut witness_combiner_constant_sumcheck) =
+    let (folded_witness_combiner_sumcheck, witness_combiner_constant_sumcheck) =
         composition_sumcheck(
             config.witness_decomposition_base_log as u64,
             config.witness_decomposition_chunks,
             config.composed_witness_length.ilog2() as usize,
         );
 
-    let (mut basic_commitment_combiner_sumcheck, mut basic_commitment_combiner_constant_sumcheck) =
+    let (basic_commitment_combiner_sumcheck, basic_commitment_combiner_constant_sumcheck) =
         composition_sumcheck(
             config.commitment_recursion.decomposition_base_log as u64,
             config.commitment_recursion.decomposition_chunks,
@@ -599,7 +595,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                 ),
             );
 
-            let mut lhs_scalar_consistency_sumcheck = ElephantCell::new(
+            let lhs_scalar_consistency_sumcheck = ElephantCell::new(
                 LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(1, total_vars, 0),
             );
 
@@ -731,7 +727,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                     ),
                 );
 
-                let mut rhs_scalar_consistency_sumcheck = ElephantCell::new(
+                let rhs_scalar_consistency_sumcheck = ElephantCell::new(
                     LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(1, total_vars, 0),
                 );
 

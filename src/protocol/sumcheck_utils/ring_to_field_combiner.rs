@@ -3,13 +3,12 @@ use std::cell::RefCell;
 use crate::{
     common::{
         config::HALF_DEGREE,
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement, SHIFT_FACTORS},
+        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         sumcheck_element::SumcheckElement,
     },
     protocol::sumcheck_utils::{
-        common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
+        common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
-        linear::LinearSumcheck,
         polynomial::Polynomial,
     },
 };
@@ -77,7 +76,7 @@ impl HighOrderSumcheckData for RingToFieldCombiner {
 
     fn is_univariate_polynomial_zero_at_point(
         &self,
-        point: super::hypercube_point::HypercubePoint,
+        _point: super::hypercube_point::HypercubePoint,
     ) -> bool {
         false
     }
@@ -222,6 +221,7 @@ impl RingToFieldCombinerEvaluation {
     }
 
     /// Evaluate at a RingElement point (convenience method)
+    #[allow(unused_mut)]
     pub fn evaluate_at_ring_point(&mut self, point: &Vec<RingElement>) -> &QuadraticExtension {
         // Evaluate the inner sumcheck at the given point
         let ring_eval = {
