@@ -8,12 +8,18 @@ use crate::{
         },
         config::{DEGREE, MOD_Q, NOF_BATCHES},
         hash::HashWrapper,
-        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
+        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
     },
     hexl::bindings::{add_mod, eltwise_reduce_mod, multiply_mod},
-    protocol::{config::{ConfigBase, SimpleConfig}, sumchecks::helpers::tensor_product_u64},
+    protocol::config::{ConfigBase, SimpleConfig},
+};
+
+#[cfg(test)]
+use crate::{
+    common::matrix::new_vec_zero_preallocated,
+    protocol::sumchecks::helpers::tensor_product_u64,
 };
 
 /// Computes J_batched = c'_1^T * J_embedded

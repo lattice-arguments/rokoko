@@ -9,12 +9,14 @@ use crate::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
-        polynomial::{Polynomial, sub_poly_in_place}, selector_eq::SelectorEq,
+        polynomial::{Polynomial, sub_poly_in_place},
     },
 };
 
 #[cfg(test)]
-use crate::protocol::sumcheck_utils::{common::SumcheckBaseData, linear::LinearSumcheck};
+use crate::protocol::sumcheck_utils::{
+    common::SumcheckBaseData, linear::LinearSumcheck, selector_eq::SelectorEq,
+};
 
 /// Sumcheck data that represents the difference between two other sumchecks.
 /// Useful for enforcing equality constraints between two multilinear extensions.

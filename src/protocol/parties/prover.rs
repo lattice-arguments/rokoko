@@ -58,6 +58,7 @@ fn config_base_from_config(config: &Config) -> &dyn ConfigBase {
 
 pub static mut ROUND_ID: usize = 0;
 
+#[allow(dead_code)]
 fn get_and_increment_round_id() -> usize {
     unsafe {
         let current_id = ROUND_ID;
@@ -66,6 +67,7 @@ fn get_and_increment_round_id() -> usize {
     }
 }
 
+#[allow(dead_code)]
 static DEBUG_HARDNESS_FROM_ROUND: usize = 0;
 
 pub fn prover_round(

@@ -1826,8 +1826,6 @@ unsafe fn inverse_transform_from_bit_reverse_avx512<const BITSHIFT: i32>(
             let w = inv_root_of_unity_powers.add(w_idx as usize);
             let w_precon = precon_inv_root_of_unity_powers.add(w_idx as usize);
             inv_t8::<BITSHIFT>(result, v_neg_modulus, v_twice_mod, t, m, w, w_precon);
-            t <<= 1;
-            m >>= 1;
             w_idx_delta >>= 1;
             w_idx += w_idx_delta;
         }

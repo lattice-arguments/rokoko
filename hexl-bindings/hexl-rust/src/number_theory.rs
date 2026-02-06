@@ -421,9 +421,9 @@ pub fn hensel_lemma_2adic_root(r: u32, q: u64) -> u64 {
     let mut mod_mask = 3u64;
 
     for _k in 2..=r {
-        let mut f = 0u64;
+        let mut f;
         let mut t = 0u64;
-        let mut a = 0u64;
+        let mut a;
         loop {
             a = a_prev + c * t;
             t += 1;

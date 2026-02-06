@@ -8,7 +8,7 @@ use crate::{
         arithmetic::field_to_ring_element_into,
         config::HALF_DEGREE,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
-        structured_row::{PreprocessedRow, StructuredRow},
+        structured_row::StructuredRow,
         sumcheck_element::SumcheckElement,
     },
     protocol::sumcheck_utils::{
@@ -20,7 +20,7 @@ use crate::{
 };
 
 #[cfg(test)]
-use crate::common::config::MOD_Q;
+use crate::common::{config::MOD_Q, structured_row::PreprocessedRow};
 
 /// Standard linear sumcheck over a vector that represents a multilinear extension.
 pub struct LinearSumcheck<E: SumcheckElement = RingElement> {
@@ -192,6 +192,7 @@ impl<E: SumcheckElement> SumcheckBaseData for LinearSumcheck<E> {
 pub struct BasicEvaluationLinearSumcheck<E: SumcheckElement = RingElement> {
     pub data: Vec<E>,
     variable_count: usize,
+    #[allow(dead_code)]
     index_mask: usize,
     suffix: usize,
     evaluated: bool,

@@ -76,7 +76,7 @@ unsafe fn mm512_hexl_mulhi_epi_52(x: __m512i, y: __m512i) -> __m512i {
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq")]
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 #[inline(always)]
 pub unsafe fn mm512_hexl_mulhi_epi<const BITSHIFT: i32>(x: __m512i, y: __m512i) -> __m512i {
     if BITSHIFT == 64 {
@@ -116,7 +116,7 @@ unsafe fn mm512_hexl_mulhi_approx_epi_52(x: __m512i, y: __m512i) -> __m512i {
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq")]
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 #[inline(always)]
 pub unsafe fn mm512_hexl_mulhi_approx_epi<const BITSHIFT: i32>(x: __m512i, y: __m512i) -> __m512i {
     if BITSHIFT == 64 {
@@ -144,7 +144,7 @@ unsafe fn mm512_hexl_mullo_epi_52(x: __m512i, y: __m512i) -> __m512i {
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq")]
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 #[inline(always)]
 pub unsafe fn mm512_hexl_mullo_epi<const BITSHIFT: i32>(x: __m512i, y: __m512i) -> __m512i {
     if BITSHIFT == 64 {
@@ -174,7 +174,7 @@ unsafe fn mm512_hexl_mullo_add_lo_epi_52(x: __m512i, y: __m512i, z: __m512i) -> 
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq")]
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 #[inline(always)]
 pub unsafe fn mm512_hexl_mullo_add_lo_epi<const BITSHIFT: i32>(
     x: __m512i,

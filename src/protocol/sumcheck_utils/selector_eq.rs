@@ -253,7 +253,7 @@ fn test_selector_eq_basic() {
     debug_assert_eq!(
         claim,
         RingElement::constant(
-            4 * 53 * (MOD_Q as i64 + 1 - 73) as u64,
+            ((4 * 53 * (MOD_Q as i64 + 1 - 73)) as u64) % MOD_Q,
             Representation::IncompleteNTT
         )
     );
@@ -280,7 +280,7 @@ fn test_selector_eq_basic() {
     debug_assert_eq!(
         claim,
         RingElement::constant(
-            2 * 53 * (MOD_Q as i64 + 1 - 73) as u64,
+            ((2 * 53 * (MOD_Q as i64 + 1 - 73)) as u64) % MOD_Q,
             Representation::IncompleteNTT
         )
     );
@@ -301,7 +301,7 @@ fn test_selector_eq_basic() {
     debug_assert_eq!(
         claim,
         RingElement::constant(
-            53 * (MOD_Q as i64 + 1 - 73) as u64,
+            ((53 * (MOD_Q as i64 + 1 - 73)) as u64) % MOD_Q,
             Representation::IncompleteNTT
         )
     );

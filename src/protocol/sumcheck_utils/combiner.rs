@@ -2,11 +2,22 @@ use std::cell::RefCell;
 
 use crate::{
     common::{
-        config::MOD_Q, ring_arithmetic::{Representation, RingElement}, structured_row::PreprocessedRow, sumcheck_element::SumcheckElement
+        ring_arithmetic::RingElement, sumcheck_element::SumcheckElement
     },
-    protocol::{open::evaluation_point_to_structured_row, sumcheck_utils::{
-            common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData}, elephant_cell::ElephantCell, hypercube_point::HypercubePoint, linear::LinearSumcheck, polynomial::{Polynomial, add_poly_in_place}
-        }},
+    protocol::sumcheck_utils::{
+        common::{EvaluationSumcheckData, HighOrderSumcheckData}, elephant_cell::ElephantCell, hypercube_point::HypercubePoint, polynomial::{Polynomial, add_poly_in_place}
+    },
+};
+
+#[cfg(test)]
+use crate::{
+    common::{
+        config::MOD_Q, ring_arithmetic::Representation, structured_row::PreprocessedRow,
+    },
+    protocol::{
+        open::evaluation_point_to_structured_row,
+        sumcheck_utils::{common::SumcheckBaseData, linear::LinearSumcheck},
+    },
 };
 
 pub struct Combiner<E: SumcheckElement = RingElement> {

@@ -536,6 +536,7 @@ fn get_temp_buffer() -> &'static mut [u64; DEGREE] {
 pub static mut AUX: LazyLock<RingElement> =
     LazyLock::new(|| RingElement::new(Representation::IncompleteNTT));
 
+#[allow(dead_code)]
 #[inline(always)]
 fn get_aux() -> &'static mut RingElement {
     unsafe { &mut AUX }

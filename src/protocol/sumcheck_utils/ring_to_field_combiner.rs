@@ -7,9 +7,12 @@ use crate::{
         sumcheck_element::SumcheckElement,
     },
     protocol::sumcheck_utils::{
-        common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData}, elephant_cell::ElephantCell, linear::LinearSumcheck, polynomial::Polynomial
+        common::{EvaluationSumcheckData, HighOrderSumcheckData}, elephant_cell::ElephantCell, polynomial::Polynomial
     },
 };
+
+#[cfg(test)]
+use crate::protocol::sumcheck_utils::{common::SumcheckBaseData, linear::LinearSumcheck};
 
 pub struct RingToFieldCombiner {
     sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
@@ -194,6 +197,7 @@ fn test_ring_to_field_combiner() {
 /// and combines it into a field extension element.
 /// Note: This takes RingElement points but implements EvaluationSumcheckData<Element=QuadraticExtension>
 /// because it converts the ring evaluation to field extensions.
+#[allow(dead_code)]
 pub struct RingToFieldCombinerEvaluation {
     evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
     challenge_vec: [QuadraticExtension; HALF_DEGREE],

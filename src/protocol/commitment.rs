@@ -2,13 +2,16 @@ use std::ops::IndexMut;
 
 use crate::{
     common::{
-        config::MOD_Q, decomposition::decompose, matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated}, ring_arithmetic::{Representation, RingElement}, structured_row::PreprocessedRow
+        decomposition::decompose, matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated}, ring_arithmetic::{Representation, RingElement}
     },
     protocol::{
         crs::{CK, CRS},
         project::Signed16RingElement,
     },
 };
+
+#[cfg(test)]
+use crate::common::{config::MOD_Q, structured_row::PreprocessedRow};
 
 pub type BasicCommitment = HorizontallyAlignedMatrix<RingElement>;
 

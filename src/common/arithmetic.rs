@@ -6,10 +6,13 @@ use crate::{
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{
             QuadraticExtension, Representation, RingElement, incomplete_ntt_multiplication
-        }, structured_row::{PreprocessedRow, StructuredRow},
+        },
     },
     hexl::bindings::{multiply_mod, sub_mod},
 };
+
+#[cfg(test)]
+use crate::common::structured_row::{PreprocessedRow, StructuredRow};
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 use std::arch::x86_64::{

@@ -1,9 +1,12 @@
 use crate::{
     common::{
-        config::MOD_Q, matrix::VerticallyAlignedMatrix, ring_arithmetic::{Representation, RingElement}, structured_row::{PreprocessedRow, StructuredRow}
+        matrix::VerticallyAlignedMatrix, ring_arithmetic::{Representation, RingElement}, structured_row::{PreprocessedRow, StructuredRow}
     },
     protocol::commitment::{BasicCommitment, commit_basic_internal},
 };
+
+#[cfg(test)]
+use crate::common::config::MOD_Q;
 
 pub struct Opening {
     pub rhs: BasicCommitment,

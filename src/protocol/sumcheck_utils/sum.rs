@@ -7,13 +7,15 @@ use crate::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
-        polynomial::{Polynomial, add_poly_in_place}, selector_eq::SelectorEq,
+        polynomial::{Polynomial, add_poly_in_place},
     },
 };
 use std::{cell::RefCell, cmp::max};
 
 #[cfg(test)]
-use crate::protocol::sumcheck_utils::{common::SumcheckBaseData, linear::LinearSumcheck};
+use crate::protocol::sumcheck_utils::{
+    common::SumcheckBaseData, linear::LinearSumcheck, selector_eq::SelectorEq,
+};
 
 /// Sumcheck data that represents the sum of two other sumchecks.
 pub struct SumSumcheck<E: SumcheckElement = RingElement> {

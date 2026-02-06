@@ -1,6 +1,9 @@
 use crate::common::{
-    config::MOD_Q, ring_arithmetic::{Representation, RingElement}, sumcheck_element::SumcheckElement
+    ring_arithmetic::RingElement, sumcheck_element::SumcheckElement
 };
+
+#[cfg(test)]
+use crate::common::{config::MOD_Q, ring_arithmetic::Representation};
 
 #[derive(Debug, Clone)]
 pub struct StructuredRow<E: SumcheckElement = RingElement> {
@@ -122,8 +125,7 @@ fn test_structured_row() {
     debug_assert_eq!(
         structured_row.at(4),
         RingElement::constant(
-            (MOD_Q
-                 as i64 + (1 - 2) * (1 - 3) * 5) as u64, // 1 0 0
+            (MOD_Q as i64 + (1 - 2) * (1 - 3) * 5) as u64, // 1 0 0
             Representation::IncompleteNTT
         )
     );
