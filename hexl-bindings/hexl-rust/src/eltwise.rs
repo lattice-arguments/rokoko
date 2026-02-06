@@ -1215,6 +1215,7 @@ pub fn fused_incomplete_ntt_mult(
     operand1: &[u64],
     operand2: &[u64],
     shift_factors: &[u64],
+    shift_factors_f64: &[f64],
     n: usize,
     modulus: u64,
 ) {
@@ -1223,13 +1224,14 @@ pub fn fused_incomplete_ntt_mult(
     debug_assert!(operand1.len() >= 2 * n);
     debug_assert!(operand2.len() >= 2 * n);
     debug_assert!(shift_factors.len() >= n);
+    debug_assert!(shift_factors_f64.len() >= n);
 
     #[cfg(target_arch = "x86_64")]
     {
         if *HAS_AVX512DQ && modulus < (1u64 << 50) {
             unsafe {
                 fused_incomplete_ntt_mult_avx512_float(
-                    result, operand1, operand2, shift_factors, n, modulus,
+                    result, operand1, operand2, shift_factors_f64, n, modulus,
                 );
                 return;
             }
@@ -1279,7 +1281,7 @@ unsafe fn fused_incomplete_ntt_mult_avx512_float(
     result: &mut [u64],
     operand1: &[u64],
     operand2: &[u64],
-    shift_factors: &[u64],
+    shift_factors_f64: &[f64],
     n: usize,
     modulus: u64,
 ) {
@@ -1295,7 +1297,7 @@ unsafe fn fused_incomplete_ntt_mult_avx512_float(
     let op1_o = operand1.as_ptr().add(n);
     let op2_e = operand2.as_ptr();
     let op2_o = operand2.as_ptr().add(n);
-    let shift = shift_factors.as_ptr();
+    let shift_f = shift_factors_f64.as_ptr();
     let res_e = result.as_mut_ptr();
     let res_o = result.as_mut_ptr().add(n);
 
@@ -1337,19 +1339,19 @@ unsafe fn fused_incomplete_ntt_mult_avx512_float(
 
     let mut i = 0usize;
     while i < n {
-        // Load 5 input vectors
+        // Load 4 operand vectors as u64, 1 shift vector as precomputed f64
         let v_a = _mm512_loadu_si512(op1_e.add(i) as *const __m512i);
         let v_b = _mm512_loadu_si512(op1_o.add(i) as *const __m512i);
         let v_c = _mm512_loadu_si512(op2_e.add(i) as *const __m512i);
         let v_d = _mm512_loadu_si512(op2_o.add(i) as *const __m512i);
-        let v_s = _mm512_loadu_si512(shift.add(i) as *const __m512i);
 
-        // Convert to double (all values < 2^50, exactly representable)
+        // Convert operands to double (all values < 2^50, exactly representable)
         let f_a = _mm512_cvt_roundepu64_pd(v_a, ROUND_MODE);
         let f_b = _mm512_cvt_roundepu64_pd(v_b, ROUND_MODE);
         let f_c = _mm512_cvt_roundepu64_pd(v_c, ROUND_MODE);
         let f_d = _mm512_cvt_roundepu64_pd(v_d, ROUND_MODE);
-        let f_s = _mm512_cvt_roundepu64_pd(v_s, ROUND_MODE);
+        // Shift factors already f64 — direct load, no conversion needed
+        let f_s = _mm512_loadu_pd(shift_f.add(i));
 
         // Karatsuba prep: (a+b) mod q, (c+d) mod q — cheap float adds
         let f_ab = fadd_mod!(f_a, f_b);

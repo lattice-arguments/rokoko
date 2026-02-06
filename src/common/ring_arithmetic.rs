@@ -490,6 +490,16 @@ pub static SHIFT_FACTORS: LazyLock<[u64; HALF_DEGREE]> = LazyLock::new(|| {
 
 pub static FIELD_SHIFT_FACTOR: LazyLock<u64> = LazyLock::new(|| SHIFT_FACTORS[0]);
 
+/// Shift factors precomputed as f64 for the fused AVX512 float kernel.
+/// Avoids a u64→f64 conversion on every ring multiplication call.
+pub static SHIFT_FACTORS_F64: LazyLock<[f64; HALF_DEGREE]> = LazyLock::new(|| {
+    let mut factors_f64 = [0.0f64; HALF_DEGREE];
+    for i in 0..HALF_DEGREE {
+        factors_f64[i] = SHIFT_FACTORS[i] as f64;
+    }
+    factors_f64
+});
+
 pub static INV_HALF_DEGREE: LazyLock<u64> =
     LazyLock::new(|| unsafe { power_mod(HALF_DEGREE as u64, MOD_Q - 2, MOD_Q) });
 
@@ -706,15 +716,19 @@ pub fn incomplete_ntt_multiplication_in_place(result: &mut RingElement, operand:
         "Result not in Incomplete NTT representation"
     );
 
-    // TODO: We need a copy of the original result because the in-place routine
-    // overwrites `result` while still reading from it. Without cloning, the
-    // computation produces incorrect values.
-    // Remove this cloning by implementing a proper in-place algorithm.
-    // incomplete_ntt_multiplication_in_place_inner(result, operand, false);
-    // seems to be broken for in-place multiplication.
-    let original = get_aux();
-    original.set_from(result);
-    incomplete_ntt_multiplication(result, &original, operand);
+    // The fused AVX512 kernel loads all inputs into registers before any store
+    // within each 8-element iteration, so result can safely alias operand1.
+    unsafe {
+        fused_incomplete_ntt_mult(
+            result.v.as_mut_ptr(),
+            result.v.as_ptr(),
+            operand.v.as_ptr(),
+            SHIFT_FACTORS.as_ptr(),
+            SHIFT_FACTORS_F64.as_ptr(),
+            HALF_DEGREE,
+            MOD_Q,
+        );
+    }
 }
 
 pub fn incomplete_ntt_multiplication_homogenized(
@@ -757,6 +771,7 @@ pub fn incomplete_ntt_multiplication_inner(
                 op1_data.as_ptr(),
                 op2_data.as_ptr(),
                 SHIFT_FACTORS.as_ptr(),
+                SHIFT_FACTORS_F64.as_ptr(),
                 HALF_DEGREE,
                 MOD_Q,
             );
@@ -1531,6 +1546,7 @@ mod tests {
                     op1.v.as_ptr(),
                     op2.v.as_ptr(),
                     SHIFT_FACTORS.as_ptr(),
+                    SHIFT_FACTORS_F64.as_ptr(),
                     HALF_DEGREE,
                     MOD_Q,
                 );

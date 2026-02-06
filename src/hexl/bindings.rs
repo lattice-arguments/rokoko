@@ -137,6 +137,7 @@ pub unsafe fn fused_incomplete_ntt_mult(
     operand1: *const u64,
     operand2: *const u64,
     shift_factors: *const u64,
+    shift_factors_f64: *const f64,
     n: usize,
     modulus: u64,
 ) {
@@ -144,5 +145,6 @@ pub unsafe fn fused_incomplete_ntt_mult(
     let operand1 = std::slice::from_raw_parts(operand1, 2 * n);
     let operand2 = std::slice::from_raw_parts(operand2, 2 * n);
     let shift_factors = std::slice::from_raw_parts(shift_factors, n);
-    hexl::fused_incomplete_ntt_mult(result, operand1, operand2, shift_factors, n, modulus);
+    let shift_factors_f64 = std::slice::from_raw_parts(shift_factors_f64, n);
+    hexl::fused_incomplete_ntt_mult(result, operand1, operand2, shift_factors, shift_factors_f64, n, modulus);
 }
