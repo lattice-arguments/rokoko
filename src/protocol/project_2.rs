@@ -1,11 +1,8 @@
 use std::any::Any;
 
-
 use crate::{
     common::{
-        arithmetic::{
-            precompute_structured_values_fast, HALF_WAY_MOD_Q_RING_CF,
-        },
+        arithmetic::{precompute_structured_values_fast, HALF_WAY_MOD_Q_RING_CF},
         config::{DEGREE, MOD_Q, NOF_BATCHES},
         hash::HashWrapper,
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
@@ -14,6 +11,11 @@ use crate::{
     },
     hexl::bindings::{add_mod, eltwise_reduce_mod, multiply_mod},
     protocol::config::{ConfigBase, SimpleConfig},
+};
+
+#[cfg(test)]
+use crate::{
+    common::matrix::new_vec_zero_preallocated, protocol::sumchecks::helpers::tensor_product_u64,
 };
 
 /// Computes J_batched = c'_1^T * J_embedded

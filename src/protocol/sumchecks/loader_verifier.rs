@@ -8,9 +8,7 @@ use crate::{
     },
     protocol::{
         project_2::BatchedProjectionChallengesSuccinct,
-        sumchecks::helpers::{
-            projection_flatter_1_times_matrix, split_projection_flatter,
-        },
+        sumchecks::helpers::{projection_flatter_1_times_matrix, split_projection_flatter},
     },
 };
 

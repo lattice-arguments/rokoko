@@ -12,6 +12,9 @@ use crate::{
     },
 };
 
+#[cfg(test)]
+use crate::common::{config::MOD_Q, structured_row::PreprocessedRow};
+
 pub type BasicCommitment = HorizontallyAlignedMatrix<RingElement>;
 
 // precompute auxiliary witness stored as i16 faster type 0 projections

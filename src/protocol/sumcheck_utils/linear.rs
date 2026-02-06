@@ -1,7 +1,4 @@
-use std::{
-    cell::RefCell,
-    ops::Index,
-};
+use std::{cell::RefCell, ops::Index};
 
 use crate::{
     common::{
@@ -12,15 +9,15 @@ use crate::{
         sumcheck_element::SumcheckElement,
     },
     protocol::sumcheck_utils::{
-            common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
-            elephant_cell::ElephantCell,
-            hypercube_point::HypercubePoint,
-            polynomial::Polynomial,
-        },
+        common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
+        elephant_cell::ElephantCell,
+        hypercube_point::HypercubePoint,
+        polynomial::Polynomial,
+    },
 };
 
 #[cfg(test)]
-use crate::common::config::MOD_Q;
+use crate::common::{config::MOD_Q, structured_row::PreprocessedRow};
 
 /// Standard linear sumcheck over a vector that represents a multilinear extension.
 pub struct LinearSumcheck<E: SumcheckElement = RingElement> {
@@ -192,6 +189,7 @@ impl<E: SumcheckElement> SumcheckBaseData for LinearSumcheck<E> {
 pub struct BasicEvaluationLinearSumcheck<E: SumcheckElement = RingElement> {
     pub data: Vec<E>,
     variable_count: usize,
+    #[allow(dead_code)]
     index_mask: usize,
     suffix: usize,
     evaluated: bool,

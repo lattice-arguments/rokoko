@@ -297,7 +297,6 @@ fn test_self_inner_product_sumcheck() {
     );
 }
 
-#[ignore = "reason: to pass one has to increase the poly degree in product sumcheck from 3 to 4"]
 #[test]
 fn test_three_way_sumcheck() {
     let data0 = vec![
@@ -340,8 +339,8 @@ fn test_three_way_sumcheck() {
     let inner_product_sumcheck_01_ref = ElephantCell::new(inner_product_sumcheck_01);
 
     let inner_product_sumcheck_012 = ProductSumcheck::new(
-        inner_product_sumcheck_01_ref.clone(),
         sumcheck_2_ref.clone(),
+        inner_product_sumcheck_01_ref.clone(),
     );
 
     let mut univariate_poly = Polynomial::new(0);

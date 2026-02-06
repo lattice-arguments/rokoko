@@ -7,6 +7,9 @@ use crate::{
     protocol::commitment::{commit_basic_internal, BasicCommitment},
 };
 
+#[cfg(test)]
+use crate::common::config::MOD_Q;
+
 pub struct Opening {
     pub rhs: BasicCommitment,
     pub evaluation_points_inner: Vec<PreprocessedRow>,

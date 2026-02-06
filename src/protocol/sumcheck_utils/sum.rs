@@ -13,7 +13,9 @@ use crate::{
 use std::{cell::RefCell, cmp::max};
 
 #[cfg(test)]
-use crate::protocol::sumcheck_utils::{common::SumcheckBaseData, linear::LinearSumcheck};
+use crate::protocol::sumcheck_utils::{
+    common::SumcheckBaseData, linear::LinearSumcheck, selector_eq::SelectorEq,
+};
 
 /// Sumcheck data that represents the sum of two other sumchecks.
 pub struct SumSumcheck<E: SumcheckElement = RingElement> {

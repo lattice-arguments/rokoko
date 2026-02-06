@@ -47,6 +47,7 @@ fn main() {
 
     load_and_preallocate("pool_stats.txt").expect("Failed to load stats");
     init_common();
+    println!("Running executor...");
     execute();
     save_access_stats("pool_stats.txt").expect("Failed to save stats");
 }

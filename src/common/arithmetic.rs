@@ -11,10 +11,14 @@ use crate::{
     hexl::bindings::{multiply_mod, sub_mod},
 };
 
+#[cfg(test)]
+use crate::common::structured_row::{PreprocessedRow, StructuredRow};
+
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 use std::arch::x86_64::{
-    __m128i, __m512i, __mmask8, _mm512_cmpgt_epu64_mask, _mm512_cvtepi64_epi16, _mm512_loadu_si512, _mm512_mask_sub_epi64, _mm512_set1_epi64,
-    _mm512_setzero_si512, _mm512_storeu_si512, _mm_storeu_si128,
+    __m128i, __m512i, __mmask8, _mm512_cmpgt_epu64_mask, _mm512_cvtepi64_epi16, _mm512_loadu_si512,
+    _mm512_mask_sub_epi64, _mm512_set1_epi64, _mm512_setzero_si512, _mm512_storeu_si512,
+    _mm_storeu_si128,
 };
 
 #[inline(always)]
@@ -44,7 +48,7 @@ pub fn pack_i64_to_i16_deg16(dst: &mut [i16], src: &[i64]) {
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     {
         let _i = 0usize;
-        for k in 0..src.len() / 16  {
+        for k in 0..src.len() / 16 {
             unsafe {
                 let i = k * 16;
                 // Load 16 i64 (two zmm registers of 8 i64)

@@ -23,6 +23,7 @@ use crate::common::{
 
 pub fn init_common() {
     LazyLock::force(&SHIFT_FACTORS);
+    LazyLock::force(&SHIFT_FACTORS_F64);
     LazyLock::force(&FIELD_SHIFT_FACTOR);
     LazyLock::force(&INV_HALF_DEGREE);
     LazyLock::force(&TWO_INV_HALF_DEGREE);

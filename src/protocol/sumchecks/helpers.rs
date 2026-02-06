@@ -15,8 +15,7 @@ use crate::{
         commitment::Prefix,
         crs::CRS,
         sumcheck_utils::{
-            elephant_cell::ElephantCell, linear::LinearSumcheck,
-            selector_eq::SelectorEq,
+            elephant_cell::ElephantCell, linear::LinearSumcheck, selector_eq::SelectorEq,
         },
     },
 };
@@ -116,6 +115,7 @@ pub(crate) fn ck_sumcheck(
 /// Used in projection constraints: (folding_challenges ⊗ projection_flatter) selects which
 /// projected elements contribute to the folded projection image, exploiting the block structure
 /// of the projection matrix.
+#[allow(dead_code)]
 pub(crate) fn tensor_product(a: &Vec<RingElement>, b: &Vec<RingElement>) -> Vec<RingElement> {
     let mut result: Vec<RingElement> = new_vec_zero_preallocated(a.len() * b.len());
     let mut idx = 0;
@@ -188,6 +188,7 @@ pub fn tensor_product_u64(a: &Vec<u64>, b: &Vec<u64>) -> Vec<u64> {
 /// that the i-th element of block `block` contributes to the final inner product. These
 /// coefficients are then loaded into a linear sumcheck that gets multiplied with the
 /// folded witness to produce the LHS of the projection constraint.
+#[allow(dead_code)]
 pub(crate) fn projection_coefficients(
     projection_matrix: &ProjectionMatrix,
     projection_flatter: &StructuredRow,

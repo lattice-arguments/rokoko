@@ -1,4 +1,3 @@
-
 use crate::{
     common::{
         arithmetic::{field_to_ring_element_into, precompute_structured_values_fast},
@@ -19,7 +18,6 @@ use crate::{
 };
 
 use super::context::SumcheckContext;
-
 
 /// Loads all data into the sumcheck context.
 ///
