@@ -1201,15 +1201,14 @@ unsafe fn eltwise_fma_mod_avx512<const BITSHIFT: i32, const INPUT_MOD_FACTOR: i3
     }
 }
 
-/// Fused incomplete NTT ring multiplication.
+/// Fused incomplete NTT ring multiplication (Karatsuba variant).
 ///
 /// For each i in 0..n, computes:
 ///   result[i]   = op1[i]*op2[i] + shift[i]*(op1[n+i]*op2[n+i])   (mod modulus)
 ///   result[n+i] = op1[n+i]*op2[i] + op1[i]*op2[n+i]              (mod modulus)
 ///
-/// This fuses 5 modular multiplications and 2 modular additions into a single
-/// pass over the data, eliminating redundant memory traffic, int↔float
-/// conversions, and per-call dispatch overhead.
+/// Uses the Karatsuba identity  b·c + a·d = (a+b)(c+d) − a·c − b·d  to reduce
+/// from 5 modular multiplications to 4, cutting FMA-port pressure by 20%.
 #[inline]
 pub fn fused_incomplete_ntt_mult(
     result: &mut [u64],
@@ -1248,7 +1247,7 @@ fn fused_incomplete_ntt_mult_native(
     n: usize,
     modulus: u64,
 ) {
-    use crate::number_theory::{add_uint_mod, multiply_mod};
+    use crate::number_theory::{add_uint_mod, multiply_mod, sub_uint_mod};
 
     for i in 0..n {
         let a = operand1[i];
@@ -1257,14 +1256,19 @@ fn fused_incomplete_ntt_mult_native(
         let d = operand2[n + i];
         let s = shift_factors[i];
 
+        // Shared products
         let ac = multiply_mod(a, c, modulus);
         let bd = multiply_mod(b, d, modulus);
+
+        // result_even = ac + s*bd
         let sbd = multiply_mod(s, bd, modulus);
         result[i] = add_uint_mod(ac, sbd, modulus);
 
-        let bc = multiply_mod(b, c, modulus);
-        let ad = multiply_mod(a, d, modulus);
-        result[n + i] = add_uint_mod(bc, ad, modulus);
+        // Karatsuba: b*c + a*d = (a+b)*(c+d) - ac - bd
+        let ab = add_uint_mod(a, b, modulus);
+        let cd = add_uint_mod(c, d, modulus);
+        let abcd = multiply_mod(ab, cd, modulus);
+        result[n + i] = sub_uint_mod(sub_uint_mod(abcd, ac, modulus), bd, modulus);
     }
 }
 
@@ -1295,8 +1299,9 @@ unsafe fn fused_incomplete_ntt_mult_avx512_float(
     let res_e = result.as_mut_ptr();
     let res_o = result.as_mut_ptr().add(n);
 
-    // Float modular multiply: (x * y) mod p
-    // Uses Dekker splitting via FMA for exact error-free product.
+    // Float modular multiply: (x * y) mod p  via Dekker error-free product.
+    // Both x, y must be exact float representations of integers in [0, p).
+    // Result is an exact float representation of an integer in [0, p).
     macro_rules! fmul_mod {
         ($x:expr, $y:expr) => {{
             let h = _mm512_mul_pd($x, $y);
@@ -1310,7 +1315,8 @@ unsafe fn fused_incomplete_ntt_mult_avx512_float(
         }};
     }
 
-    // Float modular add: (a + b) mod p, both operands in [0, p).
+    // Float modular add: (a + b) mod p.  a, b in [0, p) ⇒ sum in [0, 2p).
+    // Since p < 2^50, sum < 2^51, exactly representable in f64.
     macro_rules! fadd_mod {
         ($a:expr, $b:expr) => {{
             let sum = _mm512_add_pd($a, $b);
@@ -1319,9 +1325,19 @@ unsafe fn fused_incomplete_ntt_mult_avx512_float(
         }};
     }
 
+    // Float modular sub: (a - b) mod p.  a, b in [0, p) ⇒ diff in (-p, p).
+    // Exactly representable in f64. Conditionally add p if negative.
+    macro_rules! fsub_mod {
+        ($a:expr, $b:expr) => {{
+            let diff = _mm512_sub_pd($a, $b);
+            let m = _mm512_cmp_pd_mask(diff, v_zero, _CMP_LT_OQ);
+            _mm512_mask_add_pd(diff, m, diff, v_p)
+        }};
+    }
+
     let mut i = 0usize;
     while i < n {
-        // Load all 5 input vectors
+        // Load 5 input vectors
         let v_a = _mm512_loadu_si512(op1_e.add(i) as *const __m512i);
         let v_b = _mm512_loadu_si512(op1_o.add(i) as *const __m512i);
         let v_c = _mm512_loadu_si512(op2_e.add(i) as *const __m512i);
@@ -1335,16 +1351,24 @@ unsafe fn fused_incomplete_ntt_mult_avx512_float(
         let f_d = _mm512_cvt_roundepu64_pd(v_d, ROUND_MODE);
         let f_s = _mm512_cvt_roundepu64_pd(v_s, ROUND_MODE);
 
-        // result_even = a*c + s*(b*d)
+        // Karatsuba prep: (a+b) mod q, (c+d) mod q — cheap float adds
+        let f_ab = fadd_mod!(f_a, f_b);
+        let f_cd = fadd_mod!(f_c, f_d);
+
+        // 3 independent modular multiplies (maximal ILP)
         let ac = fmul_mod!(f_a, f_c);
         let bd = fmul_mod!(f_b, f_d);
+        let abcd = fmul_mod!(f_ab, f_cd);
+
+        // 1 dependent multiply: s * bd (needs bd result)
         let sbd = fmul_mod!(f_s, bd);
+
+        // result_even = ac + s*bd
         let f_re = fadd_mod!(ac, sbd);
 
-        // result_odd = b*c + a*d
-        let bc = fmul_mod!(f_b, f_c);
-        let ad = fmul_mod!(f_a, f_d);
-        let f_ro = fadd_mod!(bc, ad);
+        // result_odd = (a+b)(c+d) - ac - bd   [Karatsuba]
+        let tmp = fsub_mod!(abcd, ac);
+        let f_ro = fsub_mod!(tmp, bd);
 
         // Convert back to integers and store
         let v_re = _mm512_cvt_roundpd_epu64(f_re, ROUND_MODE);
