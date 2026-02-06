@@ -208,6 +208,14 @@ mod inner {
         pub fn ntt_inverse_in_place(operand: *mut u64, n: usize, modulus: u64);
     }
 
+    use crate::common::config::DEGREE;
+    use std::sync::LazyLock;
+
+    // Static scratch buffers – avoids heap allocations on every call.
+    static mut FUSED_TMP: LazyLock<[u64; DEGREE]> = LazyLock::new(|| [0u64; DEGREE]);
+    static mut FUSED_STMP: LazyLock<[u64; DEGREE]> = LazyLock::new(|| [0u64; DEGREE]);
+    static mut FUSED_AUX: LazyLock<[u64; DEGREE]> = LazyLock::new(|| [0u64; DEGREE]);
+
     /// Fallback: decompose into separate eltwise calls when the fused
     /// Rust AVX512 kernel is not available.
     ///
@@ -226,20 +234,18 @@ mod inner {
     ) {
         let n64 = n as u64;
 
-        // If result aliases operand1, copy operand1 so writes don't
-        // destroy inputs needed by later steps.
-        let _op1_keep_alive; // holds the Vec to keep the pointer valid
+        // If result aliases operand1, copy operand1 into a static
+        // buffer so writes don't destroy inputs needed by later steps.
         let op1: *const u64 = if result as *const u64 == operand1 {
-            let buf = std::slice::from_raw_parts(operand1, 2 * n).to_vec();
-            let ptr = buf.as_ptr();
-            _op1_keep_alive = Some(buf);
-            ptr
+            let aux = &mut *FUSED_AUX;
+            std::ptr::copy_nonoverlapping(operand1, aux.as_mut_ptr(), 2 * n);
+            aux.as_ptr()
         } else {
-            _op1_keep_alive = None;
             operand1
         };
 
-        let mut tmp = vec![0u64; n];
+        let tmp = &mut *FUSED_TMP;
+        let stmp = &mut *FUSED_STMP;
 
         // result_even = op1_even * op2_even
         eltwise_mult_mod(result, op1, operand2, n64, modulus);
@@ -251,8 +257,6 @@ mod inner {
         eltwise_mult_mod(tmp.as_mut_ptr(), op1.add(n), operand2.add(n), n64, modulus);
 
         // result_even += shift_factors[i] * tmp[i]
-        // shift_factors vary per element, so mult then add.
-        let mut stmp = vec![0u64; n];
         eltwise_mult_mod(stmp.as_mut_ptr(), tmp.as_ptr(), shift_factors, n64, modulus);
         eltwise_add_mod(result, result, stmp.as_ptr(), n64, modulus);
 

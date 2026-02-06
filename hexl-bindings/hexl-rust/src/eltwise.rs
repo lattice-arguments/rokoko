@@ -93,8 +93,8 @@ fn eltwise_add_mod_native(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq")]
-#[inline(always)]
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+#[inline]
 unsafe fn eltwise_add_mod_avx512(
     result: &mut [u64],
     operand1: &[u64],
@@ -166,8 +166,8 @@ fn eltwise_sub_mod_native(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq")]
-#[inline(always)]
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+#[inline]
 unsafe fn eltwise_sub_mod_avx512(
     result: &mut [u64],
     operand1: &[u64],
@@ -308,8 +308,8 @@ fn eltwise_reduce_mod_native(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq")]
-#[inline(always)]
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+#[inline]
 unsafe fn eltwise_reduce_mod_avx512<const BITSHIFT: i32>(
     result: &mut [u64],
     operand: &[u64],
@@ -518,7 +518,7 @@ fn eltwise_mult_mod_native<const INPUT_MOD_FACTOR: u64>(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq")]
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 #[inline(always)]
 unsafe fn eltwise_mult_mod_avx512_dq_int_loop_const<const PROD_RIGHT_SHIFT: i32, const INPUT_MOD_FACTOR: i32>(
     vp_result: *mut __m512i,
@@ -556,7 +556,7 @@ unsafe fn eltwise_mult_mod_avx512_dq_int_loop_const<const PROD_RIGHT_SHIFT: i32,
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq")]
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 #[inline(always)]
 unsafe fn eltwise_mult_mod_avx512_dq_int_loop_runtime<const INPUT_MOD_FACTOR: i32>(
     vp_result: *mut __m512i,
@@ -595,8 +595,8 @@ unsafe fn eltwise_mult_mod_avx512_dq_int_loop_runtime<const INPUT_MOD_FACTOR: i3
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq")]
-#[inline(always)]
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+#[inline]
 unsafe fn eltwise_mult_mod_avx512_dq_int<const INPUT_MOD_FACTOR: i32>(
     result: &mut [u64],
     operand1: &[u64],
@@ -830,7 +830,7 @@ unsafe fn eltwise_mult_mod_avx512_dq_int<const INPUT_MOD_FACTOR: i32>(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq")]
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 #[inline(always)]
 unsafe fn eltwise_mult_mod_avx512_float_loop<const INPUT_MOD_FACTOR: i32>(
     vp_result: *mut __m512i,
@@ -913,8 +913,8 @@ unsafe fn eltwise_mult_mod_avx512_float_loop<const INPUT_MOD_FACTOR: i32>(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq")]
-#[inline(always)]
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+#[inline]
 unsafe fn eltwise_mult_mod_avx512_float<const INPUT_MOD_FACTOR: i32>(
     result: &mut [u64],
     operand1: &[u64],
@@ -1089,8 +1089,8 @@ fn eltwise_fma_mod_native<const INPUT_MOD_FACTOR: u64>(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq")]
-#[inline(always)]
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+#[inline]
 unsafe fn eltwise_fma_mod_avx512<const BITSHIFT: i32, const INPUT_MOD_FACTOR: i32>
 (
     result: &mut [u64],
@@ -1275,8 +1275,8 @@ fn fused_incomplete_ntt_mult_native(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq")]
-#[inline(always)]
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+#[inline]
 unsafe fn fused_incomplete_ntt_mult_avx512_float(
     result: &mut [u64],
     operand1: &[u64],
