@@ -1,19 +1,18 @@
 use std::cell::RefCell;
 
 use crate::{
-    common::{
-        ring_arithmetic::RingElement, sumcheck_element::SumcheckElement
-    },
+    common::{ring_arithmetic::RingElement, sumcheck_element::SumcheckElement},
     protocol::sumcheck_utils::{
-        common::{EvaluationSumcheckData, HighOrderSumcheckData}, elephant_cell::ElephantCell, hypercube_point::HypercubePoint, polynomial::{Polynomial, add_poly_in_place}
+        common::{EvaluationSumcheckData, HighOrderSumcheckData},
+        elephant_cell::ElephantCell,
+        hypercube_point::HypercubePoint,
+        polynomial::{add_poly_in_place, Polynomial},
     },
 };
 
 #[cfg(test)]
 use crate::{
-    common::{
-        config::MOD_Q, ring_arithmetic::Representation, structured_row::PreprocessedRow,
-    },
+    common::{config::MOD_Q, ring_arithmetic::Representation, structured_row::PreprocessedRow},
     protocol::{
         open::evaluation_point_to_structured_row,
         sumcheck_utils::{common::SumcheckBaseData, linear::LinearSumcheck},

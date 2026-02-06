@@ -1,8 +1,10 @@
 use crate::{
     common::{
-        matrix::VerticallyAlignedMatrix, ring_arithmetic::{Representation, RingElement}, structured_row::{PreprocessedRow, StructuredRow}
+        matrix::VerticallyAlignedMatrix,
+        ring_arithmetic::{Representation, RingElement},
+        structured_row::{PreprocessedRow, StructuredRow},
     },
-    protocol::commitment::{BasicCommitment, commit_basic_internal},
+    protocol::commitment::{commit_basic_internal, BasicCommitment},
 };
 
 #[cfg(test)]

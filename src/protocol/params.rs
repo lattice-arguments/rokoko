@@ -24,7 +24,7 @@ pub static DECOMP_8_LAST_LEVEL: AuxRecursionConfig = AuxRecursionConfig {
 // Returns `if_p30` if the "p-30" feature is enabled at runtime, otherwise `if_not_p30`.
 // I didn't manage to make it a macro that works inside expressions, so a function will do.
 #[inline(always)]
-#[allow(unused_variables,unreachable_code)]
+#[allow(unused_variables, unreachable_code)]
 fn cfg_p30<T>(if_p30: T, if_not_p30: T) -> T {
     #[cfg(feature = "p-30")]
     {
@@ -34,7 +34,7 @@ fn cfg_p30<T>(if_p30: T, if_not_p30: T) -> T {
 }
 
 #[inline(always)]
-#[allow(unused_variables,unreachable_code)]
+#[allow(unused_variables, unreachable_code)]
 fn cfg_p26<T>(if_p26: T, if_not_p26: T) -> T {
     #[cfg(feature = "p-26")]
     {
@@ -44,7 +44,7 @@ fn cfg_p26<T>(if_p26: T, if_not_p26: T) -> T {
 }
 
 #[inline(always)]
-#[allow(unused_variables,unreachable_code)]
+#[allow(unused_variables, unreachable_code)]
 fn per_config<T>(p26_value: T, p28_value: T, p30_value: T) -> T {
     #[cfg(feature = "p-30")]
     {
@@ -56,7 +56,6 @@ fn per_config<T>(p26_value: T, p28_value: T, p30_value: T) -> T {
     }
     p28_value
 }
-
 
 pub static P: LazyLock<Config> = LazyLock::new(|| {
     AuxSumcheckConfig {

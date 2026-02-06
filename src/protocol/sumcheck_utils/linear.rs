@@ -1,7 +1,4 @@
-use std::{
-    cell::RefCell,
-    ops::Index,
-};
+use std::{cell::RefCell, ops::Index};
 
 use crate::{
     common::{
@@ -12,11 +9,11 @@ use crate::{
         sumcheck_element::SumcheckElement,
     },
     protocol::sumcheck_utils::{
-            common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
-            elephant_cell::ElephantCell,
-            hypercube_point::HypercubePoint,
-            polynomial::Polynomial,
-        },
+        common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
+        elephant_cell::ElephantCell,
+        hypercube_point::HypercubePoint,
+        polynomial::Polynomial,
+    },
 };
 
 #[cfg(test)]

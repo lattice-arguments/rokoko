@@ -1,9 +1,7 @@
 use crate::{
     common::{matrix::VerticallyAlignedMatrix, ring_arithmetic::RingElement},
     protocol::{
-        commitment::{
-            commit_basic, recursive_commit, CommitmentWithAux,
-        },
+        commitment::{commit_basic, recursive_commit, CommitmentWithAux},
         config::SumcheckConfig,
         crs::CRS,
     },

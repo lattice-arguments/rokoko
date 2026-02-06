@@ -2,7 +2,9 @@ use std::ops::IndexMut;
 
 use crate::{
     common::{
-        decomposition::decompose, matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated}, ring_arithmetic::{Representation, RingElement}
+        decomposition::decompose,
+        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
+        ring_arithmetic::{Representation, RingElement},
     },
     protocol::{
         crs::{CK, CRS},

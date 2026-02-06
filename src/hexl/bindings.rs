@@ -98,12 +98,7 @@ mod inner {
     }
 
     #[inline(always)]
-    pub unsafe fn eltwise_reduce_mod(
-        result: *mut u64,
-        operand: *const u64,
-        n: u64,
-        modulus: u64,
-    ) {
+    pub unsafe fn eltwise_reduce_mod(result: *mut u64, operand: *const u64, n: u64, modulus: u64) {
         let result = slice_from_raw_mut(result, n);
         let operand = slice_from_raw(operand, n);
         hexl::eltwise_reduce_mod(result, operand, modulus);
@@ -153,7 +148,13 @@ mod inner {
         let shift_factors = std::slice::from_raw_parts(shift_factors, n);
         let shift_factors_f64 = std::slice::from_raw_parts(shift_factors_f64, n);
         hexl::fused_incomplete_ntt_mult(
-            result, operand1, operand2, shift_factors, shift_factors_f64, n, modulus,
+            result,
+            operand1,
+            operand2,
+            shift_factors,
+            shift_factors_f64,
+            n,
+            modulus,
         );
     }
 }
@@ -192,12 +193,7 @@ mod inner {
             n: u64,
             modulus: u64,
         );
-        pub fn eltwise_reduce_mod(
-            result: *mut u64,
-            operand: *const u64,
-            n: u64,
-            modulus: u64,
-        );
+        pub fn eltwise_reduce_mod(result: *mut u64, operand: *const u64, n: u64, modulus: u64);
         pub fn eltwise_fma_mod(
             result: *mut u64,
             operand1: *const u64,

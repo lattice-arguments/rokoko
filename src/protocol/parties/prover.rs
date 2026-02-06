@@ -1,4 +1,3 @@
-
 use crate::{
     common::{
         decomposition::decompose,
@@ -9,9 +8,7 @@ use crate::{
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
-        commitment::{
-            commit_basic, recursive_commit, BasicCommitment, CommitmentWithAux,
-        },
+        commitment::{commit_basic, recursive_commit, BasicCommitment, CommitmentWithAux},
         config::{
             paste_by_prefix, paste_recursive_commitment, Config, ConfigBase, NextRoundCommitment,
             Projection, RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig,

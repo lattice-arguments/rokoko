@@ -7,7 +7,9 @@ use crate::{
         sumcheck_element::SumcheckElement,
     },
     protocol::sumcheck_utils::{
-        common::{EvaluationSumcheckData, HighOrderSumcheckData}, elephant_cell::ElephantCell, polynomial::Polynomial
+        common::{EvaluationSumcheckData, HighOrderSumcheckData},
+        elephant_cell::ElephantCell,
+        polynomial::Polynomial,
     },
 };
 

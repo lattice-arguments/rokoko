@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use rokoko::common::ring_arithmetic::{RingElement, Representation};
+use rokoko::common::ring_arithmetic::{Representation, RingElement};
 use std::hint::black_box;
 
 fn bench_ring_multiplication(c: &mut Criterion) {

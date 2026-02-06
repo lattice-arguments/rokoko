@@ -1,4 +1,3 @@
-
 use crate::{
     common::{
         arithmetic::field_to_ring_element,
@@ -13,10 +12,7 @@ use crate::{
     protocol::{
         config::{NextRoundCommitment, Projection, SumcheckConfig, SumcheckRoundProof},
         open::evaluation_point_to_structured_row,
-        project_2::{
-            verifier_sample_projection_challenges,
-            BatchedProjectionChallengesSuccinct,
-        },
+        project_2::{verifier_sample_projection_challenges, BatchedProjectionChallengesSuccinct},
         sumcheck_utils::common::EvaluationSumcheckData,
         sumchecks::{
             context_verifier::VerifierSumcheckContext, loader_verifier::load_verifier_sumcheck_data,

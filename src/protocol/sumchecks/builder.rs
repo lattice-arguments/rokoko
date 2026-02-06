@@ -1,4 +1,3 @@
-
 use crate::common::arithmetic::ONE;
 use crate::common::config::DEGREE;
 use crate::protocol::config::{Projection, SumcheckConfig};

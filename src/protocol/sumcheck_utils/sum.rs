@@ -7,7 +7,7 @@ use crate::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
-        polynomial::{Polynomial, add_poly_in_place},
+        polynomial::{add_poly_in_place, Polynomial},
     },
 };
 use std::{cell::RefCell, cmp::max};

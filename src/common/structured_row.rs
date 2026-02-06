@@ -1,6 +1,4 @@
-use crate::common::{
-    ring_arithmetic::RingElement, sumcheck_element::SumcheckElement
-};
+use crate::common::{ring_arithmetic::RingElement, sumcheck_element::SumcheckElement};
 
 #[cfg(test)]
 use crate::common::{config::MOD_Q, ring_arithmetic::Representation};
