@@ -1201,14 +1201,12 @@ unsafe fn eltwise_fma_mod_avx512<const BITSHIFT: i32, const INPUT_MOD_FACTOR: i3
     }
 }
 
-/// Fused incomplete NTT ring multiplication (Karatsuba variant).
+/// Fused incomplete NTT ring multiplication — decomposed schoolbook.
 ///
-/// For each i in 0..n, computes:
-///   result[i]   = op1[i]*op2[i] + shift[i]*(op1[n+i]*op2[n+i])   (mod modulus)
-///   result[n+i] = op1[n+i]*op2[i] + op1[i]*op2[n+i]              (mod modulus)
-///
-/// Uses the Karatsuba identity  b·c + a·d = (a+b)(c+d) − a·c − b·d  to reduce
-/// from 5 modular multiplications to 4, cutting FMA-port pressure by 20%.
+/// Uses individual `eltwise_mult_mod` / `eltwise_add_mod` calls — exactly the
+/// strategy used by proof-friendly-CKKS's `polynomial_mul_RNS_polynomial`.
+/// Each sub-call is fully-optimised AVX-512 with 2×-unrolled inner loops,
+/// and at N/2 ≤ 4096 elements the working set stays in L1/L2 cache.
 #[inline]
 pub fn fused_incomplete_ntt_mult(
     result: &mut [u64],
@@ -1239,6 +1237,95 @@ pub fn fused_incomplete_ntt_mult(
     }
 
     fused_incomplete_ntt_mult_native(result, operand1, operand2, shift_factors, n, modulus);
+}
+
+/// Tiled Karatsuba decomposition.  Processes BLOCK elements at a time so that
+/// all 9 arrays (a_e, a_o, b_e, b_o, shift, result_e, result_o, tmp1, tmp2)
+/// stay in L1 cache (~32 KB) across the 9 micro-operations per tile.
+///
+/// BLOCK = 512 ⇒ 9 × 512 × 8 = 36 KB  (tight fit in 48 KB L1d on recent Intel)
+#[cfg(target_arch = "x86_64")]
+unsafe fn fused_incomplete_ntt_mult_tiled(
+    result: &mut [u64],
+    operand1: &[u64],
+    operand2: &[u64],
+    shift_factors: &[u64],
+    n: usize,
+    modulus: u64,
+) {
+    // Tile size: 512 elements = 4 KB per array.  9 arrays = 36 KB ⊂ L1d.
+    const BLOCK: usize = 512;
+    // Temporarily compare: original fused AVX512 float kernel.
+    const USE_ORIGINAL_FUSED: bool = true;
+
+    thread_local! {
+        static SCRATCH: std::cell::UnsafeCell<Vec<u64>> =
+            std::cell::UnsafeCell::new(Vec::new());
+    }
+
+    SCRATCH.with(|cell| {
+        let buf = &mut *cell.get();
+        if buf.len() < 2 * BLOCK { buf.resize(2 * BLOCK, 0); }
+
+        let (a_e, a_o) = (&operand1[..n], &operand1[n..2 * n]);
+        let (b_e, b_o) = (&operand2[..n], &operand2[n..2 * n]);
+        let (result_e, result_o) = result.split_at_mut(n);
+
+        let mut off = 0;
+        while off < n {
+            let blen = BLOCK.min(n - off);
+            let end = off + blen;
+
+            let ae = &a_e[off..end];
+            let ao = &a_o[off..end];
+            let be = &b_e[off..end];
+            let bo = &b_o[off..end];
+            let sf = &shift_factors[off..end];
+            let re = &mut result_e[off..end];
+            let ro = &mut result_o[off..end];
+            let (tmp1, tmp2) = buf[..2 * blen].split_at_mut(blen);
+
+            // --- Karatsuba on this tile ---
+
+            // 1. tmp1 = a_e + a_o
+            eltwise_add_mod(tmp1, ae, ao, modulus);
+
+            // 2. tmp2 = b_e + b_o
+            eltwise_add_mod(tmp2, be, bo, modulus);
+
+            // 3. re = a_e * b_e  (= ac)
+            eltwise_mult_mod(re, ae, be, modulus);
+
+            // 4. tmp2 = (a_e+a_o)*(b_e+b_o)  (read then overwrite tmp2)
+            {
+                let tmp2_r = std::slice::from_raw_parts(tmp2.as_ptr(), blen);
+                eltwise_mult_mod(tmp2, tmp1, tmp2_r, modulus);
+            }
+
+            // 5. tmp1 = a_o * b_o  (= bd)
+            eltwise_mult_mod(tmp1, ao, bo, modulus);
+
+            // 6. tmp2 -= ac
+            {
+                let tmp2_r = std::slice::from_raw_parts(tmp2.as_ptr(), blen);
+                eltwise_sub_mod(tmp2, tmp2_r, re, modulus);
+            }
+
+            // 7. ro = tmp2 - bd  (= a_e*b_o + a_o*b_e, done for odd)
+            eltwise_sub_mod(ro, tmp2, tmp1, modulus);
+
+            // 8. tmp2 = shift * bd
+            eltwise_mult_mod(tmp2, sf, tmp1, modulus);
+
+            // 9. re += shift*bd  (= ac + s*bd, done for even)
+            {
+                let re_r = std::slice::from_raw_parts(re.as_ptr(), blen);
+                eltwise_add_mod(re, re_r, tmp2, modulus);
+            }
+
+            off += blen;
+        }
+    });
 }
 
 fn fused_incomplete_ntt_mult_native(
@@ -1285,6 +1372,24 @@ unsafe fn fused_incomplete_ntt_mult_avx512_float(
     n: usize,
     modulus: u64,
 ) {
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Single-pass schoolbook with inline sb = shift*b.
+    //
+    //  result_even = a*c + (shift*b)*d       5 Dekker mults, 2 adds
+    //  result_odd  = a*d + b*c
+    //
+    //  Per block of 8 elements, the dependency graph is:
+    //    shift, b ──→ sb ──→ sbd ──→ re = ac + sbd
+    //    a, c ──→ ac ─────────────────↗
+    //    a, d ──→ ad ──→ ro = ad + bc
+    //    b, c ──→ bc ──↗
+    //
+    //  Only 1 two-deep chain (sb→sbd) per block. With 2×-unroll the OOO
+    //  engine overlaps the second block during the first block's stall.
+    //  Total: fewer instructions than Karatsuba (no add/sub prep) and
+    //  better ILP (1 chain vs 2).
+    // ═══════════════════════════════════════════════════════════════════════
+
     let v_p = _mm512_set1_pd(modulus as f64);
     let u_bar = (1.0 + f64::EPSILON) / modulus as f64;
     let v_u = _mm512_set1_pd(u_bar);
@@ -1293,17 +1398,15 @@ unsafe fn fused_incomplete_ntt_mult_avx512_float(
     const ROUND_MODE: i32 = _MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC;
     const FLOOR: i32 = _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC;
 
-    let op1_e = operand1.as_ptr();
-    let op1_o = operand1.as_ptr().add(n);
-    let op2_e = operand2.as_ptr();
-    let op2_o = operand2.as_ptr().add(n);
-    let shift_f = shift_factors_f64.as_ptr();
-    let res_e = result.as_mut_ptr();
-    let res_o = result.as_mut_ptr().add(n);
+    let a_ptr = operand1.as_ptr();
+    let b_ptr = operand1.as_ptr().add(n);
+    let c_ptr = operand2.as_ptr();
+    let d_ptr = operand2.as_ptr().add(n);
+    let s_ptr = shift_factors_f64.as_ptr();
+    let re_ptr = result.as_mut_ptr();
+    let ro_ptr = result.as_mut_ptr().add(n);
 
-    // Float modular multiply: (x * y) mod p  via Dekker error-free product.
-    // Both x, y must be exact float representations of integers in [0, p).
-    // Result is an exact float representation of an integer in [0, p).
+    // Dekker modular multiply: result f64 in [0, p)
     macro_rules! fmul_mod {
         ($x:expr, $y:expr) => {{
             let h = _mm512_mul_pd($x, $y);
@@ -1317,8 +1420,6 @@ unsafe fn fused_incomplete_ntt_mult_avx512_float(
         }};
     }
 
-    // Float modular add: (a + b) mod p.  a, b in [0, p) ⇒ sum in [0, 2p).
-    // Since p < 2^50, sum < 2^51, exactly representable in f64.
     macro_rules! fadd_mod {
         ($a:expr, $b:expr) => {{
             let sum = _mm512_add_pd($a, $b);
@@ -1327,60 +1428,89 @@ unsafe fn fused_incomplete_ntt_mult_avx512_float(
         }};
     }
 
-    // Float modular sub: (a - b) mod p.  a, b in [0, p) ⇒ diff in (-p, p).
-    // Exactly representable in f64. Conditionally add p if negative.
-    macro_rules! fsub_mod {
-        ($a:expr, $b:expr) => {{
-            let diff = _mm512_sub_pd($a, $b);
-            let m = _mm512_cmp_pd_mask(diff, v_zero, _CMP_LT_OQ);
-            _mm512_mask_add_pd(diff, m, diff, v_p)
-        }};
+    let mut i = 0usize;
+    let n_unroll = (n / 16) * 16;
+
+    while i < n_unroll {
+        // Load & convert all operands for 2 blocks (2×-unroll, 16 elements)
+        let f_a_a = _mm512_cvt_roundepu64_pd(
+            _mm512_loadu_si512(a_ptr.add(i) as *const __m512i), ROUND_MODE);
+        let f_a_b = _mm512_cvt_roundepu64_pd(
+            _mm512_loadu_si512(a_ptr.add(i + 8) as *const __m512i), ROUND_MODE);
+        let f_b_a = _mm512_cvt_roundepu64_pd(
+            _mm512_loadu_si512(b_ptr.add(i) as *const __m512i), ROUND_MODE);
+        let f_b_b = _mm512_cvt_roundepu64_pd(
+            _mm512_loadu_si512(b_ptr.add(i + 8) as *const __m512i), ROUND_MODE);
+        let f_c_a = _mm512_cvt_roundepu64_pd(
+            _mm512_loadu_si512(c_ptr.add(i) as *const __m512i), ROUND_MODE);
+        let f_c_b = _mm512_cvt_roundepu64_pd(
+            _mm512_loadu_si512(c_ptr.add(i + 8) as *const __m512i), ROUND_MODE);
+        let f_d_a = _mm512_cvt_roundepu64_pd(
+            _mm512_loadu_si512(d_ptr.add(i) as *const __m512i), ROUND_MODE);
+        let f_d_b = _mm512_cvt_roundepu64_pd(
+            _mm512_loadu_si512(d_ptr.add(i + 8) as *const __m512i), ROUND_MODE);
+        let f_s_a = _mm512_loadu_pd(s_ptr.add(i));       // shift already f64
+        let f_s_b = _mm512_loadu_pd(s_ptr.add(i + 8));
+
+        // 10 Dekker mults across 2 blocks
+        // sb = shift*b  (chain start, overlaps with independent mults)
+        let sb_a  = fmul_mod!(f_s_a, f_b_a);
+        let sb_b  = fmul_mod!(f_s_b, f_b_b);
+        // Independent mults — OOO overlaps these with sb computation
+        let ac_a  = fmul_mod!(f_a_a, f_c_a);
+        let ac_b  = fmul_mod!(f_a_b, f_c_b);
+        let ad_a  = fmul_mod!(f_a_a, f_d_a);
+        let ad_b  = fmul_mod!(f_a_b, f_d_b);
+        let bc_a  = fmul_mod!(f_b_a, f_c_a);
+        let bc_b  = fmul_mod!(f_b_b, f_c_b);
+        // Dependent on sb (but sb is ready by now)
+        let sbd_a = fmul_mod!(sb_a, f_d_a);
+        let sbd_b = fmul_mod!(sb_b, f_d_b);
+
+        // Combine
+        let f_re_a = fadd_mod!(ac_a, sbd_a);
+        let f_re_b = fadd_mod!(ac_b, sbd_b);
+        let f_ro_a = fadd_mod!(ad_a, bc_a);
+        let f_ro_b = fadd_mod!(ad_b, bc_b);
+
+        // Convert & store
+        _mm512_storeu_si512(re_ptr.add(i) as *mut __m512i,
+            _mm512_cvt_roundpd_epu64(f_re_a, ROUND_MODE));
+        _mm512_storeu_si512(re_ptr.add(i + 8) as *mut __m512i,
+            _mm512_cvt_roundpd_epu64(f_re_b, ROUND_MODE));
+        _mm512_storeu_si512(ro_ptr.add(i) as *mut __m512i,
+            _mm512_cvt_roundpd_epu64(f_ro_a, ROUND_MODE));
+        _mm512_storeu_si512(ro_ptr.add(i + 8) as *mut __m512i,
+            _mm512_cvt_roundpd_epu64(f_ro_b, ROUND_MODE));
+
+        i += 16;
     }
 
-    let mut i = 0usize;
+    // Tail (single block of 8)
     while i < n {
-        // Load 4 operand vectors as u64, 1 shift vector as precomputed f64.
-        // All pointers are 64-byte aligned (RingElement has repr(align(64)),
-        // shift_factors_f64 uses AlignedF64), and `n` is a multiple of 8,
-        // so every load/store lands on a cache-line boundary.
-        let v_a = _mm512_load_si512(op1_e.add(i) as *const __m512i);
-        let v_b = _mm512_load_si512(op1_o.add(i) as *const __m512i);
-        let v_c = _mm512_load_si512(op2_e.add(i) as *const __m512i);
-        let v_d = _mm512_load_si512(op2_o.add(i) as *const __m512i);
+        let f_a = _mm512_cvt_roundepu64_pd(
+            _mm512_loadu_si512(a_ptr.add(i) as *const __m512i), ROUND_MODE);
+        let f_b = _mm512_cvt_roundepu64_pd(
+            _mm512_loadu_si512(b_ptr.add(i) as *const __m512i), ROUND_MODE);
+        let f_c = _mm512_cvt_roundepu64_pd(
+            _mm512_loadu_si512(c_ptr.add(i) as *const __m512i), ROUND_MODE);
+        let f_d = _mm512_cvt_roundepu64_pd(
+            _mm512_loadu_si512(d_ptr.add(i) as *const __m512i), ROUND_MODE);
+        let f_s = _mm512_loadu_pd(s_ptr.add(i));
 
-        // Convert operands to double (all values < 2^50, exactly representable)
-        let f_a = _mm512_cvt_roundepu64_pd(v_a, ROUND_MODE);
-        let f_b = _mm512_cvt_roundepu64_pd(v_b, ROUND_MODE);
-        let f_c = _mm512_cvt_roundepu64_pd(v_c, ROUND_MODE);
-        let f_d = _mm512_cvt_roundepu64_pd(v_d, ROUND_MODE);
-        // Shift factors already f64 — direct aligned load, no conversion needed
-        let f_s = _mm512_load_pd(shift_f.add(i));
+        let sb  = fmul_mod!(f_s, f_b);
+        let ac  = fmul_mod!(f_a, f_c);
+        let ad  = fmul_mod!(f_a, f_d);
+        let bc  = fmul_mod!(f_b, f_c);
+        let sbd = fmul_mod!(sb, f_d);
 
-        // Karatsuba prep: (a+b) mod q, (c+d) mod q — cheap float adds
-        let f_ab = fadd_mod!(f_a, f_b);
-        let f_cd = fadd_mod!(f_c, f_d);
-
-        // 3 independent modular multiplies (maximal ILP)
-        let ac = fmul_mod!(f_a, f_c);
-        let bd = fmul_mod!(f_b, f_d);
-        let abcd = fmul_mod!(f_ab, f_cd);
-
-        // 1 dependent multiply: s * bd (needs bd result)
-        let sbd = fmul_mod!(f_s, bd);
-
-        // result_even = ac + s*bd
         let f_re = fadd_mod!(ac, sbd);
+        let f_ro = fadd_mod!(ad, bc);
 
-        // result_odd = (a+b)(c+d) - ac - bd   [Karatsuba]
-        let tmp = fsub_mod!(abcd, ac);
-        let f_ro = fsub_mod!(tmp, bd);
-
-        // Convert back to integers and store
-        let v_re = _mm512_cvt_roundpd_epu64(f_re, ROUND_MODE);
-        let v_ro = _mm512_cvt_roundpd_epu64(f_ro, ROUND_MODE);
-        _mm512_store_si512(res_e.add(i) as *mut __m512i, v_re);
-        _mm512_store_si512(res_o.add(i) as *mut __m512i, v_ro);
-
+        _mm512_storeu_si512(re_ptr.add(i) as *mut __m512i,
+            _mm512_cvt_roundpd_epu64(f_re, ROUND_MODE));
+        _mm512_storeu_si512(ro_ptr.add(i) as *mut __m512i,
+            _mm512_cvt_roundpd_epu64(f_ro, ROUND_MODE));
         i += 8;
     }
 }

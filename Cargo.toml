@@ -44,3 +44,13 @@ codegen-units = 1
 [[bench]]
 name = "bench"
 harness = false
+
+[[bench]]
+name = "eltwise_bench"
+harness = false
+required-features = ["rust-hexl"]
+
+[[bench]]
+name = "rdtsc_bench"
+harness = false
+required-features = ["rust-hexl"]
