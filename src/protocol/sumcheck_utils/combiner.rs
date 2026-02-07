@@ -1,23 +1,21 @@
 use std::cell::RefCell;
 
 use crate::{
-    common::{
-        config::MOD_Q,
-        matrix::new_vec_zero_preallocated,
-        ring_arithmetic::{Representation, RingElement},
-        structured_row::PreprocessedRow,
-        sumcheck_element::SumcheckElement,
+    common::{ring_arithmetic::RingElement, sumcheck_element::SumcheckElement},
+    protocol::sumcheck_utils::{
+        common::{EvaluationSumcheckData, HighOrderSumcheckData},
+        elephant_cell::ElephantCell,
+        hypercube_point::HypercubePoint,
+        polynomial::{add_poly_in_place, Polynomial},
     },
+};
+
+#[cfg(test)]
+use crate::{
+    common::{config::MOD_Q, ring_arithmetic::Representation, structured_row::PreprocessedRow},
     protocol::{
         open::evaluation_point_to_structured_row,
-        sumcheck,
-        sumcheck_utils::{
-            common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
-            elephant_cell::ElephantCell,
-            hypercube_point::HypercubePoint,
-            linear::LinearSumcheck,
-            polynomial::{add_poly_in_place, Polynomial},
-        },
+        sumcheck_utils::{common::SumcheckBaseData, linear::LinearSumcheck},
     },
 };
 
@@ -117,7 +115,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
 
     fn is_univariate_polynomial_zero_at_point(
         &self,
-        point: super::hypercube_point::HypercubePoint,
+        _point: super::hypercube_point::HypercubePoint,
     ) -> bool {
         false
     }

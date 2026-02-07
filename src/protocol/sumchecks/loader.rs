@@ -1,5 +1,3 @@
-use std::iter::Sum;
-
 use crate::{
     common::{
         arithmetic::{field_to_ring_element_into, precompute_structured_values_fast},
@@ -10,7 +8,7 @@ use crate::{
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
-        config::{Config, SumcheckConfig},
+        config::SumcheckConfig,
         open::Opening,
         project_2::BatchedProjectionChallenges,
         sumchecks::helpers::{
@@ -20,8 +18,6 @@ use crate::{
 };
 
 use super::context::SumcheckContext;
-
-use super::helpers::{projection_coefficients, tensor_product};
 
 /// Loads all data into the sumcheck context.
 ///
@@ -41,7 +37,7 @@ use super::helpers::{projection_coefficients, tensor_product};
 /// * `projection_matrix_flatter_preprocessed` - Preprocessed flattening point for projection
 pub fn load_sumcheck_data(
     sumcheck_context: &mut SumcheckContext,
-    config: &SumcheckConfig,
+    _config: &SumcheckConfig,
     combined_witness: &Vec<RingElement>,
     conjugated_combined_witness: &Vec<RingElement>,
     folding_challenges: &Vec<RingElement>,
@@ -157,7 +153,7 @@ pub fn load_sumcheck_data(
     if let Some(type3_1_contexts) = &mut sumcheck_context.type3_1_sumchecks {
         if let Some(challenges) = challenges_batching_projection_1 {
             // Each batch gets its own (c_0_values, c_1_values, j_batched) tuple
-            for (batch_idx, (type3_1_ctx, challenges)) in type3_1_contexts
+            for (_batch_idx, (type3_1_ctx, challenges)) in type3_1_contexts
                 .sumchecks
                 .iter_mut()
                 .zip(challenges.iter())

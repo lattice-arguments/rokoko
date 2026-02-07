@@ -1,22 +1,14 @@
-use core::hash;
-
 use crate::{
     common::{
-        config::{DEGREE, MOD_Q},
         decomposition::decompose,
-        estimator::{estimate_rsis_security, RSISParameters},
         hash::HashWrapper,
         matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
-        norms,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
-        commitment::{
-            commit_basic, recursive_commit, BasicCommitment, CommitmentWithAux,
-            RecursiveCommitmentWithAux,
-        },
+        commitment::{commit_basic, recursive_commit, BasicCommitment, CommitmentWithAux},
         config::{
             paste_by_prefix, paste_recursive_commitment, Config, ConfigBase, NextRoundCommitment,
             Projection, RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig,
@@ -28,7 +20,7 @@ use crate::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
             open_at,
         },
-        project::{prepare_i16_witness, project, Signed16RingElement},
+        project::{prepare_i16_witness, project},
         project_2::{batch_projection_n_times, project_coefficients},
         sumcheck::{sumcheck, SumcheckContext},
     },
@@ -63,6 +55,7 @@ fn config_base_from_config(config: &Config) -> &dyn ConfigBase {
 
 pub static mut ROUND_ID: usize = 0;
 
+#[allow(dead_code)]
 fn get_and_increment_round_id() -> usize {
     unsafe {
         let current_id = ROUND_ID;
@@ -71,6 +64,7 @@ fn get_and_increment_round_id() -> usize {
     }
 }
 
+#[allow(dead_code)]
 static DEBUG_HARDNESS_FROM_ROUND: usize = 0;
 
 pub fn prover_round(
@@ -470,7 +464,7 @@ pub fn prover_round(
 
     let base_next_roung_config = config.next.as_ref().map(|c| config_base_from_config(c));
 
-    let mut next_round_witness = VerticallyAlignedMatrix {
+    let next_round_witness = VerticallyAlignedMatrix {
         height: if let Some(next_config) = &base_next_roung_config {
             next_config.witness_height()
         } else {

@@ -1,21 +1,28 @@
 [package]
-name = "cowboys-and-aliens"
+name = "rokoko"
 version = "0.1.0"
 edition = "2021"
 
 [features]
+# Use the pure-Rust HEXL replacement (hexl-rust) with AVX-512 kernels.
+# When disabled, falls back to C++ Intel HEXL via FFI (requires libhexl_wrapper.so).
+rust-hexl = ["dep:hexl-rust"]
 # Enables zero-cost borrow checking by using UnsafeCell instead of RefCell
 # WARNING: Only safe if mutations never overlap with reads
 unsafe-sumcheck = []
 debug-hardness = []
+debug-decomp = []
 p-30 = []
 p-26 = []
+p-28 = []
 
 [dependencies]
 criterion = "0.7.0"
 num = "0.4.3"
 rand = "0.9.2"
 blake3 = "1.5.1"
+hexl-rust = { path = "hexl-bindings/hexl-rust", optional = true }
+libloading = "0.8.6"
 
 [profile.release]
 opt-level = 3

@@ -56,7 +56,7 @@ pub fn decompose(input: &Vec<RingElement>, base_log: u64, radix: usize) -> Vec<R
             decomposed[index * radix + i] -= &small_shift;
             decomposed[index * radix + i].to_representation(Representation::IncompleteNTT);
         }
-        #[cfg(feature = "debug-hardness")]
+        #[cfg(feature = "debug-decomp")]
         {
             // check that recomposition works
             let mut recomposed = RingElement::all(0, Representation::IncompleteNTT);
@@ -76,7 +76,7 @@ pub fn decompose(input: &Vec<RingElement>, base_log: u64, radix: usize) -> Vec<R
                 temp_el.to_representation(Representation::IncompleteNTT);
                 temp_el
             };
-            debug_assert_eq!(&recomposed, &el_incomplete_ntt, "Recomposition failed in decomposition. Perhaps base_log and radix are not chosen properly?");
+            assert_eq!(&recomposed, &el_incomplete_ntt, "Recomposition failed in decomposition. Perhaps base_log and radix are not chosen properly?");
         }
     }
 
@@ -99,7 +99,7 @@ pub fn get_composer_offset(base_log: u64, radix: usize) -> u64 {
 // similar to get_composer_offset but scaled by 1/radix mod MOD_Q
 // this is done so that we can write sumcheck claims on the recomposed values divided by radix (as the radix will correspond to unused variables used in other context for composition)
 pub fn get_decomposed_offset_scaled(base_log: u64, radix: usize) -> u64 {
-    let mut offset = get_composer_offset(base_log, radix);
+    let offset = get_composer_offset(base_log, radix);
     unsafe {
         // no need to cache as this is only used in preprocessing
         let inv_radix = inv_mod(radix as u64, MOD_Q);

@@ -1,10 +1,6 @@
-use std::iter::Sum;
-
-use num::integer::Roots;
-
 use crate::{
     common::{
-        arithmetic::{field_to_ring_element, inner_product},
+        arithmetic::field_to_ring_element,
         config::{HALF_DEGREE, NOF_BATCHES},
         hash::HashWrapper,
         matrix::new_vec_zero_preallocated,
@@ -14,13 +10,10 @@ use crate::{
         sumcheck_element::SumcheckElement,
     },
     protocol::{
-        config::{Config, NextRoundCommitment, Projection, SumcheckConfig, SumcheckRoundProof},
+        config::{NextRoundCommitment, Projection, SumcheckConfig, SumcheckRoundProof},
         open::evaluation_point_to_structured_row,
-        project_2::{
-            verifier_sample_projection_challenges, BatchedProjectionChallenges,
-            BatchedProjectionChallengesSuccinct,
-        },
-        sumcheck_utils::{common::EvaluationSumcheckData, polynomial::Polynomial, sum},
+        project_2::{verifier_sample_projection_challenges, BatchedProjectionChallengesSuccinct},
+        sumcheck_utils::common::EvaluationSumcheckData,
         sumchecks::{
             context_verifier::VerifierSumcheckContext, loader_verifier::load_verifier_sumcheck_data,
         },
@@ -233,7 +226,7 @@ pub fn sumcheck_verifier(
     // type0 (rank many) -> type1 (nof_openings) -> type2 (nof_openings) ->
     // type3 (1) -> type4[3 recursions, each with layers*rank + output_rank] -> type5 (1)
 
-    let mut batched_claim = batch_claims(
+    let batched_claim = batch_claims(
         config,
         claims,
         rc_commitment,

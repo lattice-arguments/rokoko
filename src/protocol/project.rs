@@ -2,7 +2,7 @@ use crate::common::{
     arithmetic::{
         centered_coeffs_u64_to_i64_inplace, pack_i64_to_i16_deg16, project_one_row_i16_to_u64,
     },
-    config::{DEGREE, MOD_Q},
+    config::DEGREE,
     matrix::VerticallyAlignedMatrix,
     projection_matrix::ProjectionMatrix,
     ring_arithmetic::{Representation, RingElement},
@@ -24,9 +24,7 @@ pub fn prepare_i16_witness(
         temp.set_from(cr);
         temp.from_incomplete_ntt_to_even_odd_coefficients();
         centered_coeffs_u64_to_i64_inplace(&mut ring_el, &temp.v);
-        unsafe {
-            pack_i64_to_i16_deg16(&mut witness_i16[i].0, &mut ring_el);
-        }
+        pack_i64_to_i16_deg16(&mut witness_i16[i].0, &mut ring_el);
     }
 
     VerticallyAlignedMatrix::<Signed16RingElement> {
@@ -110,21 +108,19 @@ pub fn project(
                     * projection_matrix.projection_height,
             );
 
-            let mut projection_subimage = projection_image.col_slice_mut(
+            let projection_subimage = projection_image.col_slice_mut(
                 col,
                 rows_chunk * projection_matrix.projection_height,
                 (rows_chunk + 1) * projection_matrix.projection_height,
             );
 
             for inner_row in 0..projection_matrix.projection_height {
-                unsafe {
-                    project_one_row_i16_to_u64::<DEGREE>(
-                        subwitness_i16,
-                        &plan.rows[inner_row].pos,
-                        &plan.rows[inner_row].neg,
-                        &mut projection_subimage[inner_row].v,
-                    );
-                }
+                project_one_row_i16_to_u64::<DEGREE>(
+                    subwitness_i16,
+                    &plan.rows[inner_row].pos,
+                    &plan.rows[inner_row].neg,
+                    &mut projection_subimage[inner_row].v,
+                );
             }
         }
     }

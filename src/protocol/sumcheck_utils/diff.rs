@@ -9,13 +9,14 @@ use crate::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
-        polynomial::{add_poly_in_place, sub_poly_in_place, Polynomial},
-        selector_eq::SelectorEq,
+        polynomial::{sub_poly_in_place, Polynomial},
     },
 };
 
 #[cfg(test)]
-use crate::protocol::sumcheck_utils::{common::SumcheckBaseData, linear::LinearSumcheck};
+use crate::protocol::sumcheck_utils::{
+    common::SumcheckBaseData, linear::LinearSumcheck, selector_eq::SelectorEq,
+};
 
 /// Sumcheck data that represents the difference between two other sumchecks.
 /// Useful for enforcing equality constraints between two multilinear extensions.
@@ -86,7 +87,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
         point: HypercubePoint,
         polynomial: &mut Polynomial<E>,
     ) {
-        let mut lhs_eval_poly = self.lhs_eval_poly.borrow_mut();
+        let _lhs_eval_poly = self.lhs_eval_poly.borrow_mut();
         let lhs_sumcheck = &self.lhs_sumcheck;
         if !lhs_sumcheck
             .get_ref()

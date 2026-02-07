@@ -96,6 +96,7 @@ impl HashWrapper {
         xof.fill(out);
     }
 
+    #[allow(dead_code)]
     fn sample_binary_ring_element(&mut self) -> RingElement {
         let mut buf = [0u8; DEGREE / 8];
         self.fill_from_xof(b"binary-ring-element", &mut buf);
@@ -108,7 +109,7 @@ impl HashWrapper {
         }
         element
     }
-
+    #[allow(dead_code)]
     fn sample_biased_ternary_ring_element(&mut self) -> RingElement {
         let el1 = self.sample_binary_ring_element();
         let el2 = self.sample_binary_ring_element();
@@ -190,6 +191,7 @@ impl HashWrapper {
         }
     }
 
+    #[allow(dead_code)]
     fn sample_ternary_ring_element(&mut self) -> RingElement {
         // we need 2 bits per coefficient to sample uniformly from {-1, 0, 1}
         // 0b11 is discarded so we take (two times) more bytes to account for the rejections

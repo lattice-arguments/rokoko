@@ -8,14 +8,14 @@
 //! ## Step 2: Save access statistics
 //! At the end of your run, call:
 //! ```rust,ignore
-//! use cowboys_and_aliens::common::pool::save_access_stats;
+//! use rokoko::common::pool::save_access_stats;
 //! save_access_stats("pool_stats.txt").expect("Failed to save stats");
 //! ```
 //!
 //! ## Step 3: Preallocate pools for subsequent runs
 //! At the start of your next run, call:
 //! ```rust,ignore
-//! use cowboys_and_aliens::common::pool::load_and_preallocate;
+//! use rokoko::common::pool::load_and_preallocate;
 //! load_and_preallocate("pool_stats.txt").expect("Failed to load stats");
 //! ```
 //!

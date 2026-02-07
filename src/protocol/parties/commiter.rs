@@ -1,12 +1,9 @@
 use crate::{
     common::{matrix::VerticallyAlignedMatrix, ring_arithmetic::RingElement},
     protocol::{
-        commitment::{
-            commit_basic, recursive_commit, CommitmentWithAux, RecursiveCommitmentWithAux,
-        },
-        config::{ConfigBase, SumcheckConfig},
+        commitment::{commit_basic, recursive_commit, CommitmentWithAux},
+        config::SumcheckConfig,
         crs::CRS,
-        project::{prepare_i16_witness, Signed16RingElement},
     },
 };
 

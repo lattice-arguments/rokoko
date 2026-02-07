@@ -23,6 +23,7 @@ use crate::common::{
 
 pub fn init_common() {
     LazyLock::force(&SHIFT_FACTORS);
+    LazyLock::force(&SHIFT_FACTORS_F64);
     LazyLock::force(&FIELD_SHIFT_FACTOR);
     LazyLock::force(&INV_HALF_DEGREE);
     LazyLock::force(&TWO_INV_HALF_DEGREE);
@@ -40,8 +41,8 @@ pub fn init_common() {
     LazyLock::force(&HALF_WAY_MOD_Q_RING_CF);
     LazyLock::force(&CONSTANT_TERM_FACTORS);
 
-    unsafe { LazyLock::force_mut(&mut crate::common::ring_arithmetic::temp_buffer) };
-    unsafe { LazyLock::force_mut(&mut crate::common::ring_arithmetic::aux) };
+    unsafe { LazyLock::force_mut(&mut TEMP_BUFFER) };
+    unsafe { LazyLock::force_mut(&mut AUX) };
 
     // init some caches of HEXL
     let mut a = RingElement::new(Representation::EvenOddCoefficients);

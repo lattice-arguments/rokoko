@@ -3,16 +3,18 @@ use std::cell::RefCell;
 use crate::{
     common::{
         config::HALF_DEGREE,
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement, SHIFT_FACTORS},
+        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         sumcheck_element::SumcheckElement,
     },
     protocol::sumcheck_utils::{
-        common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
+        common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
-        linear::LinearSumcheck,
         polynomial::Polynomial,
     },
 };
+
+#[cfg(test)]
+use crate::protocol::sumcheck_utils::{common::SumcheckBaseData, linear::LinearSumcheck};
 
 pub struct RingToFieldCombiner {
     sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
@@ -77,7 +79,7 @@ impl HighOrderSumcheckData for RingToFieldCombiner {
 
     fn is_univariate_polynomial_zero_at_point(
         &self,
-        point: super::hypercube_point::HypercubePoint,
+        _point: super::hypercube_point::HypercubePoint,
     ) -> bool {
         false
     }
@@ -197,6 +199,7 @@ fn test_ring_to_field_combiner() {
 /// and combines it into a field extension element.
 /// Note: This takes RingElement points but implements EvaluationSumcheckData<Element=QuadraticExtension>
 /// because it converts the ring evaluation to field extensions.
+#[allow(dead_code)]
 pub struct RingToFieldCombinerEvaluation {
     evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
     challenge_vec: [QuadraticExtension; HALF_DEGREE],
@@ -222,6 +225,7 @@ impl RingToFieldCombinerEvaluation {
     }
 
     /// Evaluate at a RingElement point (convenience method)
+    #[allow(unused_mut)]
     pub fn evaluate_at_ring_point(&mut self, point: &Vec<RingElement>) -> &QuadraticExtension {
         // Evaluate the inner sumcheck at the given point
         let ring_eval = {

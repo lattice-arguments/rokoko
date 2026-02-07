@@ -1,20 +1,14 @@
 use crate::{
     common::{
-        arithmetic::{field_to_ring_element_into, precompute_structured_values_fast},
+        arithmetic::precompute_structured_values_fast,
         config::{DEGREE, HALF_DEGREE, NOF_BATCHES},
-        matrix::new_vec_zero_preallocated,
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement, SHIFT_FACTORS},
+        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
-        config::Config,
-        open::evaluation_point_to_structured_row,
-        project_2::{BatchedProjectionChallenges, BatchedProjectionChallengesSuccinct},
-        sumchecks::helpers::{
-            projection_coefficients, projection_flatter_1_times_matrix, split_projection_flatter,
-            tensor_product,
-        },
+        project_2::BatchedProjectionChallengesSuccinct,
+        sumchecks::helpers::{projection_flatter_1_times_matrix, split_projection_flatter},
     },
 };
 
@@ -92,7 +86,7 @@ pub fn load_verifier_sumcheck_data(
             .load_from(projection_flatter_0_structured.clone());
 
         // Load flatter_1 · projection_matrix (within-block coefficients)
-        let mut projection_flatter_1_preprocessed =
+        let projection_flatter_1_preprocessed =
             PreprocessedRow::from_structured_row(&projection_flatter_1_structured); // this is over field actually
 
         let flatter_1_times_matrix = projection_flatter_1_times_matrix(

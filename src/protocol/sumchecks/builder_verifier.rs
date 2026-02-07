@@ -1,6 +1,6 @@
 use crate::{
     common::{
-        arithmetic::{ONE, ONE_QUAD},
+        arithmetic::ONE_QUAD,
         config::{DEGREE, NOF_BATCHES},
         decomposition::get_decomposed_offset_scaled,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
@@ -591,7 +591,7 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                     output: ElephantCell::new(DiffSumcheckEvaluation::new(type3lhs, type3rhs)),
                 })
             }
-            Projection::Type1(projection_recursion) => None,
+            Projection::Type1(_projection_recursion) => None,
             Projection::Skip => None,
         }
     };
@@ -667,7 +667,7 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                     total_vars,
                 );
 
-            let mut lhs_scalar_consistency_evaluation_field = ElephantCell::new(
+            let lhs_scalar_consistency_evaluation_field = ElephantCell::new(
                 BasicEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
                     1, total_vars, 0,
                 ),
@@ -799,7 +799,7 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                         rhs_consistency_flatter_evaluation_field.clone(),
                     ));
 
-                let mut rhs_scalar_consistency_evaluation = ElephantCell::new(
+                let rhs_scalar_consistency_evaluation = ElephantCell::new(
                     BasicEvaluationLinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
                         1, total_vars, 0,
                     ),

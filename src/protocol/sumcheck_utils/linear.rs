@@ -1,30 +1,23 @@
-use std::{
-    cell::{Ref, RefCell},
-    ops::Index,
-    rc::Rc,
-};
+use std::{cell::RefCell, ops::Index};
 
 use crate::{
     common::{
-        arithmetic::{field_to_ring_element_into, ONE, TWO},
+        arithmetic::field_to_ring_element_into,
         config::HALF_DEGREE,
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement, SHIFT_FACTORS},
-        structured_row::{PreprocessedRow, StructuredRow},
+        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        structured_row::StructuredRow,
         sumcheck_element::SumcheckElement,
     },
-    protocol::{
-        sumcheck,
-        sumcheck_utils::{
-            common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
-            elephant_cell::ElephantCell,
-            hypercube_point::HypercubePoint,
-            polynomial::Polynomial,
-        },
+    protocol::sumcheck_utils::{
+        common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
+        elephant_cell::ElephantCell,
+        hypercube_point::HypercubePoint,
+        polynomial::Polynomial,
     },
 };
 
 #[cfg(test)]
-use crate::common::config::MOD_Q;
+use crate::common::{config::MOD_Q, structured_row::PreprocessedRow};
 
 /// Standard linear sumcheck over a vector that represents a multilinear extension.
 pub struct LinearSumcheck<E: SumcheckElement = RingElement> {
@@ -115,8 +108,8 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
         // value of the highest-order variable.
         let len = 1 << self.variable_count;
         let half = len / 2;
-        polynomial.coefficients[0].set_zero();
-        polynomial.coefficients[0] += &self[point]; // constant term
+        polynomial.coefficients[0].set_from(&self[point]); // constant term
+                                                           // polynomial.coefficients[0] += &self[point]; // constant term
 
         if self.variable_count > self.data.len().trailing_zeros() as usize + self.suffix {
             // we have some prefixed variables
@@ -130,8 +123,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
             return;
         }
 
-        polynomial.coefficients[1].set_zero();
-        polynomial.coefficients[1] += &self[point.moved(half)]; // coeff of x
+        polynomial.coefficients[1].set_from(&self[point.moved(half)]); // coeff of x
         polynomial.coefficients[1] -= &self[point]; // coeff of x
         polynomial.num_coefficients = 2;
     }
@@ -197,6 +189,7 @@ impl<E: SumcheckElement> SumcheckBaseData for LinearSumcheck<E> {
 pub struct BasicEvaluationLinearSumcheck<E: SumcheckElement = RingElement> {
     pub data: Vec<E>,
     variable_count: usize,
+    #[allow(dead_code)]
     index_mask: usize,
     suffix: usize,
     evaluated: bool,
