@@ -1,11 +1,10 @@
-use crate::{
-    common::{
-        config::MOD_Q,
-        matrix::new_vec_zero_preallocated,
-        ring_arithmetic::{Representation, RingElement},
-    },
-    hexl::bindings::{inv_mod, multiply_mod},
+use crate::common::{
+    matrix::new_vec_zero_preallocated,
+    ring_arithmetic::{Representation, RingElement},
 };
+
+#[cfg(test)]
+use crate::common::config::MOD_Q;
 
 impl RingElement {
     pub fn bits_into(&mut self, target: &mut RingElement, from: u64, to: u64) {
@@ -18,12 +17,11 @@ impl RingElement {
     }
 }
 
-// Decomposes each element in input into radix parts of base 2^{base_log}.
-// The decomposition is smart in the sense that it's not wasteful for negative numbers.
-// Each element x is first shifted by adding 2^{base_log * radix - 1} to it, then decomposed into radix parts,
-// and then each part is shifted back by subtracting 2^{base_log - 1}.
-// This way, we ensure that each decomposed part lies in the range [-2^{base_log - 1}, 2^{base_log - 1}).
-// The input elements are not modified in the end (i.e., they retain their original values).
+// Decomposes each element in input into radix parts of base 2^{base_log} using signed (balanced) decomposition.
+// Each element x is first shifted by adding k = (b/2) * (1 + b + b^2 + ... + b^{radix-1}) where b = 2^{base_log},
+// then decomposed into radix base-b digits, and each digit is shifted back by subtracting b/2.
+// This ensures each decomposed part lies in the range [-2^{base_log - 1}, 2^{base_log - 1}).
+// Since k = (b/2) * Σ b^i, the recomposition is exact: Σ d_i * b^i = (x + k) - k = x, with zero offset.
 pub fn decompose(input: &Vec<RingElement>, base_log: u64, radix: usize) -> Vec<RingElement> {
     let mut decomposed = new_vec_zero_preallocated(input.len() * radix);
 
@@ -32,10 +30,12 @@ pub fn decompose(input: &Vec<RingElement>, base_log: u64, radix: usize) -> Vec<R
         return decomposed;
     }
 
-    let big_shift = RingElement::all(
-        1u64 << (base_log * radix as u64 - 1),
-        Representation::EvenOddCoefficients,
-    );
+    let small_shift_val = 1u64 << (base_log - 1);
+    let mut big_shift_val: u64 = 0;
+    for i in 0..radix {
+        big_shift_val += small_shift_val << (i as u64 * base_log);
+    }
+    let big_shift = RingElement::all(big_shift_val, Representation::EvenOddCoefficients);
 
     let small_shift = RingElement::all(1u64 << (base_log - 1), Representation::EvenOddCoefficients);
 
@@ -69,8 +69,6 @@ pub fn decompose(input: &Vec<RingElement>, base_log: u64, radix: usize) -> Vec<R
                 term *= &shift;
                 recomposed += &term;
             }
-            let offset = get_composer_offset(base_log, radix);
-            recomposed -= &RingElement::all(offset, Representation::IncompleteNTT);
             let el_incomplete_ntt = {
                 let mut temp_el = el.clone();
                 temp_el.to_representation(Representation::IncompleteNTT);
@@ -83,28 +81,16 @@ pub fn decompose(input: &Vec<RingElement>, base_log: u64, radix: usize) -> Vec<R
     decomposed
 }
 
-// a + big_shift = \sum_{i \in [radix]} (decomposed_i + small_shift) * (2^{i * base_log})
-// => a = \sum_{i \in [radix]} decomposed_i * (2^{i * base_log}) + (small_shift * \sum_{i \in [radix]} (2^{i * base_log}) - big_shift
-pub fn get_composer_offset(base_log: u64, radix: usize) -> u64 {
-    let small_shift = 1u64 << (base_log - 1);
-    let big_shift = 1u64 << (base_log * radix as u64 - 1);
-    let mut offset = MOD_Q + big_shift;
-    for i in 0..radix {
-        let shift = 1u64 << (i as u64 * base_log);
-        offset -= small_shift * shift;
-    }
-    offset
+// With the balanced decomposition using k = (b/2) * Σ b^i, the recomposition offset is zero.
+// Kept for API compatibility.
+pub fn get_composer_offset(_base_log: u64, _radix: usize) -> u64 {
+    0
 }
 
-// similar to get_composer_offset but scaled by 1/radix mod MOD_Q
-// this is done so that we can write sumcheck claims on the recomposed values divided by radix (as the radix will correspond to unused variables used in other context for composition)
-pub fn get_decomposed_offset_scaled(base_log: u64, radix: usize) -> u64 {
-    let offset = get_composer_offset(base_log, radix);
-    unsafe {
-        // no need to cache as this is only used in preprocessing
-        let inv_radix = inv_mod(radix as u64, MOD_Q);
-        multiply_mod(offset, inv_radix, MOD_Q)
-    }
+// With the balanced decomposition, the offset is zero, so the scaled version is also zero.
+// Kept for API compatibility.
+pub fn get_decomposed_offset_scaled(_base_log: u64, _radix: usize) -> u64 {
+    0
 }
 
 pub fn compose_from_decomposed(
@@ -113,8 +99,6 @@ pub fn compose_from_decomposed(
     radix: usize,
 ) -> Vec<RingElement> {
     let mut recomposed = new_vec_zero_preallocated(decomposed.len() / radix);
-
-    let offset = get_composer_offset(base_log, radix);
 
     for i in 0..recomposed.len() {
         recomposed[i] = RingElement::all(0, Representation::IncompleteNTT);
@@ -125,7 +109,6 @@ pub fn compose_from_decomposed(
             term *= &shift;
             recomposed[i] += &term;
         }
-        recomposed[i] -= &RingElement::all(offset, Representation::IncompleteNTT);
     }
 
     recomposed
@@ -142,28 +125,27 @@ fn test_decompose() {
         RingElement::all(37, Representation::IncompleteNTT)
     );
     debug_assert_eq!(decomposed.len(), radix * 1);
-    // 37 is shifted to 37 + (8^4) / 2 = 2085
-    // base 8 representation of 2085 = 4 * 8^3 + 0 * 8^2 + 4 * 8^1 + 5 * 8^0
-    // so the decomposed elements should be [5, 4, 0, 4]
-    // after removing the shift, they should be [5 - 4, 4 - 4, 0 - 4, 4 - 4] = [1, 0, -4, 0]
+    // k = 4 * (1 + 8 + 64 + 512) = 2340
+    // 37 is shifted to 37 + 2340 = 2377
+    // base 8 representation of 2377 = 4 * 8^3 + 5 * 8^2 + 1 * 8^1 + 1 * 8^0
+    // so the decomposed elements should be [1, 1, 5, 4]
+    // after removing the shift, they should be [1 - 4, 1 - 4, 5 - 4, 4 - 4] = [-3, -3, 1, 0]
     debug_assert_eq!(
         decomposed[0],
-        RingElement::all(1, Representation::IncompleteNTT)
+        RingElement::all(MOD_Q - 3, Representation::IncompleteNTT)
     );
     debug_assert_eq!(
         decomposed[1],
-        RingElement::all(0, Representation::IncompleteNTT)
+        RingElement::all(MOD_Q - 3, Representation::IncompleteNTT)
     );
     debug_assert_eq!(
         decomposed[2],
-        RingElement::all(MOD_Q - 4, Representation::IncompleteNTT)
+        RingElement::all(1, Representation::IncompleteNTT)
     );
     debug_assert_eq!(
         decomposed[3],
         RingElement::all(0, Representation::IncompleteNTT)
     );
-
-    let offset = get_composer_offset(base_log, radix);
 
     let mut recomposed = RingElement::all(0, Representation::IncompleteNTT);
     for i in 0..radix {
@@ -173,7 +155,6 @@ fn test_decompose() {
         term *= &shift;
         recomposed += &term;
     }
-    recomposed -= &RingElement::all(offset, Representation::IncompleteNTT);
     debug_assert_eq!(recomposed, input[0]);
 }
 
@@ -186,8 +167,6 @@ fn test_random_mod_q() {
 
     let mut decomposed = decompose(&data, base_log, radix);
 
-    let offset = get_composer_offset(base_log, radix);
-
     let mut recomposed = RingElement::all(0, Representation::IncompleteNTT);
     for i in 0..radix {
         let mut term = decomposed[i].clone();
@@ -196,7 +175,6 @@ fn test_random_mod_q() {
         term *= &shift;
         recomposed += &term;
     }
-    recomposed -= &RingElement::all(offset, Representation::IncompleteNTT);
     debug_assert_eq!(recomposed, data[0]);
 
     let mut inf_norm = 0;
