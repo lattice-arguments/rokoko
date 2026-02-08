@@ -364,7 +364,7 @@ pub static WITNESS_CONFIG: LazyLock<InitialWitnessParams> = LazyLock::new(|| mat
         width: config.witness_width,
         decomposition_base_log: 16,
         decomposition_chunks: 2,
-        initial_norm_log: 32,
+        initial_norm_log: 31,
     },
     _ => panic!("Expected sumcheck config at the top level."),
 });

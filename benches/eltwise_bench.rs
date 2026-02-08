@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use std::alloc::{Layout, alloc_zeroed, dealloc};
+use std::alloc::{alloc_zeroed, dealloc, Layout};
 use std::hint::black_box;
 
 const MODULUS: u64 = 1125899906826241;
@@ -64,7 +64,11 @@ fn compute_shift_factors(n: usize) -> (AlignedBuf<u64>, AlignedBuf<f64>) {
     hexl_rust::ntt_forward_in_place(factors.as_mut_slice(), n, MODULUS);
 
     let mut factors_f64 = AlignedBuf::<f64>::new(n);
-    for (dst, &src) in factors_f64.as_mut_slice().iter_mut().zip(factors.as_slice()) {
+    for (dst, &src) in factors_f64
+        .as_mut_slice()
+        .iter_mut()
+        .zip(factors.as_slice())
+    {
         *dst = src as f64;
     }
     (factors, factors_f64)

@@ -179,22 +179,49 @@ fn test_recursive_commit() {
 
     let recursive_commitment = recursive_commit(&crs, &config, &data);
 
+    // 8 inputs × 4 chunks each = 32 decomposed elements
     debug_assert_eq!(recursive_commitment.committed_data.len(), 32);
+    // rank = 2 → 2 commitment elements
     debug_assert_eq!(recursive_commitment.commitment.len(), 2);
+
+    // Balanced decomposition of 37 with base_log=3 (b=8), radix=4:
+    //   k = (b/2) * (1 + b + b² + b³) = 4 * (1 + 8 + 64 + 512) = 2340
+    //   37 + k = 2377 → base-8 digits: [1, 1, 5, 4]
+    //   balanced (subtract b/2 = 4): [-3, -3, 1, 0]
     debug_assert_eq!(
         recursive_commitment.committed_data[0],
-        RingElement::all(1, Representation::IncompleteNTT)
+        RingElement::all(MOD_Q - 3, Representation::IncompleteNTT)
     );
     debug_assert_eq!(
         recursive_commitment.committed_data[1],
-        RingElement::all(0, Representation::IncompleteNTT)
+        RingElement::all(MOD_Q - 3, Representation::IncompleteNTT)
     );
     debug_assert_eq!(
         recursive_commitment.committed_data[2],
-        RingElement::all(MOD_Q - 4, Representation::IncompleteNTT)
+        RingElement::all(1, Representation::IncompleteNTT)
     );
     debug_assert_eq!(
         recursive_commitment.committed_data[3],
+        RingElement::all(0, Representation::IncompleteNTT)
+    );
+
+    // Balanced decomposition of 36:
+    //   36 + k = 2376 → base-8 digits: [0, 1, 5, 4]
+    //   balanced: [-4, -3, 1, 0]
+    debug_assert_eq!(
+        recursive_commitment.committed_data[4],
+        RingElement::all(MOD_Q - 4, Representation::IncompleteNTT)
+    );
+    debug_assert_eq!(
+        recursive_commitment.committed_data[5],
+        RingElement::all(MOD_Q - 3, Representation::IncompleteNTT)
+    );
+    debug_assert_eq!(
+        recursive_commitment.committed_data[6],
+        RingElement::all(1, Representation::IncompleteNTT)
+    );
+    debug_assert_eq!(
+        recursive_commitment.committed_data[7],
         RingElement::all(0, Representation::IncompleteNTT)
     );
     debug_assert!(recursive_commitment.next.is_none());

@@ -2,7 +2,6 @@ use crate::{
     common::{
         arithmetic::ONE_QUAD,
         config::{DEGREE, NOF_BATCHES},
-        decomposition::get_decomposed_offset_scaled,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
     },
     protocol::{
@@ -79,20 +78,6 @@ fn load_combiner_evaluation_data(
     combiner_evaluation
 }
 
-fn load_combiner_constant_evaluation(
-    base_log: u64,
-    chunks: usize,
-    total_vars: usize,
-) -> ElephantCell<BasicEvaluationLinearSumcheck<RingElement>> {
-    let const_eval = basic_evaluation_linear(1, total_vars, 0);
-    let value = RingElement::all(
-        get_decomposed_offset_scaled(base_log as u64, chunks),
-        Representation::IncompleteNTT,
-    );
-    const_eval.borrow_mut().load_from(&[value]);
-    const_eval
-}
-
 fn structured_row_ck_evaluation(
     crs: &CRS,
     total_vars: usize,
@@ -144,11 +129,6 @@ fn build_type4_verifier_context(
             next.decomposition_chunks,
             total_vars,
         );
-        let combiner_constant_eval = load_combiner_constant_evaluation(
-            next.decomposition_base_log as u64,
-            next.decomposition_chunks,
-            total_vars,
-        );
 
         let data_len = 1 << (total_vars - current.prefix.length);
         let ck_evals = (0..current.rank)
@@ -164,10 +144,10 @@ fn build_type4_verifier_context(
             combined_witness_eval.clone(),
             combiner_eval.clone(),
         ));
-        let recomposed_child_raw_eval = ElephantCell::new(DiffSumcheckEvaluation::new(
-            recomposed_combiner.clone(),
-            combiner_constant_eval.clone(),
-        ));
+        // let recomposed_child_raw_eval = ElephantCell::new(DiffSumcheckEvaluation::new(
+        //     recomposed_combiner.clone(),
+        //     combiner_constant_eval.clone(),
+        // ));
         // let recomposed_child_evals  = ElephantCell::new(ProductSumcheckEvaluation::new(
         //     child_selector_eval.clone(),
         //     recomposed_child_raw_eval.clone(),
@@ -176,7 +156,7 @@ fn build_type4_verifier_context(
             .map(|i| {
                 ElephantCell::new(ProductSumcheckEvaluation::new(
                     child_selectors_evals[i].clone(),
-                    recomposed_child_raw_eval.clone(),
+                    recomposed_combiner.clone(),
                 ))
             })
             .collect::<Vec<_>>();
@@ -212,7 +192,6 @@ fn build_type4_verifier_context(
             selector_evaluation: selector_eval,
             child_selector_evaluations: child_selectors_evals,
             combiner_evaluation: combiner_eval,
-            combiner_constant_evaluation: combiner_constant_eval,
             ck_evaluations: ck_evals,
             outputs,
         });
@@ -264,29 +243,14 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
         config.witness_decomposition_chunks,
         total_vars,
     );
-    let witness_combiner_constant_evaluation = load_combiner_constant_evaluation(
-        config.witness_decomposition_base_log as u64,
-        config.witness_decomposition_chunks,
-        total_vars,
-    );
 
     let basic_commitment_combiner_evaluation = load_combiner_evaluation_data(
         config.commitment_recursion.decomposition_base_log as u64,
         config.commitment_recursion.decomposition_chunks,
         total_vars,
     );
-    let basic_commitment_combiner_constant_evaluation = load_combiner_constant_evaluation(
-        config.commitment_recursion.decomposition_base_log as u64,
-        config.commitment_recursion.decomposition_chunks,
-        total_vars,
-    );
 
     let opening_combiner_evaluation = load_combiner_evaluation_data(
-        config.opening_recursion.decomposition_base_log as u64,
-        config.opening_recursion.decomposition_chunks,
-        total_vars,
-    );
-    let opening_combiner_constant_evaluation = load_combiner_constant_evaluation(
         config.opening_recursion.decomposition_base_log as u64,
         config.opening_recursion.decomposition_chunks,
         total_vars,
@@ -353,33 +317,22 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
         })
         .collect::<Vec<_>>();
 
-    let recomposed_folded_witness = ElephantCell::new(DiffSumcheckEvaluation::new(
-        ElephantCell::new(ProductSumcheckEvaluation::new(
-            combined_witness_evaluation.clone(),
-            folded_witness_combiner_evaluation.clone(),
-        )),
-        witness_combiner_constant_evaluation.clone(),
+    let recomposed_folded_witness = ElephantCell::new(ProductSumcheckEvaluation::new(
+        combined_witness_evaluation.clone(),
+        folded_witness_combiner_evaluation.clone(),
     ));
-    let recomposed_opening = ElephantCell::new(DiffSumcheckEvaluation::new(
-        ElephantCell::new(ProductSumcheckEvaluation::new(
-            combined_witness_evaluation.clone(),
-            opening_combiner_evaluation.clone(),
-        )),
-        opening_combiner_constant_evaluation.clone(),
+    let recomposed_opening = ElephantCell::new(ProductSumcheckEvaluation::new(
+        combined_witness_evaluation.clone(),
+        opening_combiner_evaluation.clone(),
     ));
-
     let basic_commitment_combiner_product = ElephantCell::new(ProductSumcheckEvaluation::new(
         combined_witness_evaluation.clone(),
         basic_commitment_combiner_evaluation.clone(),
     ));
-    let basic_commitment_diff = ElephantCell::new(DiffSumcheckEvaluation::new(
-        basic_commitment_combiner_product.clone(),
-        basic_commitment_combiner_constant_evaluation.clone(),
-    ));
 
     let folding_with_commitment_diff = ElephantCell::new(ProductSumcheckEvaluation::new(
         folding_challenges_evaluation.clone(),
-        basic_commitment_diff.clone(),
+        basic_commitment_combiner_product.clone(),
     ));
 
     let type0evaluations = (0..config.basic_commitment_rank)
@@ -477,11 +430,6 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                     projection_recursion.decomposition_chunks,
                     total_vars,
                 );
-                let projection_combiner_constant_evaluation = load_combiner_constant_evaluation(
-                    projection_recursion.decomposition_base_log as u64,
-                    projection_recursion.decomposition_chunks,
-                    total_vars,
-                );
                 let projection_selector_evaluation =
                     selector_evaluation_from_prefix(&projection_recursion.prefix, total_vars);
 
@@ -542,12 +490,9 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                         + projection_recursion.decomposition_chunks.ilog2() as usize,
                 );
 
-                let recomposed_projection = ElephantCell::new(DiffSumcheckEvaluation::new(
-                    ElephantCell::new(ProductSumcheckEvaluation::new(
-                        combined_witness_evaluation.clone(),
-                        projection_combiner_evaluation.clone(),
-                    )),
-                    projection_combiner_constant_evaluation.clone(),
+                let recomposed_projection = ElephantCell::new(ProductSumcheckEvaluation::new(
+                    combined_witness_evaluation.clone(),
+                    projection_combiner_evaluation.clone(),
                 ));
 
                 let lhs_projection_coeff_product =
@@ -580,7 +525,6 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                 ));
 
                 Some(Type3VerifierContext {
-                    projection_combiner_constant_evaluation,
                     projection_combiner_evaluation,
                     lhs_flatter_0_evaluation,
                     lhs_flatter_1_times_matrix_evaluation_field,
@@ -599,15 +543,6 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
     let type3_1_evaluations = match &config.projection_recursion {
         Projection::Type1(proj_config) => {
             let projection_combiner_evaluation = load_combiner_evaluation_data(
-                proj_config
-                    .recursion_batched_projection
-                    .decomposition_base_log as u64,
-                proj_config
-                    .recursion_batched_projection
-                    .decomposition_chunks,
-                total_vars,
-            );
-            let projection_combiner_constant_evaluation = load_combiner_constant_evaluation(
                 proj_config
                     .recursion_batched_projection
                     .decomposition_base_log as u64,
@@ -637,28 +572,15 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                     total_vars,
                 );
 
-            let projection_constant_terms_embedded_combiner_constant_evaluation =
-                load_combiner_constant_evaluation(
-                    proj_config.recursion_constant_term.decomposition_base_log as u64,
-                    proj_config.recursion_constant_term.decomposition_chunks,
-                    total_vars,
-                );
-
-            let recomposed_projection = ElephantCell::new(DiffSumcheckEvaluation::new(
-                ElephantCell::new(ProductSumcheckEvaluation::new(
-                    combined_witness_evaluation.clone(),
-                    projection_combiner_evaluation.clone(),
-                )),
-                projection_combiner_constant_evaluation.clone(),
+            let recomposed_projection = ElephantCell::new(ProductSumcheckEvaluation::new(
+                combined_witness_evaluation.clone(),
+                projection_combiner_evaluation.clone(),
             ));
 
             let recomposed_projection_constant_terms_embedded =
-                ElephantCell::new(DiffSumcheckEvaluation::new(
-                    ElephantCell::new(ProductSumcheckEvaluation::new(
-                        combined_witness_evaluation.clone(),
-                        projection_constant_terms_embedded_combiner_evaluation.clone(),
-                    )),
-                    projection_constant_terms_embedded_combiner_constant_evaluation.clone(),
+                ElephantCell::new(ProductSumcheckEvaluation::new(
+                    combined_witness_evaluation.clone(),
+                    projection_constant_terms_embedded_combiner_evaluation.clone(),
                 ));
 
             let projection_constant_terms_embedded_selector_evaluation =
@@ -834,7 +756,6 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
             });
             Some(Type3_1VerifierContextWrapper {
                 sumchecks: contexts,
-                projection_combiner_constant_evaluation,
                 projection_combiner_evaluation,
                 rhs_fold_challenge_evaluation,
                 lhs_scalar_consistency_evaluation_field,
@@ -1007,13 +928,10 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
         combined_witness_evaluation,
         folded_witness_selector_evaluation,
         folded_witness_combiner_evaluation,
-        witness_combiner_constant_evaluation,
         folding_challenges_evaluation,
         basic_commitment_combiner_evaluation,
-        basic_commitment_combiner_constant_evaluation,
         commitment_key_rows_evaluation,
         opening_combiner_evaluation,
-        opening_combiner_constant_evaluation,
         type0evaluations,
         type1evaluations,
         type2evaluations,

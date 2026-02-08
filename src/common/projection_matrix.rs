@@ -58,7 +58,10 @@ impl ProjectionMatrix {
         let chunk = col_base >> 3;
         debug_assert!(chunk < self.width);
 
-        (self.pos_masks[(row, chunk)], self.non_zero_masks[(row, chunk)])
+        (
+            self.pos_masks[(row, chunk)],
+            self.non_zero_masks[(row, chunk)],
+        )
     }
 
     pub fn sample(&mut self, hash_wrapper: &mut HashWrapper) {

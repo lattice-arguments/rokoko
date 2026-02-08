@@ -72,18 +72,15 @@ fn build_type4_sumcheck_context(
             combined_witness_sumcheck.clone(),
         ));
 
-        let (combiner_sumcheck, combiner_constant_sumcheck) = composition_sumcheck(
+        let combiner_sumcheck = composition_sumcheck(
             next.decomposition_base_log as u64,
             next.decomposition_chunks,
             total_vars,
         );
 
-        let recomposed_child_raw = ElephantCell::new(DiffSumcheck::new(
-            ElephantCell::new(ProductSumcheck::new(
-                combined_witness_sumcheck.clone(),
-                combiner_sumcheck.clone(),
-            )),
-            combiner_constant_sumcheck.clone(),
+        let recomposed_child_raw = ElephantCell::new(ProductSumcheck::new(
+            combined_witness_sumcheck.clone(),
+            combiner_sumcheck.clone(),
         ));
 
         // let recomposed_child_sumcheck = ElephantCell::new(ProductSumcheck::new(
@@ -134,7 +131,6 @@ fn build_type4_sumcheck_context(
             selector_sumcheck,
             child_selector_sumcheck: Some(child_selector_sumchecks),
             combiner_sumcheck: Some(combiner_sumcheck),
-            combiner_constant_sumcheck: Some(combiner_constant_sumcheck),
             data_selected_sumcheck,
             // rhs_sumcheck: recomposed_child_sumcheck,
             commitment_sumcheck: None,
@@ -217,21 +213,19 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         })
         .collect::<Vec<ElephantCell<LinearSumcheck<RingElement>>>>();
 
-    let (folded_witness_combiner_sumcheck, witness_combiner_constant_sumcheck) =
-        composition_sumcheck(
-            config.witness_decomposition_base_log as u64,
-            config.witness_decomposition_chunks,
-            config.composed_witness_length.ilog2() as usize,
-        );
+    let folded_witness_combiner_sumcheck = composition_sumcheck(
+        config.witness_decomposition_base_log as u64,
+        config.witness_decomposition_chunks,
+        config.composed_witness_length.ilog2() as usize,
+    );
 
-    let (basic_commitment_combiner_sumcheck, basic_commitment_combiner_constant_sumcheck) =
-        composition_sumcheck(
-            config.commitment_recursion.decomposition_base_log as u64,
-            config.commitment_recursion.decomposition_chunks,
-            config.composed_witness_length.ilog2() as usize,
-        );
+    let basic_commitment_combiner_sumcheck = composition_sumcheck(
+        config.commitment_recursion.decomposition_base_log as u64,
+        config.commitment_recursion.decomposition_chunks,
+        config.composed_witness_length.ilog2() as usize,
+    );
 
-    let (opening_combiner_sumcheck, opening_combiner_constant_sumcheck) = composition_sumcheck(
+    let opening_combiner_sumcheck = composition_sumcheck(
         config.opening_recursion.decomposition_base_log as u64,
         config.opening_recursion.decomposition_chunks,
         config.composed_witness_length.ilog2() as usize,
@@ -268,12 +262,9 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                     ElephantCell::new(ProductSumcheck::new(
                         folded_witness_selector_sumcheck.clone(),
                         ElephantCell::new(ProductSumcheck::new(
-                            ElephantCell::new(DiffSumcheck::new(
-                                ElephantCell::new(ProductSumcheck::new(
-                                    combined_witness_sumcheck.clone(),
-                                    folded_witness_combiner_sumcheck.clone(),
-                                )),
-                                witness_combiner_constant_sumcheck.clone(),
+                            ElephantCell::new(ProductSumcheck::new(
+                                combined_witness_sumcheck.clone(),
+                                folded_witness_combiner_sumcheck.clone(),
                             )),
                             commitment_key_rows_sumcheck[i].clone(),
                         )),
@@ -281,12 +272,9 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                     ElephantCell::new(ProductSumcheck::new(
                         basic_commitment_row_sumcheck,
                         ElephantCell::new(ProductSumcheck::new(
-                            ElephantCell::new(DiffSumcheck::new(
-                                ElephantCell::new(ProductSumcheck::new(
-                                    combined_witness_sumcheck.clone(),
-                                    basic_commitment_combiner_sumcheck.clone(),
-                                )),
-                                basic_commitment_combiner_constant_sumcheck.clone(),
+                            ElephantCell::new(ProductSumcheck::new(
+                                combined_witness_sumcheck.clone(),
+                                basic_commitment_combiner_sumcheck.clone(),
                             )),
                             folding_challenges_sumcheck.clone(),
                         )),
@@ -300,20 +288,14 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     // Type1 sumchecks
     // inner_evaluation_points \cdot folded_witness - opening.rhs \cdot fold_challenge = 0
 
-    let recomposed_folded_witness = ElephantCell::new(DiffSumcheck::new(
-        ElephantCell::new(ProductSumcheck::new(
-            combined_witness_sumcheck.clone(),
-            folded_witness_combiner_sumcheck.clone(),
-        )),
-        witness_combiner_constant_sumcheck.clone(),
+    let recomposed_folded_witness = ElephantCell::new(ProductSumcheck::new(
+        combined_witness_sumcheck.clone(),
+        folded_witness_combiner_sumcheck.clone(),
     ));
 
-    let recomposed_opening = ElephantCell::new(DiffSumcheck::new(
-        ElephantCell::new(ProductSumcheck::new(
-            combined_witness_sumcheck.clone(),
-            opening_combiner_sumcheck.clone(),
-        )),
-        opening_combiner_constant_sumcheck.clone(),
+    let recomposed_opening = ElephantCell::new(ProductSumcheck::new(
+        combined_witness_sumcheck.clone(),
+        opening_combiner_sumcheck.clone(),
     ));
 
     let type1sumchecks = (0..config.nof_openings)
@@ -409,19 +391,15 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
             let projection_selector_sumcheck =
                 sumcheck_from_prefix(&projection_recursion.prefix, total_vars);
 
-            let (projection_combiner_sumcheck, projection_combiner_constant_sumcheck) =
-                composition_sumcheck(
-                    projection_recursion.decomposition_base_log as u64,
-                    projection_recursion.decomposition_chunks,
-                    config.composed_witness_length.ilog2() as usize,
-                );
+            let projection_combiner_sumcheck = composition_sumcheck(
+                projection_recursion.decomposition_base_log as u64,
+                projection_recursion.decomposition_chunks,
+                config.composed_witness_length.ilog2() as usize,
+            );
 
-            let recomposed_projection = ElephantCell::new(DiffSumcheck::new(
-                ElephantCell::new(ProductSumcheck::new(
-                    combined_witness_sumcheck.clone(),
-                    projection_combiner_sumcheck.clone(),
-                )),
-                projection_combiner_constant_sumcheck.clone(),
+            let recomposed_projection = ElephantCell::new(ProductSumcheck::new(
+                combined_witness_sumcheck.clone(),
+                projection_combiner_sumcheck.clone(),
             ));
 
             // Split projection coefficients into two parts:
@@ -511,7 +489,6 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
 
             Some(Type3SumcheckContext {
                 projection_combiner_sumcheck,
-                projection_combiner_constant_sumcheck,
                 lhs_flatter_0_sumcheck,
                 lhs_flatter_1_times_matrix_sumcheck,
                 rhs_fold_challenge_sumcheck,
@@ -531,7 +508,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     let type3_1_sumchecks = match &config.projection_recursion {
         Projection::Type1(projection_recursion) => {
             // Projection combiner for decomposition (same for all batches)
-            let (projection_combiner_sumcheck, projection_combiner_constant_sumcheck) = {
+            let projection_combiner_sumcheck = {
                 composition_sumcheck(
                     projection_recursion
                         .recursion_batched_projection
@@ -543,10 +520,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                 )
             };
 
-            let (
-                projection_constant_terms_embedded_combiner_sumcheck,
-                projection_constant_terms_embedded_constant_sumcheck,
-            ) = composition_sumcheck(
+            let projection_constant_terms_embedded_combiner_sumcheck = composition_sumcheck(
                 projection_recursion
                     .recursion_constant_term
                     .decomposition_base_log as u64,
@@ -555,23 +529,16 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                     .decomposition_chunks,
                 config.composed_witness_length.ilog2() as usize,
             );
-            let recomposed_projection = ElephantCell::new(DiffSumcheck::new(
-                ElephantCell::new(ProductSumcheck::new(
-                    combined_witness_sumcheck.clone(),
-                    projection_combiner_sumcheck.clone(),
-                )),
-                projection_combiner_constant_sumcheck.clone(),
+            let recomposed_projection = ElephantCell::new(ProductSumcheck::new(
+                combined_witness_sumcheck.clone(),
+                projection_combiner_sumcheck.clone(),
             ));
 
             let recomposed_projection_constant_terms_embedded =
-                ElephantCell::new(DiffSumcheck::new(
-                    ElephantCell::new(ProductSumcheck::new(
-                        combined_witness_sumcheck.clone(),
-                        projection_constant_terms_embedded_combiner_sumcheck.clone(),
-                    )),
-                    projection_constant_terms_embedded_constant_sumcheck.clone(),
+                ElephantCell::new(ProductSumcheck::new(
+                    combined_witness_sumcheck.clone(),
+                    projection_constant_terms_embedded_combiner_sumcheck.clone(),
                 ));
-
             let projection_constant_terms_embedded_selector_sumcheck = sumcheck_from_prefix(
                 &projection_recursion.recursion_constant_term.prefix,
                 total_vars,
@@ -757,10 +724,8 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
 
             Some(Type3_1SumcheckContextWrapper {
                 sumchecks: contexts,
-                projection_combiner_constant_sumcheck,
                 projection_combiner_sumcheck,
                 projection_constant_terms_embedded_combiner_sumcheck,
-                projection_constant_terms_embedded_constant_sumcheck,
                 rhs_fold_challenge_sumcheck,
                 lhs_scalar_consistency_sumcheck,
                 projection_constant_terms_embedded_selector_sumcheck,
@@ -937,13 +902,10 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         combined_witness_sumcheck: combined_witness_sumcheck.clone(),
         folded_witness_selector_sumcheck,
         folded_witness_combiner_sumcheck,
-        witness_combiner_constant_sumcheck,
         folding_challenges_sumcheck,
         basic_commitment_combiner_sumcheck,
-        basic_commitment_combiner_constant_sumcheck,
         commitment_key_rows_sumcheck,
         opening_combiner_sumcheck,
-        opening_combiner_constant_sumcheck,
         type0sumchecks,
         type1sumchecks,
         type2sumchecks,

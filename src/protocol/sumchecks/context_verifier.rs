@@ -25,18 +25,12 @@ pub struct VerifierSumcheckContext {
     pub folded_witness_selector_evaluation: ElephantCell<SelectorEqEvaluation>,
     pub folded_witness_combiner_evaluation:
         ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-    pub witness_combiner_constant_evaluation:
-        ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub folding_challenges_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub basic_commitment_combiner_evaluation:
-        ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-    pub basic_commitment_combiner_constant_evaluation:
         ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub commitment_key_rows_evaluation:
         Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
     pub opening_combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-    pub opening_combiner_constant_evaluation:
-        ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
 
     // Type-specific contexts
     pub type0evaluations: Vec<Type0VerifierContext>,
@@ -79,8 +73,6 @@ pub struct Type2VerifierContext {
 }
 
 pub struct Type3VerifierContext {
-    pub projection_combiner_constant_evaluation:
-        ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub projection_combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub lhs_flatter_0_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
     pub lhs_flatter_1_times_matrix_evaluation_field:
@@ -117,8 +109,6 @@ pub struct Type3_1VerifierContext {
 }
 pub struct Type3_1VerifierContextWrapper {
     pub sumchecks: [Type3_1VerifierContext; NOF_BATCHES],
-    pub projection_combiner_constant_evaluation:
-        ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub projection_combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub rhs_fold_challenge_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub lhs_scalar_consistency_evaluation_field:
@@ -135,7 +125,6 @@ pub struct Type4LayerVerifierContext {
     pub selector_evaluation: ElephantCell<SelectorEqEvaluation>,
     pub child_selector_evaluations: Vec<ElephantCell<SelectorEqEvaluation>>,
     pub combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-    pub combiner_constant_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub ck_evaluations: Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
     pub outputs: Vec<ElephantCell<DiffSumcheckEvaluation>>,
 }
