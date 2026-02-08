@@ -6,7 +6,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 mod avx512_util;
 mod aligned_vec;
-mod cpu_features;
+pub mod cpu_features;
 mod eltwise;
 mod ntt;
 mod ntt_avx512_util;

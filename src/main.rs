@@ -40,6 +40,14 @@ fn main() {
         }
     }
 
+    #[cfg(feature = "rust-hexl")]
+    {
+        // Trigger CPU feature detection and print features if enabled
+        hexl_rust::cpu_features::print_features();
+    }
+
+    
+
     #[cfg(not(target_arch = "x86_64"))]
     {
         println!("✗ AVX-512F is only available on x86_64 architecture");
