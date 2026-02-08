@@ -45,7 +45,7 @@ fn main() {
             {
                 println!("✓✓ AVX-512DQ is enabled at compile time");
             }
-            #[cfg(not(target_feature = "avx512dq"))]    
+            #[cfg(not(target_feature = "avx512dq"))]
             {
                 println!("✗ AVX-512DQ is NOT enabled at compile time");
             }
@@ -65,7 +65,6 @@ fn main() {
         } else {
             println!("✗ AVX-512VBMI2 is NOT available on this CPU");
         }
-
     }
 
     #[cfg(feature = "rust-hexl")]
@@ -73,8 +72,6 @@ fn main() {
         // Trigger CPU feature detection and print features if enabled
         hexl_rust::cpu_features::print_features();
     }
-
-    
 
     #[cfg(not(target_arch = "x86_64"))]
     {

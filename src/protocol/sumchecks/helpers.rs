@@ -4,7 +4,6 @@ use crate::{
     common::{
         arithmetic::HALF_WAY_MOD_Q,
         config::{HALF_DEGREE, MOD_Q},
-        decomposition::get_decomposed_offset_scaled,
         matrix::{new_vec_zero_field_preallocated, new_vec_zero_preallocated},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
@@ -29,10 +28,7 @@ pub(crate) fn composition_sumcheck(
     base_log: u64,
     chunks: usize,
     total_vars: usize,
-) -> (
-    ElephantCell<LinearSumcheck<RingElement>>,
-    ElephantCell<LinearSumcheck<RingElement>>,
-) {
+) -> ElephantCell<LinearSumcheck<RingElement>> {
     let conmposition_basis = range(0, chunks)
         .map(|i| {
             // Basis element corresponding to 2^{base_log * i}
@@ -54,18 +50,7 @@ pub(crate) fn composition_sumcheck(
         .borrow_mut()
         .load_from(&conmposition_basis);
 
-    let witness_combiner_constant_sumcheck = ElephantCell::new(
-        LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(1, total_vars, 0),
-    );
-
-    witness_combiner_constant_sumcheck
-        .borrow_mut()
-        .load_from(&vec![RingElement::all(
-            get_decomposed_offset_scaled(base_log as u64, chunks),
-            Representation::IncompleteNTT,
-        )]);
-
-    (combiner_sumcheck, witness_combiner_constant_sumcheck)
+    combiner_sumcheck
 }
 
 /// Creates a selector (SelectorEq) that evaluates to 1 where the first `prefix.length`
