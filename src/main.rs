@@ -38,6 +38,34 @@ fn main() {
         } else {
             println!("✗ AVX-512F is NOT available on this CPU");
         }
+
+        if is_x86_feature_detected!("avx512dq") {
+            println!("✓ AVX-512DQ is enabled in runtime detection and available on this CPU");
+            #[cfg(all(target_feature = "avx512dq"))]
+            {
+                println!("✓✓ AVX-512DQ is enabled at compile time");
+            }
+            #[cfg(not(target_feature = "avx512dq"))]    
+            {
+                println!("✗ AVX-512DQ is NOT enabled at compile time");
+            }
+        } else {
+            println!("✗ AVX-512DQ is NOT available on this CPU");
+        }
+        if is_x86_feature_detected!("avx512vbmi2") {
+            println!("✓ AVX-512VBMI2 is enabled in runtime detection and available on this CPU");
+            #[cfg(all(target_feature = "avx512vbmi2"))]
+            {
+                println!("✓✓ AVX-512VBMI2 is enabled at compile time");
+            }
+            #[cfg(not(target_feature = "avx512vbmi2"))]
+            {
+                println!("✗ AVX-512VBMI2 is NOT enabled at compile time");
+            }
+        } else {
+            println!("✗ AVX-512VBMI2 is NOT available on this CPU");
+        }
+
     }
 
     #[cfg(feature = "rust-hexl")]
@@ -50,7 +78,7 @@ fn main() {
 
     #[cfg(not(target_arch = "x86_64"))]
     {
-        println!("✗ AVX-512F is only available on x86_64 architecture");
+        println!("✗ AVX-512 is only available on x86_64 architecture");
     }
 
     load_and_preallocate("pool_stats.txt").expect("Failed to load stats");
