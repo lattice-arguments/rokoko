@@ -115,364 +115,6 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
     }
 }
 
-#[test]
-fn test_inner_product_sumcheck() {
-    let lhs_data = vec![
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(2, Representation::IncompleteNTT),
-        RingElement::constant(3, Representation::IncompleteNTT),
-        RingElement::constant(4, Representation::IncompleteNTT),
-        RingElement::constant(5, Representation::IncompleteNTT),
-        RingElement::constant(6, Representation::IncompleteNTT),
-        RingElement::constant(7, Representation::IncompleteNTT),
-        RingElement::constant(8, Representation::IncompleteNTT),
-    ];
-
-    let rhs_data = vec![
-        RingElement::constant(9, Representation::IncompleteNTT),
-        RingElement::constant(10, Representation::IncompleteNTT),
-        RingElement::constant(11, Representation::IncompleteNTT),
-        RingElement::constant(12, Representation::IncompleteNTT),
-        RingElement::constant(13, Representation::IncompleteNTT),
-        RingElement::constant(14, Representation::IncompleteNTT),
-        RingElement::constant(15, Representation::IncompleteNTT),
-        RingElement::constant(16, Representation::IncompleteNTT),
-    ];
-
-    let sumcheck_0 = ElephantCell::new(LinearSumcheck::new(lhs_data.len()));
-    sumcheck_0.borrow_mut().load_from(&lhs_data);
-    let sumcheck_1 = ElephantCell::new(LinearSumcheck::new(rhs_data.len()));
-    sumcheck_1.borrow_mut().load_from(&rhs_data);
-
-    // Build a product sumcheck that should track the inner product of lhs_data and rhs_data.
-    let inner_product_sumcheck = ProductSumcheck::new(sumcheck_0.clone(), sumcheck_1.clone());
-
-    let mut univariate_poly = Polynomial::new(0);
-
-    inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
-
-    // The polynomial evaluated at 0 and 1 should sum to the true inner product.
-
-    debug_assert_eq!(
-        &univariate_poly.at_zero() + &univariate_poly.at_one(),
-        RingElement::constant(
-            1 * 9 + 2 * 10 + 3 * 11 + 4 * 12 + 5 * 13 + 6 * 14 + 7 * 15 + 8 * 16,
-            Representation::IncompleteNTT
-        )
-    );
-
-    let r0 = RingElement::constant(524, Representation::IncompleteNTT);
-
-    let claim = univariate_poly.at(&r0);
-
-    // Fold both underlying multilinear extensions by r0 and ensure the verifier
-    // still sees the same claim when re-running round 0 of the protocol.
-    sumcheck_0.borrow_mut().partial_evaluate(&r0);
-    sumcheck_1.borrow_mut().partial_evaluate(&r0);
-
-    inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
-
-    debug_assert_eq!(
-        &univariate_poly.at_zero() + &univariate_poly.at_one(),
-        claim
-    );
-
-    let r1 = RingElement::constant(1337, Representation::IncompleteNTT);
-
-    let claim = univariate_poly.at(&r1);
-
-    // Same invariance check after the second round challenge.
-    sumcheck_0.borrow_mut().partial_evaluate(&r1);
-    sumcheck_1.borrow_mut().partial_evaluate(&r1);
-
-    inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
-
-    debug_assert_eq!(
-        &univariate_poly.at_zero() + &univariate_poly.at_one(),
-        claim
-    );
-
-    let r2 = RingElement::constant(42, Representation::IncompleteNTT);
-
-    let claim = univariate_poly.at(&r2);
-
-    // After the final fold, the product of the two fully evaluated claims
-    // should equal the verifier's accumulated claim.
-    sumcheck_0.borrow_mut().partial_evaluate(&r2);
-    sumcheck_1.borrow_mut().partial_evaluate(&r2);
-
-    debug_assert_eq!(
-        sumcheck_0.get_ref().final_evaluations() * sumcheck_1.get_ref().final_evaluations(),
-        claim,
-    );
-
-    // Explicit multilinear evaluations of each folded claim for documentation.
-    debug_assert_eq!(
-        sumcheck_0.get_ref().final_evaluations(),
-        &RingElement::constant(
-            (MOD_Q as i64
-                + (1 - 524) * (1 - 1337) * (1 - 42) * 1
-                + (1 - 524) * (1 - 1337) * (42) * 2
-                + (1 - 524) * (1337) * (1 - 42) * 3
-                + (1 - 524) * (1337) * (42) * 4
-                + (524) * (1 - 1337) * (1 - 42) * 5
-                + (524) * (1 - 1337) * (42) * 6
-                + (524) * (1337) * (1 - 42) * 7
-                + (524) * (1337) * (42) * 8) as u64,
-            Representation::IncompleteNTT,
-        )
-    );
-
-    debug_assert_eq!(
-        sumcheck_1.get_ref().final_evaluations(),
-        &RingElement::constant(
-            (MOD_Q as i64
-                + (1 - 524) * (1 - 1337) * (1 - 42) * 9
-                + (1 - 524) * (1 - 1337) * (42) * 10
-                + (1 - 524) * (1337) * (1 - 42) * 11
-                + (1 - 524) * (1337) * (42) * 12
-                + (524) * (1 - 1337) * (1 - 42) * 13
-                + (524) * (1 - 1337) * (42) * 14
-                + (524) * (1337) * (1 - 42) * 15
-                + (524) * (1337) * (42) * 16) as u64,
-            Representation::IncompleteNTT,
-        )
-    );
-
-    // Final consistency: inner product claim equals product of individual folded claims.
-    debug_assert_eq!(
-        claim,
-        RingElement::constant(
-            (MOD_Q as i64
-                + ((1 - 524) * (1 - 1337) * (1 - 42) * 1
-                    + (1 - 524) * (1 - 1337) * (42) * 2
-                    + (1 - 524) * (1337) * (1 - 42) * 3
-                    + (1 - 524) * (1337) * (42) * 4
-                    + (524) * (1 - 1337) * (1 - 42) * 5
-                    + (524) * (1 - 1337) * (42) * 6
-                    + (524) * (1337) * (1 - 42) * 7
-                    + (524) * (1337) * (42) * 8)
-                    * ((1 - 524) * (1 - 1337) * (1 - 42) * 9
-                        + (1 - 524) * (1 - 1337) * (42) * 10
-                        + (1 - 524) * (1337) * (1 - 42) * 11
-                        + (1 - 524) * (1337) * (42) * 12
-                        + (524) * (1 - 1337) * (1 - 42) * 13
-                        + (524) * (1 - 1337) * (42) * 14
-                        + (524) * (1337) * (1 - 42) * 15
-                        + (524) * (1337) * (42) * 16)) as u64,
-            Representation::IncompleteNTT,
-        )
-    );
-}
-
-#[test]
-fn test_self_inner_product_sumcheck() {
-    let data = vec![
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(2, Representation::IncompleteNTT),
-        RingElement::constant(3, Representation::IncompleteNTT),
-        RingElement::constant(4, Representation::IncompleteNTT),
-        RingElement::constant(5, Representation::IncompleteNTT),
-        RingElement::constant(6, Representation::IncompleteNTT),
-        RingElement::constant(7, Representation::IncompleteNTT),
-        RingElement::constant(8, Representation::IncompleteNTT),
-    ];
-
-    let sumcheck = ElephantCell::new(LinearSumcheck::new(data.len()));
-    sumcheck.borrow_mut().load_from(&data);
-
-    let inner_product_sumcheck = ProductSumcheck::new(sumcheck.clone(), sumcheck.clone());
-
-    let mut univariate_poly = Polynomial::new(0);
-
-    inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
-
-    // When both inputs are identical, the inner product collapses to a sum of squares.
-    debug_assert_eq!(
-        &univariate_poly.at_zero() + &univariate_poly.at_one(),
-        RingElement::constant(
-            1 * 1 + 2 * 2 + 3 * 3 + 4 * 4 + 5 * 5 + 6 * 6 + 7 * 7 + 8 * 8,
-            Representation::IncompleteNTT
-        )
-    );
-}
-
-#[test]
-fn test_three_way_sumcheck() {
-    let data0 = vec![
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(2, Representation::IncompleteNTT),
-        RingElement::constant(3, Representation::IncompleteNTT),
-        RingElement::constant(4, Representation::IncompleteNTT),
-    ];
-
-    let data1 = vec![
-        RingElement::constant(5, Representation::IncompleteNTT),
-        RingElement::constant(6, Representation::IncompleteNTT),
-        RingElement::constant(7, Representation::IncompleteNTT),
-        RingElement::constant(8, Representation::IncompleteNTT),
-    ];
-
-    let data2 = vec![
-        RingElement::constant(9, Representation::IncompleteNTT),
-        RingElement::constant(10, Representation::IncompleteNTT),
-        RingElement::constant(11, Representation::IncompleteNTT),
-        RingElement::constant(12, Representation::IncompleteNTT),
-    ];
-
-    let mut sumcheck_0 = LinearSumcheck::new(data0.len());
-    sumcheck_0.load_from(&data0);
-    let mut sumcheck_1 = LinearSumcheck::new(data1.len());
-    sumcheck_1.load_from(&data1);
-    let mut sumcheck_2 = LinearSumcheck::new(data2.len());
-    sumcheck_2.load_from(&data2);
-
-    let sumcheck_0_ref = ElephantCell::new(sumcheck_0);
-    let sumcheck_1_ref = ElephantCell::new(sumcheck_1);
-    let sumcheck_2_ref = ElephantCell::new(sumcheck_2);
-
-    // Compose two nested product sumchecks to validate a three-way product.
-
-    let inner_product_sumcheck_01 =
-        ProductSumcheck::new(sumcheck_0_ref.clone(), sumcheck_1_ref.clone());
-
-    let inner_product_sumcheck_01_ref = ElephantCell::new(inner_product_sumcheck_01);
-
-    let inner_product_sumcheck_012 = ProductSumcheck::new(
-        sumcheck_2_ref.clone(),
-        inner_product_sumcheck_01_ref.clone(),
-    );
-
-    let mut univariate_poly = Polynomial::new(0);
-    inner_product_sumcheck_012.univariate_polynomial_into(&mut univariate_poly);
-
-    // Evaluating the first-round polynomial at 0 and 1 should give the full triple product sum.
-    debug_assert_eq!(
-        &univariate_poly.at_zero() + &univariate_poly.at_one(),
-        RingElement::constant(
-            1 * 5 * 9 + 2 * 6 * 10 + 3 * 7 * 11 + 4 * 8 * 12,
-            Representation::IncompleteNTT
-        )
-    );
-
-    let r0 = RingElement::constant(42, Representation::IncompleteNTT);
-
-    let claim = univariate_poly.at(&r0);
-
-    sumcheck_0_ref.borrow_mut().partial_evaluate(&r0);
-    sumcheck_1_ref.borrow_mut().partial_evaluate(&r0);
-    sumcheck_2_ref.borrow_mut().partial_evaluate(&r0);
-
-    inner_product_sumcheck_012.univariate_polynomial_into(&mut univariate_poly);
-
-    // The verifier's running claim should stay consistent after folding all three vectors.
-    debug_assert_eq!(
-        &univariate_poly.at_zero() + &univariate_poly.at_one(),
-        claim
-    );
-}
-
-#[test]
-fn test_product_of_linear_sumchecks_over_disjoint_variables() {
-    // Test the product sumcheck over three linear sumchecks, each
-    // defined over disjoint sets of variables.
-    // The first sumcheck is defined over the highest-order variables,
-    // the second over the middle variables, and the third over the
-    // lowest-order variables.
-    // we make use that the univariate polynomial of a linear sumcheck is just a degree 1 polynomial
-    // since it should be a produce of two constant polys and one degree 1 poly.
-
-    use crate::common::ring_arithmetic::RingElement;
-    use crate::protocol::sumcheck_utils::product::ProductSumcheck;
-
-    let data1 = vec![
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(2, Representation::IncompleteNTT),
-        RingElement::constant(3, Representation::IncompleteNTT),
-        RingElement::constant(4, Representation::IncompleteNTT),
-    ];
-
-    let data2 = vec![
-        RingElement::constant(5, Representation::IncompleteNTT),
-        RingElement::constant(6, Representation::IncompleteNTT),
-        RingElement::constant(7, Representation::IncompleteNTT),
-        RingElement::constant(8, Representation::IncompleteNTT),
-    ];
-
-    let data3 = vec![
-        RingElement::constant(9, Representation::IncompleteNTT),
-        RingElement::constant(10, Representation::IncompleteNTT),
-        RingElement::constant(11, Representation::IncompleteNTT),
-        RingElement::constant(12, Representation::IncompleteNTT),
-    ];
-
-    let sumcheck_1 = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
-        data1.len(),
-        0,
-        4,
-    ));
-    sumcheck_1.borrow_mut().load_from(&data1);
-
-    // 1 x 16, 2 x 16, 3 x 16, 4 x 16, 1 x 16, 2 x 16, 3 x 16, 4 x 16,
-
-    let sumcheck_2 = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
-        data2.len(),
-        2,
-        2,
-    ));
-
-    // (5 x 4, 6 x 4, 7 x 4, 8 x 4, 5 x 4, 6 x 4, 7 x 4, 8 x 4) x 4
-
-    sumcheck_2.borrow_mut().load_from(&data2);
-    let sumcheck_3 = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
-        data3.len(),
-        4,
-        0,
-    ));
-    sumcheck_3.borrow_mut().load_from(&data3);
-
-    let product_12 =
-        ElephantCell::new(ProductSumcheck::new(sumcheck_1.clone(), sumcheck_2.clone()));
-    let product_123 =
-        ElephantCell::new(ProductSumcheck::new(product_12.clone(), sumcheck_3.clone()));
-    let mut univariate_poly = Polynomial::new(0);
-
-    let mut claim = RingElement::constant(
-        (1 + 2 + 3 + 4) * (5 + 6 + 7 + 8) * (9 + 10 + 11 + 12),
-        Representation::IncompleteNTT,
-    );
-
-    for _ in 0..5 {
-        product_123
-            .get_ref()
-            .univariate_polynomial_into(&mut univariate_poly);
-        debug_assert_eq!(
-            &univariate_poly.at_zero() + &univariate_poly.at_one(),
-            claim
-        );
-
-        debug_assert_eq!(univariate_poly.num_coefficients, 2); // degree 1 polynomial as expected
-
-        let r = RingElement::constant(7, Representation::IncompleteNTT);
-
-        claim = univariate_poly.at(&r);
-
-        sumcheck_1.borrow_mut().partial_evaluate(&r);
-        sumcheck_2.borrow_mut().partial_evaluate(&r);
-        sumcheck_3.borrow_mut().partial_evaluate(&r);
-    }
-
-    product_123
-        .get_ref()
-        .univariate_polynomial_into(&mut univariate_poly);
-    debug_assert_eq!(
-        &univariate_poly.at_zero() + &univariate_poly.at_one(),
-        claim
-    );
-
-    debug_assert_eq!(univariate_poly.num_coefficients, 2); // degree 1 polynomial as expected
-}
-
 /// Evaluation-only version of ProductSumcheck that evaluates the product of two sumchecks at a point.
 pub struct ProductSumcheckEvaluation {
     lhs_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
@@ -505,67 +147,429 @@ impl EvaluationSumcheckData for ProductSumcheckEvaluation {
     }
 }
 
-#[test]
-fn test_product_evaluation() {
-    use crate::protocol::sumcheck_utils::linear::BasicEvaluationLinearSumcheck;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_inner_product_sumcheck() {
+        let lhs_data = vec![
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(2, Representation::IncompleteNTT),
+            RingElement::constant(3, Representation::IncompleteNTT),
+            RingElement::constant(4, Representation::IncompleteNTT),
+            RingElement::constant(5, Representation::IncompleteNTT),
+            RingElement::constant(6, Representation::IncompleteNTT),
+            RingElement::constant(7, Representation::IncompleteNTT),
+            RingElement::constant(8, Representation::IncompleteNTT),
+        ];
 
-    let lhs_data = vec![
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(2, Representation::IncompleteNTT),
-        RingElement::constant(3, Representation::IncompleteNTT),
-        RingElement::constant(4, Representation::IncompleteNTT),
-    ];
+        let rhs_data = vec![
+            RingElement::constant(9, Representation::IncompleteNTT),
+            RingElement::constant(10, Representation::IncompleteNTT),
+            RingElement::constant(11, Representation::IncompleteNTT),
+            RingElement::constant(12, Representation::IncompleteNTT),
+            RingElement::constant(13, Representation::IncompleteNTT),
+            RingElement::constant(14, Representation::IncompleteNTT),
+            RingElement::constant(15, Representation::IncompleteNTT),
+            RingElement::constant(16, Representation::IncompleteNTT),
+        ];
 
-    let rhs_data = vec![
-        RingElement::constant(5, Representation::IncompleteNTT),
-        RingElement::constant(6, Representation::IncompleteNTT),
-        RingElement::constant(7, Representation::IncompleteNTT),
-        RingElement::constant(8, Representation::IncompleteNTT),
-    ];
+        let sumcheck_0 = ElephantCell::new(LinearSumcheck::new(lhs_data.len()));
+        sumcheck_0.borrow_mut().load_from(&lhs_data);
+        let sumcheck_1 = ElephantCell::new(LinearSumcheck::new(rhs_data.len()));
+        sumcheck_1.borrow_mut().load_from(&rhs_data);
 
-    let mut lhs_eval_impl = BasicEvaluationLinearSumcheck::new(lhs_data.len());
-    lhs_eval_impl.load_from(&lhs_data);
-    let lhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
-        ElephantCell::new(lhs_eval_impl);
+        // Build a product sumcheck that should track the inner product of lhs_data and rhs_data.
+        let inner_product_sumcheck = ProductSumcheck::new(sumcheck_0.clone(), sumcheck_1.clone());
 
-    let mut rhs_eval_impl = BasicEvaluationLinearSumcheck::new(rhs_data.len());
-    rhs_eval_impl.load_from(&rhs_data);
-    let rhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
-        ElephantCell::new(rhs_eval_impl);
+        let mut univariate_poly = Polynomial::new(0);
 
-    let mut product_eval = ProductSumcheckEvaluation::new(lhs_eval, rhs_eval);
+        inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
 
-    let point = vec![
-        RingElement::constant(11, Representation::IncompleteNTT),
-        RingElement::constant(13, Representation::IncompleteNTT),
-    ];
+        // The polynomial evaluated at 0 and 1 should sum to the true inner product.
 
-    // Create reference using the folding implementation
-    let ref_lhs_data = vec![
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(2, Representation::IncompleteNTT),
-        RingElement::constant(3, Representation::IncompleteNTT),
-        RingElement::constant(4, Representation::IncompleteNTT),
-    ];
-    let ref_rhs_data = vec![
-        RingElement::constant(5, Representation::IncompleteNTT),
-        RingElement::constant(6, Representation::IncompleteNTT),
-        RingElement::constant(7, Representation::IncompleteNTT),
-        RingElement::constant(8, Representation::IncompleteNTT),
-    ];
+        debug_assert_eq!(
+            &univariate_poly.at_zero() + &univariate_poly.at_one(),
+            RingElement::constant(
+                1 * 9 + 2 * 10 + 3 * 11 + 4 * 12 + 5 * 13 + 6 * 14 + 7 * 15 + 8 * 16,
+                Representation::IncompleteNTT
+            )
+        );
 
-    let sumcheck_0 = ElephantCell::new(LinearSumcheck::new(ref_lhs_data.len()));
-    sumcheck_0.borrow_mut().load_from(&ref_lhs_data);
-    let sumcheck_1 = ElephantCell::new(LinearSumcheck::new(ref_rhs_data.len()));
-    sumcheck_1.borrow_mut().load_from(&ref_rhs_data);
+        let r0 = RingElement::constant(524, Representation::IncompleteNTT);
 
-    for r in &point {
-        sumcheck_0.borrow_mut().partial_evaluate(r);
-        sumcheck_1.borrow_mut().partial_evaluate(r);
+        let claim = univariate_poly.at(&r0);
+
+        // Fold both underlying multilinear extensions by r0 and ensure the verifier
+        // still sees the same claim when re-running round 0 of the protocol.
+        sumcheck_0.borrow_mut().partial_evaluate(&r0);
+        sumcheck_1.borrow_mut().partial_evaluate(&r0);
+
+        inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
+
+        debug_assert_eq!(
+            &univariate_poly.at_zero() + &univariate_poly.at_one(),
+            claim
+        );
+
+        let r1 = RingElement::constant(1337, Representation::IncompleteNTT);
+
+        let claim = univariate_poly.at(&r1);
+
+        // Same invariance check after the second round challenge.
+        sumcheck_0.borrow_mut().partial_evaluate(&r1);
+        sumcheck_1.borrow_mut().partial_evaluate(&r1);
+
+        inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
+
+        debug_assert_eq!(
+            &univariate_poly.at_zero() + &univariate_poly.at_one(),
+            claim
+        );
+
+        let r2 = RingElement::constant(42, Representation::IncompleteNTT);
+
+        let claim = univariate_poly.at(&r2);
+
+        // After the final fold, the product of the two fully evaluated claims
+        // should equal the verifier's accumulated claim.
+        sumcheck_0.borrow_mut().partial_evaluate(&r2);
+        sumcheck_1.borrow_mut().partial_evaluate(&r2);
+
+        debug_assert_eq!(
+            sumcheck_0.get_ref().final_evaluations() * sumcheck_1.get_ref().final_evaluations(),
+            claim,
+        );
+
+        // Explicit multilinear evaluations of each folded claim for documentation.
+        debug_assert_eq!(
+            sumcheck_0.get_ref().final_evaluations(),
+            &RingElement::constant(
+                (MOD_Q as i64
+                    + (1 - 524) * (1 - 1337) * (1 - 42) * 1
+                    + (1 - 524) * (1 - 1337) * (42) * 2
+                    + (1 - 524) * (1337) * (1 - 42) * 3
+                    + (1 - 524) * (1337) * (42) * 4
+                    + (524) * (1 - 1337) * (1 - 42) * 5
+                    + (524) * (1 - 1337) * (42) * 6
+                    + (524) * (1337) * (1 - 42) * 7
+                    + (524) * (1337) * (42) * 8) as u64,
+                Representation::IncompleteNTT,
+            )
+        );
+
+        debug_assert_eq!(
+            sumcheck_1.get_ref().final_evaluations(),
+            &RingElement::constant(
+                (MOD_Q as i64
+                    + (1 - 524) * (1 - 1337) * (1 - 42) * 9
+                    + (1 - 524) * (1 - 1337) * (42) * 10
+                    + (1 - 524) * (1337) * (1 - 42) * 11
+                    + (1 - 524) * (1337) * (42) * 12
+                    + (524) * (1 - 1337) * (1 - 42) * 13
+                    + (524) * (1 - 1337) * (42) * 14
+                    + (524) * (1337) * (1 - 42) * 15
+                    + (524) * (1337) * (42) * 16) as u64,
+                Representation::IncompleteNTT,
+            )
+        );
+
+        // Final consistency: inner product claim equals product of individual folded claims.
+        debug_assert_eq!(
+            claim,
+            RingElement::constant(
+                (MOD_Q as i64
+                    + ((1 - 524) * (1 - 1337) * (1 - 42) * 1
+                        + (1 - 524) * (1 - 1337) * (42) * 2
+                        + (1 - 524) * (1337) * (1 - 42) * 3
+                        + (1 - 524) * (1337) * (42) * 4
+                        + (524) * (1 - 1337) * (1 - 42) * 5
+                        + (524) * (1 - 1337) * (42) * 6
+                        + (524) * (1337) * (1 - 42) * 7
+                        + (524) * (1337) * (42) * 8)
+                        * ((1 - 524) * (1 - 1337) * (1 - 42) * 9
+                            + (1 - 524) * (1 - 1337) * (42) * 10
+                            + (1 - 524) * (1337) * (1 - 42) * 11
+                            + (1 - 524) * (1337) * (42) * 12
+                            + (524) * (1 - 1337) * (1 - 42) * 13
+                            + (524) * (1 - 1337) * (42) * 14
+                            + (524) * (1337) * (1 - 42) * 15
+                            + (524) * (1337) * (42) * 16)) as u64,
+                Representation::IncompleteNTT,
+            )
+        );
     }
 
-    let expected =
-        sumcheck_0.get_ref().final_evaluations() * sumcheck_1.get_ref().final_evaluations();
+    #[test]
+    fn test_self_inner_product_sumcheck() {
+        let data = vec![
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(2, Representation::IncompleteNTT),
+            RingElement::constant(3, Representation::IncompleteNTT),
+            RingElement::constant(4, Representation::IncompleteNTT),
+            RingElement::constant(5, Representation::IncompleteNTT),
+            RingElement::constant(6, Representation::IncompleteNTT),
+            RingElement::constant(7, Representation::IncompleteNTT),
+            RingElement::constant(8, Representation::IncompleteNTT),
+        ];
 
-    debug_assert_eq!(product_eval.evaluate(&point), &expected);
+        let sumcheck = ElephantCell::new(LinearSumcheck::new(data.len()));
+        sumcheck.borrow_mut().load_from(&data);
+
+        let inner_product_sumcheck = ProductSumcheck::new(sumcheck.clone(), sumcheck.clone());
+
+        let mut univariate_poly = Polynomial::new(0);
+
+        inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
+
+        // When both inputs are identical, the inner product collapses to a sum of squares.
+        debug_assert_eq!(
+            &univariate_poly.at_zero() + &univariate_poly.at_one(),
+            RingElement::constant(
+                1 * 1 + 2 * 2 + 3 * 3 + 4 * 4 + 5 * 5 + 6 * 6 + 7 * 7 + 8 * 8,
+                Representation::IncompleteNTT
+            )
+        );
+    }
+
+    #[test]
+    fn test_three_way_sumcheck() {
+        let data0 = vec![
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(2, Representation::IncompleteNTT),
+            RingElement::constant(3, Representation::IncompleteNTT),
+            RingElement::constant(4, Representation::IncompleteNTT),
+        ];
+
+        let data1 = vec![
+            RingElement::constant(5, Representation::IncompleteNTT),
+            RingElement::constant(6, Representation::IncompleteNTT),
+            RingElement::constant(7, Representation::IncompleteNTT),
+            RingElement::constant(8, Representation::IncompleteNTT),
+        ];
+
+        let data2 = vec![
+            RingElement::constant(9, Representation::IncompleteNTT),
+            RingElement::constant(10, Representation::IncompleteNTT),
+            RingElement::constant(11, Representation::IncompleteNTT),
+            RingElement::constant(12, Representation::IncompleteNTT),
+        ];
+
+        let mut sumcheck_0 = LinearSumcheck::new(data0.len());
+        sumcheck_0.load_from(&data0);
+        let mut sumcheck_1 = LinearSumcheck::new(data1.len());
+        sumcheck_1.load_from(&data1);
+        let mut sumcheck_2 = LinearSumcheck::new(data2.len());
+        sumcheck_2.load_from(&data2);
+
+        let sumcheck_0_ref = ElephantCell::new(sumcheck_0);
+        let sumcheck_1_ref = ElephantCell::new(sumcheck_1);
+        let sumcheck_2_ref = ElephantCell::new(sumcheck_2);
+
+        // Compose two nested product sumchecks to validate a three-way product.
+
+        let inner_product_sumcheck_01 =
+            ProductSumcheck::new(sumcheck_0_ref.clone(), sumcheck_1_ref.clone());
+
+        let inner_product_sumcheck_01_ref = ElephantCell::new(inner_product_sumcheck_01);
+
+        let inner_product_sumcheck_012 = ProductSumcheck::new(
+            sumcheck_2_ref.clone(),
+            inner_product_sumcheck_01_ref.clone(),
+        );
+
+        let mut univariate_poly = Polynomial::new(0);
+        inner_product_sumcheck_012.univariate_polynomial_into(&mut univariate_poly);
+
+        // Evaluating the first-round polynomial at 0 and 1 should give the full triple product sum.
+        debug_assert_eq!(
+            &univariate_poly.at_zero() + &univariate_poly.at_one(),
+            RingElement::constant(
+                1 * 5 * 9 + 2 * 6 * 10 + 3 * 7 * 11 + 4 * 8 * 12,
+                Representation::IncompleteNTT
+            )
+        );
+
+        let r0 = RingElement::constant(42, Representation::IncompleteNTT);
+
+        let claim = univariate_poly.at(&r0);
+
+        sumcheck_0_ref.borrow_mut().partial_evaluate(&r0);
+        sumcheck_1_ref.borrow_mut().partial_evaluate(&r0);
+        sumcheck_2_ref.borrow_mut().partial_evaluate(&r0);
+
+        inner_product_sumcheck_012.univariate_polynomial_into(&mut univariate_poly);
+
+        // The verifier's running claim should stay consistent after folding all three vectors.
+        debug_assert_eq!(
+            &univariate_poly.at_zero() + &univariate_poly.at_one(),
+            claim
+        );
+    }
+
+    #[test]
+    fn test_product_of_linear_sumchecks_over_disjoint_variables() {
+        // Test the product sumcheck over three linear sumchecks, each
+        // defined over disjoint sets of variables.
+        // The first sumcheck is defined over the highest-order variables,
+        // the second over the middle variables, and the third over the
+        // lowest-order variables.
+        // we make use that the univariate polynomial of a linear sumcheck is just a degree 1 polynomial
+        // since it should be a produce of two constant polys and one degree 1 poly.
+
+        use crate::common::ring_arithmetic::RingElement;
+        use crate::protocol::sumcheck_utils::product::ProductSumcheck;
+
+        let data1 = vec![
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(2, Representation::IncompleteNTT),
+            RingElement::constant(3, Representation::IncompleteNTT),
+            RingElement::constant(4, Representation::IncompleteNTT),
+        ];
+
+        let data2 = vec![
+            RingElement::constant(5, Representation::IncompleteNTT),
+            RingElement::constant(6, Representation::IncompleteNTT),
+            RingElement::constant(7, Representation::IncompleteNTT),
+            RingElement::constant(8, Representation::IncompleteNTT),
+        ];
+
+        let data3 = vec![
+            RingElement::constant(9, Representation::IncompleteNTT),
+            RingElement::constant(10, Representation::IncompleteNTT),
+            RingElement::constant(11, Representation::IncompleteNTT),
+            RingElement::constant(12, Representation::IncompleteNTT),
+        ];
+
+        let sumcheck_1 = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
+            data1.len(),
+            0,
+            4,
+        ));
+        sumcheck_1.borrow_mut().load_from(&data1);
+
+        // 1 x 16, 2 x 16, 3 x 16, 4 x 16, 1 x 16, 2 x 16, 3 x 16, 4 x 16,
+
+        let sumcheck_2 = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
+            data2.len(),
+            2,
+            2,
+        ));
+
+        // (5 x 4, 6 x 4, 7 x 4, 8 x 4, 5 x 4, 6 x 4, 7 x 4, 8 x 4) x 4
+
+        sumcheck_2.borrow_mut().load_from(&data2);
+        let sumcheck_3 = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
+            data3.len(),
+            4,
+            0,
+        ));
+        sumcheck_3.borrow_mut().load_from(&data3);
+
+        let product_12 =
+            ElephantCell::new(ProductSumcheck::new(sumcheck_1.clone(), sumcheck_2.clone()));
+        let product_123 =
+            ElephantCell::new(ProductSumcheck::new(product_12.clone(), sumcheck_3.clone()));
+        let mut univariate_poly = Polynomial::new(0);
+
+        let mut claim = RingElement::constant(
+            (1 + 2 + 3 + 4) * (5 + 6 + 7 + 8) * (9 + 10 + 11 + 12),
+            Representation::IncompleteNTT,
+        );
+
+        for _ in 0..5 {
+            product_123
+                .get_ref()
+                .univariate_polynomial_into(&mut univariate_poly);
+            debug_assert_eq!(
+                &univariate_poly.at_zero() + &univariate_poly.at_one(),
+                claim
+            );
+
+            debug_assert_eq!(univariate_poly.num_coefficients, 2); // degree 1 polynomial as expected
+
+            let r = RingElement::constant(7, Representation::IncompleteNTT);
+
+            claim = univariate_poly.at(&r);
+
+            sumcheck_1.borrow_mut().partial_evaluate(&r);
+            sumcheck_2.borrow_mut().partial_evaluate(&r);
+            sumcheck_3.borrow_mut().partial_evaluate(&r);
+        }
+
+        product_123
+            .get_ref()
+            .univariate_polynomial_into(&mut univariate_poly);
+        debug_assert_eq!(
+            &univariate_poly.at_zero() + &univariate_poly.at_one(),
+            claim
+        );
+
+        debug_assert_eq!(univariate_poly.num_coefficients, 2); // degree 1 polynomial as expected
+    }
+
+    #[test]
+    fn test_product_evaluation() {
+        use crate::protocol::sumcheck_utils::linear::BasicEvaluationLinearSumcheck;
+
+        let lhs_data = vec![
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(2, Representation::IncompleteNTT),
+            RingElement::constant(3, Representation::IncompleteNTT),
+            RingElement::constant(4, Representation::IncompleteNTT),
+        ];
+
+        let rhs_data = vec![
+            RingElement::constant(5, Representation::IncompleteNTT),
+            RingElement::constant(6, Representation::IncompleteNTT),
+            RingElement::constant(7, Representation::IncompleteNTT),
+            RingElement::constant(8, Representation::IncompleteNTT),
+        ];
+
+        let mut lhs_eval_impl = BasicEvaluationLinearSumcheck::new(lhs_data.len());
+        lhs_eval_impl.load_from(&lhs_data);
+        let lhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
+            ElephantCell::new(lhs_eval_impl);
+
+        let mut rhs_eval_impl = BasicEvaluationLinearSumcheck::new(rhs_data.len());
+        rhs_eval_impl.load_from(&rhs_data);
+        let rhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
+            ElephantCell::new(rhs_eval_impl);
+
+        let mut product_eval = ProductSumcheckEvaluation::new(lhs_eval, rhs_eval);
+
+        let point = vec![
+            RingElement::constant(11, Representation::IncompleteNTT),
+            RingElement::constant(13, Representation::IncompleteNTT),
+        ];
+
+        // Create reference using the folding implementation
+        let ref_lhs_data = vec![
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(2, Representation::IncompleteNTT),
+            RingElement::constant(3, Representation::IncompleteNTT),
+            RingElement::constant(4, Representation::IncompleteNTT),
+        ];
+        let ref_rhs_data = vec![
+            RingElement::constant(5, Representation::IncompleteNTT),
+            RingElement::constant(6, Representation::IncompleteNTT),
+            RingElement::constant(7, Representation::IncompleteNTT),
+            RingElement::constant(8, Representation::IncompleteNTT),
+        ];
+
+        let sumcheck_0 = ElephantCell::new(LinearSumcheck::new(ref_lhs_data.len()));
+        sumcheck_0.borrow_mut().load_from(&ref_lhs_data);
+        let sumcheck_1 = ElephantCell::new(LinearSumcheck::new(ref_rhs_data.len()));
+        sumcheck_1.borrow_mut().load_from(&ref_rhs_data);
+
+        for r in &point {
+            sumcheck_0.borrow_mut().partial_evaluate(r);
+            sumcheck_1.borrow_mut().partial_evaluate(r);
+        }
+
+        let expected =
+            sumcheck_0.get_ref().final_evaluations() * sumcheck_1.get_ref().final_evaluations();
+
+        debug_assert_eq!(product_eval.evaluate(&point), &expected);
+    }
 }

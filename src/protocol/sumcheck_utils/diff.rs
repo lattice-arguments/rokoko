@@ -13,11 +13,6 @@ use crate::{
     },
 };
 
-#[cfg(test)]
-use crate::protocol::sumcheck_utils::{
-    common::SumcheckBaseData, linear::LinearSumcheck, selector_eq::SelectorEq,
-};
-
 /// Sumcheck data that represents the difference between two other sumchecks.
 /// Useful for enforcing equality constraints between two multilinear extensions.
 pub struct DiffSumcheck<E: SumcheckElement = RingElement> {
@@ -124,66 +119,6 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
     }
 }
 
-#[test]
-fn test_diff_sumcheck_basic() {
-    let data_0 = vec![
-        RingElement::constant(8, Representation::IncompleteNTT),
-        RingElement::constant(7, Representation::IncompleteNTT),
-        RingElement::constant(6, Representation::IncompleteNTT),
-        RingElement::constant(5, Representation::IncompleteNTT),
-    ];
-
-    let data_1 = vec![
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(2, Representation::IncompleteNTT),
-        RingElement::constant(3, Representation::IncompleteNTT),
-        RingElement::constant(4, Representation::IncompleteNTT),
-    ];
-
-    let mut sumcheck_0 = ElephantCell::new(LinearSumcheck::new(data_0.len()));
-    let mut sumcheck_1 = ElephantCell::new(LinearSumcheck::new(data_1.len()));
-
-    sumcheck_0.borrow_mut().load_from(&data_0);
-    sumcheck_1.borrow_mut().load_from(&data_1);
-
-    let diff_sumcheck = DiffSumcheck::new(sumcheck_0.clone(), sumcheck_1.clone());
-
-    let mut poly = Polynomial::new(0);
-    diff_sumcheck.univariate_polynomial_into(&mut poly);
-
-    // Sum(data_0) - Sum(data_1) = 26 - 10 = 16
-    let claim = RingElement::constant(16, Representation::IncompleteNTT);
-    debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
-
-    // Check evaluation at a random point stays consistent.
-    let r0 = RingElement::constant(5, Representation::IncompleteNTT);
-    let claim_r0 = poly.at(&r0);
-
-    sumcheck_0.borrow_mut().partial_evaluate(&r0);
-    sumcheck_1.borrow_mut().partial_evaluate(&r0);
-
-    diff_sumcheck.univariate_polynomial_into(&mut poly);
-
-    debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim_r0);
-}
-
-#[test]
-fn diff_with_eqs() {
-    let lhs = ElephantCell::new(SelectorEq::<RingElement>::new(0b101, 3, 5));
-    let rhs = ElephantCell::new(SelectorEq::<RingElement>::new(0b011, 3, 5));
-
-    let diff = DiffSumcheck::new(lhs.clone(), rhs.clone());
-    let claim = RingElement::constant(0, Representation::IncompleteNTT);
-
-    // Initial claim: the difference of the two selectors over the full hypercube is zero.
-    // Both selectors are 1 at exactly 4 points, so their difference sums to zero.
-
-    let mut poly = Polynomial::new(0);
-    diff.univariate_polynomial_into(&mut poly);
-
-    debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
-}
-
 /// Evaluation-only version of DiffSumcheck that evaluates the difference of two sumchecks at a point.
 pub struct DiffSumcheckEvaluation {
     lhs_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
@@ -216,67 +151,134 @@ impl EvaluationSumcheckData for DiffSumcheckEvaluation {
     }
 }
 
-#[test]
-fn test_diff_evaluation() {
-    use crate::protocol::sumcheck_utils::linear::BasicEvaluationLinearSumcheck;
+mod tests {
+    use super::*;
+    use crate::protocol::sumcheck_utils::{
+        common::SumcheckBaseData, linear::LinearSumcheck, selector_eq::SelectorEq,
+    };
 
-    let lhs_data = vec![
-        RingElement::constant(8, Representation::IncompleteNTT),
-        RingElement::constant(7, Representation::IncompleteNTT),
-        RingElement::constant(6, Representation::IncompleteNTT),
-        RingElement::constant(5, Representation::IncompleteNTT),
-    ];
+    #[test]
+    fn test_diff_sumcheck_basic() {
+        let data_0 = vec![
+            RingElement::constant(8, Representation::IncompleteNTT),
+            RingElement::constant(7, Representation::IncompleteNTT),
+            RingElement::constant(6, Representation::IncompleteNTT),
+            RingElement::constant(5, Representation::IncompleteNTT),
+        ];
 
-    let rhs_data = vec![
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(2, Representation::IncompleteNTT),
-        RingElement::constant(3, Representation::IncompleteNTT),
-        RingElement::constant(4, Representation::IncompleteNTT),
-    ];
+        let data_1 = vec![
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(2, Representation::IncompleteNTT),
+            RingElement::constant(3, Representation::IncompleteNTT),
+            RingElement::constant(4, Representation::IncompleteNTT),
+        ];
 
-    let mut lhs_eval_impl = BasicEvaluationLinearSumcheck::new(lhs_data.len());
-    lhs_eval_impl.load_from(&lhs_data);
-    let lhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
-        ElephantCell::new(lhs_eval_impl);
+        let sumcheck_0 = ElephantCell::new(LinearSumcheck::new(data_0.len()));
+        let sumcheck_1 = ElephantCell::new(LinearSumcheck::new(data_1.len()));
 
-    let mut rhs_eval_impl = BasicEvaluationLinearSumcheck::new(rhs_data.len());
-    rhs_eval_impl.load_from(&rhs_data);
-    let rhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
-        ElephantCell::new(rhs_eval_impl);
+        sumcheck_0.borrow_mut().load_from(&data_0);
+        sumcheck_1.borrow_mut().load_from(&data_1);
 
-    let mut diff_eval = DiffSumcheckEvaluation::new(lhs_eval, rhs_eval);
+        let diff_sumcheck = DiffSumcheck::new(sumcheck_0.clone(), sumcheck_1.clone());
 
-    let point = vec![
-        RingElement::constant(5, Representation::IncompleteNTT),
-        RingElement::constant(7, Representation::IncompleteNTT),
-    ];
+        let mut poly = Polynomial::new(0);
+        diff_sumcheck.univariate_polynomial_into(&mut poly);
 
-    // Create reference using the folding implementation
-    let ref_lhs_data = vec![
-        RingElement::constant(8, Representation::IncompleteNTT),
-        RingElement::constant(7, Representation::IncompleteNTT),
-        RingElement::constant(6, Representation::IncompleteNTT),
-        RingElement::constant(5, Representation::IncompleteNTT),
-    ];
-    let ref_rhs_data = vec![
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(2, Representation::IncompleteNTT),
-        RingElement::constant(3, Representation::IncompleteNTT),
-        RingElement::constant(4, Representation::IncompleteNTT),
-    ];
+        // Sum(data_0) - Sum(data_1) = 26 - 10 = 16
+        let claim = RingElement::constant(16, Representation::IncompleteNTT);
+        debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
 
-    let sumcheck_0 = ElephantCell::new(LinearSumcheck::new(ref_lhs_data.len()));
-    sumcheck_0.borrow_mut().load_from(&ref_lhs_data);
-    let sumcheck_1 = ElephantCell::new(LinearSumcheck::new(ref_rhs_data.len()));
-    sumcheck_1.borrow_mut().load_from(&ref_rhs_data);
+        // Check evaluation at a random point stays consistent.
+        let r0 = RingElement::constant(5, Representation::IncompleteNTT);
+        let claim_r0 = poly.at(&r0);
 
-    for r in &point {
-        sumcheck_0.borrow_mut().partial_evaluate(r);
-        sumcheck_1.borrow_mut().partial_evaluate(r);
+        sumcheck_0.borrow_mut().partial_evaluate(&r0);
+        sumcheck_1.borrow_mut().partial_evaluate(&r0);
+
+        diff_sumcheck.univariate_polynomial_into(&mut poly);
+
+        debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim_r0);
     }
 
-    let expected =
-        sumcheck_0.get_ref().final_evaluations() - sumcheck_1.get_ref().final_evaluations();
+    #[test]
+    fn diff_with_eqs() {
+        let lhs = ElephantCell::new(SelectorEq::<RingElement>::new(0b101, 3, 5));
+        let rhs = ElephantCell::new(SelectorEq::<RingElement>::new(0b011, 3, 5));
 
-    debug_assert_eq!(diff_eval.evaluate(&point), &expected);
+        let diff = DiffSumcheck::new(lhs.clone(), rhs.clone());
+        let claim = RingElement::constant(0, Representation::IncompleteNTT);
+
+        // Initial claim: the difference of the two selectors over the full hypercube is zero.
+        // Both selectors are 1 at exactly 4 points, so their difference sums to zero.
+
+        let mut poly = Polynomial::new(0);
+        diff.univariate_polynomial_into(&mut poly);
+
+        debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
+    }
+
+    #[test]
+    fn test_diff_evaluation() {
+        use crate::protocol::sumcheck_utils::linear::BasicEvaluationLinearSumcheck;
+
+        let lhs_data = vec![
+            RingElement::constant(8, Representation::IncompleteNTT),
+            RingElement::constant(7, Representation::IncompleteNTT),
+            RingElement::constant(6, Representation::IncompleteNTT),
+            RingElement::constant(5, Representation::IncompleteNTT),
+        ];
+
+        let rhs_data = vec![
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(2, Representation::IncompleteNTT),
+            RingElement::constant(3, Representation::IncompleteNTT),
+            RingElement::constant(4, Representation::IncompleteNTT),
+        ];
+
+        let mut lhs_eval_impl = BasicEvaluationLinearSumcheck::new(lhs_data.len());
+        lhs_eval_impl.load_from(&lhs_data);
+        let lhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
+            ElephantCell::new(lhs_eval_impl);
+
+        let mut rhs_eval_impl = BasicEvaluationLinearSumcheck::new(rhs_data.len());
+        rhs_eval_impl.load_from(&rhs_data);
+        let rhs_eval: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
+            ElephantCell::new(rhs_eval_impl);
+
+        let mut diff_eval = DiffSumcheckEvaluation::new(lhs_eval, rhs_eval);
+
+        let point = vec![
+            RingElement::constant(5, Representation::IncompleteNTT),
+            RingElement::constant(7, Representation::IncompleteNTT),
+        ];
+
+        // Create reference using the folding implementation
+        let ref_lhs_data = vec![
+            RingElement::constant(8, Representation::IncompleteNTT),
+            RingElement::constant(7, Representation::IncompleteNTT),
+            RingElement::constant(6, Representation::IncompleteNTT),
+            RingElement::constant(5, Representation::IncompleteNTT),
+        ];
+        let ref_rhs_data = vec![
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(2, Representation::IncompleteNTT),
+            RingElement::constant(3, Representation::IncompleteNTT),
+            RingElement::constant(4, Representation::IncompleteNTT),
+        ];
+
+        let sumcheck_0 = ElephantCell::new(LinearSumcheck::new(ref_lhs_data.len()));
+        sumcheck_0.borrow_mut().load_from(&ref_lhs_data);
+        let sumcheck_1 = ElephantCell::new(LinearSumcheck::new(ref_rhs_data.len()));
+        sumcheck_1.borrow_mut().load_from(&ref_rhs_data);
+
+        for r in &point {
+            sumcheck_0.borrow_mut().partial_evaluate(r);
+            sumcheck_1.borrow_mut().partial_evaluate(r);
+        }
+
+        let expected =
+            sumcheck_0.get_ref().final_evaluations() - sumcheck_1.get_ref().final_evaluations();
+
+        debug_assert_eq!(diff_eval.evaluate(&point), &expected);
+    }
 }

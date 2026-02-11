@@ -13,11 +13,6 @@ use crate::{
     protocol::config::{ConfigBase, SimpleConfig},
 };
 
-#[cfg(test)]
-use crate::{
-    common::matrix::new_vec_zero_preallocated, protocol::sumchecks::helpers::tensor_product_u64,
-};
-
 /// Computes J_batched = c'_1^T * J_embedded
 ///
 /// J_embedded applies dual embedding: each coefficient j ∈ {-1,0,1} becomes a polynomial
@@ -657,222 +652,230 @@ pub fn verifier_sample_projection_challenges(
     }
 }
 
-#[test]
-fn test_batch_projection() {
-    // Test that batch_projection correctly computes c'^t * vec(V)
-    // where V = project_coefficients(witness), checked separately for each column
-    //
-    // This verifies the correctness of the batched projection algorithm by:
-    // 1. Computing V explicitly via project_coefficients
-    // 2. Computing the same result efficiently via batch_projection
-    // 3. Sampling the same random challenges for both
-    // 4. For each column: manually computing c'^t * vec(V[:, col])
-    // 5. Comparing all results to ensure consistency
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::matrix::new_vec_zero_preallocated;
+    use crate::protocol::sumchecks::helpers::tensor_product_u64;
 
-    let witness = VerticallyAlignedMatrix {
-        data: vec![RingElement::random(Representation::IncompleteNTT); 16],
-        width: 2,
-        height: 8,
-        used_cols: 2,
-    };
+    #[test]
+    fn test_batch_projection() {
+        // Test that batch_projection correctly computes c'^t * vec(V)
+        // where V = project_coefficients(witness), checked separately for each column
+        //
+        // This verifies the correctness of the batched projection algorithm by:
+        // 1. Computing V explicitly via project_coefficients
+        // 2. Computing the same result efficiently via batch_projection
+        // 3. Sampling the same random challenges for both
+        // 4. For each column: manually computing c'^t * vec(V[:, col])
+        // 5. Comparing all results to ensure consistency
 
-    let mut projection_matrix = ProjectionMatrix::new(2, 256);
-    let mut hash_wrapper = HashWrapper::new();
-    projection_matrix.sample(&mut hash_wrapper);
+        let witness = VerticallyAlignedMatrix {
+            data: vec![RingElement::random(Representation::IncompleteNTT); 16],
+            width: 2,
+            height: 8,
+            used_cols: 2,
+        };
 
-    // Compute the full projection V = (I_d ⊗ J) * coeff(W) explicitly
-    let image_ct = project_coefficients(&witness, &projection_matrix);
+        let mut projection_matrix = ProjectionMatrix::new(2, 256);
+        let mut hash_wrapper = HashWrapper::new();
+        projection_matrix.sample(&mut hash_wrapper);
 
-    let (c_0_layers, c_1_layers, _c_2_layers) = sample_layers(
-        &projection_matrix,
-        witness.width,
-        witness.height,
-        &mut hash_wrapper,
-    );
+        // Compute the full projection V = (I_d ⊗ J) * coeff(W) explicitly
+        let image_ct = project_coefficients(&witness, &projection_matrix);
 
-    let c_0_values = precompute_structured_values_fast(&c_0_layers);
-    let c_1_values = precompute_structured_values_fast(&c_1_layers);
+        let (c_0_layers, c_1_layers, _c_2_layers) = sample_layers(
+            &projection_matrix,
+            witness.width,
+            witness.height,
+            &mut hash_wrapper,
+        );
 
-    let num_chunks_in_image = image_ct.height / (projection_matrix.projection_height / DEGREE);
+        let c_0_values = precompute_structured_values_fast(&c_0_layers);
+        let c_1_values = precompute_structured_values_fast(&c_1_layers);
 
-    // Compute expected results for each column separately
-    let mut expected_cts = vec![0u64; witness.width];
+        let num_chunks_in_image = image_ct.height / (projection_matrix.projection_height / DEGREE);
 
-    for col in 0..image_ct.width {
-        let mut expected_ct = 0u64;
+        // Compute expected results for each column separately
+        let mut expected_cts = vec![0u64; witness.width];
 
-        for chunk_idx in 0..num_chunks_in_image {
-            let c_0_coeff = c_0_values[chunk_idx];
-            // Each chunk contains projection_matrix.projection_height coefficients
-            for coeff_idx in 0..projection_matrix.projection_height {
-                let c_1_coeff = c_1_values[coeff_idx];
-                // Map flat coefficient index to (row, degree) in the ring element matrix
-                let row_in_chunk = coeff_idx / DEGREE; // Which ring element in this chunk
-                let deg = coeff_idx % DEGREE; // Which coefficient in that ring element
-                let row = chunk_idx * (projection_matrix.projection_height / DEGREE) + row_in_chunk;
-                unsafe {
-                    // The challenge at this position is c'_0[chunk] * c'_1[coeff]
-                    let c_combined = multiply_mod(c_0_coeff, c_1_coeff, MOD_Q);
+        for col in 0..image_ct.width {
+            let mut expected_ct = 0u64;
 
-                    let temp = multiply_mod(image_ct[(row, col)].v[deg], c_combined, MOD_Q);
-                    expected_ct = add_mod(expected_ct, temp, MOD_Q);
+            for chunk_idx in 0..num_chunks_in_image {
+                let c_0_coeff = c_0_values[chunk_idx];
+                // Each chunk contains projection_matrix.projection_height coefficients
+                for coeff_idx in 0..projection_matrix.projection_height {
+                    let c_1_coeff = c_1_values[coeff_idx];
+                    // Map flat coefficient index to (row, degree) in the ring element matrix
+                    let row_in_chunk = coeff_idx / DEGREE; // Which ring element in this chunk
+                    let deg = coeff_idx % DEGREE; // Which coefficient in that ring element
+                    let row =
+                        chunk_idx * (projection_matrix.projection_height / DEGREE) + row_in_chunk;
+                    unsafe {
+                        // The challenge at this position is c'_0[chunk] * c'_1[coeff]
+                        let c_combined = multiply_mod(c_0_coeff, c_1_coeff, MOD_Q);
+
+                        let temp = multiply_mod(image_ct[(row, col)].v[deg], c_combined, MOD_Q);
+                        expected_ct = add_mod(expected_ct, temp, MOD_Q);
+                    }
                 }
             }
+
+            expected_cts[col] = expected_ct;
         }
 
-        expected_cts[col] = expected_ct;
-    }
+        // Now compute using the optimized batch_projection which does both operations in one pass
+        // Create a fresh hash_wrapper to sample the same challenges
+        let mut hash_wrapper2 = HashWrapper::new();
+        projection_matrix.sample(&mut hash_wrapper2); // Consume same randomness to sync state
 
-    // Now compute using the optimized batch_projection which does both operations in one pass
-    // Create a fresh hash_wrapper to sample the same challenges
-    let mut hash_wrapper2 = HashWrapper::new();
-    projection_matrix.sample(&mut hash_wrapper2); // Consume same randomness to sync state
-
-    let mut result = new_vec_zero_preallocated(witness.width);
-    batch_projection_into(
-        &mut result,
-        &witness,
-        &projection_matrix,
-        &mut hash_wrapper2,
-        false,
-    );
-
-    // Check each column separately
-    for col in 0..witness.width {
-        let mut col_result = result[col].clone();
-        col_result.to_representation(Representation::Coefficients);
-
-        debug_assert_eq!(
-            col_result.v[0], expected_cts[col],
-            "batch_projection column {} should produce the same result as computing project_coefficients followed by batching",
-            col
+        let mut result = new_vec_zero_preallocated(witness.width);
+        batch_projection_into(
+            &mut result,
+            &witness,
+            &projection_matrix,
+            &mut hash_wrapper2,
+            false,
         );
-    }
-}
 
-#[test]
-fn test_const_term_relation_to_prove() {
-    let witness = VerticallyAlignedMatrix {
-        data: vec![RingElement::random(Representation::IncompleteNTT); 8 * 64],
-        width: 8,
-        height: 64,
-        used_cols: 8,
-    };
-    let mut projection_matrix = ProjectionMatrix::new(4, 256);
+        // Check each column separately
+        for col in 0..witness.width {
+            let mut col_result = result[col].clone();
+            col_result.to_representation(Representation::Coefficients);
 
-    let mut hash_wrapper = HashWrapper::new();
-    projection_matrix.sample(&mut hash_wrapper);
-
-    // Compute the full projection V = (I_d ⊗ J) * coeff(W) explicitly
-    let mut image_ct = project_coefficients(&witness, &projection_matrix);
-    for el in image_ct.data.iter_mut() {
-        el.to_representation(Representation::IncompleteNTT);
-    }
-    debug_assert_eq!(image_ct.height, 16);
-
-    debug_assert_eq!(image_ct.width, 8);
-
-    let mut batched_projected_witness =
-        HorizontallyAlignedMatrix::new_zero_preallocated(1, witness.width);
-
-    let challenges = batch_projection_into(
-        &mut batched_projected_witness.row_slice_mut(0),
-        &witness,
-        &projection_matrix,
-        &mut hash_wrapper,
-        false,
-    );
-
-    // Now, we want to check if
-    // let B = batched_projected_witness
-    // let V = image_ct
-    // let V' = coefficients of V
-    // assume that challenges are "expanded" into vectors c_0 c_1 c_2
-    // We need to check if
-    // constant_term( c_0^T B c_2) = (c_0^T \otimes c_1^T ) V' c_2
-    // Let c_1 de split into (e_0 \otimes e_1) where e_1 has length DEGREE and e_0 has length PROJECTION_HEIGHT / DEGREE
-    // Let e = embed_dual(J) c_1
-    // Then, we need to check if
-    // constant_term( B c_2) = constant_term((c_0^T \otimes e_0^T) e V c_2)
-    // due to memory alignment:
-    // constant_term(<B, c_2>) = e <c_2 \otimes c_0 \otimes e_0, V>
-    let c_2_values = challenges.c_2_values;
-    let c_1_values = challenges.c_1_values;
-    let c_0_values = challenges.c_0_values;
-    let c1_layers = challenges.c_1_layers;
-    let (e_0_values, e_1_values) = {
-        let mut e_0_layers = Vec::new();
-        let mut e_1_layers = Vec::new();
-        for (i, &layer) in c1_layers.iter().enumerate() {
-            if i < c1_layers.len() - DEGREE.ilog2() as usize {
-                e_0_layers.push(layer);
-            } else {
-                e_1_layers.push(layer);
-            }
+            debug_assert_eq!(
+                col_result.v[0], expected_cts[col],
+                "batch_projection column {} should produce the same result as computing project_coefficients followed by batching",
+                col
+            );
         }
-        (
-            precompute_structured_values_fast(&e_0_layers),
-            precompute_structured_values_fast(&e_1_layers),
-        )
-    };
+    }
 
-    let _tensor_product = tensor_product_u64(&e_0_values, &e_1_values);
-    debug_assert_eq!(_tensor_product, c_1_values);
-    let lhs_multipier_ring = c_2_values
-        .iter()
-        .map(|&x| RingElement::constant(x, Representation::IncompleteNTT))
-        .collect::<Vec<RingElement>>();
+    #[test]
+    fn test_const_term_relation_to_prove() {
+        let witness = VerticallyAlignedMatrix {
+            data: vec![RingElement::random(Representation::IncompleteNTT); 8 * 64],
+            width: 8,
+            height: 64,
+            used_cols: 8,
+        };
+        let mut projection_matrix = ProjectionMatrix::new(4, 256);
 
-    let rhs_multipier_ring = {
-        // c_2 \otimes c_0 \otimes e_0
-        // first over u64
-        let values_0 = tensor_product_u64(&c_2_values, &c_0_values);
-        let values_1 = tensor_product_u64(&values_0, &e_0_values);
-        let vals_over_ring = values_1
+        let mut hash_wrapper = HashWrapper::new();
+        projection_matrix.sample(&mut hash_wrapper);
+
+        // Compute the full projection V = (I_d ⊗ J) * coeff(W) explicitly
+        let mut image_ct = project_coefficients(&witness, &projection_matrix);
+        for el in image_ct.data.iter_mut() {
+            el.to_representation(Representation::IncompleteNTT);
+        }
+        debug_assert_eq!(image_ct.height, 16);
+
+        debug_assert_eq!(image_ct.width, 8);
+
+        let mut batched_projected_witness =
+            HorizontallyAlignedMatrix::new_zero_preallocated(1, witness.width);
+
+        let challenges = batch_projection_into(
+            &mut batched_projected_witness.row_slice_mut(0),
+            &witness,
+            &projection_matrix,
+            &mut hash_wrapper,
+            false,
+        );
+
+        // Now, we want to check if
+        // let B = batched_projected_witness
+        // let V = image_ct
+        // let V' = coefficients of V
+        // assume that challenges are "expanded" into vectors c_0 c_1 c_2
+        // We need to check if
+        // constant_term( c_0^T B c_2) = (c_0^T \otimes c_1^T ) V' c_2
+        // Let c_1 de split into (e_0 \otimes e_1) where e_1 has length DEGREE and e_0 has length PROJECTION_HEIGHT / DEGREE
+        // Let e = embed_dual(J) c_1
+        // Then, we need to check if
+        // constant_term( B c_2) = constant_term((c_0^T \otimes e_0^T) e V c_2)
+        // due to memory alignment:
+        // constant_term(<B, c_2>) = e <c_2 \otimes c_0 \otimes e_0, V>
+        let c_2_values = challenges.c_2_values;
+        let c_1_values = challenges.c_1_values;
+        let c_0_values = challenges.c_0_values;
+        let c1_layers = challenges.c_1_layers;
+        let (e_0_values, e_1_values) = {
+            let mut e_0_layers = Vec::new();
+            let mut e_1_layers = Vec::new();
+            for (i, &layer) in c1_layers.iter().enumerate() {
+                if i < c1_layers.len() - DEGREE.ilog2() as usize {
+                    e_0_layers.push(layer);
+                } else {
+                    e_1_layers.push(layer);
+                }
+            }
+            (
+                precompute_structured_values_fast(&e_0_layers),
+                precompute_structured_values_fast(&e_1_layers),
+            )
+        };
+
+        let _tensor_product = tensor_product_u64(&e_0_values, &e_1_values);
+        debug_assert_eq!(_tensor_product, c_1_values);
+        let lhs_multipier_ring = c_2_values
             .iter()
             .map(|&x| RingElement::constant(x, Representation::IncompleteNTT))
             .collect::<Vec<RingElement>>();
-        vals_over_ring
-    };
 
-    let e = {
-        let mut e = RingElement::zero(Representation::Coefficients);
-        for (i, &val) in e_1_values.iter().enumerate() {
-            e.v[i as usize] = val;
-        }
-        e.from_coefficients_to_even_odd_coefficients();
-        e.from_even_odd_coefficients_to_incomplete_ntt_representation();
-        e.conjugate_in_place();
-        e
-    };
+        let rhs_multipier_ring = {
+            // c_2 \otimes c_0 \otimes e_0
+            // first over u64
+            let values_0 = tensor_product_u64(&c_2_values, &c_0_values);
+            let values_1 = tensor_product_u64(&values_0, &e_0_values);
+            let vals_over_ring = values_1
+                .iter()
+                .map(|&x| RingElement::constant(x, Representation::IncompleteNTT))
+                .collect::<Vec<RingElement>>();
+            vals_over_ring
+        };
 
-    let mut lhs = {
-        let mut acc = RingElement::zero(Representation::IncompleteNTT);
-        for col in 0..batched_projected_witness.data.len() {
-            let mut temp = RingElement::zero(Representation::IncompleteNTT);
-            temp *= (
-                &batched_projected_witness.data[col],
-                &lhs_multipier_ring[col],
-            );
-            acc += &temp;
-        }
-        acc
-    };
+        let e = {
+            let mut e = RingElement::zero(Representation::Coefficients);
+            for (i, &val) in e_1_values.iter().enumerate() {
+                e.v[i as usize] = val;
+            }
+            e.from_coefficients_to_even_odd_coefficients();
+            e.from_even_odd_coefficients_to_incomplete_ntt_representation();
+            e.conjugate_in_place();
+            e
+        };
 
-    let mut rhs = {
-        let mut acc = RingElement::zero(Representation::IncompleteNTT);
-        for i in 0..image_ct.data.len() {
-            let mut temp = RingElement::zero(Representation::IncompleteNTT);
-            temp *= (&image_ct.data[i], &rhs_multipier_ring[i]);
-            acc += &temp;
-        }
-        acc *= &e;
-        acc
-    };
-    lhs.to_representation(Representation::Coefficients);
-    rhs.to_representation(Representation::Coefficients);
-    debug_assert_eq!(
-        lhs.v[0], rhs.v[0],
-        "Constant terms of LHS and RHS should match"
-    );
+        let mut lhs = {
+            let mut acc = RingElement::zero(Representation::IncompleteNTT);
+            for col in 0..batched_projected_witness.data.len() {
+                let mut temp = RingElement::zero(Representation::IncompleteNTT);
+                temp *= (
+                    &batched_projected_witness.data[col],
+                    &lhs_multipier_ring[col],
+                );
+                acc += &temp;
+            }
+            acc
+        };
+
+        let mut rhs = {
+            let mut acc = RingElement::zero(Representation::IncompleteNTT);
+            for i in 0..image_ct.data.len() {
+                let mut temp = RingElement::zero(Representation::IncompleteNTT);
+                temp *= (&image_ct.data[i], &rhs_multipier_ring[i]);
+                acc += &temp;
+            }
+            acc *= &e;
+            acc
+        };
+        lhs.to_representation(Representation::Coefficients);
+        rhs.to_representation(Representation::Coefficients);
+        debug_assert_eq!(
+            lhs.v[0], rhs.v[0],
+            "Constant terms of LHS and RHS should match"
+        );
+    }
 }

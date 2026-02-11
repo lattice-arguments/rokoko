@@ -409,372 +409,376 @@ impl<E: SumcheckElement> EvaluationSumcheckData for FakeEvaluationLinearSumcheck
         &self.result
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[test]
-fn test_linear_sumcheck() {
-    use crate::common::ring_arithmetic::RingElement;
+    #[test]
+    fn test_linear_sumcheck() {
+        use crate::common::ring_arithmetic::RingElement;
 
-    let data = vec![
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(2, Representation::IncompleteNTT),
-        RingElement::constant(3, Representation::IncompleteNTT),
-        RingElement::constant(4, Representation::IncompleteNTT),
-        RingElement::constant(5, Representation::IncompleteNTT),
-        RingElement::constant(6, Representation::IncompleteNTT),
-        RingElement::constant(7, Representation::IncompleteNTT),
-        RingElement::constant(8, Representation::IncompleteNTT),
-    ];
+        let data = vec![
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(2, Representation::IncompleteNTT),
+            RingElement::constant(3, Representation::IncompleteNTT),
+            RingElement::constant(4, Representation::IncompleteNTT),
+            RingElement::constant(5, Representation::IncompleteNTT),
+            RingElement::constant(6, Representation::IncompleteNTT),
+            RingElement::constant(7, Representation::IncompleteNTT),
+            RingElement::constant(8, Representation::IncompleteNTT),
+        ];
 
-    let mut sumcheck = LinearSumcheck::new(data.len());
-    sumcheck.load_from(&data);
+        let mut sumcheck = LinearSumcheck::new(data.len());
+        sumcheck.load_from(&data);
 
-    // Simulate three verifier challenges and ensure the running claim matches
-    // the multilinear extension evaluated at the folded point.
+        // Simulate three verifier challenges and ensure the running claim matches
+        // the multilinear extension evaluated at the folded point.
 
-    let r0 = RingElement::constant(524, Representation::IncompleteNTT);
+        let r0 = RingElement::constant(524, Representation::IncompleteNTT);
 
-    sumcheck.partial_evaluate(&r0);
+        sumcheck.partial_evaluate(&r0);
 
-    let r1 = RingElement::constant(1337, Representation::IncompleteNTT);
+        let r1 = RingElement::constant(1337, Representation::IncompleteNTT);
 
-    sumcheck.partial_evaluate(&r1);
+        sumcheck.partial_evaluate(&r1);
 
-    let r2 = RingElement::constant(42, Representation::IncompleteNTT);
+        let r2 = RingElement::constant(42, Representation::IncompleteNTT);
 
-    sumcheck.partial_evaluate(&r2);
+        sumcheck.partial_evaluate(&r2);
 
-    debug_assert!(sumcheck.data.len() == 1);
+        debug_assert!(sumcheck.data.len() == 1);
 
-    debug_assert_eq!(
-        sumcheck.data[0],
-        RingElement::constant(
-            (MOD_Q as i64
-                + 1 * (1 - 42) * (1 - 1337) * (1 - 524)
-                + 2 * 42 * (1 - 1337) * (1 - 524)
-                + 3 * (1 - 42) * 1337 * (1 - 524)
-                + 4 * 42 * 1337 * (1 - 524)
-                + 5 * (1 - 42) * (1 - 1337) * 524
-                + 6 * 42 * (1 - 1337) * 524
-                + 7 * (1 - 42) * 1337 * 524
-                + 8 * 42 * 1337 * 524) as u64,
-            Representation::IncompleteNTT
+        debug_assert_eq!(
+            sumcheck.data[0],
+            RingElement::constant(
+                (MOD_Q as i64
+                    + 1 * (1 - 42) * (1 - 1337) * (1 - 524)
+                    + 2 * 42 * (1 - 1337) * (1 - 524)
+                    + 3 * (1 - 42) * 1337 * (1 - 524)
+                    + 4 * 42 * 1337 * (1 - 524)
+                    + 5 * (1 - 42) * (1 - 1337) * 524
+                    + 6 * 42 * (1 - 1337) * 524
+                    + 7 * (1 - 42) * 1337 * 524
+                    + 8 * 42 * 1337 * 524) as u64,
+                Representation::IncompleteNTT
+            )
         )
-    )
-}
+    }
 
-#[test]
-fn test_linear_sumcheck_univariate_polynomial() {
-    use crate::common::ring_arithmetic::RingElement;
+    #[test]
+    fn test_linear_sumcheck_univariate_polynomial() {
+        use crate::common::ring_arithmetic::RingElement;
 
-    let data = vec![
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(2, Representation::IncompleteNTT),
-        RingElement::constant(3, Representation::IncompleteNTT),
-        RingElement::constant(4, Representation::IncompleteNTT),
-        RingElement::constant(5, Representation::IncompleteNTT),
-        RingElement::constant(6, Representation::IncompleteNTT),
-        RingElement::constant(7, Representation::IncompleteNTT),
-        RingElement::constant(8, Representation::IncompleteNTT),
-    ];
+        let data = vec![
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(2, Representation::IncompleteNTT),
+            RingElement::constant(3, Representation::IncompleteNTT),
+            RingElement::constant(4, Representation::IncompleteNTT),
+            RingElement::constant(5, Representation::IncompleteNTT),
+            RingElement::constant(6, Representation::IncompleteNTT),
+            RingElement::constant(7, Representation::IncompleteNTT),
+            RingElement::constant(8, Representation::IncompleteNTT),
+        ];
 
-    let mut sumcheck = LinearSumcheck::new(data.len());
-    sumcheck.load_from(&data);
+        let mut sumcheck = LinearSumcheck::new(data.len());
+        sumcheck.load_from(&data);
 
-    let mut poly = Polynomial::new(2);
+        let mut poly = Polynomial::new(2);
 
-    // First round polynomial should encode how the highest-order variable
-    // toggles between the left and right halves of the data vector.
-    sumcheck.univariate_polynomial_into(&mut poly);
+        // First round polynomial should encode how the highest-order variable
+        // toggles between the left and right halves of the data vector.
+        sumcheck.univariate_polynomial_into(&mut poly);
 
-    // poly 1 + (5 - 1) * x + 2 + (6 - 2) * x + 3 + (7 - 3) * x + 4 + (8 - 4) * x
+        // poly 1 + (5 - 1) * x + 2 + (6 - 2) * x + 3 + (7 - 3) * x + 4 + (8 - 4) * x
 
-    debug_assert_eq!(
-        poly.coefficients[0],
-        RingElement::constant(1 + 2 + 3 + 4, Representation::IncompleteNTT)
-    ); // sum of all elements
+        debug_assert_eq!(
+            poly.coefficients[0],
+            RingElement::constant(1 + 2 + 3 + 4, Representation::IncompleteNTT)
+        ); // sum of all elements
 
-    debug_assert_eq!(
-        poly.coefficients[1],
-        RingElement::constant(
-            (5 - 1) + (6 - 2) + (7 - 3) + (8 - 4),
-            Representation::IncompleteNTT
-        )
-    ); // computed manually
-}
+        debug_assert_eq!(
+            poly.coefficients[1],
+            RingElement::constant(
+                (5 - 1) + (6 - 2) + (7 - 3) + (8 - 4),
+                Representation::IncompleteNTT
+            )
+        ); // computed manually
+    }
 
-#[test]
-fn test_masked_sumcheck_indexing() {
-    use crate::common::ring_arithmetic::RingElement;
+    #[test]
+    fn test_masked_sumcheck_indexing() {
+        use crate::common::ring_arithmetic::RingElement;
 
-    let data = vec![
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(2, Representation::IncompleteNTT),
-        RingElement::constant(3, Representation::IncompleteNTT),
-        RingElement::constant(4, Representation::IncompleteNTT),
-        RingElement::constant(5, Representation::IncompleteNTT),
-        RingElement::constant(6, Representation::IncompleteNTT),
-        RingElement::constant(7, Representation::IncompleteNTT),
-        RingElement::constant(8, Representation::IncompleteNTT),
-    ];
+        let data = vec![
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(2, Representation::IncompleteNTT),
+            RingElement::constant(3, Representation::IncompleteNTT),
+            RingElement::constant(4, Representation::IncompleteNTT),
+            RingElement::constant(5, Representation::IncompleteNTT),
+            RingElement::constant(6, Representation::IncompleteNTT),
+            RingElement::constant(7, Representation::IncompleteNTT),
+            RingElement::constant(8, Representation::IncompleteNTT),
+        ];
 
-    let mut sumcheck = LinearSumcheck::new_with_prefixed_sufixed_data(data.len(), 2, 0);
-    sumcheck.load_from(&data);
+        let mut sumcheck = LinearSumcheck::new_with_prefixed_sufixed_data(data.len(), 2, 0);
+        sumcheck.load_from(&data);
 
-    // Now, the sumcheck has 2 prefixed variables, so when we index with HypercubePoint.
+        // Now, the sumcheck has 2 prefixed variables, so when we index with HypercubePoint.
 
-    let mut poly = Polynomial::new(0);
+        let mut poly = Polynomial::new(0);
 
-    sumcheck.univariate_polynomial_into(&mut poly);
+        sumcheck.univariate_polynomial_into(&mut poly);
 
-    // the first polynomial is over x_0 which is prefixed and should be ignored.
-    // Therefore, the polynomial should be a constant equal to the sum of all data points times 2.
-    // The factor of 2 comes from the fact that the sumcheck claim is has to account for dummy variables.
-    debug_assert_eq!(
-        poly.coefficients[0],
-        RingElement::constant(
-            (1 + 2 + 3 + 4 + 5 + 6 + 7 + 8) * 2,
-            Representation::IncompleteNTT
-        )
-    );
+        // the first polynomial is over x_0 which is prefixed and should be ignored.
+        // Therefore, the polynomial should be a constant equal to the sum of all data points times 2.
+        // The factor of 2 comes from the fact that the sumcheck claim is has to account for dummy variables.
+        debug_assert_eq!(
+            poly.coefficients[0],
+            RingElement::constant(
+                (1 + 2 + 3 + 4 + 5 + 6 + 7 + 8) * 2,
+                Representation::IncompleteNTT
+            )
+        );
 
-    debug_assert_eq!(
-        poly.coefficients[1],
-        RingElement::constant(0, Representation::IncompleteNTT)
-    );
+        debug_assert_eq!(
+            poly.coefficients[1],
+            RingElement::constant(0, Representation::IncompleteNTT)
+        );
 
-    debug_assert_eq!(poly.num_coefficients, 1);
+        debug_assert_eq!(poly.num_coefficients, 1);
 
-    let mut claim = poly.at_zero();
-    claim += &poly.at_one();
+        let mut claim = poly.at_zero();
+        claim += &poly.at_one();
 
-    debug_assert_eq!(
-        claim,
-        RingElement::constant(
+        debug_assert_eq!(
+            claim,
+            RingElement::constant(
+                (1 + 2 + 3 + 4 + 5 + 6 + 7 + 8) * 4,
+                Representation::IncompleteNTT,
+            )
+        );
+
+        let r0 = RingElement::constant(524, Representation::IncompleteNTT);
+
+        let new_claim = poly.at(&r0);
+
+        debug_assert_eq!(
+            new_claim,
+            RingElement::constant(
+                (1 + 2 + 3 + 4 + 5 + 6 + 7 + 8) * 2,
+                Representation::IncompleteNTT
+            )
+        );
+
+        sumcheck.partial_evaluate(&r0);
+
+        sumcheck.univariate_polynomial_into(&mut poly);
+
+        debug_assert_eq!(
+            poly.coefficients[0],
+            RingElement::constant(1 + 2 + 3 + 4 + 5 + 6 + 7 + 8, Representation::IncompleteNTT)
+        );
+
+        debug_assert_eq!(
+            poly.coefficients[1],
+            RingElement::constant(0, Representation::IncompleteNTT)
+        );
+
+        debug_assert_eq!(poly.num_coefficients, 1);
+
+        debug_assert_eq!(&poly.at_zero() + &poly.at_one(), new_claim);
+
+        let r1 = RingElement::constant(1337, Representation::IncompleteNTT);
+
+        let new_claim = poly.at(&r1);
+
+        debug_assert_eq!(
+            new_claim,
+            RingElement::constant(1 + 2 + 3 + 4 + 5 + 6 + 7 + 8, Representation::IncompleteNTT)
+        );
+
+        sumcheck.partial_evaluate(&r1);
+
+        sumcheck.univariate_polynomial_into(&mut poly);
+
+        debug_assert_eq!(
+            poly.coefficients[0],
+            RingElement::constant(1 + 2 + 3 + 4, Representation::IncompleteNTT)
+        );
+
+        debug_assert_eq!(
+            poly.coefficients[1],
+            RingElement::constant(
+                (5 - 1) + (6 - 2) + (7 - 3) + (8 - 4),
+                Representation::IncompleteNTT
+            )
+        );
+
+        debug_assert_eq!(poly.num_coefficients, 2);
+
+        debug_assert_eq!(&poly.at_zero() + &poly.at_one(), new_claim);
+
+        let r2 = RingElement::constant(42, Representation::IncompleteNTT);
+
+        let new_claim = poly.at(&r2);
+
+        sumcheck.partial_evaluate(&r2);
+
+        sumcheck.univariate_polynomial_into(&mut poly);
+
+        debug_assert_eq!(&poly.at_zero() + &poly.at_one(), new_claim);
+
+        let r3 = RingElement::constant(7, Representation::IncompleteNTT);
+
+        let new_claim = poly.at(&r3);
+
+        sumcheck.partial_evaluate(&r3);
+
+        sumcheck.univariate_polynomial_into(&mut poly);
+
+        debug_assert_eq!(&poly.at_zero() + &poly.at_one(), new_claim);
+
+        let r4 = RingElement::constant(19, Representation::IncompleteNTT);
+
+        let new_claim = poly.at(&r4);
+
+        sumcheck.partial_evaluate(&r4);
+
+        debug_assert!(sumcheck.data.len() == 1);
+
+        // now, we make a final check using r2, r3, r4
+        debug_assert_eq!(
+            sumcheck.final_evaluations(),
+            &RingElement::constant(
+                (MOD_Q as i64
+                    + 1 * (1 - 19) * (1 - 7) * (1 - 42)
+                    + 2 * 19 * (1 - 7) * (1 - 42)
+                    + 3 * (1 - 19) * 7 * (1 - 42)
+                    + 4 * 19 * 7 * (1 - 42)
+                    + 5 * (1 - 19) * (1 - 7) * 42
+                    + 6 * 19 * (1 - 7) * 42
+                    + 7 * (1 - 19) * 7 * 42
+                    + 8 * 19 * 7 * 42) as u64,
+                Representation::IncompleteNTT
+            )
+        );
+
+        debug_assert_eq!(&new_claim, sumcheck.final_evaluations());
+    }
+
+    #[test]
+    fn test_linear_sumcheck_with_suffixed_data() {
+        use crate::common::ring_arithmetic::RingElement;
+
+        let data = vec![
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(2, Representation::IncompleteNTT),
+            RingElement::constant(3, Representation::IncompleteNTT),
+            RingElement::constant(4, Representation::IncompleteNTT),
+            RingElement::constant(5, Representation::IncompleteNTT),
+            RingElement::constant(6, Representation::IncompleteNTT),
+            RingElement::constant(7, Representation::IncompleteNTT),
+            RingElement::constant(8, Representation::IncompleteNTT),
+        ];
+
+        // we head with a vector that has 2 suffixed variables, i.e. (1,1,1,1, 2,2,2,2, 3,3,3,3, 4,4,4,4, 5,5,5,5, 6,6,6,6, 7,7,7,7, 8,8,8,8)
+
+        let mut sumcheck = LinearSumcheck::new_with_prefixed_sufixed_data(data.len(), 0, 2);
+        sumcheck.load_from(&data);
+
+        // Now, the sumcheck has 2 suffixed variables, so when we index with HypercubePoint.
+
+        let mut poly = Polynomial::new(0);
+
+        sumcheck.univariate_polynomial_into(&mut poly);
+
+        let claim = RingElement::constant(
             (1 + 2 + 3 + 4 + 5 + 6 + 7 + 8) * 4,
             Representation::IncompleteNTT,
-        )
-    );
+        );
 
-    let r0 = RingElement::constant(524, Representation::IncompleteNTT);
-
-    let new_claim = poly.at(&r0);
-
-    debug_assert_eq!(
-        new_claim,
-        RingElement::constant(
-            (1 + 2 + 3 + 4 + 5 + 6 + 7 + 8) * 2,
-            Representation::IncompleteNTT
-        )
-    );
-
-    sumcheck.partial_evaluate(&r0);
-
-    sumcheck.univariate_polynomial_into(&mut poly);
-
-    debug_assert_eq!(
-        poly.coefficients[0],
-        RingElement::constant(1 + 2 + 3 + 4 + 5 + 6 + 7 + 8, Representation::IncompleteNTT)
-    );
-
-    debug_assert_eq!(
-        poly.coefficients[1],
-        RingElement::constant(0, Representation::IncompleteNTT)
-    );
-
-    debug_assert_eq!(poly.num_coefficients, 1);
-
-    debug_assert_eq!(&poly.at_zero() + &poly.at_one(), new_claim);
-
-    let r1 = RingElement::constant(1337, Representation::IncompleteNTT);
-
-    let new_claim = poly.at(&r1);
-
-    debug_assert_eq!(
-        new_claim,
-        RingElement::constant(1 + 2 + 3 + 4 + 5 + 6 + 7 + 8, Representation::IncompleteNTT)
-    );
-
-    sumcheck.partial_evaluate(&r1);
-
-    sumcheck.univariate_polynomial_into(&mut poly);
-
-    debug_assert_eq!(
-        poly.coefficients[0],
-        RingElement::constant(1 + 2 + 3 + 4, Representation::IncompleteNTT)
-    );
-
-    debug_assert_eq!(
-        poly.coefficients[1],
-        RingElement::constant(
-            (5 - 1) + (6 - 2) + (7 - 3) + (8 - 4),
-            Representation::IncompleteNTT
-        )
-    );
-
-    debug_assert_eq!(poly.num_coefficients, 2);
-
-    debug_assert_eq!(&poly.at_zero() + &poly.at_one(), new_claim);
-
-    let r2 = RingElement::constant(42, Representation::IncompleteNTT);
-
-    let new_claim = poly.at(&r2);
-
-    sumcheck.partial_evaluate(&r2);
-
-    sumcheck.univariate_polynomial_into(&mut poly);
-
-    debug_assert_eq!(&poly.at_zero() + &poly.at_one(), new_claim);
-
-    let r3 = RingElement::constant(7, Representation::IncompleteNTT);
-
-    let new_claim = poly.at(&r3);
-
-    sumcheck.partial_evaluate(&r3);
-
-    sumcheck.univariate_polynomial_into(&mut poly);
-
-    debug_assert_eq!(&poly.at_zero() + &poly.at_one(), new_claim);
-
-    let r4 = RingElement::constant(19, Representation::IncompleteNTT);
-
-    let new_claim = poly.at(&r4);
-
-    sumcheck.partial_evaluate(&r4);
-
-    debug_assert!(sumcheck.data.len() == 1);
-
-    // now, we make a final check using r2, r3, r4
-    debug_assert_eq!(
-        sumcheck.final_evaluations(),
-        &RingElement::constant(
-            (MOD_Q as i64
-                + 1 * (1 - 19) * (1 - 7) * (1 - 42)
-                + 2 * 19 * (1 - 7) * (1 - 42)
-                + 3 * (1 - 19) * 7 * (1 - 42)
-                + 4 * 19 * 7 * (1 - 42)
-                + 5 * (1 - 19) * (1 - 7) * 42
-                + 6 * 19 * (1 - 7) * 42
-                + 7 * (1 - 19) * 7 * 42
-                + 8 * 19 * 7 * 42) as u64,
-            Representation::IncompleteNTT
-        )
-    );
-
-    debug_assert_eq!(&new_claim, sumcheck.final_evaluations());
-}
-
-#[test]
-fn test_linear_sumcheck_with_suffixed_data() {
-    use crate::common::ring_arithmetic::RingElement;
-
-    let data = vec![
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(2, Representation::IncompleteNTT),
-        RingElement::constant(3, Representation::IncompleteNTT),
-        RingElement::constant(4, Representation::IncompleteNTT),
-        RingElement::constant(5, Representation::IncompleteNTT),
-        RingElement::constant(6, Representation::IncompleteNTT),
-        RingElement::constant(7, Representation::IncompleteNTT),
-        RingElement::constant(8, Representation::IncompleteNTT),
-    ];
-
-    // we head with a vector that has 2 suffixed variables, i.e. (1,1,1,1, 2,2,2,2, 3,3,3,3, 4,4,4,4, 5,5,5,5, 6,6,6,6, 7,7,7,7, 8,8,8,8)
-
-    let mut sumcheck = LinearSumcheck::new_with_prefixed_sufixed_data(data.len(), 0, 2);
-    sumcheck.load_from(&data);
-
-    // Now, the sumcheck has 2 suffixed variables, so when we index with HypercubePoint.
-
-    let mut poly = Polynomial::new(0);
-
-    sumcheck.univariate_polynomial_into(&mut poly);
-
-    let claim = RingElement::constant(
-        (1 + 2 + 3 + 4 + 5 + 6 + 7 + 8) * 4,
-        Representation::IncompleteNTT,
-    );
-
-    debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
-}
-
-#[test]
-fn test_evaluation_sumcheck() {
-    let data = vec![
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(2, Representation::IncompleteNTT),
-        RingElement::constant(3, Representation::IncompleteNTT),
-        RingElement::constant(4, Representation::IncompleteNTT),
-        RingElement::constant(5, Representation::IncompleteNTT),
-        RingElement::constant(6, Representation::IncompleteNTT),
-        RingElement::constant(7, Representation::IncompleteNTT),
-        RingElement::constant(8, Representation::IncompleteNTT),
-    ];
-
-    let mut evaluation_sumcheck =
-        BasicEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(8, 3, 3);
-
-    evaluation_sumcheck.load_from(&data);
-
-    let mut point = vec![
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(2, Representation::IncompleteNTT),
-        RingElement::constant(5, Representation::IncompleteNTT),
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(6, Representation::IncompleteNTT),
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(3, Representation::IncompleteNTT),
-        RingElement::constant(4, Representation::IncompleteNTT),
-    ];
-
-    let mut ref_sumcheck = LinearSumcheck::new_with_prefixed_sufixed_data(8, 3, 3);
-    ref_sumcheck.load_from(&data);
-
-    for r in point.iter() {
-        ref_sumcheck.partial_evaluate(r);
+        debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
     }
-    let expected_evaluation = ref_sumcheck.final_evaluations();
 
-    debug_assert_eq!(evaluation_sumcheck.evaluate(&point), expected_evaluation);
-}
+    #[test]
+    fn test_evaluation_sumcheck() {
+        let data = vec![
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(2, Representation::IncompleteNTT),
+            RingElement::constant(3, Representation::IncompleteNTT),
+            RingElement::constant(4, Representation::IncompleteNTT),
+            RingElement::constant(5, Representation::IncompleteNTT),
+            RingElement::constant(6, Representation::IncompleteNTT),
+            RingElement::constant(7, Representation::IncompleteNTT),
+            RingElement::constant(8, Representation::IncompleteNTT),
+        ];
 
-#[test]
-fn test_structured_row_evaluation_sumcheck() {
-    // Create a structured row with 3 tensor layers
-    // This represents 2^3 = 8 data points
-    let tensor_layers = vec![
-        RingElement::random(Representation::IncompleteNTT),
-        RingElement::random(Representation::IncompleteNTT),
-        RingElement::random(Representation::IncompleteNTT),
-    ];
+        let mut evaluation_sumcheck =
+            BasicEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(8, 3, 3);
 
-    let structured_row = StructuredRow { tensor_layers };
+        evaluation_sumcheck.load_from(&data);
 
-    let mut evaluation_sumcheck =
-        StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(8, 2, 3);
+        let point = vec![
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(2, Representation::IncompleteNTT),
+            RingElement::constant(5, Representation::IncompleteNTT),
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(6, Representation::IncompleteNTT),
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(3, Representation::IncompleteNTT),
+            RingElement::constant(4, Representation::IncompleteNTT),
+        ];
 
-    evaluation_sumcheck.load_from(structured_row.clone());
+        let mut ref_sumcheck = LinearSumcheck::new_with_prefixed_sufixed_data(8, 3, 3);
+        ref_sumcheck.load_from(&data);
 
-    let mut point = vec![
-        RingElement::random(Representation::IncompleteNTT), // prefix 0
-        RingElement::random(Representation::IncompleteNTT), // prefix 1
-        RingElement::random(Representation::IncompleteNTT), // data 0
-        RingElement::random(Representation::IncompleteNTT), // data 1
-        RingElement::random(Representation::IncompleteNTT), // data 2
-        RingElement::random(Representation::IncompleteNTT), // suffix 0
-        RingElement::random(Representation::IncompleteNTT), // suffix 1
-        RingElement::random(Representation::IncompleteNTT), // suffix 2
-    ];
+        for r in point.iter() {
+            ref_sumcheck.partial_evaluate(r);
+        }
+        let expected_evaluation = ref_sumcheck.final_evaluations();
 
-    let mut ref_sumcheck = LinearSumcheck::new_with_prefixed_sufixed_data(8, 2, 3);
-
-    let prepared_data = PreprocessedRow::from_structured_row(&structured_row);
-
-    ref_sumcheck.load_from(&prepared_data.preprocessed_row);
-
-    for r in point.iter() {
-        ref_sumcheck.partial_evaluate(r);
+        debug_assert_eq!(evaluation_sumcheck.evaluate(&point), expected_evaluation);
     }
-    let expected_evaluation = ref_sumcheck.final_evaluations();
-    debug_assert_eq!(evaluation_sumcheck.evaluate(&point), expected_evaluation);
+
+    #[test]
+    fn test_structured_row_evaluation_sumcheck() {
+        // Create a structured row with 3 tensor layers
+        // This represents 2^3 = 8 data points
+        let tensor_layers = vec![
+            RingElement::random(Representation::IncompleteNTT),
+            RingElement::random(Representation::IncompleteNTT),
+            RingElement::random(Representation::IncompleteNTT),
+        ];
+
+        let structured_row = StructuredRow { tensor_layers };
+
+        let mut evaluation_sumcheck =
+            StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(8, 2, 3);
+
+        evaluation_sumcheck.load_from(structured_row.clone());
+
+        let point = vec![
+            RingElement::random(Representation::IncompleteNTT), // prefix 0
+            RingElement::random(Representation::IncompleteNTT), // prefix 1
+            RingElement::random(Representation::IncompleteNTT), // data 0
+            RingElement::random(Representation::IncompleteNTT), // data 1
+            RingElement::random(Representation::IncompleteNTT), // data 2
+            RingElement::random(Representation::IncompleteNTT), // suffix 0
+            RingElement::random(Representation::IncompleteNTT), // suffix 1
+            RingElement::random(Representation::IncompleteNTT), // suffix 2
+        ];
+
+        let mut ref_sumcheck = LinearSumcheck::new_with_prefixed_sufixed_data(8, 2, 3);
+
+        let prepared_data = PreprocessedRow::from_structured_row(&structured_row);
+
+        ref_sumcheck.load_from(&prepared_data.preprocessed_row);
+
+        for r in point.iter() {
+            ref_sumcheck.partial_evaluate(r);
+        }
+        let expected_evaluation = ref_sumcheck.final_evaluations();
+        debug_assert_eq!(evaluation_sumcheck.evaluate(&point), expected_evaluation);
+    }
 }

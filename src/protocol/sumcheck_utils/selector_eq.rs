@@ -167,149 +167,6 @@ impl<E: SumcheckElement> SumcheckBaseData for SelectorEq<E> {
     }
 }
 
-#[test]
-fn test_selector_eq_basic() {
-    let selector = 0b10;
-    let selector_variable_count = 2;
-    let total_variable_count = 4;
-
-    // this can be viewed as a sumcheck over the vector (0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0)
-    let mut sumcheck =
-        SelectorEq::<RingElement>::new(selector, selector_variable_count, total_variable_count);
-    let mut polynomial = Polynomial::new(2);
-
-    // Irrelevant points should produce an identically-zero polynomial.
-    // let result =
-    //     sumcheck.univariate_polynomial_at_point_into(HypercubePoint::new(0b100), &mut polynomial);
-
-    // 0b0100 and 0b1100 do not match the selector in the higher order bits, so the polynomial is identically zero
-    debug_assert_eq!(
-        sumcheck.is_univariate_polynomial_zero_at_point(HypercubePoint::new(0b100)),
-        true
-    );
-
-    // let result =
-    // sumcheck.univariate_polynomial_at_point_into(HypercubePoint::new(0b101), &mut polynomial);
-
-    // 0b0101 and 0b1101 do not match the selector in the higher order bits, so the polynomial is identically zero
-    debug_assert_eq!(
-        sumcheck.is_univariate_polynomial_zero_at_point(HypercubePoint::new(0b101)),
-        true
-    );
-
-    let result =
-        sumcheck.univariate_polynomial_at_point_into(HypercubePoint::new(0b010), &mut polynomial);
-
-    // 0b1010 matches the selector in the higher order bits
-    debug_assert_eq!(
-        sumcheck.is_univariate_polynomial_zero_at_point(HypercubePoint::new(0b010)),
-        false
-    );
-
-    // as selector = 0b10, the polynomial should be x as it's 1 when the variable is 1, and 0 when the variable is 0
-    debug_assert_eq!(
-        polynomial.coefficients[0],
-        RingElement::zero(Representation::IncompleteNTT)
-    );
-    debug_assert_eq!(
-        polynomial.coefficients[1],
-        RingElement::one(Representation::IncompleteNTT)
-    );
-
-    // There are exactly four satisfying assignments for the selector bits.
-    let mut claim = RingElement::constant(4, Representation::IncompleteNTT);
-
-    sumcheck.univariate_polynomial_into(&mut polynomial);
-
-    debug_assert_eq!(&polynomial.at_zero() + &polynomial.at_one(), claim);
-
-    let r0 = RingElement::constant(53, Representation::IncompleteNTT);
-
-    // Folding the highest bit turns the indicator vector into four copies of r0.
-    sumcheck.partial_evaluate(&r0);
-
-    claim = polynomial.at(&r0);
-
-    // (0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0)
-    // changes into (r0, r0, r0, r0, 0, 0, 0, 0) after partial evaluation at r0
-    debug_assert_eq!(
-        claim,
-        RingElement::constant(4 * 53, Representation::IncompleteNTT)
-    );
-
-    sumcheck.univariate_polynomial_into(&mut polynomial);
-
-    debug_assert_eq!(&polynomial.at_zero() + &polynomial.at_one(), claim);
-
-    let r1 = RingElement::constant(73, Representation::IncompleteNTT);
-
-    sumcheck.partial_evaluate(&r1);
-
-    claim = polynomial.at(&r1);
-
-    // (r0, r0, r0, r0, 0, 0, 0, 0) // at 0 it's r0, at 1 it's 0 so the funtion is r0 * (1 - x)
-    // changes into (r0 * (1 - r1), r0 * (1 - r1), r0 * (1 - r1), r0 * (1 - r1)) after partial evaluation at r1
-
-    debug_assert_eq!(
-        claim,
-        RingElement::constant(
-            ((4 * 53 * (MOD_Q as i64 + 1 - 73)) as u64) % MOD_Q,
-            Representation::IncompleteNTT
-        )
-    );
-
-    sumcheck.univariate_polynomial_into(&mut polynomial);
-
-    debug_assert_eq!(&polynomial.at_zero() + &polynomial.at_one(), claim);
-
-    debug_assert_eq!(
-        polynomial.coefficients[1],
-        RingElement::zero(Representation::IncompleteNTT)
-    );
-    // after partial evaluation at r1, the function is constant, so the coeff of x is 0
-
-    let r2 = RingElement::constant(19, Representation::IncompleteNTT);
-
-    sumcheck.partial_evaluate(&r2);
-
-    claim = polynomial.at(&r2);
-
-    // (r0 * (1 - r1), r0 * (1 - r1), r0 * (1 - r1), r0 * (1 - r1))
-    // changes into (r0 * (1 - r1), r0 * (1 - r1)) after partial evaluation at r2 (as the function is constant and the variable is ignored)
-
-    debug_assert_eq!(
-        claim,
-        RingElement::constant(
-            ((2 * 53 * (MOD_Q as i64 + 1 - 73)) as u64) % MOD_Q,
-            Representation::IncompleteNTT
-        )
-    );
-
-    sumcheck.univariate_polynomial_into(&mut polynomial);
-
-    debug_assert_eq!(&polynomial.at_zero() + &polynomial.at_one(), claim);
-
-    let r3 = RingElement::constant(743, Representation::IncompleteNTT);
-
-    sumcheck.partial_evaluate(&r3);
-
-    claim = polynomial.at(&r3);
-
-    // (r0 * (1 - r1), r0 * (1 - r1))
-    // changes into (r0 * (1 - r1)) after partial evaluation at r3 (as the function is constant and the variable is ignored)
-
-    debug_assert_eq!(
-        claim,
-        RingElement::constant(
-            ((53 * (MOD_Q as i64 + 1 - 73)) as u64) % MOD_Q,
-            Representation::IncompleteNTT
-        )
-    );
-
-    // After exhausting all variables, the stored claim should match the verifier's expectation.
-    debug_assert_eq!(sumcheck.final_evaluations(), &claim);
-}
-
 pub struct SelectorEqEvaluation {
     selector: usize,
     selector_variable_count: usize,
@@ -378,31 +235,179 @@ impl EvaluationSumcheckData for SelectorEqEvaluation {
     }
 }
 
-#[test]
-fn test_selector_eq_evaluation() {
-    use crate::common::ring_arithmetic::RingElement;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let selector = 0b10;
-    let selector_variable_count = 2;
-    let total_variable_count = 4;
+    #[test]
+    fn test_selector_eq_basic() {
+        let selector = 0b10;
+        let selector_variable_count = 2;
+        let total_variable_count = 4;
 
-    let mut evaluation_sumcheck =
-        SelectorEqEvaluation::new(selector, selector_variable_count, total_variable_count);
+        // this can be viewed as a sumcheck over the vector (0,0,0,0,0,0,0,0,1,1,1,1,0,0,0,0)
+        let mut sumcheck =
+            SelectorEq::<RingElement>::new(selector, selector_variable_count, total_variable_count);
+        let mut polynomial = Polynomial::new(2);
 
-    let point = vec![
-        RingElement::constant(53, Representation::IncompleteNTT), // var 0
-        RingElement::constant(73, Representation::IncompleteNTT), // var 1
-        RingElement::constant(19, Representation::IncompleteNTT), // var 2
-        RingElement::constant(743, Representation::IncompleteNTT), // var 3
-    ];
+        // Irrelevant points should produce an identically-zero polynomial.
+        // let result =
+        //     sumcheck.univariate_polynomial_at_point_into(HypercubePoint::new(0b100), &mut polynomial);
 
-    let mut ref_sumcheck =
-        SelectorEq::<RingElement>::new(selector, selector_variable_count, total_variable_count);
+        // 0b0100 and 0b1100 do not match the selector in the higher order bits, so the polynomial is identically zero
+        debug_assert_eq!(
+            sumcheck.is_univariate_polynomial_zero_at_point(HypercubePoint::new(0b100)),
+            true
+        );
 
-    for r in point.iter() {
-        ref_sumcheck.partial_evaluate(r);
+        // let result =
+        // sumcheck.univariate_polynomial_at_point_into(HypercubePoint::new(0b101), &mut polynomial);
+
+        // 0b0101 and 0b1101 do not match the selector in the higher order bits, so the polynomial is identically zero
+        debug_assert_eq!(
+            sumcheck.is_univariate_polynomial_zero_at_point(HypercubePoint::new(0b101)),
+            true
+        );
+
+        let _result = sumcheck
+            .univariate_polynomial_at_point_into(HypercubePoint::new(0b010), &mut polynomial);
+
+        // 0b1010 matches the selector in the higher order bits
+        debug_assert_eq!(
+            sumcheck.is_univariate_polynomial_zero_at_point(HypercubePoint::new(0b010)),
+            false
+        );
+
+        // as selector = 0b10, the polynomial should be x as it's 1 when the variable is 1, and 0 when the variable is 0
+        debug_assert_eq!(
+            polynomial.coefficients[0],
+            RingElement::zero(Representation::IncompleteNTT)
+        );
+        debug_assert_eq!(
+            polynomial.coefficients[1],
+            RingElement::one(Representation::IncompleteNTT)
+        );
+
+        // There are exactly four satisfying assignments for the selector bits.
+        let mut claim = RingElement::constant(4, Representation::IncompleteNTT);
+
+        sumcheck.univariate_polynomial_into(&mut polynomial);
+
+        debug_assert_eq!(&polynomial.at_zero() + &polynomial.at_one(), claim);
+
+        let r0 = RingElement::constant(53, Representation::IncompleteNTT);
+
+        // Folding the highest bit turns the indicator vector into four copies of r0.
+        sumcheck.partial_evaluate(&r0);
+
+        claim = polynomial.at(&r0);
+
+        // (0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0)
+        // changes into (r0, r0, r0, r0, 0, 0, 0, 0) after partial evaluation at r0
+        debug_assert_eq!(
+            claim,
+            RingElement::constant(4 * 53, Representation::IncompleteNTT)
+        );
+
+        sumcheck.univariate_polynomial_into(&mut polynomial);
+
+        debug_assert_eq!(&polynomial.at_zero() + &polynomial.at_one(), claim);
+
+        let r1 = RingElement::constant(73, Representation::IncompleteNTT);
+
+        sumcheck.partial_evaluate(&r1);
+
+        claim = polynomial.at(&r1);
+
+        // (r0, r0, r0, r0, 0, 0, 0, 0) // at 0 it's r0, at 1 it's 0 so the funtion is r0 * (1 - x)
+        // changes into (r0 * (1 - r1), r0 * (1 - r1), r0 * (1 - r1), r0 * (1 - r1)) after partial evaluation at r1
+
+        debug_assert_eq!(
+            claim,
+            RingElement::constant(
+                ((4 * 53 * (MOD_Q as i64 + 1 - 73)) as u64) % MOD_Q,
+                Representation::IncompleteNTT
+            )
+        );
+
+        sumcheck.univariate_polynomial_into(&mut polynomial);
+
+        debug_assert_eq!(&polynomial.at_zero() + &polynomial.at_one(), claim);
+
+        debug_assert_eq!(
+            polynomial.coefficients[1],
+            RingElement::zero(Representation::IncompleteNTT)
+        );
+        // after partial evaluation at r1, the function is constant, so the coeff of x is 0
+
+        let r2 = RingElement::constant(19, Representation::IncompleteNTT);
+
+        sumcheck.partial_evaluate(&r2);
+
+        claim = polynomial.at(&r2);
+
+        // (r0 * (1 - r1), r0 * (1 - r1), r0 * (1 - r1), r0 * (1 - r1))
+        // changes into (r0 * (1 - r1), r0 * (1 - r1)) after partial evaluation at r2 (as the function is constant and the variable is ignored)
+
+        debug_assert_eq!(
+            claim,
+            RingElement::constant(
+                ((2 * 53 * (MOD_Q as i64 + 1 - 73)) as u64) % MOD_Q,
+                Representation::IncompleteNTT
+            )
+        );
+
+        sumcheck.univariate_polynomial_into(&mut polynomial);
+
+        debug_assert_eq!(&polynomial.at_zero() + &polynomial.at_one(), claim);
+
+        let r3 = RingElement::constant(743, Representation::IncompleteNTT);
+
+        sumcheck.partial_evaluate(&r3);
+
+        claim = polynomial.at(&r3);
+
+        // (r0 * (1 - r1), r0 * (1 - r1))
+        // changes into (r0 * (1 - r1)) after partial evaluation at r3 (as the function is constant and the variable is ignored)
+
+        debug_assert_eq!(
+            claim,
+            RingElement::constant(
+                ((53 * (MOD_Q as i64 + 1 - 73)) as u64) % MOD_Q,
+                Representation::IncompleteNTT
+            )
+        );
+
+        // After exhausting all variables, the stored claim should match the verifier's expectation.
+        debug_assert_eq!(sumcheck.final_evaluations(), &claim);
     }
-    let expected_evaluation = ref_sumcheck.final_evaluations();
 
-    debug_assert_eq!(evaluation_sumcheck.evaluate(&point), expected_evaluation);
+    #[test]
+    fn test_selector_eq_evaluation() {
+        use crate::common::ring_arithmetic::RingElement;
+
+        let selector = 0b10;
+        let selector_variable_count = 2;
+        let total_variable_count = 4;
+
+        let mut evaluation_sumcheck =
+            SelectorEqEvaluation::new(selector, selector_variable_count, total_variable_count);
+
+        let point = vec![
+            RingElement::constant(53, Representation::IncompleteNTT), // var 0
+            RingElement::constant(73, Representation::IncompleteNTT), // var 1
+            RingElement::constant(19, Representation::IncompleteNTT), // var 2
+            RingElement::constant(743, Representation::IncompleteNTT), // var 3
+        ];
+
+        let mut ref_sumcheck =
+            SelectorEq::<RingElement>::new(selector, selector_variable_count, total_variable_count);
+
+        for r in point.iter() {
+            ref_sumcheck.partial_evaluate(r);
+        }
+        let expected_evaluation = ref_sumcheck.final_evaluations();
+
+        debug_assert_eq!(evaluation_sumcheck.evaluate(&point), expected_evaluation);
+    }
 }

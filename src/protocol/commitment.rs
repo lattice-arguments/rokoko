@@ -12,9 +12,6 @@ use crate::{
     },
 };
 
-#[cfg(test)]
-use crate::common::{config::MOD_Q, structured_row::PreprocessedRow};
-
 pub type BasicCommitment = HorizontallyAlignedMatrix<RingElement>;
 
 // precompute auxiliary witness stored as i16 faster type 0 projections
@@ -152,171 +149,178 @@ pub fn recursive_commit(
     }
 }
 
-#[test]
-fn test_recursive_commit() {
-    let crs = CRS::gen_crs(256, 2);
-    let data = vec![
-        RingElement::all(37, Representation::IncompleteNTT),
-        RingElement::all(36, Representation::IncompleteNTT),
-        RingElement::all(37, Representation::IncompleteNTT),
-        RingElement::all(36, Representation::IncompleteNTT),
-        RingElement::all(37, Representation::IncompleteNTT),
-        RingElement::all(36, Representation::IncompleteNTT),
-        RingElement::all(37, Representation::IncompleteNTT),
-        RingElement::all(36, Representation::IncompleteNTT),
-    ];
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::config::MOD_Q;
+    use crate::common::structured_row::PreprocessedRow;
 
-    let config = RecursionConfig {
-        decomposition_base_log: 3, // base 8
-        decomposition_chunks: 4,
-        rank: 2,
-        prefix: Prefix {
-            prefix: 0,
-            length: 0,
-        },
-        next: None,
-    };
+    #[test]
+    fn test_recursive_commit() {
+        let crs = CRS::gen_crs(256, 2);
+        let data = vec![
+            RingElement::all(37, Representation::IncompleteNTT),
+            RingElement::all(36, Representation::IncompleteNTT),
+            RingElement::all(37, Representation::IncompleteNTT),
+            RingElement::all(36, Representation::IncompleteNTT),
+            RingElement::all(37, Representation::IncompleteNTT),
+            RingElement::all(36, Representation::IncompleteNTT),
+            RingElement::all(37, Representation::IncompleteNTT),
+            RingElement::all(36, Representation::IncompleteNTT),
+        ];
 
-    let recursive_commitment = recursive_commit(&crs, &config, &data);
+        let config = RecursionConfig {
+            decomposition_base_log: 3, // base 8
+            decomposition_chunks: 4,
+            rank: 2,
+            prefix: Prefix {
+                prefix: 0,
+                length: 0,
+            },
+            next: None,
+        };
 
-    // 8 inputs × 4 chunks each = 32 decomposed elements
-    debug_assert_eq!(recursive_commitment.committed_data.len(), 32);
-    // rank = 2 → 2 commitment elements
-    debug_assert_eq!(recursive_commitment.commitment.len(), 2);
+        let recursive_commitment = recursive_commit(&crs, &config, &data);
 
-    // Balanced decomposition of 37 with base_log=3 (b=8), radix=4:
-    //   k = (b/2) * (1 + b + b² + b³) = 4 * (1 + 8 + 64 + 512) = 2340
-    //   37 + k = 2377 → base-8 digits: [1, 1, 5, 4]
-    //   balanced (subtract b/2 = 4): [-3, -3, 1, 0]
-    debug_assert_eq!(
-        recursive_commitment.committed_data[0],
-        RingElement::all(MOD_Q - 3, Representation::IncompleteNTT)
-    );
-    debug_assert_eq!(
-        recursive_commitment.committed_data[1],
-        RingElement::all(MOD_Q - 3, Representation::IncompleteNTT)
-    );
-    debug_assert_eq!(
-        recursive_commitment.committed_data[2],
-        RingElement::all(1, Representation::IncompleteNTT)
-    );
-    debug_assert_eq!(
-        recursive_commitment.committed_data[3],
-        RingElement::all(0, Representation::IncompleteNTT)
-    );
+        // 8 inputs × 4 chunks each = 32 decomposed elements
+        debug_assert_eq!(recursive_commitment.committed_data.len(), 32);
+        // rank = 2 → 2 commitment elements
+        debug_assert_eq!(recursive_commitment.commitment.len(), 2);
 
-    // Balanced decomposition of 36:
-    //   36 + k = 2376 → base-8 digits: [0, 1, 5, 4]
-    //   balanced: [-4, -3, 1, 0]
-    debug_assert_eq!(
-        recursive_commitment.committed_data[4],
-        RingElement::all(MOD_Q - 4, Representation::IncompleteNTT)
-    );
-    debug_assert_eq!(
-        recursive_commitment.committed_data[5],
-        RingElement::all(MOD_Q - 3, Representation::IncompleteNTT)
-    );
-    debug_assert_eq!(
-        recursive_commitment.committed_data[6],
-        RingElement::all(1, Representation::IncompleteNTT)
-    );
-    debug_assert_eq!(
-        recursive_commitment.committed_data[7],
-        RingElement::all(0, Representation::IncompleteNTT)
-    );
-    debug_assert!(recursive_commitment.next.is_none());
-}
+        // Balanced decomposition of 37 with base_log=3 (b=8), radix=4:
+        //   k = (b/2) * (1 + b + b² + b³) = 4 * (1 + 8 + 64 + 512) = 2340
+        //   37 + k = 2377 → base-8 digits: [1, 1, 5, 4]
+        //   balanced (subtract b/2 = 4): [-3, -3, 1, 0]
+        debug_assert_eq!(
+            recursive_commitment.committed_data[0],
+            RingElement::all(MOD_Q - 3, Representation::IncompleteNTT)
+        );
+        debug_assert_eq!(
+            recursive_commitment.committed_data[1],
+            RingElement::all(MOD_Q - 3, Representation::IncompleteNTT)
+        );
+        debug_assert_eq!(
+            recursive_commitment.committed_data[2],
+            RingElement::all(1, Representation::IncompleteNTT)
+        );
+        debug_assert_eq!(
+            recursive_commitment.committed_data[3],
+            RingElement::all(0, Representation::IncompleteNTT)
+        );
 
-#[test]
-fn test_commitment_computation() {
-    let ck: CK = vec![
-        PreprocessedRow {
-            preprocessed_row: vec![
+        // Balanced decomposition of 36:
+        //   36 + k = 2376 → base-8 digits: [0, 1, 5, 4]
+        //   balanced: [-4, -3, 1, 0]
+        debug_assert_eq!(
+            recursive_commitment.committed_data[4],
+            RingElement::all(MOD_Q - 4, Representation::IncompleteNTT)
+        );
+        debug_assert_eq!(
+            recursive_commitment.committed_data[5],
+            RingElement::all(MOD_Q - 3, Representation::IncompleteNTT)
+        );
+        debug_assert_eq!(
+            recursive_commitment.committed_data[6],
+            RingElement::all(1, Representation::IncompleteNTT)
+        );
+        debug_assert_eq!(
+            recursive_commitment.committed_data[7],
+            RingElement::all(0, Representation::IncompleteNTT)
+        );
+        debug_assert!(recursive_commitment.next.is_none());
+    }
+
+    #[test]
+    fn test_commitment_computation() {
+        let ck: CK = vec![
+            PreprocessedRow {
+                preprocessed_row: vec![
+                    RingElement::constant(1, Representation::IncompleteNTT),
+                    RingElement::constant(2, Representation::IncompleteNTT),
+                    RingElement::constant(4, Representation::IncompleteNTT),
+                    RingElement::constant(8, Representation::IncompleteNTT),
+                    RingElement::constant(16, Representation::IncompleteNTT),
+                    RingElement::constant(32, Representation::IncompleteNTT),
+                    RingElement::constant(64, Representation::IncompleteNTT),
+                    RingElement::constant(128, Representation::IncompleteNTT),
+                ],
+                // structured_row: StructuredRow {
+                //     tensor_layers: vec![], // incorrect but not used here
+                // },
+            },
+            PreprocessedRow {
+                preprocessed_row: vec![
+                    RingElement::constant(1, Representation::IncompleteNTT),
+                    RingElement::constant(4, Representation::IncompleteNTT),
+                    RingElement::constant(16, Representation::IncompleteNTT),
+                    RingElement::constant(64, Representation::IncompleteNTT),
+                    RingElement::constant(256, Representation::IncompleteNTT),
+                    RingElement::constant(1024, Representation::IncompleteNTT),
+                    RingElement::constant(4096, Representation::IncompleteNTT),
+                    RingElement::constant(16384, Representation::IncompleteNTT),
+                ],
+                // structured_row: StructuredRow {
+                //     tensor_layers: vec![], // incorrect but not used here
+                // },
+            },
+        ];
+
+        let witness = VerticallyAlignedMatrix {
+            data: vec![
                 RingElement::constant(1, Representation::IncompleteNTT),
                 RingElement::constant(2, Representation::IncompleteNTT),
+                RingElement::constant(3, Representation::IncompleteNTT),
                 RingElement::constant(4, Representation::IncompleteNTT),
+                RingElement::constant(5, Representation::IncompleteNTT),
+                RingElement::constant(6, Representation::IncompleteNTT),
+                RingElement::constant(7, Representation::IncompleteNTT),
                 RingElement::constant(8, Representation::IncompleteNTT),
+                RingElement::constant(9, Representation::IncompleteNTT),
+                RingElement::constant(10, Representation::IncompleteNTT),
+                RingElement::constant(11, Representation::IncompleteNTT),
+                RingElement::constant(12, Representation::IncompleteNTT),
+                RingElement::constant(13, Representation::IncompleteNTT),
+                RingElement::constant(14, Representation::IncompleteNTT),
+                RingElement::constant(15, Representation::IncompleteNTT),
                 RingElement::constant(16, Representation::IncompleteNTT),
-                RingElement::constant(32, Representation::IncompleteNTT),
-                RingElement::constant(64, Representation::IncompleteNTT),
-                RingElement::constant(128, Representation::IncompleteNTT),
             ],
-            // structured_row: StructuredRow {
-            //     tensor_layers: vec![], // incorrect but not used here
-            // },
-        },
-        PreprocessedRow {
-            preprocessed_row: vec![
-                RingElement::constant(1, Representation::IncompleteNTT),
-                RingElement::constant(4, Representation::IncompleteNTT),
-                RingElement::constant(16, Representation::IncompleteNTT),
-                RingElement::constant(64, Representation::IncompleteNTT),
-                RingElement::constant(256, Representation::IncompleteNTT),
-                RingElement::constant(1024, Representation::IncompleteNTT),
-                RingElement::constant(4096, Representation::IncompleteNTT),
-                RingElement::constant(16384, Representation::IncompleteNTT),
-            ],
-            // structured_row: StructuredRow {
-            //     tensor_layers: vec![], // incorrect but not used here
-            // },
-        },
-    ];
+            width: 2,
+            height: 8,
+            used_cols: 2,
+        };
 
-    let witness = VerticallyAlignedMatrix {
-        data: vec![
-            RingElement::constant(1, Representation::IncompleteNTT),
-            RingElement::constant(2, Representation::IncompleteNTT),
-            RingElement::constant(3, Representation::IncompleteNTT),
-            RingElement::constant(4, Representation::IncompleteNTT),
-            RingElement::constant(5, Representation::IncompleteNTT),
-            RingElement::constant(6, Representation::IncompleteNTT),
-            RingElement::constant(7, Representation::IncompleteNTT),
-            RingElement::constant(8, Representation::IncompleteNTT),
-            RingElement::constant(9, Representation::IncompleteNTT),
-            RingElement::constant(10, Representation::IncompleteNTT),
-            RingElement::constant(11, Representation::IncompleteNTT),
-            RingElement::constant(12, Representation::IncompleteNTT),
-            RingElement::constant(13, Representation::IncompleteNTT),
-            RingElement::constant(14, Representation::IncompleteNTT),
-            RingElement::constant(15, Representation::IncompleteNTT),
-            RingElement::constant(16, Representation::IncompleteNTT),
-        ],
-        width: 2,
-        height: 8,
-        used_cols: 2,
-    };
+        let commitment = commit_basic_internal(&ck, &witness, 2);
 
-    let commitment = commit_basic_internal(&ck, &witness, 2);
+        debug_assert_eq!(
+            &commitment[(0, 0)],
+            &RingElement::constant(
+                1 * 1 + 2 * 2 + 4 * 3 + 8 * 4 + 16 * 5 + 32 * 6 + 64 * 7 + 128 * 8,
+                Representation::IncompleteNTT
+            )
+        );
 
-    debug_assert_eq!(
-        &commitment[(0, 0)],
-        &RingElement::constant(
-            1 * 1 + 2 * 2 + 4 * 3 + 8 * 4 + 16 * 5 + 32 * 6 + 64 * 7 + 128 * 8,
-            Representation::IncompleteNTT
-        )
-    );
+        debug_assert_eq!(
+            &commitment[(0, 1)],
+            &RingElement::constant(
+                1 * 9 + 2 * 10 + 4 * 11 + 8 * 12 + 16 * 13 + 32 * 14 + 64 * 15 + 128 * 16,
+                Representation::IncompleteNTT
+            )
+        );
 
-    debug_assert_eq!(
-        &commitment[(0, 1)],
-        &RingElement::constant(
-            1 * 9 + 2 * 10 + 4 * 11 + 8 * 12 + 16 * 13 + 32 * 14 + 64 * 15 + 128 * 16,
-            Representation::IncompleteNTT
-        )
-    );
+        debug_assert_eq!(
+            &commitment[(1, 0)],
+            &RingElement::constant(
+                1 * 1 + 4 * 2 + 16 * 3 + 64 * 4 + 256 * 5 + 1024 * 6 + 4096 * 7 + 16384 * 8,
+                Representation::IncompleteNTT
+            )
+        );
 
-    debug_assert_eq!(
-        &commitment[(1, 0)],
-        &RingElement::constant(
-            1 * 1 + 4 * 2 + 16 * 3 + 64 * 4 + 256 * 5 + 1024 * 6 + 4096 * 7 + 16384 * 8,
-            Representation::IncompleteNTT
-        )
-    );
-
-    debug_assert_eq!(
-        &commitment[(1, 1)],
-        &RingElement::constant(
-            1 * 9 + 4 * 10 + 16 * 11 + 64 * 12 + 256 * 13 + 1024 * 14 + 4096 * 15 + 16384 * 16,
-            Representation::IncompleteNTT
-        )
-    );
+        debug_assert_eq!(
+            &commitment[(1, 1)],
+            &RingElement::constant(
+                1 * 9 + 4 * 10 + 16 * 11 + 64 * 12 + 256 * 13 + 1024 * 14 + 4096 * 15 + 16384 * 16,
+                Representation::IncompleteNTT
+            )
+        );
+    }
 }

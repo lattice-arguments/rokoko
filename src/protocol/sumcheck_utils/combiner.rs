@@ -133,132 +133,6 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
     }
 }
 
-#[test]
-fn test_combiner() {
-    let data0 = (0..8)
-        .map(|i| RingElement::constant(i + 1 as u64, Representation::IncompleteNTT))
-        .collect::<Vec<RingElement>>();
-
-    let data1 = (8..16)
-        .map(|i| RingElement::constant((i + 1) as u64, Representation::IncompleteNTT))
-        .collect::<Vec<RingElement>>();
-
-    let data2 = (16..24)
-        .map(|i| RingElement::constant((i + 1) as u64, Representation::IncompleteNTT))
-        .collect::<Vec<RingElement>>();
-
-    let data3 = (24..32)
-        .map(|i| RingElement::constant((i + 1) as u64, Representation::IncompleteNTT))
-        .collect::<Vec<RingElement>>();
-
-    let combiner = evaluation_point_to_structured_row(&vec![
-        RingElement::constant(32, Representation::IncompleteNTT),
-        RingElement::constant(33, Representation::IncompleteNTT),
-    ]);
-
-    // vector is (1 - 32) * (1 - 33), (1 - 32) * 33, 32 * (1 - 33), 32 * 33
-
-    let preprocessed_challenges = PreprocessedRow::from_structured_row(&combiner);
-
-    let mut sumcheck0 = LinearSumcheck::new(data0.len());
-
-    sumcheck0.load_from(&data0);
-
-    let mut sumcheck1 = LinearSumcheck::new(data1.len());
-    sumcheck1.load_from(&data1);
-
-    let mut sumcheck2 = LinearSumcheck::new(data2.len());
-
-    sumcheck2.load_from(&data2);
-
-    let mut sumcheck3 = LinearSumcheck::new(data3.len());
-    sumcheck3.load_from(&data3);
-
-    let sumcheck0_ref = ElephantCell::new(sumcheck0);
-    let sumcheck1_ref = ElephantCell::new(sumcheck1);
-    let sumcheck2_ref = ElephantCell::new(sumcheck2);
-    let sumcheck3_ref = ElephantCell::new(sumcheck3);
-
-    let mut combiner = Combiner::new(vec![
-        sumcheck0_ref.clone(),
-        sumcheck1_ref.clone(),
-        sumcheck2_ref.clone(),
-        sumcheck3_ref.clone(),
-    ]);
-
-    combiner.load_challenges_from(&preprocessed_challenges.preprocessed_row);
-
-    let mut poly = Polynomial::new(0);
-
-    combiner.univariate_polynomial_into(&mut poly);
-
-    // manually compute expected coefficients
-    // 1 + 2 + ... + 8 = 36
-    // 9 + 10 + ... + 16 = 100
-    // 17 + ... + 24 = 164
-    // 25 + ... + 32 = 228
-
-    let claim = RingElement::constant(
-        (MOD_Q as i64
-            + 36 * (1 - 32) * (1 - 33)
-            + 100 * (1 - 32) * 33
-            + 164 * 32 * (1 - 33)
-            + 228 * 32 * 33) as u64,
-        Representation::IncompleteNTT,
-    );
-
-    debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
-
-    let r0 = RingElement::constant(2, Representation::IncompleteNTT);
-
-    let claim = poly.at(&r0);
-
-    sumcheck0_ref.borrow_mut().partial_evaluate(&r0);
-    sumcheck1_ref.borrow_mut().partial_evaluate(&r0);
-    sumcheck2_ref.borrow_mut().partial_evaluate(&r0);
-    sumcheck3_ref.borrow_mut().partial_evaluate(&r0);
-
-    combiner.univariate_polynomial_into(&mut poly);
-    debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
-
-    let r1 = RingElement::constant(3, Representation::IncompleteNTT);
-    let claim = poly.at(&r1);
-
-    sumcheck0_ref.borrow_mut().partial_evaluate(&r1);
-    sumcheck1_ref.borrow_mut().partial_evaluate(&r1);
-    sumcheck2_ref.borrow_mut().partial_evaluate(&r1);
-    sumcheck3_ref.borrow_mut().partial_evaluate(&r1);
-    combiner.univariate_polynomial_into(&mut poly);
-    debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
-
-    let r2 = RingElement::constant(5, Representation::IncompleteNTT);
-    let final_claim = poly.at(&r2);
-    sumcheck0_ref.borrow_mut().partial_evaluate(&r2);
-    sumcheck1_ref.borrow_mut().partial_evaluate(&r2);
-    sumcheck2_ref.borrow_mut().partial_evaluate(&r2);
-    sumcheck3_ref.borrow_mut().partial_evaluate(&r2);
-
-    let mut final_eval = RingElement::zero(Representation::IncompleteNTT);
-
-    let mut term = sumcheck0_ref.get_ref().final_evaluations().clone();
-    term *= &combiner.challenges[0];
-    final_eval += &term;
-
-    term = sumcheck1_ref.get_ref().final_evaluations().clone();
-    term *= &combiner.challenges[1];
-    final_eval += &term;
-
-    term = sumcheck2_ref.get_ref().final_evaluations().clone();
-    term *= &combiner.challenges[2];
-    final_eval += &term;
-
-    term = sumcheck3_ref.get_ref().final_evaluations().clone();
-    term *= &combiner.challenges[3];
-    final_eval += &term;
-
-    debug_assert_eq!(final_eval, final_claim);
-}
-
 /// Evaluation-only version of Combiner that evaluates a linear combination of sumchecks at a point.
 pub struct CombinerEvaluation<E: SumcheckElement = RingElement> {
     evaluations: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = E>>>,
@@ -310,64 +184,194 @@ impl<E: SumcheckElement> EvaluationSumcheckData for CombinerEvaluation<E> {
         &self.result
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[test]
-fn test_combiner_evaluation() {
-    use crate::protocol::sumcheck_utils::linear::BasicEvaluationLinearSumcheck;
+    #[test]
+    fn test_combiner() {
+        let data0 = (0..8)
+            .map(|i| RingElement::constant(i + 1 as u64, Representation::IncompleteNTT))
+            .collect::<Vec<RingElement>>();
 
-    let data0 = vec![
-        RingElement::constant(1, Representation::IncompleteNTT),
-        RingElement::constant(2, Representation::IncompleteNTT),
-        RingElement::constant(3, Representation::IncompleteNTT),
-        RingElement::constant(4, Representation::IncompleteNTT),
-    ];
+        let data1 = (8..16)
+            .map(|i| RingElement::constant((i + 1) as u64, Representation::IncompleteNTT))
+            .collect::<Vec<RingElement>>();
 
-    let data1 = vec![
-        RingElement::constant(5, Representation::IncompleteNTT),
-        RingElement::constant(6, Representation::IncompleteNTT),
-        RingElement::constant(7, Representation::IncompleteNTT),
-        RingElement::constant(8, Representation::IncompleteNTT),
-    ];
+        let data2 = (16..24)
+            .map(|i| RingElement::constant((i + 1) as u64, Representation::IncompleteNTT))
+            .collect::<Vec<RingElement>>();
 
-    let mut eval0_impl = BasicEvaluationLinearSumcheck::new(data0.len());
-    eval0_impl.load_from(&data0);
-    let eval0: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
-        ElephantCell::new(eval0_impl);
+        let data3 = (24..32)
+            .map(|i| RingElement::constant((i + 1) as u64, Representation::IncompleteNTT))
+            .collect::<Vec<RingElement>>();
 
-    let mut eval1_impl = BasicEvaluationLinearSumcheck::new(data1.len());
-    eval1_impl.load_from(&data1);
-    let eval1: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
-        ElephantCell::new(eval1_impl);
+        let combiner = evaluation_point_to_structured_row(&vec![
+            RingElement::constant(32, Representation::IncompleteNTT),
+            RingElement::constant(33, Representation::IncompleteNTT),
+        ]);
 
-    let challenges = vec![
-        RingElement::constant(3, Representation::IncompleteNTT),
-        RingElement::constant(5, Representation::IncompleteNTT),
-    ];
+        // vector is (1 - 32) * (1 - 33), (1 - 32) * 33, 32 * (1 - 33), 32 * 33
 
-    let mut combiner_eval = CombinerEvaluation::new(vec![eval0, eval1]);
-    combiner_eval.load_challenges_from(&challenges);
+        let preprocessed_challenges = PreprocessedRow::from_structured_row(&combiner);
 
-    let point = vec![
-        RingElement::constant(7, Representation::IncompleteNTT),
-        RingElement::constant(11, Representation::IncompleteNTT),
-    ];
+        let mut sumcheck0 = LinearSumcheck::new(data0.len());
 
-    // Create reference using the folding implementation
-    let sumcheck0 = ElephantCell::new(LinearSumcheck::new(data0.len()));
-    sumcheck0.borrow_mut().load_from(&data0);
-    let sumcheck1 = ElephantCell::new(LinearSumcheck::new(data1.len()));
-    sumcheck1.borrow_mut().load_from(&data1);
+        sumcheck0.load_from(&data0);
 
-    for r in &point {
-        sumcheck0.borrow_mut().partial_evaluate(r);
-        sumcheck1.borrow_mut().partial_evaluate(r);
+        let mut sumcheck1 = LinearSumcheck::new(data1.len());
+        sumcheck1.load_from(&data1);
+
+        let mut sumcheck2 = LinearSumcheck::new(data2.len());
+
+        sumcheck2.load_from(&data2);
+
+        let mut sumcheck3 = LinearSumcheck::new(data3.len());
+        sumcheck3.load_from(&data3);
+
+        let sumcheck0_ref = ElephantCell::new(sumcheck0);
+        let sumcheck1_ref = ElephantCell::new(sumcheck1);
+        let sumcheck2_ref = ElephantCell::new(sumcheck2);
+        let sumcheck3_ref = ElephantCell::new(sumcheck3);
+
+        let mut combiner = Combiner::new(vec![
+            sumcheck0_ref.clone(),
+            sumcheck1_ref.clone(),
+            sumcheck2_ref.clone(),
+            sumcheck3_ref.clone(),
+        ]);
+
+        combiner.load_challenges_from(&preprocessed_challenges.preprocessed_row);
+
+        let mut poly = Polynomial::new(0);
+
+        combiner.univariate_polynomial_into(&mut poly);
+
+        // manually compute expected coefficients
+        // 1 + 2 + ... + 8 = 36
+        // 9 + 10 + ... + 16 = 100
+        // 17 + ... + 24 = 164
+        // 25 + ... + 32 = 228
+
+        let claim = RingElement::constant(
+            (MOD_Q as i64
+                + 36 * (1 - 32) * (1 - 33)
+                + 100 * (1 - 32) * 33
+                + 164 * 32 * (1 - 33)
+                + 228 * 32 * 33) as u64,
+            Representation::IncompleteNTT,
+        );
+
+        debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
+
+        let r0 = RingElement::constant(2, Representation::IncompleteNTT);
+
+        let claim = poly.at(&r0);
+
+        sumcheck0_ref.borrow_mut().partial_evaluate(&r0);
+        sumcheck1_ref.borrow_mut().partial_evaluate(&r0);
+        sumcheck2_ref.borrow_mut().partial_evaluate(&r0);
+        sumcheck3_ref.borrow_mut().partial_evaluate(&r0);
+
+        combiner.univariate_polynomial_into(&mut poly);
+        debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
+
+        let r1 = RingElement::constant(3, Representation::IncompleteNTT);
+        let claim = poly.at(&r1);
+
+        sumcheck0_ref.borrow_mut().partial_evaluate(&r1);
+        sumcheck1_ref.borrow_mut().partial_evaluate(&r1);
+        sumcheck2_ref.borrow_mut().partial_evaluate(&r1);
+        sumcheck3_ref.borrow_mut().partial_evaluate(&r1);
+        combiner.univariate_polynomial_into(&mut poly);
+        debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
+
+        let r2 = RingElement::constant(5, Representation::IncompleteNTT);
+        let final_claim = poly.at(&r2);
+        sumcheck0_ref.borrow_mut().partial_evaluate(&r2);
+        sumcheck1_ref.borrow_mut().partial_evaluate(&r2);
+        sumcheck2_ref.borrow_mut().partial_evaluate(&r2);
+        sumcheck3_ref.borrow_mut().partial_evaluate(&r2);
+
+        let mut final_eval = RingElement::zero(Representation::IncompleteNTT);
+
+        let mut term = sumcheck0_ref.get_ref().final_evaluations().clone();
+        term *= &combiner.challenges[0];
+        final_eval += &term;
+
+        term = sumcheck1_ref.get_ref().final_evaluations().clone();
+        term *= &combiner.challenges[1];
+        final_eval += &term;
+
+        term = sumcheck2_ref.get_ref().final_evaluations().clone();
+        term *= &combiner.challenges[2];
+        final_eval += &term;
+
+        term = sumcheck3_ref.get_ref().final_evaluations().clone();
+        term *= &combiner.challenges[3];
+        final_eval += &term;
+
+        debug_assert_eq!(final_eval, final_claim);
     }
 
-    let mut expected = sumcheck0.get_ref().final_evaluations().clone();
-    expected *= &challenges[0];
-    let mut term = sumcheck1.get_ref().final_evaluations().clone();
-    term *= &challenges[1];
-    expected += &term;
+    #[test]
+    fn test_combiner_evaluation() {
+        use crate::protocol::sumcheck_utils::linear::BasicEvaluationLinearSumcheck;
 
-    debug_assert_eq!(combiner_eval.evaluate(&point), &expected);
+        let data0 = vec![
+            RingElement::constant(1, Representation::IncompleteNTT),
+            RingElement::constant(2, Representation::IncompleteNTT),
+            RingElement::constant(3, Representation::IncompleteNTT),
+            RingElement::constant(4, Representation::IncompleteNTT),
+        ];
+
+        let data1 = vec![
+            RingElement::constant(5, Representation::IncompleteNTT),
+            RingElement::constant(6, Representation::IncompleteNTT),
+            RingElement::constant(7, Representation::IncompleteNTT),
+            RingElement::constant(8, Representation::IncompleteNTT),
+        ];
+
+        let mut eval0_impl = BasicEvaluationLinearSumcheck::new(data0.len());
+        eval0_impl.load_from(&data0);
+        let eval0: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
+            ElephantCell::new(eval0_impl);
+
+        let mut eval1_impl = BasicEvaluationLinearSumcheck::new(data1.len());
+        eval1_impl.load_from(&data1);
+        let eval1: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
+            ElephantCell::new(eval1_impl);
+
+        let challenges = vec![
+            RingElement::constant(3, Representation::IncompleteNTT),
+            RingElement::constant(5, Representation::IncompleteNTT),
+        ];
+
+        let mut combiner_eval = CombinerEvaluation::new(vec![eval0, eval1]);
+        combiner_eval.load_challenges_from(&challenges);
+
+        let point = vec![
+            RingElement::constant(7, Representation::IncompleteNTT),
+            RingElement::constant(11, Representation::IncompleteNTT),
+        ];
+
+        // Create reference using the folding implementation
+        let sumcheck0 = ElephantCell::new(LinearSumcheck::new(data0.len()));
+        sumcheck0.borrow_mut().load_from(&data0);
+        let sumcheck1 = ElephantCell::new(LinearSumcheck::new(data1.len()));
+        sumcheck1.borrow_mut().load_from(&data1);
+
+        for r in &point {
+            sumcheck0.borrow_mut().partial_evaluate(r);
+            sumcheck1.borrow_mut().partial_evaluate(r);
+        }
+
+        let mut expected = sumcheck0.get_ref().final_evaluations().clone();
+        expected *= &challenges[0];
+        let mut term = sumcheck1.get_ref().final_evaluations().clone();
+        term *= &challenges[1];
+        expected += &term;
+
+        debug_assert_eq!(combiner_eval.evaluate(&point), &expected);
+    }
 }

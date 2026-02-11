@@ -113,119 +113,129 @@ pub fn project(
     projection_image
 }
 
-#[test]
-fn test_projection() {
-    let projection_height = 256;
-    let projection_matrix = ProjectionMatrix::from_i8({
-        let mut data = vec![vec![0i8; projection_height * 2]; projection_height];
-        data[0][0] = -1;
-        data[0][1] = -1;
-        data[0][2] = 1;
-        data[0][3] = 1;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_projection() {
+        let projection_height = 256;
+        let projection_matrix = ProjectionMatrix::from_i8({
+            let mut data = vec![vec![0i8; projection_height * 2]; projection_height];
+            data[0][0] = -1;
+            data[0][1] = -1;
+            data[0][2] = 1;
+            data[0][3] = 1;
 
-        data[3][1] = -1;
-        data[3][2] = 1;
-        data[3][6] = 1;
-        data[3][7] = 1;
+            data[3][1] = -1;
+            data[3][2] = 1;
+            data[3][6] = 1;
+            data[3][7] = 1;
 
-        data
-    });
+            data
+        });
 
-    let mut witness = VerticallyAlignedMatrix {
-        data: vec![
-            RingElement::constant(1, Representation::IncompleteNTT);
-            projection_matrix.projection_height * 8
-        ],
-        width: 2,
-        height: projection_matrix.projection_height * 4,
-        used_cols: 2,
-    };
+        let mut witness = VerticallyAlignedMatrix {
+            data: vec![
+                RingElement::constant(1, Representation::IncompleteNTT);
+                projection_matrix.projection_height * 8
+            ],
+            width: 2,
+            height: projection_matrix.projection_height * 4,
+            used_cols: 2,
+        };
 
-    for i in 0..witness.height * witness.width {
-        witness.data[i] = RingElement::constant((i + 1) as u64, Representation::IncompleteNTT);
+        for i in 0..witness.height * witness.width {
+            witness.data[i] = RingElement::constant((i + 1) as u64, Representation::IncompleteNTT);
+        }
+        let witness_i16 = prepare_i16_witness(&mut witness);
+
+        let projection_image = project(&witness_i16, &projection_matrix);
+
+        debug_assert_eq!(
+            projection_image[(0, 0)],
+            RingElement::constant(
+                (-1i64 * 1 + -1i64 * 2 + 1i64 * 3 + 1i64 * 4) as u64,
+                Representation::IncompleteNTT
+            )
+        );
+        debug_assert_eq!(
+            projection_image[(projection_matrix.projection_height, 0)],
+            RingElement::constant(
+                (-1 * (projection_matrix.projection_height as i64 * 2 + 1)
+                    + -1 * (projection_matrix.projection_height as i64 * 2 + 2)
+                    + 1 * (projection_matrix.projection_height as i64 * 2 + 3)
+                    + 1 * (projection_matrix.projection_height as i64 * 2 + 4))
+                    as u64,
+                Representation::IncompleteNTT
+            )
+        );
+
+        debug_assert_eq!(
+            projection_image[(0, 1)],
+            RingElement::constant(
+                (-1 * (projection_matrix.projection_height as i64 * 4 + 1)
+                    + -1 * (projection_matrix.projection_height as i64 * 4 + 2)
+                    + 1 * (projection_matrix.projection_height as i64 * 4 + 3)
+                    + 1 * (projection_matrix.projection_height as i64 * 4 + 4))
+                    as u64,
+                Representation::IncompleteNTT
+            )
+        );
+
+        debug_assert_eq!(
+            projection_image[(projection_matrix.projection_height, 1)],
+            RingElement::constant(
+                (-1 * (projection_matrix.projection_height as i64 * 6 + 1)
+                    + -1 * (projection_matrix.projection_height as i64 * 6 + 2)
+                    + 1 * (projection_matrix.projection_height as i64 * 6 + 3)
+                    + 1 * (projection_matrix.projection_height as i64 * 6 + 4))
+                    as u64,
+                Representation::IncompleteNTT
+            )
+        );
+
+        debug_assert_eq!(
+            projection_image[(3, 0)],
+            RingElement::constant(
+                (-1i64 * 2 + 1 * 3 + 1 * 7 + 1 * 8) as u64,
+                Representation::IncompleteNTT
+            )
+        );
+
+        debug_assert_eq!(
+            projection_image[(projection_matrix.projection_height + 3, 0)],
+            RingElement::constant(
+                (-1 * (projection_matrix.projection_height as i64 * 2 + 2)
+                    + 1 * (projection_matrix.projection_height as i64 * 2 + 3)
+                    + 1 * (projection_matrix.projection_height as i64 * 2 + 7)
+                    + 1 * (projection_matrix.projection_height as i64 * 2 + 8))
+                    as u64,
+                Representation::IncompleteNTT
+            )
+        );
+
+        debug_assert_eq!(
+            projection_image[(3, 1)],
+            RingElement::constant(
+                (-1 * (projection_matrix.projection_height as i64 * 4 + 2)
+                    + 1 * (projection_matrix.projection_height as i64 * 4 + 3)
+                    + 1 * (projection_matrix.projection_height as i64 * 4 + 7)
+                    + 1 * (projection_matrix.projection_height as i64 * 4 + 8))
+                    as u64,
+                Representation::IncompleteNTT
+            )
+        );
+
+        debug_assert_eq!(
+            projection_image[(projection_matrix.projection_height + 3, 1)],
+            RingElement::constant(
+                (-1 * (projection_matrix.projection_height as i64 * 6 + 2)
+                    + 1 * (projection_matrix.projection_height as i64 * 6 + 3)
+                    + 1 * (projection_matrix.projection_height as i64 * 6 + 7)
+                    + 1 * (projection_matrix.projection_height as i64 * 6 + 8))
+                    as u64,
+                Representation::IncompleteNTT
+            )
+        );
     }
-    let witness_i16 = prepare_i16_witness(&mut witness);
-
-    let projection_image = project(&witness_i16, &projection_matrix);
-
-    debug_assert_eq!(
-        projection_image[(0, 0)],
-        RingElement::constant(
-            (-1i64 * 1 + -1i64 * 2 + 1i64 * 3 + 1i64 * 4) as u64,
-            Representation::IncompleteNTT
-        )
-    );
-    debug_assert_eq!(
-        projection_image[(projection_matrix.projection_height, 0)],
-        RingElement::constant(
-            (-1 * (projection_matrix.projection_height as i64 * 2 + 1)
-                + -1 * (projection_matrix.projection_height as i64 * 2 + 2)
-                + 1 * (projection_matrix.projection_height as i64 * 2 + 3)
-                + 1 * (projection_matrix.projection_height as i64 * 2 + 4)) as u64,
-            Representation::IncompleteNTT
-        )
-    );
-
-    debug_assert_eq!(
-        projection_image[(0, 1)],
-        RingElement::constant(
-            (-1 * (projection_matrix.projection_height as i64 * 4 + 1)
-                + -1 * (projection_matrix.projection_height as i64 * 4 + 2)
-                + 1 * (projection_matrix.projection_height as i64 * 4 + 3)
-                + 1 * (projection_matrix.projection_height as i64 * 4 + 4)) as u64,
-            Representation::IncompleteNTT
-        )
-    );
-
-    debug_assert_eq!(
-        projection_image[(projection_matrix.projection_height, 1)],
-        RingElement::constant(
-            (-1 * (projection_matrix.projection_height as i64 * 6 + 1)
-                + -1 * (projection_matrix.projection_height as i64 * 6 + 2)
-                + 1 * (projection_matrix.projection_height as i64 * 6 + 3)
-                + 1 * (projection_matrix.projection_height as i64 * 6 + 4)) as u64,
-            Representation::IncompleteNTT
-        )
-    );
-
-    debug_assert_eq!(
-        projection_image[(3, 0)],
-        RingElement::constant(
-            (-1i64 * 2 + 1 * 3 + 1 * 7 + 1 * 8) as u64,
-            Representation::IncompleteNTT
-        )
-    );
-
-    debug_assert_eq!(
-        projection_image[(projection_matrix.projection_height + 3, 0)],
-        RingElement::constant(
-            (-1 * (projection_matrix.projection_height as i64 * 2 + 2)
-                + 1 * (projection_matrix.projection_height as i64 * 2 + 3)
-                + 1 * (projection_matrix.projection_height as i64 * 2 + 7)
-                + 1 * (projection_matrix.projection_height as i64 * 2 + 8)) as u64,
-            Representation::IncompleteNTT
-        )
-    );
-
-    debug_assert_eq!(
-        projection_image[(3, 1)],
-        RingElement::constant(
-            (-1 * (projection_matrix.projection_height as i64 * 4 + 2)
-                + 1 * (projection_matrix.projection_height as i64 * 4 + 3)
-                + 1 * (projection_matrix.projection_height as i64 * 4 + 7)
-                + 1 * (projection_matrix.projection_height as i64 * 4 + 8)) as u64,
-            Representation::IncompleteNTT
-        )
-    );
-
-    debug_assert_eq!(
-        projection_image[(projection_matrix.projection_height + 3, 1)],
-        RingElement::constant(
-            (-1 * (projection_matrix.projection_height as i64 * 6 + 2)
-                + 1 * (projection_matrix.projection_height as i64 * 6 + 3)
-                + 1 * (projection_matrix.projection_height as i64 * 6 + 7)
-                + 1 * (projection_matrix.projection_height as i64 * 6 + 8)) as u64,
-            Representation::IncompleteNTT
-        )
-    );
 }

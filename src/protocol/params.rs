@@ -71,7 +71,7 @@ pub static P: LazyLock<Config> = LazyLock::new(|| {
         ),
         projection_ratio: 1,              // no-op
         projection_height: 2usize.pow(8), // no-op, TODO: make sure this is not used
-        basic_commitment_rank: cfg_p26(8,9),
+        basic_commitment_rank: cfg_p26(8, 9),
         nof_openings: 1,
         commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,

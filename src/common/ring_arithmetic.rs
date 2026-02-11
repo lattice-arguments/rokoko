@@ -1208,7 +1208,7 @@ impl SizeableProof for QuadraticExtension {
 
 #[cfg(test)]
 mod tests {
-    use crate::common::{init_common, norms};
+    use crate::common::init_common;
 
     use super::*;
 
@@ -1360,9 +1360,9 @@ mod tests {
     #[test]
     fn test_conjugation_ref() {
         init_common();
-        let mut a = RingElement::random(Representation::IncompleteNTT);
+        let a = RingElement::random(Representation::IncompleteNTT);
         let mut a_conj = a.clone();
-        let mut b = RingElement::new(Representation::IncompleteNTT);
+        let b = RingElement::new(Representation::IncompleteNTT);
         let mut b_conj = b.clone();
 
         a_conj.conjugate_in_place_ref();
@@ -1371,8 +1371,8 @@ mod tests {
         b_conj.conjugate_in_place_ref();
         // debug_assert_eq!(a.v, a_conj.v);
 
-        let mut a_plus_b = &a + &b;
-        let mut a_times_b = &a * &b;
+        let a_plus_b = &a + &b;
+        let a_times_b = &a * &b;
 
         let mut a_plus_b_conj = a_plus_b.clone();
         a_plus_b_conj.conjugate_in_place_ref();
@@ -1387,7 +1387,7 @@ mod tests {
     #[test]
     fn test_conjugation() {
         init_common();
-        let mut a = RingElement::random(Representation::IncompleteNTT);
+        let a = RingElement::random(Representation::IncompleteNTT);
         let mut a_conj = a.clone();
         let mut a_conj_ref = a.clone();
         a_conj.conjugate_in_place();
@@ -1568,15 +1568,3 @@ mod tests {
         }
     }
 }
-
-// #[test]
-// fn test_conjugation() {
-//     use crate::common::init_common;
-
-//     init_common();
-//     let mut a = RingElement::random(Representation::IncompleteNTT);
-//     let mut a_conj = a.clone();
-//     a_conj.conjugate_in_place_ref();
-//     a.conjugate_in_place_ref();
-//     debug_assert_eq!(a.v, a_conj.v);
-// }

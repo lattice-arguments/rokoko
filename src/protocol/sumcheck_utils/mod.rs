@@ -103,7 +103,7 @@ mod tests {
             rhs_inner.clone(),
             rhs_selector.clone(),
         ));
-        let mut diff_sumcheck = DiffSumcheck::new(lhs_masked.clone(), rhs_masked.clone());
+        let diff_sumcheck = DiffSumcheck::new(lhs_masked.clone(), rhs_masked.clone());
         let mut poly = Polynomial::new(0);
 
         // Initial claim: the difference of inner products over the full hypercube is zero.

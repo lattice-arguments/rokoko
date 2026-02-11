@@ -11,8 +11,13 @@ use crate::{
     hexl::bindings::{multiply_mod, sub_mod},
 };
 
-#[cfg(test)]
-use crate::common::structured_row::{PreprocessedRow, StructuredRow};
+pub static HALF_WAY_MOD_Q: LazyLock<u64> = LazyLock::new(|| {
+    let budget = u64::MAX / (MOD_Q * 4);
+    budget * MOD_Q
+});
+
+pub static HALF_WAY_MOD_Q_RING_CF: LazyLock<RingElement> =
+    LazyLock::new(|| RingElement::all(*HALF_WAY_MOD_Q, Representation::Coefficients));
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 use std::arch::x86_64::{
@@ -324,18 +329,6 @@ pub static TWO_QUAD: LazyLock<QuadraticExtension> =
 pub static ZERO_QUAD: LazyLock<QuadraticExtension> =
     LazyLock::new(|| QuadraticExtension { coeffs: [0, 0] });
 
-#[test]
-fn test_field_to_ring_roundtrip() {
-    let fe = QuadraticExtension {
-        coeffs: [123456789, 987654321],
-    };
-    let re = field_to_ring_element(&fe);
-    let fes = re.split_into_quadratic_extensions();
-    for f in fes {
-        debug_assert_eq!(f, fe);
-    }
-}
-
 // this is only for u64
 pub fn precompute_structured_values(layers: &[u64]) -> Vec<u64> {
     let size = 1 << layers.len();
@@ -399,114 +392,122 @@ pub fn precompute_structured_values_fast(layers: &[u64]) -> Vec<u64> {
     values
 }
 
-#[test]
-fn test_precompute_structured_values() {
-    use crate::common::hash::HashWrapper;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::structured_row::{PreprocessedRow, StructuredRow};
 
-    // Test with different layer sizes
-    for num_layers in 1..=10 {
-        let mut hash = HashWrapper::new();
-        let layers: Vec<u64> = (0..num_layers).map(|_| hash.sample_u64_mod_q()).collect();
+    #[test]
+    fn test_precompute_structured_values() {
+        use crate::common::hash::HashWrapper;
 
-        let result_slow = precompute_structured_values(&layers);
-        let result_fast = precompute_structured_values_fast(&layers);
+        // Test with different layer sizes
+        for num_layers in 1..=10 {
+            let mut hash = HashWrapper::new();
+            let layers: Vec<u64> = (0..num_layers).map(|_| hash.sample_u64_mod_q()).collect();
 
-        debug_assert_eq!(
-            result_slow.len(),
-            result_fast.len(),
-            "Length mismatch for {} layers",
-            num_layers
-        );
+            let result_slow = precompute_structured_values(&layers);
+            let result_fast = precompute_structured_values_fast(&layers);
 
-        for (i, (slow, fast)) in result_slow.iter().zip(result_fast.iter()).enumerate() {
             debug_assert_eq!(
-                slow, fast,
-                "Mismatch at index {} for {} layers: slow={}, fast={}",
-                i, num_layers, slow, fast
+                result_slow.len(),
+                result_fast.len(),
+                "Length mismatch for {} layers",
+                num_layers
+            );
+
+            for (i, (slow, fast)) in result_slow.iter().zip(result_fast.iter()).enumerate() {
+                debug_assert_eq!(
+                    slow, fast,
+                    "Mismatch at index {} for {} layers: slow={}, fast={}",
+                    i, num_layers, slow, fast
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_precompute_structured_values_properties() {
+        use crate::common::hash::HashWrapper;
+
+        let mut hash = HashWrapper::new();
+        let layers: Vec<u64> = (0..5).map(|_| hash.sample_u64_mod_q()).collect();
+        let values = precompute_structured_values_fast(&layers);
+
+        // Size should be 2^k for k layers
+        debug_assert_eq!(values.len(), 1 << layers.len());
+
+        // Test specific properties: values[i] should match the tensor product computation
+        // For index i with binary representation b_k...b_1b_0:
+        // values[i] = product of (layer[j] if b_j=1, else (1-layer[j]))
+
+        let manual_compute = |index: usize| -> u64 {
+            let mut result = 1u64;
+            for (bit_pos, &layer) in layers.iter().rev().enumerate() {
+                if (index >> bit_pos) & 1 == 1 {
+                    unsafe {
+                        result = multiply_mod(result, layer, MOD_Q);
+                    }
+                } else {
+                    unsafe {
+                        result = multiply_mod(result, sub_mod(1, layer, MOD_Q), MOD_Q);
+                    }
+                }
+            }
+            result
+        };
+
+        for i in 0..values.len() {
+            debug_assert_eq!(
+                values[i],
+                manual_compute(i),
+                "Value mismatch at index {} (binary: {:05b})",
+                i,
+                i
             );
         }
     }
-}
 
-#[test]
-fn test_precompute_structured_values_properties() {
-    use crate::common::hash::HashWrapper;
+    #[test]
+    fn test_precompute_structured_values_mathces_preprocessed_row() {
+        let layers = vec![2u64, 3u64, 5u64];
+        let layers_ring = layers
+            .iter()
+            .map(|&l| RingElement::constant(l, Representation::IncompleteNTT))
+            .collect::<Vec<RingElement>>();
 
-    let mut hash = HashWrapper::new();
-    let layers: Vec<u64> = (0..5).map(|_| hash.sample_u64_mod_q()).collect();
-    let values = precompute_structured_values_fast(&layers);
+        let structure_row = StructuredRow {
+            tensor_layers: layers_ring,
+        };
+        let preprocessed_row = PreprocessedRow::from_structured_row(&structure_row);
 
-    // Size should be 2^k for k layers
-    debug_assert_eq!(values.len(), 1 << layers.len());
+        let precomputed_values = precompute_structured_values_fast(&layers);
+        let precomputed_values_ring = precomputed_values
+            .iter()
+            .map(|&v| RingElement::constant(v, Representation::IncompleteNTT))
+            .collect::<Vec<RingElement>>();
 
-    // Test specific properties: values[i] should match the tensor product computation
-    // For index i with binary representation b_k...b_1b_0:
-    // values[i] = product of (layer[j] if b_j=1, else (1-layer[j]))
-
-    let manual_compute = |index: usize| -> u64 {
-        let mut result = 1u64;
-        for (bit_pos, &layer) in layers.iter().rev().enumerate() {
-            if (index >> bit_pos) & 1 == 1 {
-                unsafe {
-                    result = multiply_mod(result, layer, MOD_Q);
-                }
-            } else {
-                unsafe {
-                    result = multiply_mod(result, sub_mod(1, layer, MOD_Q), MOD_Q);
-                }
-            }
+        debug_assert_eq!(
+            preprocessed_row.preprocessed_row.len(),
+            precomputed_values_ring.len()
+        );
+        for i in 0..preprocessed_row.preprocessed_row.len() {
+            debug_assert_eq!(
+                preprocessed_row.preprocessed_row[i],
+                precomputed_values_ring[i],
+            );
         }
-        result
-    };
+    }
 
-    for i in 0..values.len() {
-        debug_assert_eq!(
-            values[i],
-            manual_compute(i),
-            "Value mismatch at index {} (binary: {:05b})",
-            i,
-            i
-        );
+    #[test]
+    fn test_field_to_ring_roundtrip() {
+        let fe = QuadraticExtension {
+            coeffs: [123456789, 987654321],
+        };
+        let re = field_to_ring_element(&fe);
+        let fes = re.split_into_quadratic_extensions();
+        for f in fes {
+            debug_assert_eq!(f, fe);
+        }
     }
 }
-
-#[test]
-fn test_precompute_structured_values_mathces_preprocessed_row() {
-    let layers = vec![2u64, 3u64, 5u64];
-    let layers_ring = layers
-        .iter()
-        .map(|&l| RingElement::constant(l, Representation::IncompleteNTT))
-        .collect::<Vec<RingElement>>();
-
-    let structure_row = StructuredRow {
-        tensor_layers: layers_ring,
-    };
-    let preprocessed_row = PreprocessedRow::from_structured_row(&structure_row);
-
-    let precomputed_values = precompute_structured_values_fast(&layers);
-    let precomputed_values_ring = precomputed_values
-        .iter()
-        .map(|&v| RingElement::constant(v, Representation::IncompleteNTT))
-        .collect::<Vec<RingElement>>();
-
-    debug_assert_eq!(
-        preprocessed_row.preprocessed_row.len(),
-        precomputed_values_ring.len()
-    );
-    for i in 0..preprocessed_row.preprocessed_row.len() {
-        debug_assert_eq!(
-            preprocessed_row.preprocessed_row[i],
-            precomputed_values_ring[i],
-        );
-    }
-}
-
-pub static ADDITION_SUBTRACTION_BUDGET: LazyLock<u64> = LazyLock::new(|| u64::MAX / (MOD_Q * 4)); // if we start from number HALF_WAY_MOD_Q how many additions/subtractions (with elements in [0,MOD_Q)) can we do without overflowing u64?
-
-pub static HALF_WAY_MOD_Q: LazyLock<u64> = LazyLock::new(|| {
-    let budget = u64::MAX / (MOD_Q * 4);
-    budget * MOD_Q
-});
-
-pub static HALF_WAY_MOD_Q_RING_CF: LazyLock<RingElement> =
-    LazyLock::new(|| RingElement::all(*HALF_WAY_MOD_Q, Representation::Coefficients));
