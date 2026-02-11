@@ -151,6 +151,7 @@ impl EvaluationSumcheckData for DiffSumcheckEvaluation {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::protocol::sumcheck_utils::{
