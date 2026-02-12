@@ -1,7 +1,10 @@
 ![Project Banner](banner.png)
 # RoKoko
 
-A Rust implementation of RoKoko, an efficient lattice-based succint argument system.
+A Rust implementation of RoKoko, an efficient lattice-based succint argument system. 
+
+The protocol supports power-of-two cyclotomic rings, and parameters are selected so that the ring splits into factos of degree 2 ("almost splitting"), which allows to leverage incomplete NTT for efficient multiplication. Additionally, we implement vectorized random projections for full ring elements and coefficients, and specifically manage to leverage more efficient 16-bit AVX-512 operations for the first kind. 
+A general interface for sumcheck protocols is also provided, which supports different constraints and might be of independent interest. 
 
 ## Build and run instructions
 
