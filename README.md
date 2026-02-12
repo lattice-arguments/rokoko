@@ -5,7 +5,19 @@ A Rust implementation of RoKoko, an efficient lattice-based succint argument sys
 
 ## Build and run instructions
 
-For more a detailed comparison about the backends, check below.
+The project supports two interchangeable backends for ring arithmetic:
+
+- `rust-hexl` — a [pure Rust implementation](incomplete-rexl/README.md) for modular arithmetic and NTT operations
+- HEXL C++ bindings — native bindings to the Intel HEXL library
+
+Unlike HEXL, `rust-hexl` can run on any Rust-supported platform (at degraded performance).
+
+For the best performance, it is necessary to manually enable the different AVX-512 features flags for the Rust compiler.
+```
+export RUSTFLAGS="-C target-feature=+avx512f,+avx512bw,+avx512dq,+avx512vbmi2 -C linker=gcc"
+```
+Note that even if your processor advertises AVX-512 support, it may not support all AVX-512 instruction subsets, as [listed here](https://en.wikipedia.org/wiki/AVX-512#CPUs_with_AVX-512).
+If your platform does not support some of the listed target features, remove the unsupported ones. Performance will degrade accordingly.
 
 #### Using `rust-hexl` feature (pure Rust backend)
 The protocol can be directly compiled and run with 
@@ -156,6 +168,13 @@ pub enum Projection {
 ```
 where `Type0` defines the random projection over the full ring elements, and `Type1` the random projections over the ring coefficient.
 
+## Experiments
+This codebase has been benchmarked on a Precision 750, which features a Intel Core i7-11850H and 64GB of Memory. The benchmarks logs have been placed under `experiments/tiger_lake` folder.
+
+Additionally, benchmarks of [Greyhound](https://github.com/lattice-dogs/labrador) and [SALSAA](https://github.com/lattice-arguments/salsaaa) have been recorded for polynomial degrees 2^26, 2^28.
+
+Due to memory requirements for polynomial degrees 2^30 exceeding 64GB, respective benchmarks for Greyhound and SALSAA have been recorded on a different machine (Dell PowerEdge XE8640 with Xeon Platinum 8468) and placed in the `sapphire_rapids` folder.
+
 ## Features
 
 * `rust-hexl`: enable pure-Rust ring arithmetic backend
@@ -163,21 +182,6 @@ where `Type0` defines the random projection over the full ring elements, and `Ty
 * `unsafe-sumcheck`: enables zero-cost borrow checking by using `UnsafeCell` instead of `RefCell` in sumcheck subprotocols
 * `debug-hardness`: additional checks and prints for L2 norm in prover
 * `debug-decomp`: additional checks for decomposition and overflows in type 0 projections
-
-## Platform and requirements
-The project supports two interchangeable backends for ring arithmetic:
-
-- `rust-hexl` — a pure Rust implementation for modular arithmetic and NTT operations
-- HEXL C++ bindings — native bindings to the Intel HEXL library
-
-Unlike HEXL, `rust-hexl` runs on any Rust-supported platform. On non-`x86_64` architectures, or when AVX-512 is unavailable, it automatically falls back to weaker SIMD instructions or naive multiplication. This ensures portability at the cost of reduced performance.
-
-It is necessary to manually enable the different AVX-512 features for the Rust compiler.
-```
-export RUSTFLAGS="-C target-feature=+avx512f,+avx512bw,+avx512dq,+avx512vbmi2 -C linker=gcc"
-```
-Note that even if your processor advertises AVX-512 support, it may not support all AVX-512 instruction subsets, as [listed here](https://en.wikipedia.org/wiki/AVX-512#CPUs_with_AVX-512).
-If your platform does not support some of the listed target features, remove the unsupported ones. Performance will degrade accordingly.
 
 ## License
 
