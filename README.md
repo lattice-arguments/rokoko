@@ -119,7 +119,7 @@ We support different constraint types, each encoding a specific semantic guarant
 * `Type4`: Recursive commitment well-formedness - verifies the entire recursive commitment  tree structure
 * `Type5`: Witness norm check - verifies `<combined_witness, conjugated_witness> = norm_claim`. Further, we derive an additional check for the most external commitment layer. 
 
-Currently, a framework for supporting different kinds of relations is not fully exposed, yet all of those checks have been (generally) built from composable blocks, not specific to our relation in general. 
+Currently, a framework for supporting different kinds of relations is not fully exposed. Yet, all of those checks have been (generally) built from composable blocks, not specific to our relation in general. 
 
 ## Configuration and Structure
 
@@ -139,8 +139,8 @@ The following parameters are shared by both `SumcheckConfig` and `SimpleConfig`:
 - `witness_height`: number of rows in the witness matrix
 - `witness_width`: number of columns in the witness matrix
 - `projection_ratio`: target witness height reduction by projections
-- `projection_height`: height of the projection image
-- `basic_commitment_rank`: rank of the (non-recursive) commitment (`F_0`)
+- `projection_height`: height of the projection image (typically, 256) 
+- `basic_commitment_rank`: rank of the (non-recursive) commitment (`F_0` part of the committed linear relation from the publication)
 
 ### Sumcheck Configuration
 
@@ -149,7 +149,7 @@ The following parameters are sumcheck-specific and defined in `SumcheckConfig`.
 Sumcheck rounds:
 
 - `commitment_recursion: RecursionConfig`: controls how witness commitments are recursively represented via decomposition and prefix
-- `opening_recursion: RecursionConfig`: same idea, but for opening proofs. In many setups it mirrors `commitment_recursion`
+- `opening_recursion: RecursionConfig`: same idea, but for left-constraint opening (T). In many setups, it mirrors `commitment_recursion`
 - `projection_recursion: Projection`: selects which (if any) projection to run
 - `nof_openings`: number of openings per round
 
@@ -157,7 +157,6 @@ Witness decomposition-related settings:
 
 - `witness_decomposition_base_log`
 - `witness_decomposition_chunks`
-- `folded_witness_prefix: Prefix`
 - `composed_witness_length`
 
 The different variants of projections can be selected through:
@@ -176,7 +175,7 @@ where, as mentioned above, `Type0` and `Type1` define the coarse and fine random
 
 This codebase has been benchmarked on a Precision 750, which features an Intel Core i7-11850H and 64 GB of memory. The benchmarks have been run using the pure-Rust back-end, specifically with the features `unsafe-sumcheck` and `rust-hexl` enabled. Logs have been placed under the [experiments/tiger_lake](experiments/tiger_lake) folder.
 
-Additionally, benchmarks of Greyhound (https://github.com/lattice-dogs/labrador) and SALSAA (https://github.com/lattice-arguments/salsaaa) have been recorded on the same machine for polynomial degrees 2^26 and 2^28.
+Additionally, benchmarks of [Greyhound](https://github.com/lattice-dogs/labrador) and [SALSAA](https://github.com/lattice-arguments/salsaaa) have been recorded on the same machine for polynomial degrees 2^26 and 2^28.
 
 Due to memory requirements for polynomial degree 2^30 exceeding 64 GB, the respective benchmarks for Greyhound and SALSAA were run on a different machine (Dell PowerEdge XE8640 with Xeon Platinum 8468) and placed in the [experiments/sapphire_rapids](experiments/sapphire_rapids) folder.
 
@@ -185,7 +184,7 @@ Due to memory requirements for polynomial degree 2^30 exceeding 64 GB, the respe
 * `rust-hexl`: enables the pure-Rust ring arithmetic back-end
 * `p-26`, `p-28`, `p-30`: parameters for polynomial degrees 2^26, 2^28, and 2^30 respectively
 * `unsafe-sumcheck`: enables zero-cost borrow checking by using `UnsafeCell` instead of `RefCell` in sumcheck subprotocols
-* `debug-hardness`: verifies the hardness of underlying SIS instances (requires Lattice Estimator as a submodule and SageMath installed)
+* `debug-hardness`: verifies the hardness of underlying SIS instances (requires [Lattice Estimator](https://github.com/malb/lattice-estimator) cloned as a submodule and [SageMath](https://www.sagemath.org/) installed)
 * `debug-decomp`: additional checks for decomposition and overflows in type 0 projections
 
 ## License
