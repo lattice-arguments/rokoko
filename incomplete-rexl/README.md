@@ -30,7 +30,7 @@ Add the dependency (path or git):
 
 ```toml
 [dependencies]
-incomplete-rexl = { path = "../hexl-bindings/hexl-rust" }
+incomplete-rexl = { path = "../incomplete-rexl" }
 ```
 
 ### Basic modular arithmetic
