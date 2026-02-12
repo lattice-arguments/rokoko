@@ -170,9 +170,9 @@ where `Type0` defines the random projection over the full ring elements, and `Ty
 ## Experiments
 This codebase has been benchmarked on a Precision 750, which features a Intel Core i7-11850H and 64GB of Memory. The benchmarks logs have been placed under `experiments/tiger_lake` folder.
 
-Additionally, benchmarks of [Greyhound](https://github.com/lattice-dogs/labrador) and [SALSAA](https://github.com/lattice-arguments/salsaaa) have been recorded for polynomial degrees 2^26, 2^28.
+Additionally, benchmarks of [Greyhound](https://github.com/lattice-dogs/labrador) and [SALSAA](https://github.com/lattice-arguments/salsaaa) have been recorded on the same machine for polynomial degrees 2^26, 2^28.
 
-Due to memory requirements for polynomial degrees 2^30 exceeding 64GB, respective benchmarks for Greyhound and SALSAA have been recorded on a different machine (Dell PowerEdge XE8640 with Xeon Platinum 8468) and placed in the `sapphire_rapids` folder.
+Due to memory requirements for polynomial degrees 2^30 exceeding 64GB, respective benchmarks for Greyhound and SALSAA have been ran on a different machine (Dell PowerEdge XE8640 with Xeon Platinum 8468) and placed in the `sapphire_rapids` folder.
 
 ## Features
 
