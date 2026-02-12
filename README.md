@@ -9,7 +9,7 @@ Our protocol is run over power-of-two cyclotomic rings, and parameters are selec
 
 The sumcheck protocol efficiently enforces a collection of algebraic constraints over committed and folded witnesses. A general, highly modular interface for sumcheck protocols is provided, which supports different constraints and may be used for different relations.
 
-We implement vectorized random projections for full ring elements and coefficients, and specifically achieve a higher degree of vectorization for the first kind by leveraging 16-bit registers and thus utilizing a higher number of lanes.
+We implement vectorized random projections for full ring elements and coefficients, and specifically achieve a higher degree of vectorization for the first kind by leveraging smaller registers and thus utilizing a higher number of lanes.
 
 
 ## Build and run instructions
