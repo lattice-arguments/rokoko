@@ -49,4 +49,3 @@ harness = false
 name = "eltwise_bench"
 harness = false
 required-features = ["rust-hexl"]
-
