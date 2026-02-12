@@ -5,7 +5,7 @@ A Rust implementation of RoKoko, an efficient lattice-based succint argument sys
 
 ## Intro
 
-Only power-of-two cyclotomic rings are supported, and parameters are selected such that the ring splits into factors of 2-degree ("almost splitting"), which allows to leverage incomplete NTT for efficient multiplication.
+Our protocol is run over power-of-two cyclotomic rings, and parameters are selected such that the ring splits into factors of 2-degree ("almost splitting"), which allows to leverage incomplete NTT for efficient multiplication.
 
 The sumcheck protocol efficiently enforces a collection of algebraic constraints over committed and folded witnesses. A general, highly modular interface for sumcheck protocols is provided, which supports different constraints and may be used for different relations.
 
