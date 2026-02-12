@@ -33,6 +33,7 @@ The protocol can be compiled and run directly with:
 cargo +nightly run --release --features rust-hexl
 ```
 
+
 #### Using HEXL C++ bindings
 
 It is first necessary to build the library submodule separately.
@@ -56,6 +57,9 @@ Finally, run:
 ```
 cargo +nightly run --release
 ```
+
+## Cached allocations
+For the best performance, it is advisable to run the protocol twice. During the first run, the protocol collects the allocation descriptions (and stores them as a file). On the next run, those allocations will be done in advance, which impact especially the commitment and verifier performance. 
 
 ## API
 
