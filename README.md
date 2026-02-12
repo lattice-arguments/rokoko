@@ -103,16 +103,15 @@ The verifier interface, similarly to the prover, requires a CRS, `SumcheckConfig
 
 Just as the prover, `verifier_round` is recursively called, and the prover sumcheck and simple rounds are checked against the respective interface.
 ```rust
-pub fn verifier_round(
+pub fn verifier_round_simple(
     crs: &CRS,
-    config: &SumcheckConfig,
-    rc_commitment: &[RingElement],
-    round_proof: &SumcheckRoundProof,
+    config: &SimpleConfig,
+    commitment: &BasicCommitment,
+    round_proof: &SimpleRoundProof,
     evaluation_points_inner: &[StructuredRow],
     evaluation_points_outer: &[StructuredRow],
     claims: &[RingElement],
-    sumcheck_context_verifier: &mut VerifierSumcheckContext,
-    hash_wrapper_verifier: Option<HashWrapper>,
+    hash_wrapper: Option<HashWrapper>,
 )
 ```
 
