@@ -129,12 +129,12 @@ pub fn verifier_round_simple(
 We support different constraint type, with each encoding a specific semantic guarantee:
 
 * `Type0`: Basic commitment correctness - verifies `CK · folded_witness = commitment · fold_challenge`
-* `Type1`: Inner evaluation consistency - verifies opening RHS matches witness evaluation
-* `Type2`: Outer evaluation consistency - verifies opening produces the claimed scalar result
-* `Type3`: Projection validity (block-diagonal) - verifies projection image is correctly computed from witness
-* `Type3_1`: Projection validity (Kronecker) - verifies `c^T (I ⊗ P) · witness = c^T projection_image · fold_challenge`
+* `Type1`: Inner evaluation consistency - verifies opening RHS matches witness evaluation. In matches the claim of ``matrix-from-rows(l) W = T'' from the publication.
+* `Type2`: Outer evaluation consistency - verifies the correctness of the evaluation of the rows of the matrix T with outer evaluation points. Those inner products are known to the verifier.
+* `Type3`: Coarse projection validity (block-diagonal) - verifies projection image is correctly computed from witness
+* `Type3_1`: Fine projection validity- verifies `c^T (I ⊗ P) · witness = c^T projection_image · fold_challenge` (batched). Also verifies the correspondence of the constant terms of the fine projection.
 * `Type4`: Recursive commitment well-formedness - verifies the entire recursive commitment  tree structure
-* `Type5`: Witness norm check - verifies `<combined_witness, conjugated_witness> = norm_claim`
+* `Type5`: Witness norm check - verifies `<combined_witness, conjugated_witness> = norm_claim`. Further, we derive an additional check for the most external commitment layer. 
 
 Sumcheck contexts are initiliazed by `init_sumcheck`, which currently builds intializes all sumcheck gadges together.
 The sumcheck protocol (over all constraint types) then can be run by the runner, which interface is defined as
