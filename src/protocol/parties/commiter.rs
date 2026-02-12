@@ -19,9 +19,6 @@ pub fn commit(
 
     let rc_commitment = rc_commitment_with_aux.most_inner_commitment().clone();
 
-    // if we don't proj on the first level, we can't use i16 witness
-    // let witness_i16 = prepare_i16_witness(witness);
-
     let commitment_with_aux = CommitmentWithAux {
         rc_commitment_with_aux,
         witness_i16: None,
