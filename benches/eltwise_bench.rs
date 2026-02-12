@@ -75,7 +75,7 @@ fn bench_eltwise_ops(c: &mut Criterion) {
             &n,
             |bencher, _| {
                 bencher.iter(|| {
-                    hexl_rust::eltwise_mult_mod(
+                    incomplete_rexl::eltwise_mult_mod(
                         black_box(result.as_mut_slice()),
                         black_box(operand1.as_slice()),
                         black_box(operand2.as_slice()),
@@ -117,7 +117,7 @@ fn bench_eltwise_ops(c: &mut Criterion) {
             &n,
             |bencher, _| {
                 bencher.iter(|| {
-                    hexl_rust::fused_incomplete_ntt_mult(
+                    incomplete_rexl::fused_incomplete_ntt_mult(
                         black_box(fused_result.as_mut_slice()),
                         black_box(fused_op1.as_slice()),
                         black_box(fused_op2.as_slice()),
