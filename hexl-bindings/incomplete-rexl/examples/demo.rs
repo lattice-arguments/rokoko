@@ -1,9 +1,9 @@
-//! Comprehensive example demonstrating every public feature of hexl-rust.
+//! Comprehensive example demonstrating every public feature of incomplete-rexl.
 //!
 //! Run with:
 //!     cargo run --release --example demo
 
-use hexl_rust::{
+use incomplete_rexl::{
     // Scalar modular arithmetic
     add_mod,
     // CPU feature detection
@@ -33,7 +33,7 @@ const P: u64 = 1125899906826241;
 
 fn main() {
     println!("╔══════════════════════════════════════════════════╗");
-    println!("║           hexl-rust  feature demo               ║");
+    println!("║       incomplete-rexl  feature demo             ║");
     println!("╚══════════════════════════════════════════════════╝\n");
 
     // ─── CPU features ────────────────────────────────────────────────────

@@ -70,7 +70,7 @@ fn main() {
     #[cfg(feature = "rust-hexl")]
     {
         // Trigger CPU feature detection and print features if enabled
-        hexl_rust::cpu_features::print_features();
+        incomplete_rexl::cpu_features::print_features();
     }
 
     #[cfg(not(target_arch = "x86_64"))]

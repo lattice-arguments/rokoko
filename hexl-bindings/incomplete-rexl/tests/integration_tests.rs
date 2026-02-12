@@ -1,10 +1,10 @@
-//! Integration tests for the hexl-rust standalone library.
+//! Integration tests for the incomplete-rexl standalone library.
 //!
 //! These tests exercise the public API surface: NTT transforms,
 //! element-wise modular arithmetic, incomplete-NTT helpers, and
 //! the fused incomplete-NTT multiplication kernel.
 
-use hexl_rust::*;
+use incomplete_rexl::*;
 
 // A small NTT-friendly prime that fits comfortably in the AVX-512 float path (< 2^50).
 // modulus - 1 = 2^20 * 3 * ... so NTT supports degrees up to 2^20.

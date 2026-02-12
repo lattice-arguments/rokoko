@@ -1,9 +1,9 @@
-# hexl-rust
+# incomplete-rexl
 
 A pure-Rust library for high-performance modular arithmetic and Number Theoretic
 Transforms (NTT), with AVX-512 acceleration.  Designed as a standalone
 replacement for Intel HEXL, with additional support for *incomplete NTT*
-multiplication (the Karatsuba / even-odd split used in many FHE schemes).
+multiplication. The library name
 
 > **Requires Rust nightly** (`#![feature(target_feature_inline_always)]`).
 
@@ -30,13 +30,13 @@ Add the dependency (path or git):
 
 ```toml
 [dependencies]
-hexl-rust = { path = "../hexl-bindings/hexl-rust" }
+incomplete-rexl = { path = "../hexl-bindings/hexl-rust" }
 ```
 
 ### Basic modular arithmetic
 
 ```rust
-use hexl_rust::{add_mod, multiply_mod, power_mod, inv_mod};
+use incomplete_rexl::{add_mod, multiply_mod, power_mod, inv_mod};
 
 let p = 1125899906826241u64; // 50-bit NTT-friendly prime
 
@@ -48,7 +48,7 @@ assert_eq!(power_mod(3, p - 1, p), 1); // Fermat's little theorem
 ### NTT round-trip
 
 ```rust
-use hexl_rust::{ntt_forward_in_place, ntt_inverse_in_place};
+use incomplete_rexl::{ntt_forward_in_place, ntt_inverse_in_place};
 
 let p: u64 = 1125899906826241;
 let n: usize = 1024;
@@ -75,7 +75,7 @@ internally cached *shift factors* (the twiddle factors from the omitted last
 butterfly level).
 
 ```rust
-use hexl_rust::{
+use incomplete_rexl::{
     add_mod, sub_mod, multiply_mod,
     incomplete_ntt_forward_in_place,
     incomplete_ntt_inverse_in_place,

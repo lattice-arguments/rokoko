@@ -54,7 +54,7 @@ pub static HAS_AVX512VBMI2: LazyLock<bool> = LazyLock::new(|| {
 });
 
 pub fn print_features() {
-    println!("CPU features for HEXL-rust:");
+    println!("CPU features for incomplete-rexl:");
     println!("  AVX-512DQ: {}", if *HAS_AVX512DQ { "✓" } else { "✗" });
     println!("  AVX-512IFMA: {}", if *HAS_AVX512IFMA { "✓" } else { "✗" });
     println!(

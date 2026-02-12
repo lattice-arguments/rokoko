@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-# Use the pure-Rust HEXL replacement (hexl-rust) with AVX-512 kernels.
+# Use the pure-Rust HEXL replacement (incomplete-rexl) with AVX-512 kernels.
 # When disabled, falls back to C++ Intel HEXL via FFI (requires libhexl_wrapper.so).
-rust-hexl = ["dep:hexl-rust"]
+rust-hexl = ["dep:incomplete-rexl"]
 # Enables zero-cost borrow checking by using UnsafeCell instead of RefCell
 # WARNING: Only safe if mutations never overlap with reads
 unsafe-sumcheck = []
@@ -21,7 +21,7 @@ criterion = "0.7.0"
 num = "0.4.3"
 rand = "0.9.2"
 blake3 = "1.5.1"
-hexl-rust = { path = "hexl-bindings/hexl-rust", optional = true }
+incomplete-rexl = { path = "hexl-bindings/hexl-rust", optional = true }
 libloading = "0.8.6"
 
 [profile.release]

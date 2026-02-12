@@ -21,7 +21,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hexl-rust"
+name = "incomplete-rexl"
 version = "0.1.0"
 dependencies = [
  "rand",

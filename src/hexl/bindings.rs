@@ -3,7 +3,7 @@
 // ────────────────────────────────────────────────────────────────────
 #[cfg(feature = "rust-hexl")]
 mod inner {
-    use hexl_rust as hexl;
+    use incomplete_rexl as hexl;
 
     #[inline(always)]
     unsafe fn slice_from_raw<'a>(ptr: *const u64, n: u64) -> &'a [u64] {
@@ -132,7 +132,7 @@ mod inner {
     }
 
     /// Fused incomplete NTT ring multiplication (Karatsuba + AVX512 float).
-    /// Shift factors are cached internally by hexl-rust.
+    /// Shift factors are cached internally by incomplete-rexl.
     #[inline(always)]
     pub unsafe fn fused_incomplete_ntt_mult(
         result: *mut u64,

@@ -240,7 +240,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hexl-rust"
+name = "incomplete-rexl"
 version = "0.1.0"
 dependencies = [
  "rand",
@@ -523,7 +523,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "criterion",
- "hexl-rust",
+ "incomplete-rexl",
  "libloading",
  "num",
  "rand",

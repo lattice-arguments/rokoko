@@ -1,7 +1,8 @@
 [package]
-name = "hexl-rust"
+name = "incomplete-rexl"
 version = "0.1.0"
 edition = "2021"
+# Requires Rust nightly (uses #![feature(target_feature_inline_always)])
 description = "Pure-Rust modular arithmetic and NTT library with AVX-512 acceleration"
 readme = "README.md"
 license = "Apache-2.0"
