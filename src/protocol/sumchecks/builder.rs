@@ -103,18 +103,6 @@ fn build_type4_sumcheck_context(
             ck_sumchecks.push(ck_sumcheck(crs, total_vars, data_len, i, 0));
         }
 
-        // let outputs = ck_sumchecks
-        //     .iter()
-        //     .map(|ck_row| {
-        //         let lhs = ElephantCell::new(ProductSumcheck::new(
-        //             ck_row.clone(),
-        //             data_selected_sumcheck.clone(),
-        //         ));
-        //         let rhs = recomposed_child_sumcheck.clone();
-        //         ElephantCell::new(DiffSumcheck::new(lhs, rhs))
-        //     })
-        //     .collect::<Vec<_>>();
-
         let outputs = (0..current.rank)
             .map(|i| {
                 let lhs = ElephantCell::new(ProductSumcheck::new(
@@ -185,9 +173,10 @@ fn build_type4_sumcheck_context(
 ///   - Type1: inner_eval · folded_witness = opening.rhs · fold_challenge
 ///   - Type2: outer_eval · opening.rhs = claimed_evaluation
 ///   - Type3: projection_coeffs · folded_witness = fold_tensor · projection_image (block-diagonal)
-///   - Type3_1: c^T (I ⊗ P) · folded_witness = c^T projection_image · fold_challenge (Kronecker)
+///   - Type3_1: c^T (I ⊗ P) · folded_witness = c^T projection_image · fold_challenge (Kronecker) + consistency checks for batched projections
 ///   - Type4: recursive commitment well-formedness at each layer
 ///   - Type5: witness norm via <combined_witness, conjugate>
+///             (also, we derive a specialised sumcheck for the most outer commitment layer)
 ///
 /// Prefix padding enables composition without reindexing. Decomposition
 /// offsets are preloaded to match commitment arithmetic.
@@ -870,7 +859,6 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         all_outputs.push(type2.output.clone());
     }
 
-    // TODO use enum
     if let Some(type3sumcheck) = &type3sumcheck {
         all_outputs.push(type3sumcheck.output.clone());
     } else if let Some(type3_1_contexts) = &type3_1_sumchecks {

@@ -376,7 +376,6 @@ pub fn precompute_structured_values_fast(layers: &[u64]) -> Vec<u64> {
             // Multiply in-place by scalar
             for i in start_0..end_0 {
                 unsafe {
-                    // TODO: use vectorisation
                     values[i] = multiply_mod(values[i], layer_complement, MOD_Q);
                 }
             }

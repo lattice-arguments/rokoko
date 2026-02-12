@@ -55,9 +55,6 @@ impl<T> ZeroNew<T> for VerticallyAlignedMatrix<T>
 where
     T: Clone,
 {
-    // TODO: maybe it's a bit weird that we cannot
-    // implement ::zero for RingElement (many reps)?
-    // How to fix that?
     fn new_zero(height: usize, width: usize, zero: &T) -> Self {
         VerticallyAlignedMatrix {
             data: vec![zero.clone(); height * width],

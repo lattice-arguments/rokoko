@@ -70,7 +70,7 @@ pub static P: LazyLock<Config> = LazyLock::new(|| {
             2usize.pow(9), // p-30
         ),
         projection_ratio: 1,              // no-op
-        projection_height: 2usize.pow(8), // no-op, TODO: make sure this is not used
+        projection_height: 2usize.pow(8), // no-op,
         basic_commitment_rank: cfg_p26(8, 9),
         nof_openings: 1,
         commitment_recursion: AuxRecursionConfig {
@@ -106,7 +106,7 @@ pub static P_1: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| {
         commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
-            rank: cfg_p30(4, 2), // TODO: why 3 doesn't work here?
+            rank: cfg_p30(4, 2), // TODO: Add support for non-power-of-two ranks
             next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
         },
         opening_recursion: AuxRecursionConfig {

@@ -30,7 +30,6 @@ thread_local! {
         RefCell::new(rand::rng());
 }
 
-// TODO: handle better the case when ring element is zero.
 impl RingElement {
     pub const fn new(representation: Representation) -> Self {
         Self {
@@ -464,7 +463,6 @@ impl RingElement {
         }
         let mut sum = 0u64;
         for i in 0..HALF_DEGREE {
-            // TODO: vectorized sum
             sum += buf[i];
         }
 

@@ -24,17 +24,6 @@ use super::context::SumcheckContext;
 /// This function encapsulates all the `load_from` calls that populate the sumcheck
 /// gadgets with their actual input values. By extracting this logic, we separate
 /// data preparation from the main sumcheck execution flow.
-///
-/// # Arguments
-///
-/// * `sumcheck_context` - The initialized sumcheck context to load data into
-/// * `config` - Protocol configuration
-/// * `combined_witness` - The full witness vector
-/// * `folding_challenges` - Random weights for folding multiple witnesses
-/// * `opening` - Opening proofs with evaluation points
-/// * `projection_matrix` - The structured projection matrix
-/// * `projection_matrix_flatter_structured` - Structured row for flattening projection
-/// * `projection_matrix_flatter_preprocessed` - Preprocessed flattening point for projection
 pub fn load_sumcheck_data(
     sumcheck_context: &mut SumcheckContext,
     _config: &SumcheckConfig,

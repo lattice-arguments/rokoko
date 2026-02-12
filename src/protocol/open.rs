@@ -66,7 +66,7 @@ pub fn claim(
 ) -> RingElement {
     let preprocessed_row_inner = PreprocessedRow::from_structured_row(evaluation_point_inner);
     let preprocessed_row_outer = PreprocessedRow::from_structured_row(evaluation_point_outer);
-    let rhs = commit_basic_internal(&vec![preprocessed_row_inner], witness, 1); // TODO: this is a bit wasteful, but now
+    let rhs = commit_basic_internal(&vec![preprocessed_row_inner], witness, 1);
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
     let mut result = RingElement::zero(Representation::IncompleteNTT);
     for col in 0..rhs.width {

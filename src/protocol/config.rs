@@ -347,7 +347,7 @@ impl SizeableProof for SumcheckRoundProof {
         let mut size = 0;
         for poly in &self.polys {
             for coeff in &poly.coefficients[0..poly.num_coefficients] {
-                size += coeff.size_in_bits(); // TODO: erase -1 if we do sumcheck trick
+                size += coeff.size_in_bits();
             }
         }
         println!("Polys size: {} KB, ", to_kb(size));

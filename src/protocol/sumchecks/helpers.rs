@@ -131,28 +131,18 @@ pub fn tensor_product_u64(a: &Vec<u64>, b: &Vec<u64>) -> Vec<u64> {
 /// the gap between the structured projection matrix and the flat witness representation
 /// that the sumcheck operates on. Here's the full story:
 ///
-/// **High-Level Goal:**
 /// We need to prove that:
 ///   (I ⊗ ProjectionMatrix) · folded_witness = projection_image · fold_challenge
 ///
 /// where I is a block identity matrix, ProjectionMatrix is a small structured matrix,
 /// and the tensor product arranges copies of ProjectionMatrix along the diagonal blocks.
 ///
-/// **Why This Constraint Matters:**
-/// The projection mechanism is how we compress the witness for efficiency. The prover
-/// computes a projected image that's smaller than the original witness, and the verifier
-/// needs to check this projection was done correctly. However, we can't just multiply
-/// the matrix directly—we need to fold it with a random verifier challenge (fold_challenge)
-/// to keep the protocol non-interactive and succinct.
-///
-/// **The Flattening Trick:**
 /// Instead of proving the projection row-by-row (which would require many constraints),
 /// we sample a random linear combination (projection_flatter) of the rows. This gives us
 /// a single inner product constraint:
 ///   <projection_flatter, (I ⊗ ProjectionMatrix) · folded_witness>
 ///      = <projection_flatter, projection_image · fold_challenge>
 ///
-/// **Block Structure Exploitation:**
 /// The witness is organized into `blocks` many blocks of size `inner_width`, where
 /// inner_width = projection_ratio * height. Each block gets multiplied by its own
 /// copy of the projection matrix. By splitting `projection_flatter` into:
@@ -160,19 +150,6 @@ pub fn tensor_product_u64(a: &Vec<u64>, b: &Vec<u64>) -> Vec<u64> {
 ///   - projection_flatter_1: weights for positions within each block (length = height)
 /// we can compute the effective coefficients for the full witness vector by combining
 /// these two layers.
-///
-/// **Sparsity Optimization:**
-/// ProjectionMatrix is typically sparse (many entries are zero or ±1), and we expect
-/// projection_flatter to have relatively few non-zero entries after the MLE evaluation.
-/// By tracking `non_zero_inner_indices`, we avoid iterating over zero contributions,
-/// which gives a significant speedup in practice.
-///
-/// **Return Value:**
-/// The returned vector has length `witness_height` and contains the effective linear
-/// combination weights. Specifically, result[block * inner_width + i] is the coefficient
-/// that the i-th element of block `block` contributes to the final inner product. These
-/// coefficients are then loaded into a linear sumcheck that gets multiplied with the
-/// folded witness to produce the LHS of the projection constraint.
 #[allow(dead_code)]
 pub(crate) fn projection_coefficients(
     projection_matrix: &ProjectionMatrix,
@@ -434,7 +411,7 @@ pub fn projection_flatter_1_times_matrix_ref(
 
     let mut result_field = new_vec_zero_field_preallocated(inner_width);
     for i in 0..inner_width {
-        result_field[i].coeffs.fill(*HALF_WAY_MOD_Q); // TODO: optimize this to be preallocated
+        result_field[i].coeffs.fill(*HALF_WAY_MOD_Q);
     }
 
     for inner_row in 0..height {

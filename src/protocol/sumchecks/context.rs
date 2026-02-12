@@ -13,7 +13,6 @@ use crate::{
 /// Folding with a verifier challenge updates all constraints via `partial_evaluate_all`.
 ///
 /// Note: `type3sumcheck` and `type3_1_sumchecks` are mutually exclusive - only one is used
-/// depending on whether the projection matrix is block-diagonal (Type3) or Kronecker (Type3_1).
 pub struct SumcheckContext {
     pub combined_witness_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub folded_witness_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
@@ -28,7 +27,7 @@ pub struct SumcheckContext {
     pub type3sumcheck: Option<Type3SumcheckContext>,
     pub type4sumchecks: Vec<Type4SumcheckContext>,
     pub type5sumcheck: Type5SumcheckContext,
-    pub type3_1_sumchecks: Option<Type3_1SumcheckContextWrapper>, // it should never go together with type3sumcheck TODO: refactor for enum I guess
+    pub type3_1_sumchecks: Option<Type3_1SumcheckContextWrapper>, // it should never go together with type3sumcheck, left as option for easier handling
     pub combiner: ElephantCell<Combiner<RingElement>>,
     pub field_combiner: ElephantCell<RingToFieldCombiner>,
     pub next: Option<Box<SumcheckContext>>,
@@ -196,7 +195,7 @@ pub struct Type1SumcheckContext {
     pub output: ElephantCell<DiffSumcheck<RingElement>>,
 }
 
-/// Type2: Outer evaluation point consistency for openings.
+/// Type2: Outer evaluation point consistency for openings (`T` in a paper)
 ///
 /// Proves: `<outer_evaluation_points, opening.rhs> = claimed_evaluation` (public)
 ///
