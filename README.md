@@ -3,8 +3,14 @@
 
 A Rust implementation of RoKoko, an efficient lattice-based succint argument system. 
 
-The protocol supports power-of-two cyclotomic rings, and parameters are selected so that the ring splits into factos of degree 2 ("almost splitting"), which allows to leverage incomplete NTT for efficient multiplication. Additionally, we implement vectorized random projections for full ring elements and coefficients, and specifically manage to leverage more efficient 16-bit AVX-512 operations for the first kind. 
-A general interface for sumcheck protocols is also provided, which supports different constraints and might be of independent interest. 
+## Intro
+
+Only power-of-two cyclotomic rings are supported, and parameters are selected such that the ring splits into factors of 2-degree ("almost splitting"), which allows to leverage incomplete NTT for efficient multiplication.
+
+The sumcheck protocol efficiently enforces a collection of algebraic constraints over committed and folded witnesses. A general, highly modular interface for sumcheck protocols is provided, which supports different constraints and may be used for different relations.
+
+We implement vectorized random projections for full ring elements and coefficients, and specifically achieve a higher degree of vectorization for the first kind by leveraging 16-bit registers and thus utilizing a higher number of lanes.
+
 
 ## Build and run instructions
 
@@ -117,6 +123,42 @@ pub fn verifier_round_simple(
     hash_wrapper: Option<HashWrapper>,
 )
 ```
+
+### Sumcheck interface
+
+We support different constraint type, with each encoding a specific semantic guarantee:
+
+* `Type0`: Basic commitment correctness - verifies `CK · folded_witness = commitment · fold_challenge`
+* `Type1`: Inner evaluation consistency - verifies opening RHS matches witness evaluation
+* `Type2`: Outer evaluation consistency - verifies opening produces the claimed scalar result
+* `Type3`: Projection validity (block-diagonal) - verifies projection image is correctly computed from witness
+* `Type3_1`: Projection validity (Kronecker) - verifies `c^T (I ⊗ P) · witness = c^T projection_image · fold_challenge`
+* `Type4`: Recursive commitment well-formedness - verifies the entire recursive commitment  tree structure
+* `Type5`: Witness norm check - verifies `<combined_witness, conjugated_witness> = norm_claim`
+
+Sumcheck contexts are initiliazed by `init_sumcheck`, which currently builds intializes all sumcheck gadges together.
+The sumcheck protocol (over all constraint types) then can be run by the runner, which interface is defined as
+```rust
+pub fn sumcheck(
+    config: &SumcheckConfig,
+    combined_witness: &Vec<RingElement>,
+    projection_matrix: &ProjectionMatrix,
+    folding_challenges: &Vec<RingElement>,
+    challenges_batching_projection_1: &Option<&[BatchedProjectionChallenges; NOF_BATCHES]>,
+    opening: &Opening,
+    sumcheck_context: &mut SumcheckContext,
+    hash_wrapper: &mut HashWrapper,
+) -> (
+    RingElement,
+    RingElement,
+    RingElement,
+    RingElement,
+    Vec<Polynomial<QuadraticExtension>>,
+    Vec<RingElement>,
+    Option<Vec<RingElement>>,
+)
+```
+In order, different claim over the witness and conjugated witness are returned, alongside with norm and inner norm claims. Additionally, the sumcheck runner returns the round polynomials, evaluations points and finally optional constant claims.
 
 ## Cofiguration and structure
 
