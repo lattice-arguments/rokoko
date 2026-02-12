@@ -2,4 +2,4 @@
 rustflags = ["-C", "target-cpu=native", "-C"]
 
 [target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "target-cpu=native", "-C", "target-feature=+avx512f", "-C", "opt-level=3"]
+rustflags = ["-C", "target-cpu=native", "-C", "opt-level=3"]
