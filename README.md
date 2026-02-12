@@ -10,22 +10,22 @@ Our protocol is run over power-of-two cyclotomic rings, and parameters are selec
 
 The sumcheck protocol efficiently enforces a collection of algebraic constraints over committed and folded witnesses. A general, highly modular interface for sumcheck protocols is provided, which supports different constraints and may be used for different relations.
 
-We implement two variants of commited random projections based on the Johnson-Lindestrauss lemma, a coarse (also referred as `Type0` in the codebase) variant applying a projection matrix to full ring elements, and a fine variant (`Type1`) projecting only the coefficients of the witness ring elements. Both implementations are efficient and vectorised, specifically achieving a higher degree of vectorisation for the coarse projection by leveraging smaller registers and thus utilising a greater number of lanes.
+We implement two variants of committed random projections based on the Johnson-Lindestrauss lemma, a coarse (also referred to as `Type0` in the codebase) variant applying a projection matrix to full ring elements, and a fine variant (`Type1`) projecting only the coefficients of the witness ring elements. Both implementations are efficient and vectorised, specifically achieving a higher degree of vectorisation for the coarse projection by leveraging smaller registers and thus utilising a greater number of lanes.
 
 ## Build and Run Instructions
 
 The project supports two interchangeable back-ends for ring arithmetic:
 
-- `rust-hexl` — a [pure Rust implementation](incomplete-rexl/README.md) for modular arithmetic and NTT operations.
+- `incomplete-rexl` — a [pure Rust implementation](incomplete-rexl/README.md) for modular arithmetic and NTT operations.
 - HEXL C++ bindings — native bindings to the Intel HEXL library  
 
-Unlike HEXL, `rust-hexl` can run on any Rust-supported platform (with degraded performance).
+Unlike HEXL, `incomplete-rexl` can run on any Rust-supported platform (with degraded performance).
 
 For the best performance, it is required to compile and run the project on an AVX-512-enabled processor.
 Note that your processor may not support all AVX-512 instruction subsets, as listed here: https://en.wikipedia.org/wiki/AVX-512#CPUs_with_AVX-512.  
 If your platform does not support some of the instruction subsets (such as `avx512dq` or `avx512vbmi2`), performance will degrade accordingly.
 
-#### Using the `rust-hexl` feature (pure Rust back-end)
+#### Using the `incomplete-rexl` feature (pure Rust back-end)
 
 The protocol can be compiled and run directly with:
 
@@ -119,28 +119,7 @@ We support different constraint types, each encoding a specific semantic guarant
 * `Type4`: Recursive commitment well-formedness - verifies the entire recursive commitment  tree structure
 * `Type5`: Witness norm check - verifies `<combined_witness, conjugated_witness> = norm_claim`. Further, we derive an additional check for the most external commitment layer. 
 
-```rust
-pub fn sumcheck(
-    config: &SumcheckConfig,
-    combined_witness: &Vec<RingElement>,
-    projection_matrix: &ProjectionMatrix,
-    folding_challenges: &Vec<RingElement>,
-    challenges_batching_projection_1: &Option<&[BatchedProjectionChallenges; NOF_BATCHES]>,
-    opening: &Opening,
-    sumcheck_context: &mut SumcheckContext,
-    hash_wrapper: &mut HashWrapper,
-) -> (
-    RingElement,
-    RingElement,
-    RingElement,
-    RingElement,
-    Vec<Polynomial<QuadraticExtension>>,
-    Vec<RingElement>,
-    Option<Vec<RingElement>>,
-)
-```
-
-In order, different claims over the witness and conjugated witness are returned, alongside norm and inner norm claims. Additionally, the sumcheck runner returns the round polynomials, evaluation points, and finally optional constant claims.
+Currently, a framework for supporting different kinds of relations is not fully exposed, yet all of those checks have been (generally) built from composable blocks, not specific to our relation in general. 
 
 ## Configuration and Structure
 
@@ -173,7 +152,6 @@ Sumcheck rounds:
 - `opening_recursion: RecursionConfig`: same idea, but for opening proofs. In many setups it mirrors `commitment_recursion`
 - `projection_recursion: Projection`: selects which (if any) projection to run
 - `nof_openings`: number of openings per round
-- `next_level_usage_ratio`: defines usage of witness width for the next level (as a fraction)
 
 Witness decomposition-related settings:
 
@@ -182,7 +160,7 @@ Witness decomposition-related settings:
 - `folded_witness_prefix: Prefix`
 - `composed_witness_length`
 
-The different variant of projections can be selected through:
+The different variants of projections can be selected through:
 
 ```rust
 pub enum Projection {
@@ -192,7 +170,7 @@ pub enum Projection {
 }
 ```
 
-where, as mentioned above, `Type0` and `Type1` define the coarse and fine random projections respectively.
+where, as mentioned above, `Type0` and `Type1` define the coarse and fine random projections, respectively.
 
 ## Experiments
 
