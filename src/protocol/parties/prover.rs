@@ -128,7 +128,6 @@ pub fn prover_round(
 
     let rcs_projection_1 = match &config.projection_recursion {
         Projection::Type1(proj_config) => {
-            // TODO implement Type1 projection recursion
             let t2 = std::time::Instant::now();
             let projection_image_ct = project_coefficients(&witness, &projection_matrix);
             println!("  project_cf: {} ms", t2.elapsed().as_millis());
@@ -405,7 +404,7 @@ pub fn prover_round(
         };
 
         let recomposed_witness_bound = recommited_ell_2_norm_rest
-            * (next_level_width as f64).sqrt() // norm conversion as we get argument about columsn separately in extraction
+            * (next_level_width as f64).sqrt() // norm conversion as we get argument about columsn separately in extraction, TODO: I think it is not necessary
             * (config
                 .witness_decomposition_base_log
                 .pow((config.witness_decomposition_chunks - 1) as u32)) as f64;
@@ -447,9 +446,6 @@ pub fn prover_round(
             argued_witness_bound
         };
 
-        if !with_claims {
-            // i.e. not the first round
-        }
         match &config.projection_recursion {
             Projection::Skip => {
                 // do nothing as we cannot use inner product norm extraction anyway
