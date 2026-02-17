@@ -404,7 +404,7 @@ pub fn prover_round(
         };
 
         let recomposed_witness_bound = recommited_ell_2_norm_rest
-            * (next_level_width as f64).sqrt() // norm conversion as we get argument about columsn separately in extraction, TODO: I think it is not necessary
+            // * (next_level_width as f64).sqrt() // norm conversion as we get argument about columsn separately in extraction, TODO: I think it is not necessary
             * (config
                 .witness_decomposition_base_log
                 .pow((config.witness_decomposition_chunks - 1) as u32)) as f64;
