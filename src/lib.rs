@@ -3,3 +3,4 @@
 pub mod common;
 pub mod hexl;
 pub mod protocol;
+pub mod salsaa;
