@@ -2,7 +2,6 @@ use rokoko::common::init_common;
 use rokoko::common::pool::{load_and_preallocate, save_access_stats};
 // use rokoko::protocol::parties::executor::execute;
 use rokoko::salsaa::executor::execute;
-// use rokoko::protocol::execution::execute;
 
 fn main() {
     #[cfg(feature = "p-26")]

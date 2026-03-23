@@ -1,4 +1,8 @@
-use crate::common::{matrix::{HorizontallyAlignedMatrix}, ring_arithmetic::{Representation, RingElement}, sampling::sample_random_vector, structured_row::{PreprocessedRow, StructuredRow}
+use crate::common::{
+    matrix::HorizontallyAlignedMatrix,
+    ring_arithmetic::{Representation, RingElement},
+    sampling::sample_random_vector,
+    structured_row::{PreprocessedRow, StructuredRow},
 };
 pub type CK = Vec<PreprocessedRow>;
 pub type SCK = Vec<StructuredRow>;
@@ -29,11 +33,13 @@ impl CRS {
         debug_assert!(max_wit_dim.is_power_of_two());
 
         let shared_v_module = HorizontallyAlignedMatrix::<RingElement> {
-            data: sample_random_vector(max_wit_dim.ilog2() as usize * max_module_size, Representation::IncompleteNTT),
+            data: sample_random_vector(
+                max_wit_dim.ilog2() as usize * max_module_size,
+                Representation::IncompleteNTT,
+            ),
             width: max_wit_dim.ilog2() as usize,
             height: max_module_size,
         };
-
 
         let (cks, structured_cks): (Vec<_>, Vec<_>) = (1..=max_wit_dim.ilog2() as usize)
             .map(|i| {

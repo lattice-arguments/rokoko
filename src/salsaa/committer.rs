@@ -1,4 +1,7 @@
-use crate::{common::{matrix::VerticallyAlignedMatrix, ring_arithmetic::RingElement}, protocol::crs::CRS};
+use crate::{
+    common::{matrix::VerticallyAlignedMatrix, ring_arithmetic::RingElement},
+    protocol::crs::CRS,
+};
 
 pub fn commit(
     witness: VerticallyAlignedMatrix<RingElement>,
