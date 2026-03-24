@@ -1,7 +1,7 @@
 use crate::common::config::*;
 use crate::hexl::bindings::*;
 use crate::protocol::config::SizeableProof;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 use std::cell::RefCell;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 use std::sync::LazyLock;
@@ -26,8 +26,15 @@ pub struct RingElement {
 }
 
 thread_local! {
-    static RNG: RefCell<rand::rngs::ThreadRng> =
-        RefCell::new(rand::rng());
+    static RNG: RefCell<rand::rngs::StdRng> =
+        RefCell::new(rand::rngs::StdRng::from_os_rng());
+}
+
+pub fn seed_rng(seed: &str) {
+    let seed_bytes: [u8; 32] = *blake3::hash(seed.as_bytes()).as_bytes();
+    RNG.with(|cell| {
+        *cell.borrow_mut() = rand::rngs::StdRng::from_seed(seed_bytes);
+    });
 }
 
 impl RingElement {
@@ -1197,6 +1204,7 @@ impl SizeableProof for QuadraticExtension {
 #[cfg(test)]
 mod tests {
     use crate::common::init_common;
+use rand::SeedableRng;
 
     use super::*;
 
