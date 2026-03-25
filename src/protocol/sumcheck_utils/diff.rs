@@ -82,7 +82,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
         point: HypercubePoint,
         polynomial: &mut Polynomial<E>,
     ) {
-        let _lhs_eval_poly = self.lhs_eval_poly.borrow_mut();
+        polynomial.set_zero();
         let lhs_sumcheck = &self.lhs_sumcheck;
         if !lhs_sumcheck
             .get_ref()
