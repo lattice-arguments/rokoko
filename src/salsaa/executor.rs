@@ -46,6 +46,7 @@ pub struct SalsaaProof {
     projection_commitment: BasicCommitment,
     sumcheck_transcript: Vec<Polynomial<QuadraticExtension>>,
     ip_l2_claim: Option<RingElement>,
+    ip_linf_claim: Option<RingElement>,
     claims: HorizontallyAlignedMatrix<RingElement>,
     claim_over_projection: Vec<RingElement>,
     next: Option<Box<SalsaaProof>>,
@@ -625,6 +626,19 @@ pub fn prover_round(
         None
     };
 
+    let ip_linf_claim = if config.exact_binariness {
+        let mut temp = RingElement::zero(Representation::IncompleteNTT);
+        let mut claim = RingElement::zero(Representation::IncompleteNTT);
+        for (w, wc) in witness.data.iter().zip(witness_conjugated.iter()) {
+            temp -= (&*ALL_ONE_COEFFS, w);
+            temp *= wc;
+            claim += &temp;
+        }
+        Some(claim)
+    } else {
+        None
+    };
+
     paste_by_prefix(
         &mut extended_witness,
         &witness.data,
@@ -714,6 +728,11 @@ pub fn prover_round(
             .claim();
         let ct = linf_claim.constant_term_from_incomplete_ntt();
         assert_eq!(ct, 0, "Linf claim from the projection sumcheck is not zero, which means that the witness is not exactly binary as expected");
+
+        assert_eq!(
+            linf_claim, ip_linf_claim.clone().unwrap(),
+            "Linf claim from the projection sumcheck does not match the expected linf claim computed from the witness"
+        );
     }
     // END TEST ONLY
 
@@ -845,6 +864,7 @@ pub fn prover_round(
     SalsaaProof {
         projection_commitment,
         ip_l2_claim,
+        ip_linf_claim,
         sumcheck_transcript: polys,
         claims,
         claim_over_projection,
