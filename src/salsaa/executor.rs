@@ -5,23 +5,10 @@ use rand::rand_core::le;
 
 use crate::{
     common::{
-        arithmetic::{field_to_ring_element_into, ALL_ONE_COEFFS, ONE, ZERO},
-        config::{self, HALF_DEGREE},
-        hash::HashWrapper,
-        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
-        projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
-        sampling::sample_random_short_vector,
-        structured_row::{PreprocessedRow, StructuredRow},
-        sumcheck_element::SumcheckElement,
+        arithmetic::{ALL_ONE_COEFFS, ONE, ZERO, field_to_ring_element_into}, config::{self, HALF_DEGREE}, decomposition::{compose_from_decomposed, decompose_chunks_into}, hash::HashWrapper, matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated}, projection_matrix::ProjectionMatrix, ring_arithmetic::{QuadraticExtension, Representation, RingElement}, sampling::sample_random_short_vector, structured_row::{PreprocessedRow, StructuredRow}, sumcheck_element::SumcheckElement
     },
     protocol::{
-        commitment::{self, commit_basic, commit_basic_internal, BasicCommitment, Prefix},
-        config::paste_by_prefix,
-        crs::CRS,
-        open::{claim, evaluation_point_to_structured_row},
-        project::{self, prepare_i16_witness, project},
-        sumcheck_utils::{
+        commitment::{self, BasicCommitment, Prefix, commit_basic, commit_basic_internal}, config::paste_by_prefix, crs::{self, CRS}, fold::fold, open::{claim, evaluation_point_to_structured_row}, project::{self, prepare_i16_witness, project}, sumcheck_utils::{
             combiner::{Combiner, CombinerEvaluation},
             common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
             diff::{DiffSumcheck, DiffSumcheckEvaluation},
@@ -35,8 +22,7 @@ use crate::{
             ring_to_field_combiner::{RingToFieldCombiner, RingToFieldCombinerEvaluation},
             selector_eq::{SelectorEq, SelectorEqEvaluation},
             sum,
-        },
-        sumchecks::helpers::{projection_flatter_1_times_matrix, sumcheck_from_prefix},
+        }, sumchecks::helpers::{projection_flatter_1_times_matrix, sumcheck_from_prefix}
     },
 };
 
@@ -51,6 +37,9 @@ pub struct SalsaaProof {
     ip_linf_claim: Option<RingElement>,
     claims: HorizontallyAlignedMatrix<RingElement>,
     claim_over_projection: Vec<RingElement>,
+    new_claims: HorizontallyAlignedMatrix<RingElement>,
+    commitment_to_folded_witness: BasicCommitment, // TODO: this is unnecessary, remove later
+    decomposed_split_commitment: BasicCommitment, // TODO: this should be optional as on the last round we just send the witness immediately post folding
     next: Option<Box<SalsaaProof>>,
 }
 
@@ -63,6 +52,7 @@ pub struct RoundConfig {
     pub projection_prefix: Prefix,
     pub main_witness_prefix: Prefix,    // shall be always 0
     pub inner_evaluation_claims: usize, // how many inner evaluation claims we want to make, this determines the number of type1 sumchecks we need
+    pub decomposition_base_log: u64, // base log for decomposition, if 0 then no decomposition is done and the proof is for the folded witness
     pub next: Option<Box<RoundConfig>>,
 }
 
@@ -87,6 +77,7 @@ const CONFIG: RoundConfig = RoundConfig {
     },
     next: None, // for now, we test only the first round, but we will need to fill this in for later rounds
     inner_evaluation_claims: 1, // for VDF one will be enough
+    decomposition_base_log: 12 // for now, we test only the first round, but we will need to fill this in for later rounds
 };
 
 // ==== Prover Sumcheck context initialization ====
@@ -860,13 +851,109 @@ pub fn prover_round(
     //     claim_over_projection[1] += &temp;
     // }
 
+    let mut folding_challenges = new_vec_zero_preallocated(config.main_witness_columns);
+    hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut folding_challenges);
+
+    let mut folded_witness = fold(&witness, &folding_challenges);
+
+    // TODO: remove me later as we can recmpose it
+    let commitment_to_folded_witness = commit_basic(crs, &folded_witness, RANK);
+
+    let split_witness = VerticallyAlignedMatrix {
+        height: folded_witness.height / 2,
+        width: 2,
+        data: folded_witness.data,
+        used_cols: 2,
+    };
+
+    // TEST ONLU
+
+    let commitment_to_split_witness = commit_basic(crs, &split_witness, RANK);
+
+    let old_ck = crs.structured_ck_for_wit_dim(split_witness.height * 2);
+    let composed = &(&(&*ONE - &old_ck[0].tensor_layers[0]) * &commitment_to_split_witness[(0, 0)]) + &(&old_ck[0].tensor_layers[0] * &commitment_to_split_witness[(0, 1)]);
+    assert_eq!(composed, commitment_to_folded_witness[(0, 0)], "Composed commitment from the split witness does not match the commitment to the folded witness");
+
+    // END TEST ONLY
+
+    let mut decomposed_split_witness = VerticallyAlignedMatrix {
+        height: split_witness.height,
+        width: 8,
+        data: new_vec_zero_preallocated(split_witness.height * 8),
+        used_cols: 8,
+    };
+
+    decompose_chunks_into(&mut decomposed_split_witness.data[..split_witness.height * 2], &split_witness.data[..split_witness.height], config.decomposition_base_log, 2);
+
+    decompose_chunks_into(&mut decomposed_split_witness.data[split_witness.height * 2..split_witness.height * 4], &split_witness.data[split_witness.height..], config.decomposition_base_log, 2);
+
+    decompose_chunks_into(&mut decomposed_split_witness.data[split_witness.height * 4.. split_witness.height * 6], &projected_witness.data[..split_witness.height], config.decomposition_base_log, 2);
+
+    decompose_chunks_into(&mut decomposed_split_witness.data[split_witness.height * 6..], &projected_witness.data[split_witness.height..], config.decomposition_base_log, 2);
+
+    let decomposed_split_commitment = commit_basic(crs, &decomposed_split_witness, RANK);
+
+    // TEST ONLY
+
+    let composed = compose_from_decomposed(&vec![
+        decomposed_split_commitment[(0, 0)].clone(),
+        decomposed_split_commitment[(0, 1)].clone(),
+        decomposed_split_commitment[(0, 2)].clone(),
+        decomposed_split_commitment[(0, 3)].clone(),
+    ], config.decomposition_base_log, 2);
+
+    assert_eq!(composed[0], commitment_to_split_witness[(0, 0)], "Composed commitment from the decomposed split witness does not match the commitment to the split witness");
+
+    assert_eq!(composed[1], commitment_to_split_witness[(0, 1)], "Composed commitment from the decomposed split projected witness does not match the commitment to the projected witness");
+
+    let composed_projection = compose_from_decomposed(&vec![
+        decomposed_split_commitment[(0, 4)].clone(),
+        decomposed_split_commitment[(0, 5)].clone(),
+        decomposed_split_commitment[(0, 6)].clone(),
+        decomposed_split_commitment[(0, 7)].clone(),
+    ], config.decomposition_base_log, 2);
+
+    let unsplit_projection = &(&(&*ONE - &old_ck[0].tensor_layers[0]) * &composed_projection[0]) + &(&old_ck[0].tensor_layers[0] * &composed_projection[1]);
+
+    assert_eq!(unsplit_projection, projection_commitment[(0, 0)], "Composed commitment from the decomposed split projected witness does not match the commitment to the projected witness");
+
+    // END TEST ONLY
+
+    let new_evaluation_points_inner = evaluation_points
+        .iter()
+        .skip(outer_points_len + 1)
+        .cloned()
+        .collect::<Vec<_>>();
+
+    // let new_evaluation_points_inner = evaluation_points
+    //     .iter()
+    //     .skip(evaluation_points.len() - decomposed_split_commitment.height.ilog2() as usize)
+    //     .cloned()
+    //     .collect::<Vec<_>>();
+
+    let new_evaluation_points_inner_expanded = PreprocessedRow::from_structured_row(&evaluation_point_to_structured_row(&new_evaluation_points_inner));
+
+    let new_evaluation_points_inner_conjugated = new_evaluation_points_inner
+        .iter()
+        .map(RingElement::conjugate)
+        .collect::<Vec<_>>();
+
+    let new_evaluation_points_inner_conjugated_expanded = PreprocessedRow::from_structured_row(&evaluation_point_to_structured_row(&new_evaluation_points_inner_conjugated));
+
+    let new_claims = commit_basic_internal(&vec![new_evaluation_points_inner_expanded, new_evaluation_points_inner_conjugated_expanded], &decomposed_split_witness, 1);
+
+
+
     SalsaaProof {
         projection_commitment,
         ip_l2_claim,
         ip_linf_claim,
         sumcheck_transcript: polys,
-        claims,
-        claim_over_projection,
+        claims, // NOT needed
+        claim_over_projection, // not needed
+        new_claims,
+        commitment_to_folded_witness, // TODO: we can remove this as we can recompute it from the split witness, but for now let's keep it for simplicity
+        decomposed_split_commitment,
         next: None,
     }
 
@@ -1420,6 +1507,7 @@ impl VerifierSumcheckContext {
 
 pub fn verifier_round(
     config: &RoundConfig,
+    crs: &CRS,
     verifier_context: &mut VerifierSumcheckContext,
     proof: &SalsaaProof,
     evaluation_points_inner: &[StructuredRow],
@@ -1512,6 +1600,32 @@ pub fn verifier_round(
         round_idx += 1;
     }
 
+    // let sck_for_current_witness = crs.structured_ck_for_wit_dim(config.witness_length);
+
+    // verify evaluation claims (TODO: change to recompute them from the proof data)
+    let recomposed_claims = HorizontallyAlignedMatrix {
+        height: proof.claims.height,
+        width: proof.claims.width / 2,
+        data: compose_from_decomposed(&proof.claims.data, config.decomposition_base_log, 2),
+    };
+
+    // let new_witness_height = config.witness_length / 2;
+    // let layer = evaluation_points_outer.last().unwrap().clone();
+    //         let outer_points_len = config.main_witness_columns.ilog2() as usize + 1;
+    let layer = &evaluation_points_ring[2];
+
+    // assert_eq!(
+    //     recomposed_claims,
+    //     proof.claims.clone(),
+    //     "Recomposed claims from the proof do not match the original claims"
+    // );
+   
+   assert_eq!(
+        proof.claims[(0,0)],
+        &(&(&*ONE - layer) * &recomposed_claims[(0, 0)]) + &(layer * &recomposed_claims[(0, 1)]),
+        "Recomposed claim for the witness does not match the original claim"
+    );
+
     verifier_context.load_data(
         config,
         proof,
@@ -1589,6 +1703,7 @@ pub fn execute() {
     let mut verifier_context = init_verifier_sumcheck(&CONFIG);
     verifier_round(
         &CONFIG,
+        &crs,
         &mut verifier_context,
         &proof,
         &evaluation_points_inner,
