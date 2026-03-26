@@ -297,7 +297,6 @@ pub fn projection_flatter_1_times_matrix(
         result_field[i].coeffs.fill(*HALF_WAY_MOD_Q);
     }
 
-    println!("XXX height: {}", height);
     for inner_row in 0..height {
         let weight = &projection_flatter_1.preprocessed_row[inner_row];
         let weight_field = QuadraticExtension {

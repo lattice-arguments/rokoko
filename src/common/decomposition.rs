@@ -83,7 +83,12 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
 // Like decompose, but interleaves by digit index rather than by element.
 // decompose([a, b], radix=2)        -> [a0, a1, b0, b1]
 // decompose_chunks([a, b], radix=2) -> [a0, b0, a1, b1]
-pub fn decompose_chunks_into(output: &mut [RingElement], input: &[RingElement], base_log: u64, radix: usize) {
+pub fn decompose_chunks_into(
+    output: &mut [RingElement],
+    input: &[RingElement],
+    base_log: u64,
+    radix: usize,
+) {
     let mut flat = decompose(input, base_log, radix);
     let n = input.len();
     for index in 0..n {

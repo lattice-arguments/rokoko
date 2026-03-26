@@ -475,7 +475,10 @@ impl RingElement {
 
     // 1 us
     pub fn inverse(&self) -> RingElement {
-        assert_eq!(self.representation, Representation::HomogenizedFieldExtensions);
+        assert_eq!(
+            self.representation,
+            Representation::HomogenizedFieldExtensions
+        );
 
         // Each slot is Z_q[X]/(X^2 - beta) where beta = FIELD_SHIFT_FACTOR.
         // Slot i represents a_i + b_i*X with a_i = v[i], b_i = v[i + HALF_DEGREE].
@@ -525,16 +528,14 @@ impl RingElement {
         let mut prefix_products = [0u64; HALF_DEGREE];
         prefix_products[0] = norms[0];
         for i in 1..HALF_DEGREE {
-            prefix_products[i] =
-                unsafe { multiply_mod(prefix_products[i - 1], norms[i], MOD_Q) };
+            prefix_products[i] = unsafe { multiply_mod(prefix_products[i - 1], norms[i], MOD_Q) };
         }
 
         let mut inv = unsafe { inv_mod(prefix_products[HALF_DEGREE - 1], MOD_Q) };
 
         let mut norm_inverses = [0u64; HALF_DEGREE];
         for i in (1..HALF_DEGREE).rev() {
-            norm_inverses[i] =
-                unsafe { multiply_mod(inv, prefix_products[i - 1], MOD_Q) };
+            norm_inverses[i] = unsafe { multiply_mod(inv, prefix_products[i - 1], MOD_Q) };
             inv = unsafe { multiply_mod(inv, norms[i], MOD_Q) };
         }
         norm_inverses[0] = inv;

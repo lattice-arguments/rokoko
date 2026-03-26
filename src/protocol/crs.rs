@@ -47,7 +47,12 @@ impl CRS {
                 let mut sck = Vec::with_capacity(max_module_size);
 
                 for j in 0..max_module_size {
-                    let v_module = shared_v_module.row(j).iter().skip(max_wit_dim.ilog2() as usize - i).cloned().collect();
+                    let v_module = shared_v_module
+                        .row(j)
+                        .iter()
+                        .skip(max_wit_dim.ilog2() as usize - i)
+                        .cloned()
+                        .collect();
 
                     let structured_row = StructuredRow {
                         tensor_layers: v_module,
