@@ -97,7 +97,7 @@ static CONFIG_R1: LazyLock<RoundConfig> = LazyLock::new(|| RoundConfig {
         length: 4,
     },
     next: None,
-    inner_evaluation_claims: 2,
+    inner_evaluation_claims: 1,
     decomposition_base_log: 12,
 });
 
@@ -1893,7 +1893,7 @@ pub fn verifier_round(
 
     let vdf_challenge = if config.vdf {
         let mut challenge = RingElement::zero(Representation::IncompleteNTT);
-        hash_wrapper.sample_ring_element_into(&mut challenge);
+        hash_wrapper.sample_ring_element_ntt_slots_into(&mut challenge);
         Some(challenge)
     } else {
         None
@@ -2172,12 +2172,9 @@ fn compute_ip_vdf_claim(
     let c = vdf_challenge.expect("VDF enabled but no challenge");
     let (y_0, y_t, _) = vdf_params.expect("VDF enabled but no params");
     let two_k = config.witness_length / 2 / VDF_MATRIX_WIDTH;
-    // Compute c^{2K} by repeated squaring: c -> c^2 -> c^4 -> ... -> c^{2K}
-    let num_squarings = two_k.ilog2() as usize;
-    let mut c_power = c.clone();
-    for _ in 0..num_squarings {
-        let tmp = c_power.clone();
-        c_power *= &tmp;
+    let mut c_power = RingElement::constant(1, Representation::IncompleteNTT);
+    for _ in 0..two_k {
+        c_power *= c;
     }
     let mut claim = y_0.negate();
     c_power *= y_t;
@@ -2381,6 +2378,7 @@ pub fn execute() {
     let commit_duration = start.elapsed().as_nanos();
     println!("TOTAL Commit time: {:?} ns", commit_duration);
 
+    // TODO: we don't need those clais for vdf, erase
     let evaluation_points_inner = vec![evaluation_point_to_structured_row(
         &range(0, WITNESS_DIM.ilog2() as usize)
             .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 2))
@@ -2389,19 +2387,7 @@ pub fn execute() {
 
     let preprocessed_row_inner =
         PreprocessedRow::from_structured_row(evaluation_points_inner.get(0).unwrap());
-    // TODO rename commit_basic_internal as we abuse it sometimes
     let claims = commit_basic_internal(&vec![preprocessed_row_inner], &vdf_output.trace_witness, 1);
-
-    // let double_evaluation_points_inner = vec![
-    //     evaluation_points_inner.get(0).unwrap().clone(),
-    //     evaluation_points_inner.get(0).unwrap().clone(),
-    // ];
-
-    // let double_claims = HorizontallyAlignedMatrix {
-    //     height: 2,
-    //     width: claims.width,
-    //     data: [&claims.data[..], &claims.data[..]].concat(),
-    // };
 
     println!("===== STARTING PROVER =====");
     let start = std::time::Instant::now();
