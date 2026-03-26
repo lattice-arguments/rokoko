@@ -65,6 +65,7 @@ pub struct SalsaaProof {
 pub struct RoundConfig {
     pub witness_length: usize,
     pub exact_binariness: bool, // whether the proof should be for exact binariness
+    pub vdf: bool, // for the first round
     pub l2: bool,               // whether the proof should be for l2 norm of the witness
     pub projection_ratio: usize, // set 0 for no projection
     pub main_witness_columns: usize,
@@ -84,6 +85,7 @@ static CONFIG_R1: LazyLock<RoundConfig> = LazyLock::new(|| RoundConfig {
     witness_length: (WITNESS_DIM / 2) * 8 * 2, // 8 columns to be expanded to 16 to account for the projection
     exact_binariness: false,
     l2: true,
+    vdf: false,
     projection_ratio: 8,
     main_witness_columns: 8,
     main_witness_prefix: Prefix {
@@ -102,7 +104,8 @@ static CONFIG_R1: LazyLock<RoundConfig> = LazyLock::new(|| RoundConfig {
 static CONFIG: LazyLock<RoundConfig> = LazyLock::new(|| RoundConfig {
     witness_length: WITNESS_DIM * WITNESS_WIDTH * 2, // we ``bloat up'' the witness times two to account to the projection
     exact_binariness: true,
-    l2: true,
+    l2: false,
+    vdf: true, // for the first round
     projection_ratio: 2, // for the first round is 2, later shall be 8 (I think)
     main_witness_columns: NUM_COLUMNS_INITIAL,
     main_witness_prefix: Prefix {
@@ -635,6 +638,14 @@ pub fn prover_round(
     let projection_commitment = commit_basic(crs, &projected_witness, RANK);
 
     let batching_challenges = BatchingChallenges::sample(&config, hash_wrapper);
+
+     let vdf_challenge = if config.vdf {
+        let mut challenge = RingElement::zero(Representation::IncompleteNTT);
+        hash_wrapper.sample_ring_element_into(&mut challenge);
+        Some(challenge)
+    } else {
+        None
+    };
 
     println!("witness.data.len {:?}", witness.data.len());
     let mut extended_witness = new_vec_zero_preallocated(witness.data.len() * 2);
@@ -1601,12 +1612,38 @@ pub fn verifier_round(
     claims: &HorizontallyAlignedMatrix<RingElement>,
     hash_wrapper: &mut HashWrapper,
 ) {
+    // TODO: check linf, l2 cts
     // Replay prover's Fiat-Shamir: sample projection matrix, batching challenges
     let mut projection_matrix =
         ProjectionMatrix::new(config.main_witness_columns, PROJECTION_HEIGHT);
     projection_matrix.sample(hash_wrapper);
 
     let batching_challenges = BatchingChallenges::sample(config, hash_wrapper);
+
+    let vdf_challenge = if config.vdf {
+        let mut challenge = RingElement::zero(Representation::IncompleteNTT);
+        hash_wrapper.sample_ring_element_into(&mut challenge);
+        Some(challenge)
+    } else {
+        None
+    };
+
+    if config.l2 {
+        let claim: &RingElement = proof.ip_l2_claim.as_ref().expect("Missing l2 claim in proof while l2 constraint is enabled");
+        let ct = claim.constant_term_from_incomplete_ntt();
+        println!("asserted norm is sqrt({})", ct);
+    }
+
+    if config.exact_binariness {
+        let claim: &RingElement = proof.ip_linf_claim.as_ref().expect("Missing linf claim in proof while exact_binariness is enabled");
+        let ct = claim.constant_term_from_incomplete_ntt();
+        if ct != 0 {
+            println!("Binariness verification failed: constant term is not zero, got {}", ct);  
+        } else {
+            println!("Binariness verification passed: constant term is zero");
+        }
+            
+    }
 
     let mut evaluation_points_outer = new_vec_zero_preallocated(config.main_witness_columns);
     hash_wrapper.sample_ring_element_vec_into(&mut evaluation_points_outer);
