@@ -940,7 +940,7 @@ pub fn prover_round(
 
     let new_evaluation_points_inner_conjugated_expanded = PreprocessedRow::from_structured_row(&evaluation_point_to_structured_row(&new_evaluation_points_inner_conjugated));
 
-    let new_claims = commit_basic_internal(&vec![new_evaluation_points_inner_expanded, new_evaluation_points_inner_conjugated_expanded], &decomposed_split_witness, 1);
+    let new_claims = commit_basic_internal(&vec![new_evaluation_points_inner_expanded, new_evaluation_points_inner_conjugated_expanded], &decomposed_split_witness, 2);
 
 
 
@@ -1628,8 +1628,33 @@ pub fn verifier_round(
         "Recomposed claim for the witness does not match the original claim"
     );
 
-    // TODO: check also conjugate claims
-    // check claims over the projection
+    // Check conjugate claims
+    let conj_layer = layer.conjugate();
+    let mut folded_conj_claim = RingElement::zero(Representation::IncompleteNTT);
+    for i in 0..config.main_witness_columns {
+        let mut term = folding_challenges[i].clone();
+        term *= &proof.claims[(1, i)];
+        folded_conj_claim += &term;
+    }
+
+    assert_eq!(
+        folded_conj_claim,
+        &(&(&*ONE - &conj_layer) * &recomposed_claims[(1, 0)]) + &(&conj_layer * &recomposed_claims[(1, 1)]),
+        "Recomposed conjugate claim for the witness does not match the original claim"
+    );
+
+    // Check claims over the projection
+    assert_eq!(
+        proof.claim_over_projection[0],
+        &(&(&*ONE - layer) * &recomposed_claims[(0, 2)]) + &(layer * &recomposed_claims[(0, 3)]),
+        "Recomposed claim for the projection does not match the original claim"
+    );
+
+    assert_eq!(
+        proof.claim_over_projection[1],
+        &(&(&*ONE - &conj_layer) * &recomposed_claims[(1, 2)]) + &(&conj_layer * &recomposed_claims[(1, 3)]),
+        "Recomposed conjugate claim for the projection does not match the original claim"
+    );
 
     verifier_context.load_data(
         config,
