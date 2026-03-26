@@ -473,6 +473,11 @@ impl RingElement {
         result
     }
 
+    pub fn negate(&self) -> RingElement {
+        let zero = RingElement::zero(self.representation);
+        &zero - self
+    }
+
     // 1 us
     pub fn inverse(&self) -> RingElement {
         assert_eq!(

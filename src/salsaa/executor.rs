@@ -7,7 +7,7 @@ use rand::rand_core::le;
 use crate::{
     common::{
         arithmetic::{field_to_ring_element_into, ALL_ONE_COEFFS, ONE, ZERO},
-        config::{self, HALF_DEGREE},
+        config::{self, DEGREE, HALF_DEGREE},
         decomposition::{compose_from_decomposed, decompose_chunks_into},
         hash::HashWrapper,
         matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
@@ -1847,10 +1847,188 @@ pub fn verifier_round(
     }
 }
 
+
+const VDF_MATRIX_WIDTH: usize = 64;
+const VDF_MATRIX_HEIGHT: usize = 1;
+pub struct vdf_crs {
+    A: HorizontallyAlignedMatrix<RingElement>,
+}
+pub fn vdf_init() -> vdf_crs {
+    println!("Initializing VDF CRS...");
+    let A = HorizontallyAlignedMatrix {
+        height: VDF_MATRIX_HEIGHT,
+        width: VDF_MATRIX_WIDTH,
+        data: (0..VDF_MATRIX_HEIGHT * VDF_MATRIX_WIDTH)
+            .map(|_| RingElement::random(Representation::IncompleteNTT))
+            .collect(),
+    };
+    vdf_crs { A }    
+}
+
+/// Decomposes a RingElement into 64 bit-plane RingElements, writing into `target`.
+/// target\[b\].v\[j\] = (element.v\[j\] >> b) & 1 for each coefficient j and bit b.
+/// The input is assumed to be in IncompleteNTT; we convert to EvenOddCoefficients
+/// to access raw coefficients, decompose, then convert each result back.
+pub fn decompose_binary_into(element: &RingElement, target: &mut [RingElement]) {
+    assert!(target.len() >= 64, "target slice must have at least 64 elements");
+
+    let mut tmp = element.clone();
+    tmp.from_incomplete_ntt_to_even_odd_coefficients();
+
+    for bit_elem in target[..64].iter_mut() {
+        *bit_elem = RingElement::zero(Representation::EvenOddCoefficients);
+    }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    {
+        use std::arch::x86_64::*;
+        unsafe {
+            let one = _mm512_set1_epi64(1);
+            // Process 8 coefficients at a time
+            for chunk_start in (0..DEGREE).step_by(8) {
+                let coeffs = _mm512_loadu_epi64(tmp.v[chunk_start..].as_ptr() as *const i64);
+                for b in 0..64u64 {
+                    let shift_amt = _mm512_set1_epi64(b as i64);
+                    let shifted = _mm512_srlv_epi64(coeffs, shift_amt);
+                    let masked = _mm512_and_epi64(shifted, one);
+                    _mm512_storeu_epi64(
+                        target[b as usize].v[chunk_start..].as_mut_ptr() as *mut i64,
+                        masked,
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+    {
+        for j in 0..DEGREE {
+            let val = tmp.v[j];
+            for b in 0..64usize {
+                target[b].v[j] = (val >> b) & 1;
+            }
+        }
+    }
+
+    for bit_elem in target[..64].iter_mut() {
+        bit_elem.from_even_odd_coefficients_to_incomplete_ntt_representation();
+    }
+}
+
+
+
+pub struct VDFOutput {
+    y_int: RingElement,
+    y_t: RingElement,
+    trace_witness: VerticallyAlignedMatrix<RingElement>,
+}
+pub fn execute_vdf(
+    y_0: &RingElement,
+) -> VDFOutput {
+    let vdf_crs = vdf_init();
+
+    // g = (1, 2, 4, .., 2^63)
+    // we want to obtain the following form
+    //
+    // |-----------------|      | ------- |
+    // | g               |      |  -y_0   |     
+    // | a g             |      |    0    | 
+    // |   a g           |      |    0    | 
+    // |     a g         |      |    0    | 
+    // |       a g       |  w = |    0    | 
+    // |         a g     |      |    0    | 
+    // |           a g   |      |    0    | 
+    // |             a g |      |    0    | 
+    // |               a |      |   y_t   | 
+    // |-----------------|      | ------- |
+    // t = 8
+    // and in VDF we compute it like
+    // w_0 = g^{-1} (-y_0)
+    // (a g) * (w_0 || w_1) = 0
+    // a w_0 = - g w_1
+    // w_1 = g^{-1} (- a w_0) and we call y_1 = a w_0
+    // w_2 = g^{-1} (- a w_1) and we call y_2 = a w_1
+    // w_3 = g^{-1} (- a w_2) and we call y_3 = a w_2
+    // w_4 = g^{-1} (- a w_3) and we call y_4 = a w_3
+    // w_5 = g^{-1} (- a w_4) and we call y_5 = a w_4
+    // w_6 = g^{-1} (- a w_5) and we call y_6 = a w_5
+    // w_7 = g^{-1} (- a w_6) and we call y_7 = a w_6
+    // y_8 = a w_7
+
+    // |---------|    |---------|     |--------------|
+    // | g       |    | w_0 w_4 |     | -y_0   -y_4  |
+    // | a g     |    | w_1 w_5 |     |   0     0    |
+    // |   a g   |  * | w_2 w_6 |   = |   0     0    |
+    // |     a g |    | w_3 w_7 |     |   0     0    |
+    // |       a |    |---------|     |  y_4   y_8   |
+    // |---------|                    |--------------|
+
+    // we call y_int = y_4
+    // then we can split the wintess witness into two cols
+    // 
+    // This intuition naturally generalises to any t = 2^k,
+    // i.e. t = WITNESS_DIM/64*2 (2 columns, 64 for decomposition)
+    // 
+    
+    let mut trace_witness = VerticallyAlignedMatrix {
+        height: WITNESS_DIM,
+        width: 2,
+        data: new_vec_zero_preallocated(WITNESS_DIM * 2),
+        used_cols: 2,
+    };
+
+    let steps_per_col = WITNESS_DIM / VDF_MATRIX_WIDTH;
+    let total_steps = steps_per_col * 2;
+
+    let mut neg_y = y_0.negate();
+    let mut y_int = RingElement::zero(Representation::IncompleteNTT);
+    let mut temp = RingElement::zero(Representation::IncompleteNTT);
+
+    for step in 0..total_steps {
+        let col = step / steps_per_col;
+        let row_in_col = step % steps_per_col;
+        let base_row = row_in_col * VDF_MATRIX_WIDTH;
+
+        // w_step = g^{-1}(-y_step) = decompose_binary(-y_step)
+        // Write directly into the trace_witness column-major slice
+        let data_offset = col * WITNESS_DIM + base_row;
+        decompose_binary_into(&neg_y, &mut trace_witness.data[data_offset..data_offset + VDF_MATRIX_WIDTH]);
+
+        // y_{step+1} = <a, w_step> = sum_j a_j * bits[j]
+        let mut y_next = RingElement::zero(Representation::IncompleteNTT);
+        for j in 0..VDF_MATRIX_WIDTH {
+            temp *= (&vdf_crs.A[(0, j)], &trace_witness.data[data_offset + j]);
+            y_next += &temp;
+        }
+
+        if step == steps_per_col - 1 {
+            y_int = y_next.clone();
+        }
+
+        neg_y = y_next.negate();
+    }
+
+    let y_t = neg_y.negate();
+
+    VDFOutput {
+        y_int,
+        y_t,
+        trace_witness,
+    }
+}
+
 pub fn execute() {
     println!("Generating CRS...");
 
     let crs = CRS::gen_crs(WITNESS_DIM, 8);
+    let vdf_crs = vdf_init();
+
+    println!("CRS generated. Starting execution...");
+    let vdf_start = std::time::Instant::now();
+    let y_0 = RingElement::random(Representation::IncompleteNTT); // TODO: from hash
+    let vdf_output = execute_vdf(&y_0);
+    let vdf_duration = vdf_start.elapsed().as_millis();
+    println!("VDF executed in {:?} ms", vdf_duration);
 
     let mut sumcheck_context = init_prover_sumcheck(&crs, &CONFIG);
 
@@ -1916,4 +2094,79 @@ pub fn execute() {
     let verify_duration = start.elapsed().as_nanos();
     println!("TOTAL Verify time: {:?} ns", verify_duration);
     println!("===== VERIFICATION PASSED =====");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::config::MOD_Q;
+
+    #[test]
+    fn test_decompose_binary_roundtrip() {
+        let elem = RingElement::random(Representation::IncompleteNTT);
+        let mut bits: Vec<RingElement> = (0..64)
+            .map(|_| RingElement::zero(Representation::IncompleteNTT))
+            .collect();
+        decompose_binary_into(&elem, &mut bits);
+
+        assert_eq!(bits.len(), 64);
+
+        // Recompose: sum_b bits[b] * 2^b  (in EvenOdd space, then convert back)
+        let mut recomposed = RingElement::zero(Representation::IncompleteNTT);
+        recomposed.from_incomplete_ntt_to_even_odd_coefficients();
+        for (b, bit_elem) in bits.iter().enumerate() {
+            let mut bit_copy = bit_elem.clone();
+            bit_copy.from_incomplete_ntt_to_even_odd_coefficients();
+            let shift = 1u64 << b;
+            for j in 0..DEGREE {
+                recomposed.v[j] = (recomposed.v[j] + bit_copy.v[j] * shift) % MOD_Q;
+            }
+        }
+        recomposed.from_even_odd_coefficients_to_incomplete_ntt_representation();
+
+        assert_eq!(recomposed, elem, "Binary decomposition roundtrip failed");
+    }
+
+    #[test]
+    fn test_decompose_binary_bits_are_binary() {
+        let elem = RingElement::random(Representation::IncompleteNTT);
+        let mut bits: Vec<RingElement> = (0..64)
+            .map(|_| RingElement::zero(Representation::IncompleteNTT))
+            .collect();
+        decompose_binary_into(&elem, &mut bits);
+
+        for (b, bit_elem) in bits.iter().enumerate() {
+            let mut bit_copy = bit_elem.clone();
+            bit_copy.from_incomplete_ntt_to_even_odd_coefficients();
+            for j in 0..DEGREE {
+                assert!(
+                    bit_copy.v[j] == 0 || bit_copy.v[j] == 1,
+                    "Bit plane {} coeff {} is {}, expected 0 or 1",
+                    b, j, bit_copy.v[j]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_decompose_binary_high_bits_zero() {
+        // MOD_Q < 2^51, so bits 51..63 should be all zero
+        let elem = RingElement::random(Representation::IncompleteNTT);
+        let mut bits: Vec<RingElement> = (0..64)
+            .map(|_| RingElement::zero(Representation::IncompleteNTT))
+            .collect();
+        decompose_binary_into(&elem, &mut bits);
+
+        for b in 51..64 {
+            let mut bit_copy = bits[b].clone();
+            bit_copy.from_incomplete_ntt_to_even_odd_coefficients();
+            for j in 0..DEGREE {
+                assert_eq!(
+                    bit_copy.v[j], 0,
+                    "Bit plane {} coeff {} should be 0 (above modulus bit-width)",
+                    b, j
+                );
+            }
+        }
+    }
 }
