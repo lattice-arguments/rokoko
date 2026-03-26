@@ -19,7 +19,7 @@ use crate::{
     },
     protocol::{
         commitment::{self, commit_basic, commit_basic_internal, BasicCommitment, Prefix},
-        config::paste_by_prefix,
+        config::{paste_by_prefix, to_kb, SizeableProof},
         crs::{self, CRS},
         fold::fold,
         open::{claim, evaluation_point_to_structured_row},
@@ -79,6 +79,71 @@ impl std::ops::Deref for SalsaaProof {
         match self {
             SalsaaProof::Intermediate { common, .. } => common,
             SalsaaProof::Last { common, .. } => common,
+        }
+    }
+}
+
+fn ring_vec_size(v: &[RingElement]) -> usize {
+    v.iter().map(|e| e.size_in_bits()).sum()
+}
+
+impl SizeableProof for SalsaaProof {
+    fn size_in_bits(&self) -> usize {
+        let common = &**self;
+
+        // Sumcheck transcript (polynomials)
+        let mut polys_size = 0;
+        for poly in &common.sumcheck_transcript {
+            for coeff in &poly.coefficients[0..poly.num_coefficients] {
+                polys_size += coeff.size_in_bits();
+            }
+        }
+        println!("  Polys: {:.2} KB", to_kb(polys_size));
+
+        // Claims matrix
+        let claims_size = ring_vec_size(&common.claims.data);
+        println!("  Claims: {:.2} KB", to_kb(claims_size));
+
+        // Claim over projection
+        let proj_claim_size = ring_vec_size(&common.claim_over_projection);
+        println!("  Claim over projection: {:.2} KB", to_kb(proj_claim_size));
+
+        // Projection commitment
+        let proj_commit_size = ring_vec_size(&common.projection_commitment.data);
+        println!("  Projection commitment: {:.2} KB", to_kb(proj_commit_size));
+
+        // Norm claims
+        let l2_size = common.ip_l2_claim.as_ref().map_or(0, |c| c.size_in_bits());
+        let linf_size = common.ip_linf_claim.as_ref().map_or(0, |c| c.size_in_bits());
+        println!("  L2 claim: {:.2} KB, Linf claim: {:.2} KB", to_kb(l2_size), to_kb(linf_size));
+
+        let mut round_size = polys_size + claims_size + proj_claim_size + proj_commit_size + l2_size + linf_size;
+
+        match self {
+            SalsaaProof::Intermediate { new_claims, decomposed_split_commitment, next, .. } => {
+                let new_claims_size = ring_vec_size(&new_claims.data);
+                println!("  New claims: {:.2} KB", to_kb(new_claims_size));
+
+                let decomp_commit_size = ring_vec_size(&decomposed_split_commitment.data);
+                println!("  Decomposed split commitment: {:.2} KB", to_kb(decomp_commit_size));
+
+                round_size += new_claims_size + decomp_commit_size;
+                println!("  Round total: {:.2} KB", to_kb(round_size));
+
+                round_size + next.size_in_bits()
+            }
+            SalsaaProof::Last { folded_witness, projected_witness, .. } => {
+                let folded_size = ring_vec_size(folded_witness);
+                println!("  Folded witness: {:.2} KB", to_kb(folded_size));
+
+                let proj_wit_size = ring_vec_size(projected_witness);
+                println!("  Projected witness: {:.2} KB", to_kb(proj_wit_size));
+
+                round_size += folded_size + proj_wit_size;
+                println!("  Round total (last): {:.2} KB", to_kb(round_size));
+
+                round_size
+            }
         }
     }
 }
@@ -2604,6 +2669,10 @@ pub fn execute() {
     );
     let prove_duration = start.elapsed().as_millis();
     println!("TOTAL Prove time: {:?} ms", prove_duration);
+
+    println!("===== PROOF SIZE =====");
+    let proof_size_bits = proof.size_in_bits();
+    println!("Total proof size: {:.2} KB", to_kb(proof_size_bits));
 
     println!("===== STARTING VERIFIER =====");
     let start = std::time::Instant::now();
