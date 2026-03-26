@@ -1814,6 +1814,41 @@ pub fn verifier_round(
         verifier_eval, batched_claim_over_field,
         "Verifier final check failed: tree evaluation does not match sumcheck claim"
     );
+
+    // Recurse into the next round if config.next is present
+    if let Some(next_config) = &config.next {
+        let next_proof = proof
+            .next
+            .as_ref()
+            .expect("Config has next level but proof does not");
+
+        let new_evaluation_points_inner = evaluation_points_ring
+            .iter()
+            .skip(outer_points_len + 1)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        let new_evaluation_points_inner_conjugated = new_evaluation_points_inner
+            .iter()
+            .map(RingElement::conjugate)
+            .collect::<Vec<_>>();
+
+        let next_level_eval_points = vec![
+            evaluation_point_to_structured_row(&new_evaluation_points_inner),
+            evaluation_point_to_structured_row(&new_evaluation_points_inner_conjugated),
+        ];
+
+        verifier_round(
+            next_config,
+            crs,
+            verifier_context.next.as_mut().unwrap(),
+            &proof.decomposed_split_commitment,
+            next_proof,
+            &next_level_eval_points,
+            &proof.new_claims,
+            hash_wrapper,
+        );
+    }
 }
 
 pub fn execute() {
