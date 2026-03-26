@@ -43,6 +43,8 @@ use crate::{
     },
 };
 
+const DEBUG: bool = false;
+
 const WITNESS_DIM: usize = 2usize.pow(16);
 const WITNESS_WIDTH: usize = 2usize;
 const RANK: usize = 8;
@@ -729,10 +731,10 @@ impl ProverSumcheckContext {
             // Compute vdf_batched_row[j] = 2^j + c * a_j for j = 0..63
             // (2^j reduced mod q since RingElement::constant doesn't reduce)
             let mut batched_row: Vec<RingElement> = Vec::with_capacity(VDF_MATRIX_WIDTH);
+            let mut ca_j = RingElement::zero(Representation::IncompleteNTT);
             for j in 0..VDF_MATRIX_WIDTH {
                 let mut row_j = RingElement::constant((1u64 << j) % MOD_Q, Representation::IncompleteNTT);
-                let mut ca_j = c.clone();
-                ca_j *= &vdf_crs_ref.A[(0, j)];
+                ca_j *= (c, &vdf_crs_ref.A[(0, j)]);
                 row_j += &ca_j;
                 batched_row.push(row_j);
             }
@@ -787,7 +789,7 @@ pub fn prover_round(
         None
     };
 
-    println!("witness.data.len {:?}", witness.data.len());
+    if DEBUG { println!("witness.data.len {:?}", witness.data.len()); }
     let mut extended_witness = new_vec_zero_preallocated(witness.data.len() * 2);
 
     let mut witness_conjugated = new_vec_zero_preallocated(witness.data.len());
@@ -819,8 +821,6 @@ pub fn prover_round(
     } else {
         None
     };
-    let ip_vdf_claim = compute_ip_vdf_claim(config, vdf_challenge.as_ref(), vdf_params);
-
     paste_by_prefix(
         &mut extended_witness,
         &witness.data,
@@ -866,74 +866,76 @@ pub fn prover_round(
         .borrow_mut()
         .load_challenges_from(qe);
 
-    // TEST ONLY
-    let claim = sumcheck_context.type1sumcheck[0].output.borrow().claim();
+    if DEBUG {
+        let ip_vdf_claim = compute_ip_vdf_claim(config, vdf_challenge.as_ref(), vdf_params);
 
-    let mut expected_claim = ZERO.clone();
-    for (c, r) in claims.row(0).iter().zip(evaluation_points_outer.iter()) {
-        expected_claim += &(c * r);
-    }
-    assert_eq!(claim, expected_claim, "Claim from the sumcheck does not match the expected claim computed from the committed witness and the evaluation points");
+        let claim = sumcheck_context.type1sumcheck[0].output.borrow().claim();
 
-    let projection_claim = sumcheck_context
-        .type3sumcheck
-        .as_ref()
-        .unwrap()
-        .output
-        .borrow()
-        .claim();
-    let expected_projection_claim = ZERO.clone();
-    assert_eq!(
-        projection_claim, expected_projection_claim,
-        "Projection claim from the sumcheck does not match the expected projection claim"
-    );
+        let mut expected_claim = ZERO.clone();
+        for (c, r) in claims.row(0).iter().zip(evaluation_points_outer.iter()) {
+            expected_claim += &(c * r);
+        }
+        assert_eq!(claim, expected_claim, "Claim from the sumcheck does not match the expected claim computed from the committed witness and the evaluation points");
 
-    if config.l2 {
-        let l2_claim = sumcheck_context
-            .l2sumcheck
+        let projection_claim = sumcheck_context
+            .type3sumcheck
             .as_ref()
             .unwrap()
             .output
             .borrow()
             .claim();
+        let expected_projection_claim = ZERO.clone();
         assert_eq!(
-            l2_claim, ip_l2_claim.clone().unwrap(),
-            "L2 claim from the projection sumcheck does not match the expected l2 claim computed from the witness"
+            projection_claim, expected_projection_claim,
+            "Projection claim from the sumcheck does not match the expected projection claim"
         );
+
+        if config.l2 {
+            let l2_claim = sumcheck_context
+                .l2sumcheck
+                .as_ref()
+                .unwrap()
+                .output
+                .borrow()
+                .claim();
+            assert_eq!(
+                l2_claim, ip_l2_claim.clone().unwrap(),
+                "L2 claim from the projection sumcheck does not match the expected l2 claim computed from the witness"
+            );
+        }
+
+        if config.exact_binariness {
+            let linf_claim = sumcheck_context
+                .linfsumcheck
+                .as_ref()
+                .unwrap()
+                .output
+                .borrow()
+                .claim();
+            let ct = linf_claim.constant_term_from_incomplete_ntt();
+            assert_eq!(ct, 0, "Linf claim from the projection sumcheck is not zero, which means that the witness is not exactly binary as expected");
+
+            assert_eq!(
+                linf_claim, ip_linf_claim.clone().unwrap(),
+                "Linf claim from the projection sumcheck does not match the expected linf claim computed from the witness"
+            );
+        }
+
+        if config.vdf {
+            let vdf_claim = sumcheck_context
+                .vdfsumcheck
+                .as_ref()
+                .unwrap()
+                .output
+                .borrow()
+                .claim();
+
+            assert_eq!(
+                vdf_claim, ip_vdf_claim.clone().unwrap(),
+                "VDF claim from the sumcheck does not match the expected VDF claim"
+            );
+        }
     }
-
-    if config.exact_binariness {
-        let linf_claim = sumcheck_context
-            .linfsumcheck
-            .as_ref()
-            .unwrap()
-            .output
-            .borrow()
-            .claim();
-        let ct = linf_claim.constant_term_from_incomplete_ntt();
-        assert_eq!(ct, 0, "Linf claim from the projection sumcheck is not zero, which means that the witness is not exactly binary as expected");
-
-        assert_eq!(
-            linf_claim, ip_linf_claim.clone().unwrap(),
-            "Linf claim from the projection sumcheck does not match the expected linf claim computed from the witness"
-        );
-    }
-
-    if config.vdf {
-        let vdf_claim = sumcheck_context
-            .vdfsumcheck
-            .as_ref()
-            .unwrap()
-            .output
-            .borrow()
-            .claim();
-
-        assert_eq!(
-            vdf_claim, ip_vdf_claim.clone().unwrap(),
-            "VDF claim from the sumcheck does not match the expected VDF claim"
-        );
-    }
-    // END TEST ONLY
 
     let mut num_vars = sumcheck_context.combiner.borrow().variable_count();
 
@@ -973,10 +975,12 @@ pub fn prover_round(
         polys.push(poly_over_field);
     }
 
-    println!(
-        "Polynomial time: {:?} ms, Evaluation time: {:?} ms",
-        time_poly, time_eval
-    );
+    if DEBUG {
+        println!(
+            "Polynomial time: {:?} ms, Evaluation time: {:?} ms",
+            time_poly, time_eval
+        );
+    }
 
     let outer_points_len = config.main_witness_columns.ilog2() as usize + 1; // extended witness is two times the original witness, so we need one more bit for the prefix
     let evaluation_points_inner = evaluation_points
@@ -1059,25 +1063,26 @@ pub fn prover_round(
 
     let mut folded_witness = fold(&witness, &folding_challenges);
 
-    // TEST ONLY
-    let commitment_to_folded_witness = commit_basic(crs, &folded_witness, RANK);
-    // END TEST ONLY
+    if DEBUG {
+        let commitment_to_folded_witness = commit_basic(crs, &folded_witness, RANK);
+        let split_ref = VerticallyAlignedMatrix {
+            height: folded_witness.height / 2,
+            width: 2,
+            data: folded_witness.data.clone(),
+            used_cols: 2,
+        };
+        let commitment_to_split_witness = commit_basic(crs, &split_ref, RANK);
+        let old_ck = crs.structured_ck_for_wit_dim(split_ref.height * 2);
+        let composed = &(&(&*ONE - &old_ck[0].tensor_layers[0]) * &commitment_to_split_witness[(0, 0)])
+            + &(&old_ck[0].tensor_layers[0] * &commitment_to_split_witness[(0, 1)]);
+        assert_eq!(composed, commitment_to_folded_witness[(0, 0)], "Composed commitment from the split witness does not match the commitment to the folded witness");
+    }
     let split_witness = VerticallyAlignedMatrix {
         height: folded_witness.height / 2,
         width: 2,
         data: folded_witness.data,
         used_cols: 2,
     };
-
-    // TEST ONLY
-    let commitment_to_split_witness = commit_basic(crs, &split_witness, RANK);
-
-    let old_ck = crs.structured_ck_for_wit_dim(split_witness.height * 2);
-    let composed = &(&(&*ONE - &old_ck[0].tensor_layers[0]) * &commitment_to_split_witness[(0, 0)])
-        + &(&old_ck[0].tensor_layers[0] * &commitment_to_split_witness[(0, 1)]);
-    assert_eq!(composed, commitment_to_folded_witness[(0, 0)], "Composed commitment from the split witness does not match the commitment to the folded witness");
-
-    // END TEST ONLY
 
     let mut decomposed_split_witness = VerticallyAlignedMatrix {
         height: split_witness.height,
@@ -1116,40 +1121,41 @@ pub fn prover_round(
 
     let decomposed_split_commitment = commit_basic(crs, &decomposed_split_witness, RANK);
 
-    // TEST ONLY
+    if DEBUG {
+        let commitment_to_split_witness = commit_basic(crs, &split_witness, RANK);
+        let old_ck = crs.structured_ck_for_wit_dim(split_witness.height * 2);
 
-    let composed = compose_from_decomposed(
-        &vec![
-            decomposed_split_commitment[(0, 0)].clone(),
-            decomposed_split_commitment[(0, 1)].clone(),
-            decomposed_split_commitment[(0, 2)].clone(),
-            decomposed_split_commitment[(0, 3)].clone(),
-        ],
-        config.decomposition_base_log,
-        2,
-    );
+        let composed = compose_from_decomposed(
+            &vec![
+                decomposed_split_commitment[(0, 0)].clone(),
+                decomposed_split_commitment[(0, 1)].clone(),
+                decomposed_split_commitment[(0, 2)].clone(),
+                decomposed_split_commitment[(0, 3)].clone(),
+            ],
+            config.decomposition_base_log,
+            2,
+        );
 
-    assert_eq!(composed[0], commitment_to_split_witness[(0, 0)], "Composed commitment from the decomposed split witness does not match the commitment to the split witness");
+        assert_eq!(composed[0], commitment_to_split_witness[(0, 0)], "Composed commitment from the decomposed split witness does not match the commitment to the split witness");
 
-    assert_eq!(composed[1], commitment_to_split_witness[(0, 1)], "Composed commitment from the decomposed split projected witness does not match the commitment to the projected witness");
+        assert_eq!(composed[1], commitment_to_split_witness[(0, 1)], "Composed commitment from the decomposed split projected witness does not match the commitment to the projected witness");
 
-    let composed_projection = compose_from_decomposed(
-        &vec![
-            decomposed_split_commitment[(0, 4)].clone(),
-            decomposed_split_commitment[(0, 5)].clone(),
-            decomposed_split_commitment[(0, 6)].clone(),
-            decomposed_split_commitment[(0, 7)].clone(),
-        ],
-        config.decomposition_base_log,
-        2,
-    );
+        let composed_projection = compose_from_decomposed(
+            &vec![
+                decomposed_split_commitment[(0, 4)].clone(),
+                decomposed_split_commitment[(0, 5)].clone(),
+                decomposed_split_commitment[(0, 6)].clone(),
+                decomposed_split_commitment[(0, 7)].clone(),
+            ],
+            config.decomposition_base_log,
+            2,
+        );
 
-    let unsplit_projection = &(&(&*ONE - &old_ck[0].tensor_layers[0]) * &composed_projection[0])
-        + &(&old_ck[0].tensor_layers[0] * &composed_projection[1]);
+        let unsplit_projection = &(&(&*ONE - &old_ck[0].tensor_layers[0]) * &composed_projection[0])
+            + &(&old_ck[0].tensor_layers[0] * &composed_projection[1]);
 
-    assert_eq!(unsplit_projection, projection_commitment[(0, 0)], "Composed commitment from the decomposed split projected witness does not match the commitment to the projected witness");
-
-    // END TEST ONLY
+        assert_eq!(unsplit_projection, projection_commitment[(0, 0)], "Composed commitment from the decomposed split projected witness does not match the commitment to the projected witness");
+    }
 
     let new_evaluation_points_inner = evaluation_points
         .iter()
@@ -1824,10 +1830,10 @@ impl VerifierSumcheckContext {
             // Compute vdf_batched_row[j] = 2^j + c * a_j for j = 0..63
             // (2^j reduced mod q since RingElement::constant doesn't reduce)
             let mut batched_row: Vec<RingElement> = Vec::with_capacity(VDF_MATRIX_WIDTH);
+            let mut ca_j = RingElement::zero(Representation::IncompleteNTT);
             for j in 0..VDF_MATRIX_WIDTH {
                 let mut row_j = RingElement::constant((1u64 << j) % MOD_Q, Representation::IncompleteNTT);
-                let mut ca_j = c.clone();
-                ca_j *= &vdf_crs_ref.A[(0, j)];
+                ca_j *= (c, &vdf_crs_ref.A[(0, j)]);
                 row_j += &ca_j;
                 batched_row.push(row_j);
             }
@@ -1845,16 +1851,17 @@ impl VerifierSumcheckContext {
             // Iterate in reverse so c_power starts at c^{2^0} and pairs with LSB.
             let mut mle_step_powers = RingElement::constant(1, Representation::IncompleteNTT);
             let mut c_power = c.clone(); // c^{2^0} = c
+            let mut temp_sq = RingElement::zero(Representation::IncompleteNTT);
+            let mut term = RingElement::zero(Representation::IncompleteNTT);
             for x_i in step_powers_vars.iter().rev() {
                 // factor = (1 - x_i) + x_i * c^{2^k}
                 let mut factor = &*ONE - x_i;
-                let mut term = x_i.clone();
-                term *= &c_power;
+                term *= (x_i, &c_power);
                 factor += &term;
                 mle_step_powers *= &factor;
                 // c_power = c_power^2 for next iteration
-                let tmp = c_power.clone();
-                c_power *= &tmp;
+                temp_sq *= (&c_power, &c_power);
+                std::mem::swap(&mut c_power, &mut temp_sq);
             }
             vdf_eval
                 .vdf_step_powers_evaluation
@@ -2288,7 +2295,6 @@ pub fn execute_vdf(y_0: &RingElement, dim: usize, vdf_crs: &vdf_crs) -> VDFOutpu
     // w_7 = g^{-1} (- a w_6) and we call y_7 = a w_6
     // y_8 = a w_7
 
-    // TODO add tests if after example VDF execution indeed this holds
     // |---------|    |---------|     |--------------|
     // | g       |    | w_0 w_4 |     | -y_0   -y_4  |
     // | a g     |    | w_1 w_5 |     |   0     0    |
