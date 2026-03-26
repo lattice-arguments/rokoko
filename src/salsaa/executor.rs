@@ -7,7 +7,7 @@ use rand::rand_core::le;
 use crate::{
     common::{
         arithmetic::{field_to_ring_element_into, ALL_ONE_COEFFS, ONE, ZERO},
-        config::{self, DEGREE, HALF_DEGREE},
+        config::{self, DEGREE, HALF_DEGREE, MOD_Q},
         decomposition::{compose_from_decomposed, decompose_chunks_into},
         hash::HashWrapper,
         matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
@@ -130,13 +130,67 @@ pub struct ProverSumcheckContext {
     pub projection_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
     pub type1sumcheck: Vec<Type1ProverSumcheckContext>, // for verifying inner evaluation points
     pub type3sumcheck: Option<Type3ProverSumcheckContext>, // for verifying the projection
-    // pub type5sumcheck: Option<Type5ProverSumcheckContext>, // for verifying the l2 norm of the witness, only used when exact_binariness is false TODO
     pub l2sumcheck: Option<L2ProverSumcheckContext>,
     pub linfsumcheck: Option<LinfSumcheckContext>,
-    // pub type6sumcheck: Option<Type6ProvserSumcheckContext>, // for verifying ecact binariness, only used when exact_binariness is true TODO
+    pub vdfsumcheck: Option<VDFProverSumcheckContext>, // for verifying the VDF, only used in the first round
     pub combiner: ElephantCell<Combiner<RingElement>>,
     pub field_combiner: ElephantCell<RingToFieldCombiner>,
     pub next: Option<Box<ProverSumcheckContext>>,
+}
+
+
+// VDF sumcheck: we prove that M · w = b where M is the VDF matrix and b = (-y_0, 0, ..., 0, y_t).
+//
+// The VDF matrix has the structure:
+// |-----------------|      | ------- |
+// | g               |      |  -y_0   |
+// | a g             |      |    0    |
+// |   a g           |      |    0    |
+// |     a g         |      |    0    |
+// |       a g       |  w = |    0    |
+// |         a g     |      |    0    |
+// |           a g   |      |    0    |
+// |             a g |      |    0    |
+// |               a |      |   y_t   |
+// |-----------------|      | ------- |
+//
+// where w = (w_0 // w_1) i.e. the columns are stacked (matching our vertical memory alignment).
+//
+// We batch the rows with challenge powers (vdf_step_powers)^T = (1, c, c^2, ..., c^{2K}):
+//
+//                |-----------------|                         | ------- |
+//                | g               |                         |  -y_0   |
+//                | a g             |                         |    0    |
+//                |   a g           |                         |    0    |
+//                |     a g         |                         |    0    |
+//  step_powers^T |       a g       |  w = step_powers^T      |    0    |
+//                |         a g     |                         |    0    |
+//                |           a g   |                         |    0    |
+//                |             a g |                         |    0    |
+//                |               a |                         |   y_t   |
+//                |-----------------|                         | ------- |
+//
+// We factor this into two vectors:
+//   vdf_batched_row^T = (1, c) ⊗ (g // a)
+//     = [2^0 + c·a_0, 2^1 + c·a_1, ..., 2^63 + c·a_63]  (batched matrix column)
+//   vdf_step_powers^T = (1, c, c^2, ..., c^{2K-1})  (challenge powers weighting each step)
+//
+// So the batched relation becomes:
+//   (vdf_step_powers^T ⊗ vdf_batched_row^T) · w = -y_0 + c^{2K} · y_t
+//
+// All of the logic generalises to any t that is a power of two (i.e. WITNESS_DIM * 2).
+// The full product (vdf_step_powers ⊗ vdf_batched_row) is one sumcheck for the prover.
+// For the verifier:
+//   - MLE[vdf_batched_row] evaluation is one small sumcheck (64 elements)
+//   - MLE[vdf_step_powers] evaluation is efficient via the tensor structure:
+//     vdf_step_powers = (1, c^{t/2}) ⊗ (1, c^{t/4}) ⊗ ... ⊗ (1, c)
+//     MLE[vdf_step_powers](x) = prod_i ((1-x_i) + x_i · c^{t/2^{i+1}})
+
+
+pub struct VDFProverSumcheckContext {
+    pub vdf_step_powers_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub vdf_batched_row_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub output: ElephantCell<ProductSumcheck<RingElement>>,
 }
 
 pub struct L2ProverSumcheckContext {
@@ -213,6 +267,44 @@ fn init_prover_type_1_sumcheck(
     Type1ProverSumcheckContext {
         inner_evaluation_sumcheck,
         outer_evaluation_sumcheck,
+        output,
+    }
+}
+
+fn init_prover_vdf_sumcheck(
+    config: &RoundConfig,
+    main_witness_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
+) -> VDFProverSumcheckContext {
+    let total_vars = config.witness_length.ilog2() as usize;
+    let two_k = config.witness_length / 2 / VDF_MATRIX_WIDTH; // 2K = total VDF steps across both columns
+
+    // vdf_step_powers: varies over log2(2K) middle variables (one per VDF step)
+    // prefix = 1 (main_witness_selector bit), suffix = 6 (element-within-block bits)
+    let vdf_step_powers_sumcheck = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
+        two_k,
+        1,
+        VDF_MATRIX_WIDTH.ilog2() as usize,
+    ));
+
+    // vdf_batched_row: varies over 6 LSB variables (element within 64-element block)
+    // prefix = total_vars - 6 (all higher bits)
+    let vdf_batched_row_sumcheck = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
+        VDF_MATRIX_WIDTH,
+        total_vars - VDF_MATRIX_WIDTH.ilog2() as usize,
+        0,
+    ));
+
+    let output = ElephantCell::new(ProductSumcheck::new(
+        ElephantCell::new(ProductSumcheck::new(
+            vdf_step_powers_sumcheck.clone(),
+            vdf_batched_row_sumcheck.clone(),
+        )),
+        main_witness_sumcheck.clone(),
+    ));
+
+    VDFProverSumcheckContext {
+        vdf_step_powers_sumcheck,
+        vdf_batched_row_sumcheck,
         output,
     }
 }
@@ -425,6 +517,15 @@ pub fn init_prover_sumcheck(crs: &CRS, config: &RoundConfig) -> ProverSumcheckCo
         None
     };
 
+    let vdfsumcheck = if config.vdf {
+        Some(init_prover_vdf_sumcheck(
+            config,
+            main_witness_sumcheck.clone(),
+        ))
+    } else {
+        None
+    };
+
     let mut all_outputs: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>> =
         vec![];
     for type1 in &type1sumcheck {
@@ -439,6 +540,9 @@ pub fn init_prover_sumcheck(crs: &CRS, config: &RoundConfig) -> ProverSumcheckCo
     }
     if let Some(linf) = &linfsumcheck {
         all_outputs.push(linf.output.clone());
+    }
+    if let Some(vdf) = &vdfsumcheck {
+        all_outputs.push(vdf.output.clone());
     }
 
     let combiner = ElephantCell::new(Combiner::new(all_outputs));
@@ -455,6 +559,7 @@ pub fn init_prover_sumcheck(crs: &CRS, config: &RoundConfig) -> ProverSumcheckCo
         field_combiner,
         l2sumcheck,
         linfsumcheck,
+        vdfsumcheck,
         next: config
             .next
             .as_ref()
@@ -536,6 +641,11 @@ impl ProverSumcheckContext {
                 .borrow_mut()
                 .partial_evaluate(r);
         }
+
+        if let Some(vdf) = &mut self.vdfsumcheck {
+            vdf.vdf_step_powers_sumcheck.borrow_mut().partial_evaluate(r);
+            vdf.vdf_batched_row_sumcheck.borrow_mut().partial_evaluate(r);
+        }
     }
 
     pub fn load_data(
@@ -546,6 +656,8 @@ impl ProverSumcheckContext {
         evaluation_points_outer: &Vec<RingElement>,
         projection_matrix: &ProjectionMatrix,
         projection_batching_challenges: &Option<BatchingChallenges>,
+        vdf_challenge: Option<&RingElement>,
+        vdf_crs_param: Option<&vdf_crs>,
     ) {
         self.witness_sumcheck.borrow_mut().load_from(&witness);
         self.witness_conjugated_sumcheck
@@ -609,6 +721,33 @@ impl ProverSumcheckContext {
                 .borrow_mut()
                 .load_from(&evaluation_points_outer);
         }
+
+        if let Some(vdf) = &mut self.vdfsumcheck {
+            let c = vdf_challenge.expect("VDF sumcheck enabled but no vdf_challenge provided");
+            let vdf_crs_ref = vdf_crs_param.expect("VDF sumcheck enabled but no vdf_crs provided");
+
+            // Compute vdf_batched_row[j] = 2^j + c * a_j for j = 0..63
+            // (2^j reduced mod q since RingElement::constant doesn't reduce)
+            let mut batched_row: Vec<RingElement> = Vec::with_capacity(VDF_MATRIX_WIDTH);
+            for j in 0..VDF_MATRIX_WIDTH {
+                let mut row_j = RingElement::constant((1u64 << j) % MOD_Q, Representation::IncompleteNTT);
+                let mut ca_j = c.clone();
+                ca_j *= &vdf_crs_ref.A[(0, j)];
+                row_j += &ca_j;
+                batched_row.push(row_j);
+            }
+            vdf.vdf_batched_row_sumcheck.borrow_mut().load_from(&batched_row);
+
+            // Compute vdf_step_powers[i] = c^i for i = 0..2K
+            let two_k = witness.len() / 2 / VDF_MATRIX_WIDTH;
+            let mut step_powers: Vec<RingElement> = Vec::with_capacity(two_k);
+            let mut c_power = RingElement::constant(1, Representation::IncompleteNTT);
+            for _ in 0..two_k {
+                step_powers.push(c_power.clone());
+                c_power *= c;
+            }
+            vdf.vdf_step_powers_sumcheck.borrow_mut().load_from(&step_powers);
+        }
     }
 }
 
@@ -621,6 +760,7 @@ pub fn prover_round(
     claims: &HorizontallyAlignedMatrix<RingElement>,
     // evaluation_points_outer: &Vec<StructuredRow>,
     hash_wrapper: &mut HashWrapper,
+    vdf_params: Option<(&RingElement, &RingElement, &vdf_crs)>, // (y_0, y_t, crs) - only for first round
 ) -> SalsaaProof {
     let witness_16 = prepare_i16_witness(witness);
 
@@ -679,6 +819,7 @@ pub fn prover_round(
     } else {
         None
     };
+    let ip_vdf_claim = compute_ip_vdf_claim(config, vdf_challenge.as_ref(), vdf_params);
 
     paste_by_prefix(
         &mut extended_witness,
@@ -701,6 +842,8 @@ pub fn prover_round(
         &evaluation_points_outer,
         &projection_matrix,
         &Some(batching_challenges),
+        vdf_challenge.as_ref(),
+        vdf_params.map(|(_, _, crs)| crs),
     );
 
     // Sample random batching coefficients from Fiat-Shamir
@@ -773,6 +916,21 @@ pub fn prover_round(
         assert_eq!(
             linf_claim, ip_linf_claim.clone().unwrap(),
             "Linf claim from the projection sumcheck does not match the expected linf claim computed from the witness"
+        );
+    }
+
+    if config.vdf {
+        let vdf_claim = sumcheck_context
+            .vdfsumcheck
+            .as_ref()
+            .unwrap()
+            .output
+            .borrow()
+            .claim();
+
+        assert_eq!(
+            vdf_claim, ip_vdf_claim.clone().unwrap(),
+            "VDF claim from the sumcheck does not match the expected VDF claim"
         );
     }
     // END TEST ONLY
@@ -1041,6 +1199,7 @@ pub fn prover_round(
             &new_claims,
             // &evaluation_points_outer, // TODO: do we need to pass the outer evaluation points to the next level? maybe not, since the next level will have its own ones?
             hash_wrapper,
+            None, // VDF only in first round
         )))
     } else {
         None
@@ -1110,6 +1269,7 @@ pub struct VerifierSumcheckContext {
     pub type3evaluation: Option<Type3VerifierSumcheckContext>,
     pub l2evaluation: Option<L2VerifierSumcheckContext>,
     pub linfevaluation: Option<LinfVerifierSumcheckContext>,
+    pub vdfevaluation: Option<VDFVerifierSumcheckContext>,
     pub combiner_evaluation: ElephantCell<CombinerEvaluation<RingElement>>,
     pub field_combiner_evaluation: ElephantCell<RingToFieldCombinerEvaluation>,
     pub next: Option<Box<VerifierSumcheckContext>>,
@@ -1124,6 +1284,12 @@ pub struct LinfVerifierSumcheckContext {
     pub output: ElephantCell<ProductSumcheckEvaluation>,
     pub one_minus_wit_evaluation: ElephantCell<DiffSumcheckEvaluation>,
     pub one_minus_wit_selector_evaluation: ElephantCell<ProductSumcheckEvaluation>,
+}
+
+pub struct VDFVerifierSumcheckContext {
+    pub vdf_step_powers_evaluation: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
+    pub vdf_batched_row_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
+    pub output: ElephantCell<ProductSumcheckEvaluation>,
 }
 
 pub struct Type1VerifierSumcheckContext {
@@ -1335,6 +1501,38 @@ fn init_verifier_linf_sumcheck(
     }
 }
 
+fn init_verifier_vdf_sumcheck(
+    config: &RoundConfig,
+    main_witness_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
+) -> VDFVerifierSumcheckContext {
+    let total_vars = config.witness_length.ilog2() as usize;
+
+    let vdf_step_powers_evaluation =
+        ElephantCell::new(FakeEvaluationLinearSumcheck::<RingElement>::new());
+
+    let vdf_batched_row_evaluation = ElephantCell::new(
+        BasicEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
+            VDF_MATRIX_WIDTH,
+            total_vars - VDF_MATRIX_WIDTH.ilog2() as usize,
+            0,
+        ),
+    );
+
+    let output = ElephantCell::new(ProductSumcheckEvaluation::new(
+        ElephantCell::new(ProductSumcheckEvaluation::new(
+            vdf_step_powers_evaluation.clone(),
+            vdf_batched_row_evaluation.clone(),
+        )),
+        main_witness_evaluation.clone(),
+    ));
+
+    VDFVerifierSumcheckContext {
+        vdf_step_powers_evaluation,
+        vdf_batched_row_evaluation,
+        output,
+    }
+}
+
 pub fn init_verifier_sumcheck(config: &RoundConfig) -> VerifierSumcheckContext {
     let total_vars = config.witness_length.ilog2() as usize;
 
@@ -1391,6 +1589,15 @@ pub fn init_verifier_sumcheck(config: &RoundConfig) -> VerifierSumcheckContext {
         None
     };
 
+    let vdfevaluation = if config.vdf {
+        Some(init_verifier_vdf_sumcheck(
+            config,
+            main_witness_evaluation.clone(),
+        ))
+    } else {
+        None
+    };
+
     let mut all_outputs: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>> =
         vec![];
     for type1 in &type1evaluations {
@@ -1404,6 +1611,9 @@ pub fn init_verifier_sumcheck(config: &RoundConfig) -> VerifierSumcheckContext {
     }
     if let Some(linf) = &linfevaluation {
         all_outputs.push(linf.output.clone());
+    }
+    if let Some(vdf) = &vdfevaluation {
+        all_outputs.push(vdf.output.clone());
     }
 
     let combiner_evaluation = ElephantCell::new(CombinerEvaluation::new(all_outputs));
@@ -1420,6 +1630,7 @@ pub fn init_verifier_sumcheck(config: &RoundConfig) -> VerifierSumcheckContext {
         type3evaluation,
         l2evaluation,
         linfevaluation,
+        vdfevaluation,
         combiner_evaluation,
         field_combiner_evaluation,
         next: config
@@ -1438,6 +1649,7 @@ fn batch_claims(
     evaluation_points_outer: &[RingElement],
     ip_l2_claim: Option<&RingElement>,
     ip_linf_claim: Option<&RingElement>,
+    ip_vdf_claim: Option<&RingElement>,
     combination: &[RingElement],
 ) -> RingElement {
     let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
@@ -1481,6 +1693,16 @@ fn batch_claims(
         idx += 1;
     }
 
+    // VDF: product sumcheck claim = -y_0 + c^{2K} · y_t
+    if config.vdf {
+        let mut weighted = ip_vdf_claim
+            .expect("Missing vdf claim in proof while vdf is enabled")
+            .clone();
+        weighted *= &combination[idx];
+        batched_claim += &weighted;
+        idx += 1;
+    }
+
     assert_eq!(
         idx,
         combination.len(),
@@ -1501,6 +1723,8 @@ impl VerifierSumcheckContext {
         projection_matrix: &ProjectionMatrix,
         combination: &[RingElement],
         qe: [QuadraticExtension; HALF_DEGREE],
+        vdf_challenge: Option<&RingElement>,
+        vdf_crs_param: Option<&vdf_crs>,
     ) {
         let outer_points_len = config.main_witness_columns.ilog2() as usize + 1;
         let outer_points = &evaluation_points_ring[0..outer_points_len].to_vec();
@@ -1593,6 +1817,51 @@ impl VerifierSumcheckContext {
                 .load_from(batching_challenges.c2.clone());
         }
 
+        if let Some(vdf_eval) = &mut self.vdfevaluation {
+            let c = vdf_challenge.expect("VDF evaluation enabled but no vdf_challenge provided");
+            let vdf_crs_ref = vdf_crs_param.expect("VDF evaluation enabled but no vdf_crs provided");
+
+            // Compute vdf_batched_row[j] = 2^j + c * a_j for j = 0..63
+            // (2^j reduced mod q since RingElement::constant doesn't reduce)
+            let mut batched_row: Vec<RingElement> = Vec::with_capacity(VDF_MATRIX_WIDTH);
+            for j in 0..VDF_MATRIX_WIDTH {
+                let mut row_j = RingElement::constant((1u64 << j) % MOD_Q, Representation::IncompleteNTT);
+                let mut ca_j = c.clone();
+                ca_j *= &vdf_crs_ref.A[(0, j)];
+                row_j += &ca_j;
+                batched_row.push(row_j);
+            }
+            vdf_eval.vdf_batched_row_evaluation.borrow_mut().load_from(&batched_row);
+
+            // Compute MLE[vdf_step_powers](x) = prod_i ((1-x_i) + x_i * c^{2^i})
+            // step_powers variables: skip prefix=1 (MSB column selector), take log2(2K) vars
+            let two_k = config.witness_length / 2 / VDF_MATRIX_WIDTH;
+            let step_powers_num_vars = two_k.ilog2() as usize;
+            let prefix = 1usize; // MSB selector bit (column selector)
+            let step_powers_vars = &evaluation_points_ring[prefix..prefix + step_powers_num_vars];
+
+            // Variables are MSB-first: step_powers_vars[0] = MSB of step index.
+            // MLE[vdf_step_powers](x) = prod_i [(1-x_i) + x_i * c^{2^{n-1-i}}]
+            // Iterate in reverse so c_power starts at c^{2^0} and pairs with LSB.
+            let mut mle_step_powers = RingElement::constant(1, Representation::IncompleteNTT);
+            let mut c_power = c.clone(); // c^{2^0} = c
+            for x_i in step_powers_vars.iter().rev() {
+                // factor = (1 - x_i) + x_i * c^{2^k}
+                let mut factor = &*ONE - x_i;
+                let mut term = x_i.clone();
+                term *= &c_power;
+                factor += &term;
+                mle_step_powers *= &factor;
+                // c_power = c_power^2 for next iteration
+                let tmp = c_power.clone();
+                c_power *= &tmp;
+            }
+            vdf_eval
+                .vdf_step_powers_evaluation
+                .borrow_mut()
+                .set_result(mle_step_powers);
+        }
+
         self.combiner_evaluation
             .borrow_mut()
             .load_challenges_from(combination);
@@ -1611,6 +1880,8 @@ pub fn verifier_round(
     evaluation_points_inner: &[StructuredRow],
     claims: &HorizontallyAlignedMatrix<RingElement>,
     hash_wrapper: &mut HashWrapper,
+    vdf_crs_param: Option<&vdf_crs>,
+    vdf_outputs: Option<(&RingElement, &RingElement)>, // (y_0, y_t) - only for first round
 ) {
     // TODO: check linf, l2 cts
     // Replay prover's Fiat-Shamir: sample projection matrix, batching challenges
@@ -1668,6 +1939,7 @@ pub fn verifier_round(
         &evaluation_points_outer,
         proof.ip_l2_claim.as_ref(),
         proof.ip_linf_claim.as_ref(),
+        compute_ip_vdf_claim(config, vdf_challenge.as_ref(), vdf_outputs.map(|(y_0, y_t)| (y_0, y_t, vdf_crs_param.unwrap()))).as_ref(),
         &combination,
     );
 
@@ -1831,6 +2103,8 @@ pub fn verifier_round(
         &projection_matrix,
         &combination,
         qe,
+        vdf_challenge.as_ref(),
+        vdf_crs_param,
     );
 
     // let eval_l2 = verifier_context.l2evaluation.as_ref().unwrap().output.eva
@@ -1880,8 +2154,35 @@ pub fn verifier_round(
             &next_level_eval_points,
             &proof.new_claims,
             hash_wrapper,
+            None, // VDF only in first round
+            None, // no VDF outputs in recursive rounds
         );
     }
+}
+
+/// Computes ip_vdf_claim = -y_0 + c^{2K} * y_t from the VDF challenge and outputs.
+fn compute_ip_vdf_claim(
+    config: &RoundConfig,
+    vdf_challenge: Option<&RingElement>,
+    vdf_params: Option<(&RingElement, &RingElement, &vdf_crs)>,
+) -> Option<RingElement> {
+    if !config.vdf {
+        return None;
+    }
+    let c = vdf_challenge.expect("VDF enabled but no challenge");
+    let (y_0, y_t, _) = vdf_params.expect("VDF enabled but no params");
+    let two_k = config.witness_length / 2 / VDF_MATRIX_WIDTH;
+    // Compute c^{2K} by repeated squaring: c -> c^2 -> c^4 -> ... -> c^{2K}
+    let num_squarings = two_k.ilog2() as usize;
+    let mut c_power = c.clone();
+    for _ in 0..num_squarings {
+        let tmp = c_power.clone();
+        c_power *= &tmp;
+    }
+    let mut claim = y_0.negate();
+    c_power *= y_t;
+    claim += &c_power;
+    Some(claim)
 }
 
 const VDF_MATRIX_WIDTH: usize = 64;
@@ -1955,7 +2256,7 @@ pub fn decompose_binary_into(element: &RingElement, target: &mut [RingElement]) 
 }
 
 pub struct VDFOutput {
-    y_int: RingElement,
+    y_int: RingElement, // TODO: this y_int is not needed but let's keep it for now
     y_t: RingElement,
     trace_witness: VerticallyAlignedMatrix<RingElement>,
 }
@@ -2064,19 +2365,18 @@ pub fn execute() {
 
     println!("CRS generated. Starting execution...");
     let vdf_start = std::time::Instant::now();
-    let y_0 = RingElement::random(Representation::IncompleteNTT); // TODO: from hash
+    let y_0: RingElement = RingElement::random(Representation::IncompleteNTT); // TODO: from hash
     let vdf_output = execute_vdf(&y_0, WITNESS_DIM, &vdf_crs);
     let vdf_duration = vdf_start.elapsed().as_millis();
     println!("VDF executed in {:?} ms", vdf_duration);
 
     let mut sumcheck_context = init_prover_sumcheck(&crs, &CONFIG);
 
-    let witness = binary_witness_sampler();
 
     println!("===== COMMITTING WITNESS =====");
     let start = std::time::Instant::now();
 
-    let commitment = commit_basic(&crs, &witness, RANK);
+    let commitment = commit_basic(&crs, &vdf_output.trace_witness, RANK);
 
     let commit_duration = start.elapsed().as_nanos();
     println!("TOTAL Commit time: {:?} ns", commit_duration);
@@ -2090,7 +2390,7 @@ pub fn execute() {
     let preprocessed_row_inner =
         PreprocessedRow::from_structured_row(evaluation_points_inner.get(0).unwrap());
     // TODO rename commit_basic_internal as we abuse it sometimes
-    let claims = commit_basic_internal(&vec![preprocessed_row_inner], &witness, 1);
+    let claims = commit_basic_internal(&vec![preprocessed_row_inner], &vdf_output.trace_witness, 1);
 
     // let double_evaluation_points_inner = vec![
     //     evaluation_points_inner.get(0).unwrap().clone(),
@@ -2107,12 +2407,13 @@ pub fn execute() {
     let start = std::time::Instant::now();
     let proof = prover_round(
         &crs,
-        &witness,
+        &vdf_output.trace_witness,
         &CONFIG,
         &mut sumcheck_context,
         &evaluation_points_inner,
         &claims,
         &mut HashWrapper::new(),
+        Some((&y_0, &vdf_output.y_t, &vdf_crs)),
     );
     let prove_duration = start.elapsed().as_millis();
     println!("TOTAL Prove time: {:?} ms", prove_duration);
@@ -2129,6 +2430,8 @@ pub fn execute() {
         &evaluation_points_inner,
         &claims,
         &mut HashWrapper::new(),
+        Some(&vdf_crs),
+        Some((&y_0, &vdf_output.y_t)),
     );
     let verify_duration = start.elapsed().as_nanos();
     println!("TOTAL Verify time: {:?} ns", verify_duration);
