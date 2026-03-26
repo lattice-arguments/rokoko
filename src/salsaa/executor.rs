@@ -46,7 +46,7 @@ use crate::{
 const DEBUG: bool = false;
 
 // 2^7 (degree) * 2^{19} (witness height) * 2 (witness width) = 2^27 
-const WITNESS_DIM: usize = 2usize.pow(19);
+const WITNESS_DIM: usize = 2usize.pow(14);
 const WITNESS_WIDTH: usize = 2usize;
 const RANK: usize = 8;
 
@@ -59,6 +59,7 @@ pub struct SalsaaProofCommon {
     claim_over_projection: Vec<RingElement>,
 }
 
+
 pub enum SalsaaProof {
     Intermediate {
         common: SalsaaProofCommon,
@@ -66,10 +67,19 @@ pub enum SalsaaProof {
         decomposed_split_commitment: BasicCommitment,
         next: Box<SalsaaProof>,
     },
+    IntermediateUnstructured {
+        common: SalsaaProofCommon,
+        new_claims: Vec<RingElement>,
+        decomposed_split_commitment: BasicCommitment,
+        next: Box<SalsaaProof>, 
+        projection_image_ct: [u64; 256],
+        projection_image_batched: [RingElement; 2],
+    },
     Last {
         common: SalsaaProofCommon,
         folded_witness: Vec<RingElement>,
-        projected_witness: Vec<RingElement>,
+        projection_image_ct: [u64; 256],
+        projection_image_batched: [RingElement; 2],
     },
 }
 
@@ -79,6 +89,7 @@ impl std::ops::Deref for SalsaaProof {
         match self {
             SalsaaProof::Intermediate { common, .. } => common,
             SalsaaProof::Last { common, .. } => common,
+            SalsaaProof::IntermediateUnstructured { common, .. } => common,
         }
     }
 }
@@ -132,17 +143,38 @@ impl SizeableProof for SalsaaProof {
 
                 round_size + next.size_in_bits()
             }
-            SalsaaProof::Last { folded_witness, projected_witness, .. } => {
+            SalsaaProof::Last { folded_witness, projection_image_batched, .. } => {
                 let folded_size = ring_vec_size(folded_witness);
                 println!("  Folded witness: {:.2} KB", to_kb(folded_size));
 
-                let proj_wit_size = ring_vec_size(projected_witness);
-                println!("  Projected witness: {:.2} KB", to_kb(proj_wit_size));
+                let projection_image_size = 256 * 64; // over estimated
+                println!("  Projection image: {:.2} KB", to_kb(projection_image_size));
 
-                round_size += folded_size + proj_wit_size;
+                let batched_projection_size = ring_vec_size(projection_image_batched);
+                println!("  Batched projection: {:.2} KB", to_kb(batched_projection_size));
+
+                round_size += folded_size + batched_projection_size + projection_image_size;
                 println!("  Round total (last): {:.2} KB", to_kb(round_size));
 
                 round_size
+            }
+            SalsaaProof::IntermediateUnstructured { new_claims, decomposed_split_commitment, projection_image_batched, next, .. } => {
+                let new_claims_size = ring_vec_size(new_claims);
+                println!("  New claims: {:.2} KB", to_kb(new_claims_size));
+
+                let decomp_commit_size = ring_vec_size(&decomposed_split_commitment.data);
+                println!("  Decomposed split commitment: {:.2} KB", to_kb(decomp_commit_size));
+
+                let projection_image_size = 256 * 64; // over estimated
+                println!("  Projection image: {:.2} KB", to_kb(projection_image_size));
+
+                let batched_projection_size = ring_vec_size(projection_image_batched);
+                println!("  Batched projection: {:.2} KB", to_kb(batched_projection_size));
+
+                round_size += new_claims_size + decomp_commit_size + projection_image_size + batched_projection_size;
+                println!("  Round total: {:.2} KB", to_kb(round_size));
+
+                round_size + next.size_in_bits()
             }
         }
     }
@@ -150,20 +182,25 @@ impl SizeableProof for SalsaaProof {
 
 #[derive(Clone)]
 pub struct RoundConfigCommon {
+    pub main_witness_prefix: Prefix,  
+    pub main_witness_columns: usize,
     pub witness_length: usize,
     pub exact_binariness: bool, // whether the proof should be for exact binariness
     pub vdf: bool, // for the first round
-    pub l2: bool,               // whether the proof should be for l2 norm of the witness
-    pub projection_ratio: usize, // set 0 for no projection
-    pub main_witness_columns: usize,
-    pub projection_prefix: Prefix,
-    pub main_witness_prefix: Prefix,    // shall be always 0
+    pub l2: bool,               // whether the proof should be for l2 norm of the witness  
     pub inner_evaluation_claims: usize, // how many inner evaluation claims we want to make, this determines the number of type1 sumchecks we need
 }
 
 #[derive(Clone)]
 pub enum RoundConfig {
     Intermediate {
+        common: RoundConfigCommon,
+        decomposition_base_log: u64,
+        projection_ratio: usize, // set 0 for no projection
+        projection_prefix: Prefix,
+        next: Box<RoundConfig>,
+    },
+    IntermediateUnstructured {
         common: RoundConfigCommon,
         decomposition_base_log: u64,
         next: Box<RoundConfig>,
@@ -179,6 +216,7 @@ impl std::ops::Deref for RoundConfig {
         match self {
             RoundConfig::Intermediate { common, .. } => common,
             RoundConfig::Last { common, .. } => common,
+            RoundConfig::IntermediateUnstructured { common, .. } => common,
         }
     }
 }
@@ -208,6 +246,7 @@ fn build_round_config(witness_length: usize, is_first_round: bool) -> RoundConfi
     let next_main_witness_columns = 8usize;
     let next_projection_ratio = 8usize;
     let can_recurse = next_single_col_height >= PROJECTION_HEIGHT * next_projection_ratio;
+    println!("Building round config: witness_length={}, single_col_height={}, next_single_col_height={}, can_recurse={}", witness_length, single_col_height, next_single_col_height, can_recurse);
 
     let inner_evaluation_claims = if is_first_round { 0 } else { 2 };
 
@@ -216,17 +255,12 @@ fn build_round_config(witness_length: usize, is_first_round: bool) -> RoundConfi
         exact_binariness: is_first_round,
         l2: !is_first_round,
         vdf: is_first_round,
-        projection_ratio,
+        inner_evaluation_claims,
         main_witness_columns,
         main_witness_prefix: Prefix {
             prefix: 0b0,
             length: 1,
         },
-        projection_prefix: Prefix {
-            prefix: main_witness_columns,
-            length: main_witness_columns.ilog2() as usize + 1,
-        },
-        inner_evaluation_claims,
     };
 
     if can_recurse {
@@ -234,6 +268,11 @@ fn build_round_config(witness_length: usize, is_first_round: bool) -> RoundConfi
         RoundConfig::Intermediate {
             common,
             decomposition_base_log: 8,
+            projection_ratio,
+            projection_prefix: Prefix {
+                prefix: main_witness_columns,
+                length: main_witness_columns.ilog2() as usize + 1,
+            },
             next: Box::new(build_round_config(next_witness_length, false)),
         }
     } else {
@@ -251,7 +290,7 @@ pub struct ProverSumcheckContext {
     pub witness_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub witness_conjugated_sumcheck: ElephantCell<LinearSumcheck<RingElement>>, // for verifying norms. Should be optional?
     pub main_witness_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
-    pub projection_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
+    pub projection_selector_sumcheck: Option<ElephantCell<SelectorEq<RingElement>>>,
     pub type1sumcheck: Vec<Type1ProverSumcheckContext>, // for verifying inner evaluation points
     pub type3sumcheck: Option<Type3ProverSumcheckContext>, // for verifying the projection
     pub l2sumcheck: Option<L2ProverSumcheckContext>,
@@ -438,105 +477,111 @@ fn init_prover_type_3_sumcheck(
     main_witness_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
     projection_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
 ) -> Type3ProverSumcheckContext {
-    let c2_len = config.main_witness_columns;
-    let c1_len = PROJECTION_HEIGHT;
-    // (c_2 \otimes c_0 \otimes c_1^T J) · witness = (c_2 \otimes c_0 \otimes c_1)^T projected_witness
-    let single_col_height = config.witness_length / 2 / config.main_witness_columns;
+    match config {
+        RoundConfig::Intermediate { projection_ratio, projection_prefix, .. } => {
 
-    let c0_len: usize = single_col_height / (PROJECTION_HEIGHT * config.projection_ratio);
-    assert!(c0_len > 0, "c0_len must be greater than 0");
+            let c2_len = config.main_witness_columns;
+            let c1_len = PROJECTION_HEIGHT;
+            // (c_2 \otimes c_0 \otimes c_1^T J) · witness = (c_2 \otimes c_0 \otimes c_1)^T projected_witness
+            let single_col_height = config.witness_length / 2 / config.main_witness_columns;
 
-    let total_vars = config.witness_length.ilog2() as usize;
+            let c0_len: usize = single_col_height / (PROJECTION_HEIGHT * projection_ratio);
+            assert!(c0_len > 0, "c0_len must be greater than 0");
 
-    assert_eq!(c0_len * c1_len * c2_len, config.witness_length / (2_usize.pow(config.projection_prefix.length as u32)), "c0_len * c1_len * c2_len must be equal to witness_length, got c0_len: {}, c1_len: {}, c2_len: {}, witness_length: {}", c0_len, c1_len, c2_len, config.witness_length);
+            let total_vars = config.witness_length.ilog2() as usize;
 
-    // We have the following variables structure:
-    // LEFT
-    // prefix
-    // c_2.ilog2() variables for c_2
-    // c_0.ilog2() variables for c_0
-    // (c_1^T J).ilog2() variables for (c_1^T J)
+            assert_eq!(c0_len * c1_len * c2_len, config.witness_length / (2_usize.pow(projection_prefix.length as u32)), "c0_len * c1_len * c2_len must be equal to witness_length, got c0_len: {}, c1_len: {}, c2_len: {}, witness_length: {}", c0_len, c1_len, c2_len, config.witness_length);
 
-    // RIGHT
-    // prefix
-    // c_2.ilog2() variables for c_2
-    // c_0.ilog2() variables for c_0
-    // c_1.ilog2() variables for c_1
+            // We have the following variables structure:
+            // LEFT
+            // prefix
+            // c_2.ilog2() variables for c_2
+            // c_0.ilog2() variables for c_0
+            // (c_1^T J).ilog2() variables for (c_1^T J)
 
-    // left
-    let fltr_len = (config.projection_ratio * PROJECTION_HEIGHT).ilog2() as usize;
+            // RIGHT
+            // prefix
+            // c_2.ilog2() variables for c_2
+            // c_0.ilog2() variables for c_0
+            // c_1.ilog2() variables for c_1
 
-    let flattened_projection_matrix_sumcheck =
-        ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
-            config.projection_ratio * PROJECTION_HEIGHT,
-            total_vars - fltr_len,
-            0,
-        ));
-    let c0l_sumcheck = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
-        c0_len,
-        total_vars - fltr_len - c0_len.ilog2() as usize,
-        fltr_len,
-    ));
+            // left
+            let fltr_len = (projection_ratio * PROJECTION_HEIGHT).ilog2() as usize;
 
-    let c2l_sumcheck = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
-        c2_len,
-        total_vars - fltr_len - c0_len.ilog2() as usize - c2_len.ilog2() as usize,
-        fltr_len + c0_len.ilog2() as usize,
-    ));
+            let flattened_projection_matrix_sumcheck =
+                ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
+                    projection_ratio * PROJECTION_HEIGHT,
+                    total_vars - fltr_len,
+                    0,
+                ));
+            let c0l_sumcheck = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
+                c0_len,
+                total_vars - fltr_len - c0_len.ilog2() as usize,
+                fltr_len,
+            ));
 
-    // right
-    let c1r_sumcheck = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
-        c1_len,
-        total_vars - c1_len.ilog2() as usize,
-        0,
-    ));
+            let c2l_sumcheck = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
+                c2_len,
+                total_vars - fltr_len - c0_len.ilog2() as usize - c2_len.ilog2() as usize,
+                fltr_len + c0_len.ilog2() as usize,
+            ));
 
-    let c0r_sumcheck = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
-        c0_len,
-        total_vars - c1_len.ilog2() as usize - c0_len.ilog2() as usize,
-        c1_len.ilog2() as usize,
-    ));
+            // right
+            let c1r_sumcheck = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
+                c1_len,
+                total_vars - c1_len.ilog2() as usize,
+                0,
+            ));
 
-    let c2r_sumcheck = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
-        c2_len,
-        total_vars - c1_len.ilog2() as usize - c0_len.ilog2() as usize - c2_len.ilog2() as usize,
-        c1_len.ilog2() as usize + c0_len.ilog2() as usize,
-    ));
+            let c0r_sumcheck = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
+                c0_len,
+                total_vars - c1_len.ilog2() as usize - c0_len.ilog2() as usize,
+                c1_len.ilog2() as usize,
+            ));
 
-    let lhs = ElephantCell::new(ProductSumcheck::new(
-        c2l_sumcheck.clone(),
-        ElephantCell::new(ProductSumcheck::new(
-            c0l_sumcheck.clone(),
-            ElephantCell::new(ProductSumcheck::new(
-                flattened_projection_matrix_sumcheck.clone(),
-                main_witness_sumcheck.clone(),
-            )),
-        )),
-    ));
+            let c2r_sumcheck = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
+                c2_len,
+                total_vars - c1_len.ilog2() as usize - c0_len.ilog2() as usize - c2_len.ilog2() as usize,
+                c1_len.ilog2() as usize + c0_len.ilog2() as usize,
+            ));
 
-    let rhs = ElephantCell::new(ProductSumcheck::new(
-        c2r_sumcheck.clone(),
-        ElephantCell::new(ProductSumcheck::new(
-            c0r_sumcheck.clone(),
-            ElephantCell::new(ProductSumcheck::new(
-                c1r_sumcheck.clone(),
-                projection_sumcheck.clone(),
-            )),
-        )),
-    ));
+            let lhs = ElephantCell::new(ProductSumcheck::new(
+                c2l_sumcheck.clone(),
+                ElephantCell::new(ProductSumcheck::new(
+                    c0l_sumcheck.clone(),
+                    ElephantCell::new(ProductSumcheck::new(
+                        flattened_projection_matrix_sumcheck.clone(),
+                        main_witness_sumcheck.clone(),
+                    )),
+                )),
+            ));
 
-    let output = ElephantCell::new(DiffSumcheck::new(lhs.clone(), rhs.clone()));
+            let rhs = ElephantCell::new(ProductSumcheck::new(
+                c2r_sumcheck.clone(),
+                ElephantCell::new(ProductSumcheck::new(
+                    c0r_sumcheck.clone(),
+                    ElephantCell::new(ProductSumcheck::new(
+                        c1r_sumcheck.clone(),
+                        projection_sumcheck.clone(),
+                    )),
+                )),
+            ));
 
-    Type3ProverSumcheckContext {
-        flattened_projection_matrix_sumcheck,
-        c0l_sumcheck,
-        c2l_sumcheck,
-        c1r_sumcheck,
-        c0r_sumcheck,
-        c2r_sumcheck,
-        lhs,
-        rhs,
-        output,
+            let output = ElephantCell::new(DiffSumcheck::new(lhs.clone(), rhs.clone()));
+
+            Type3ProverSumcheckContext {
+                flattened_projection_matrix_sumcheck,
+                c0l_sumcheck,
+                c2l_sumcheck,
+                c1r_sumcheck,
+                c0r_sumcheck,
+                c2r_sumcheck,
+                lhs,
+                rhs,
+                output,
+            }
+        },
+        _ => panic!("type 3 sumcheck should only be initialized for rounds with projection"),
     }
 }
 
@@ -590,34 +635,44 @@ pub fn init_prover_sumcheck(crs: &CRS, config: &RoundConfig) -> ProverSumcheckCo
         &config.main_witness_prefix,
         config.witness_length.ilog2() as usize,
     );
-    let projection_selector_sumcheck = sumcheck_from_prefix(
-        &config.projection_prefix,
-        config.witness_length.ilog2() as usize,
-    );
+    
 
     let main_witness_sumcheck: ElephantCell<ProductSumcheck<_>> =
         ElephantCell::new(ProductSumcheck::new(
             witness_sumcheck.clone(),
             main_witness_selector_sumcheck.clone(),
         ));
-    let projection_sumcheck: ElephantCell<ProductSumcheck<_>> =
-        ElephantCell::new(ProductSumcheck::new(
+
+    let projection_selector_sumcheck = match config {
+        RoundConfig::Intermediate { projection_prefix, .. } => Some(sumcheck_from_prefix(
+        &projection_prefix,
+        config.witness_length.ilog2() as usize,
+        )),
+        _ => None,
+    };
+
+    let projection_sumcheck =  match config {
+        RoundConfig::Intermediate {..} => Some(ElephantCell::new(ProductSumcheck::new(
             witness_sumcheck.clone(),
-            projection_selector_sumcheck.clone(),
-        ));
+            projection_selector_sumcheck.as_ref().unwrap().clone(),
+        ))),
+        _ => None,
+    };
+
+        
 
     let type1sumcheck = (0..config.inner_evaluation_claims)
         .map(|_| init_prover_type_1_sumcheck(config, main_witness_sumcheck.clone()))
         .collect::<Vec<_>>();
 
-    let type3sumcheck = if config.projection_ratio > 0 {
-        Some(init_prover_type_3_sumcheck(
+
+    let type3sumcheck = match config {
+        RoundConfig::Intermediate { .. } => Some(init_prover_type_3_sumcheck(
             config,
             main_witness_sumcheck.clone(),
-            projection_sumcheck.clone(),
-        ))
-    } else {
-        None
+            projection_sumcheck.clone().unwrap(),
+        )),
+        _ => None,
     };
 
     let l2sumcheck = if config.l2 {
@@ -686,6 +741,7 @@ pub fn init_prover_sumcheck(crs: &CRS, config: &RoundConfig) -> ProverSumcheckCo
         vdfsumcheck,
         next: match config {
             RoundConfig::Intermediate { next, .. } => Some(Box::new(init_prover_sumcheck(crs, next))),
+            RoundConfig::IntermediateUnstructured { next, .. } => Some(Box::new(init_prover_sumcheck(crs, next))),
             RoundConfig::Last { .. } => None,
         },
     }
@@ -700,28 +756,35 @@ pub struct BatchingChallenges {
 
 impl BatchingChallenges {
     pub fn sample(config: &RoundConfig, hash_wrapper: &mut HashWrapper) -> Self {
-        let c2_len = config.main_witness_columns;
-        let c1_len = PROJECTION_HEIGHT;
-        let single_col_height = config.witness_length / 2 / config.main_witness_columns;
-        let c0_len: usize = single_col_height / (PROJECTION_HEIGHT * config.projection_ratio);
-        assert!(c0_len > 0, "c0_len must be greater than 0");
-        let mut result = Self {
-            c0: StructuredRow {
-                tensor_layers: new_vec_zero_preallocated(c0_len.ilog2() as usize),
-            },
-            c1: StructuredRow {
-                tensor_layers: new_vec_zero_preallocated(c1_len.ilog2() as usize),
-            },
-            c2: StructuredRow {
-                tensor_layers: new_vec_zero_preallocated(c2_len.ilog2() as usize),
-            },
-        };
+        match config {
+            RoundConfig::Intermediate { projection_ratio, .. } => {
+                let c2_len = config.main_witness_columns;
+                let c1_len = PROJECTION_HEIGHT;
+                let single_col_height = config.witness_length / 2 / config.main_witness_columns;
+                let c0_len: usize = single_col_height / (PROJECTION_HEIGHT * projection_ratio);
+                assert!(c0_len > 0, "c0_len must be greater than 0");
+                let mut result = Self {
+                    c0: StructuredRow {
+                        tensor_layers: new_vec_zero_preallocated(c0_len.ilog2() as usize),
+                    },
+                    c1: StructuredRow {
+                        tensor_layers: new_vec_zero_preallocated(c1_len.ilog2() as usize),
+                    },
+                    c2: StructuredRow {
+                        tensor_layers: new_vec_zero_preallocated(c2_len.ilog2() as usize),
+                    },
+                };
 
-        hash_wrapper.sample_ring_element_ntt_slots_same_vec_into(&mut result.c0.tensor_layers);
-        hash_wrapper.sample_ring_element_ntt_slots_same_vec_into(&mut result.c1.tensor_layers);
-        hash_wrapper.sample_ring_element_ntt_slots_same_vec_into(&mut result.c2.tensor_layers);
+                hash_wrapper.sample_ring_element_ntt_slots_same_vec_into(&mut result.c0.tensor_layers);
+                hash_wrapper.sample_ring_element_ntt_slots_same_vec_into(&mut result.c1.tensor_layers);
+                hash_wrapper.sample_ring_element_ntt_slots_same_vec_into(&mut result.c2.tensor_layers);
 
-        result
+                result
+
+            },
+            _ => panic!("Batching challenges should only be sampled for rounds with projection"),
+            
+        }
     }
 }
 
@@ -735,8 +798,8 @@ impl ProverSumcheckContext {
             .borrow_mut()
             .partial_evaluate(r);
         self.projection_selector_sumcheck
-            .borrow_mut()
-            .partial_evaluate(r);
+            .as_ref()
+            .map(|sumcheck| sumcheck.borrow_mut().partial_evaluate(r));
         for type1 in &mut self.type1sumcheck {
             type1
                 .inner_evaluation_sumcheck
@@ -901,7 +964,10 @@ pub fn prover_round(
 
     let projection_commitment = commit_basic(crs, &projected_witness, RANK);
 
-    let batching_challenges = BatchingChallenges::sample(&config, hash_wrapper);
+    let batching_challenges = match config {
+        RoundConfig::Intermediate { .. } => Some(BatchingChallenges::sample(config, hash_wrapper)),
+        _ => None,
+    };
 
      let vdf_challenge = if config.vdf {
         let mut challenge = RingElement::zero(Representation::IncompleteNTT);
@@ -948,11 +1014,17 @@ pub fn prover_round(
         &witness.data,
         &config.main_witness_prefix,
     );
-    paste_by_prefix(
-        &mut extended_witness,
-        &projected_witness.data,
-        &config.projection_prefix,
-    );
+
+    match config {
+        RoundConfig::Intermediate { projection_prefix, .. } => {
+            paste_by_prefix(
+                &mut extended_witness,
+                &projected_witness.data,
+                projection_prefix,
+            );
+        },
+        _ => {},
+    }
 
     let mut evaluation_points_outer = new_vec_zero_preallocated(config.main_witness_columns);
     hash_wrapper.sample_ring_element_vec_into(&mut evaluation_points_outer);
@@ -963,7 +1035,7 @@ pub fn prover_round(
         evaluation_points_inner,
         &evaluation_points_outer,
         &projection_matrix,
-        &Some(batching_challenges),
+        &batching_challenges,
         vdf_challenge.as_ref(),
         vdf_params.map(|(_, _, crs)| crs),
     );
@@ -1341,12 +1413,17 @@ pub fn prover_round(
             }
         }
 
+        RoundConfig::IntermediateUnstructured { next, .. } => {
+            panic!("Unstructured intermediate rounds are not implemented yet");
+        }
+
         RoundConfig::Last { .. } => {
             // Last round: send the folded witness and projected witness directly, no decomposition
             SalsaaProof::Last {
                 common,
                 folded_witness: folded_witness.data,
-                projected_witness: projected_witness.data,
+                projection_image_ct: [0u64; 256],
+                projection_image_batched: [RingElement::zero(Representation::IncompleteNTT), RingElement::zero(Representation::IncompleteNTT)], // TODO change me to the actual evaluation of the projected witness at the evaluation points, but for now we just want to test the verifier logic with dummy values
             }
         }
     }
@@ -1387,7 +1464,7 @@ pub struct VerifierSumcheckContext {
     pub witness_evaluation: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
     pub witness_conjugated_evaluation: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
     pub main_witness_selector_evaluation: ElephantCell<SelectorEqEvaluation>,
-    pub projection_selector_evaluation: ElephantCell<SelectorEqEvaluation>,
+    pub projection_selector_evaluation: Option<ElephantCell<SelectorEqEvaluation>>,
     pub type1evaluations: Vec<Type1VerifierSumcheckContext>,
     pub type3evaluation: Option<Type3VerifierSumcheckContext>,
     pub l2evaluation: Option<L2VerifierSumcheckContext>,
@@ -1480,99 +1557,105 @@ fn init_verifier_type_3_sumcheck(
     main_witness_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
     projection_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
 ) -> Type3VerifierSumcheckContext {
-    let c2_len = config.main_witness_columns;
-    let c1_len = PROJECTION_HEIGHT;
-    let single_col_height = config.witness_length / 2 / config.main_witness_columns;
-    let c0_len: usize = single_col_height / (PROJECTION_HEIGHT * config.projection_ratio);
-    let total_vars = config.witness_length.ilog2() as usize;
+    match config {
+        RoundConfig::Intermediate { projection_ratio, .. } => {
+            
+            let c2_len = config.main_witness_columns;
+            let c1_len = PROJECTION_HEIGHT;
+            let single_col_height = config.witness_length / 2 / config.main_witness_columns;
+            let c0_len: usize = single_col_height / (PROJECTION_HEIGHT * projection_ratio);
+            let total_vars = config.witness_length.ilog2() as usize;
 
-    // LEFT: prefix, c2, c0, flattened_projection_matrix (c1^T J)
-    let fltr_len = (config.projection_ratio * PROJECTION_HEIGHT).ilog2() as usize;
+            // LEFT: prefix, c2, c0, flattened_projection_matrix (c1^T J)
+            let fltr_len = (projection_ratio * PROJECTION_HEIGHT).ilog2() as usize;
 
-    let flattened_projection_matrix_evaluation = ElephantCell::new(
-        BasicEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
-            config.projection_ratio * PROJECTION_HEIGHT,
-            total_vars - fltr_len,
-            0,
-        ),
-    );
-    let c0l_evaluation = ElephantCell::new(
-        StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
-            c0_len,
-            total_vars - fltr_len - c0_len.ilog2() as usize,
-            fltr_len,
-        ),
-    );
-    let c2l_evaluation = ElephantCell::new(
-        StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
-            c2_len,
-            total_vars - fltr_len - c0_len.ilog2() as usize - c2_len.ilog2() as usize,
-            fltr_len + c0_len.ilog2() as usize,
-        ),
-    );
+            let flattened_projection_matrix_evaluation = ElephantCell::new(
+                BasicEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
+                    projection_ratio * PROJECTION_HEIGHT,
+                    total_vars - fltr_len,
+                    0,
+                ),
+            );
+            let c0l_evaluation = ElephantCell::new(
+                StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
+                    c0_len,
+                    total_vars - fltr_len - c0_len.ilog2() as usize,
+                    fltr_len,
+                ),
+            );
+            let c2l_evaluation = ElephantCell::new(
+                StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
+                    c2_len,
+                    total_vars - fltr_len - c0_len.ilog2() as usize - c2_len.ilog2() as usize,
+                    fltr_len + c0_len.ilog2() as usize,
+                ),
+            );
 
-    // RIGHT: prefix, c2, c0, c1
-    let c1r_evaluation = ElephantCell::new(
-        StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
-            c1_len,
-            total_vars - c1_len.ilog2() as usize,
-            0,
-        ),
-    );
-    let c0r_evaluation = ElephantCell::new(
-        StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
-            c0_len,
-            total_vars - c1_len.ilog2() as usize - c0_len.ilog2() as usize,
-            c1_len.ilog2() as usize,
-        ),
-    );
-    let c2r_evaluation = ElephantCell::new(
-        StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
-            c2_len,
-            total_vars
-                - c1_len.ilog2() as usize
-                - c0_len.ilog2() as usize
-                - c2_len.ilog2() as usize,
-            c1_len.ilog2() as usize + c0_len.ilog2() as usize,
-        ),
-    );
+            // RIGHT: prefix, c2, c0, c1
+            let c1r_evaluation = ElephantCell::new(
+                StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
+                    c1_len,
+                    total_vars - c1_len.ilog2() as usize,
+                    0,
+                ),
+            );
+            let c0r_evaluation = ElephantCell::new(
+                StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
+                    c0_len,
+                    total_vars - c1_len.ilog2() as usize - c0_len.ilog2() as usize,
+                    c1_len.ilog2() as usize,
+                ),
+            );
+            let c2r_evaluation = ElephantCell::new(
+                StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
+                    c2_len,
+                    total_vars
+                        - c1_len.ilog2() as usize
+                        - c0_len.ilog2() as usize
+                        - c2_len.ilog2() as usize,
+                    c1_len.ilog2() as usize + c0_len.ilog2() as usize,
+                ),
+            );
 
-    let lhs = ElephantCell::new(ProductSumcheckEvaluation::new(
-        c2l_evaluation.clone(),
-        ElephantCell::new(ProductSumcheckEvaluation::new(
-            c0l_evaluation.clone(),
-            ElephantCell::new(ProductSumcheckEvaluation::new(
-                ElephantCell::new(RingToFieldWrapperEvaluation::new(
-                    flattened_projection_matrix_evaluation.clone(),
+            let lhs = ElephantCell::new(ProductSumcheckEvaluation::new(
+                c2l_evaluation.clone(),
+                ElephantCell::new(ProductSumcheckEvaluation::new(
+                    c0l_evaluation.clone(),
+                    ElephantCell::new(ProductSumcheckEvaluation::new(
+                        ElephantCell::new(RingToFieldWrapperEvaluation::new(
+                            flattened_projection_matrix_evaluation.clone(),
+                        )),
+                        main_witness_evaluation.clone(),
+                    )),
                 )),
-                main_witness_evaluation.clone(),
-            )),
-        )),
-    ));
+            ));
 
-    let rhs = ElephantCell::new(ProductSumcheckEvaluation::new(
-        c2r_evaluation.clone(),
-        ElephantCell::new(ProductSumcheckEvaluation::new(
-            c0r_evaluation.clone(),
-            ElephantCell::new(ProductSumcheckEvaluation::new(
-                c1r_evaluation.clone(),
-                projection_evaluation.clone(),
-            )),
-        )),
-    ));
+            let rhs = ElephantCell::new(ProductSumcheckEvaluation::new(
+                c2r_evaluation.clone(),
+                ElephantCell::new(ProductSumcheckEvaluation::new(
+                    c0r_evaluation.clone(),
+                    ElephantCell::new(ProductSumcheckEvaluation::new(
+                        c1r_evaluation.clone(),
+                        projection_evaluation.clone(),
+                    )),
+                )),
+            ));
 
-    let output = ElephantCell::new(DiffSumcheckEvaluation::new(lhs.clone(), rhs.clone()));
+            let output = ElephantCell::new(DiffSumcheckEvaluation::new(lhs.clone(), rhs.clone()));
 
-    Type3VerifierSumcheckContext {
-        c2l_evaluation,
-        c0l_evaluation,
-        flattened_projection_matrix_evaluation,
-        c2r_evaluation,
-        c0r_evaluation,
-        c1r_evaluation,
-        lhs,
-        rhs,
-        output,
+            Type3VerifierSumcheckContext {
+                c2l_evaluation,
+                c0l_evaluation,
+                flattened_projection_matrix_evaluation,
+                c2r_evaluation,
+                c0r_evaluation,
+                c1r_evaluation,
+                lhs,
+                rhs,
+                output,
+            }
+        },
+        _ => panic!("Type 3 sumcheck should only be initialized for intermediate rounds with projection"),
     }
 }
 
@@ -1665,32 +1748,38 @@ pub fn init_verifier_sumcheck(config: &RoundConfig) -> VerifierSumcheckContext {
 
     let main_witness_selector_evaluation =
         selector_evaluation_from_prefix(&config.main_witness_prefix, total_vars);
-    let projection_selector_evaluation =
-        selector_evaluation_from_prefix(&config.projection_prefix, total_vars);
+    let projection_selector_evaluation = match config {
+        RoundConfig::Intermediate { projection_prefix, .. } => Some(selector_evaluation_from_prefix(projection_prefix, total_vars)),
+        _ => None,
+        
+    };
 
     let main_witness_evaluation: ElephantCell<ProductSumcheckEvaluation> =
         ElephantCell::new(ProductSumcheckEvaluation::new(
             witness_evaluation.clone(),
             main_witness_selector_evaluation.clone(),
         ));
-    let projection_eval: ElephantCell<ProductSumcheckEvaluation> =
-        ElephantCell::new(ProductSumcheckEvaluation::new(
+
+    let projection_eval =  match config {
+        RoundConfig::Intermediate { projection_prefix, .. } => Some(ElephantCell::new(ProductSumcheckEvaluation::new(
             witness_evaluation.clone(),
-            projection_selector_evaluation.clone(),
-        ));
+            selector_evaluation_from_prefix(projection_prefix, total_vars),
+        ))),
+        _ => None,
+    };
+ 
 
     let type1evaluations = (0..config.inner_evaluation_claims)
         .map(|_| init_verifier_type_1_sumcheck(config, main_witness_evaluation.clone()))
         .collect::<Vec<_>>();
 
-    let type3evaluation = if config.projection_ratio > 0 {
-        Some(init_verifier_type_3_sumcheck(
+    let type3evaluation = match config {
+        RoundConfig::Intermediate { projection_ratio, .. } => Some(init_verifier_type_3_sumcheck(
             config,
             main_witness_evaluation.clone(),
-            projection_eval.clone(),
-        ))
-    } else {
-        None
+            projection_eval.expect("Projection evaluation should be initialized for intermediate rounds with projection"),
+        )),
+        _ => None,
     };
 
     let l2evaluation = if config.l2 {
@@ -1758,6 +1847,7 @@ pub fn init_verifier_sumcheck(config: &RoundConfig) -> VerifierSumcheckContext {
         field_combiner_evaluation,
         next: match config {
             RoundConfig::Intermediate { next, .. } => Some(Box::new(init_verifier_sumcheck(next))),
+            RoundConfig::IntermediateUnstructured { next, .. } => Some(Box::new(init_verifier_sumcheck(next))),
             RoundConfig::Last { .. } => None,
         },
     }
@@ -1790,10 +1880,12 @@ fn batch_claims(
         idx += 1;
     }
 
-    // Type3: diff sumcheck, claim = 0
-    if config.projection_ratio > 0 {
-        // zero claim, nothing to add
-        idx += 1;
+    match config {
+        RoundConfig::Intermediate { .. } => {
+            // zero claim, nothing to add
+            idx += 1;
+        },
+        _ => {},
     }
 
     // L2: product sumcheck over conjugated witness and selected witness.
@@ -1842,7 +1934,7 @@ impl VerifierSumcheckContext {
         evaluation_points_ring: &[RingElement],
         evaluation_points_inner: &[StructuredRow],
         evaluation_points_outer: &[RingElement],
-        batching_challenges: &BatchingChallenges,
+        batching_challenges: &Option<BatchingChallenges>,
         projection_matrix: &ProjectionMatrix,
         combination: &[RingElement],
         qe: [QuadraticExtension; HALF_DEGREE],
@@ -1863,11 +1955,13 @@ impl VerifierSumcheckContext {
             claim_over_witness += &temp;
         }
 
-        temp *= (
-            proof.claim_over_projection.get(0).unwrap(),
-            &outer_points_expanded[config.main_witness_columns],
-        );
-        claim_over_witness += &temp;
+        if matches!(config, RoundConfig::Intermediate { .. }) {
+            temp *= (
+                proof.claim_over_projection.get(0).unwrap(),
+                &outer_points_expanded[config.main_witness_columns],
+            );
+            claim_over_witness += &temp;
+        }
 
         let mut main_cols_points = evaluation_points_ring[1..outer_points_len].to_vec();
         for r in main_cols_points.iter_mut() {
@@ -1909,7 +2003,7 @@ impl VerifierSumcheckContext {
         }
 
         if let Some(type3_eval) = &mut self.type3evaluation {
-            let c1_expanded = PreprocessedRow::from_structured_row(&batching_challenges.c1);
+            let c1_expanded = PreprocessedRow::from_structured_row(&batching_challenges.as_ref().unwrap().c1);
 
             let flattened_projection =
                 projection_flatter_1_times_matrix(projection_matrix, &c1_expanded);
@@ -1921,23 +2015,23 @@ impl VerifierSumcheckContext {
             type3_eval
                 .c0l_evaluation
                 .borrow_mut()
-                .load_from(batching_challenges.c0.clone());
+                .load_from(batching_challenges.as_ref().unwrap().c0.clone());
             type3_eval
                 .c2l_evaluation
                 .borrow_mut()
-                .load_from(batching_challenges.c2.clone());
+                .load_from(batching_challenges.as_ref().unwrap().c2.clone());
             type3_eval
                 .c0r_evaluation
                 .borrow_mut()
-                .load_from(batching_challenges.c0.clone());
+                .load_from(batching_challenges.as_ref().unwrap().c0.clone());
             type3_eval
                 .c1r_evaluation
                 .borrow_mut()
-                .load_from(batching_challenges.c1.clone());
+                .load_from(batching_challenges.as_ref().unwrap().c1.clone());
             type3_eval
                 .c2r_evaluation
                 .borrow_mut()
-                .load_from(batching_challenges.c2.clone());
+                .load_from(batching_challenges.as_ref().unwrap().c2.clone());
         }
 
         if let Some(vdf_eval) = &mut self.vdfevaluation {
@@ -2015,7 +2109,13 @@ pub fn verifier_round(
         ProjectionMatrix::new(config.main_witness_columns, PROJECTION_HEIGHT);
     projection_matrix.sample(hash_wrapper);
 
-    let batching_challenges = BatchingChallenges::sample(config, hash_wrapper);
+    let batching_challenges = match config {
+        RoundConfig::Intermediate { .. } => {
+            Some(BatchingChallenges::sample(config, hash_wrapper))
+        },
+        _ => None,
+        
+    };
 
     let vdf_challenge = if config.vdf {
         let mut challenge = RingElement::zero(Representation::IncompleteNTT);
@@ -2280,7 +2380,7 @@ pub fn verifier_round(
             );
         }
 
-        (RoundConfig::Last { .. }, SalsaaProof::Last { folded_witness, projected_witness, .. }) => {
+        (RoundConfig::Last { .. }, SalsaaProof::Last { folded_witness, .. }) => {
             // Last round: verify claims directly from the witness data
 
             // Reconstruct the folded witness as a VerticallyAlignedMatrix (1 column)
@@ -2292,12 +2392,12 @@ pub fn verifier_round(
             };
 
             // Reconstruct projected witness (1 column, same height as folded)
-            let projected_witness_matrix = VerticallyAlignedMatrix {
-                height: projected_witness.len(),
-                width: 1,
-                data: projected_witness.clone(),
-                used_cols: 1,
-            };
+            // let projected_witness_matrix = VerticallyAlignedMatrix {
+            //     height: projected_witness.len(),
+            //     width: 1,
+            //     data: projected_witness.clone(),
+            //     used_cols: 1,
+            // };
 
             // Use the current round's sumcheck evaluation points, including the "layer" variable
             // (no +1 skip since there's no split at the last round).
@@ -2346,35 +2446,35 @@ pub fn verifier_round(
                 "Last round: folded conjugate claim does not match evaluation of the folded witness"
             );
 
-            // Compute expected claim over projected witness
-            let mut expected_projection_claim = RingElement::zero(Representation::IncompleteNTT);
-            for (w, r) in projected_witness.iter().zip(eval_points_inner_expanded.preprocessed_row.iter()) {
-                temp *= (w, r);
-                expected_projection_claim += &temp;
-            }
+            // // Compute expected claim over projected witness
+            // let mut expected_projection_claim = RingElement::zero(Representation::IncompleteNTT);
+            // for (w, r) in projected_witness.iter().zip(eval_points_inner_expanded.preprocessed_row.iter()) {
+            //     temp *= (w, r);
+            //     expected_projection_claim += &temp;
+            // }
 
-            assert_eq!(
-                proof.claim_over_projection[0], expected_projection_claim,
-                "Last round: projection claim does not match evaluation of the projected witness"
-            );
+            // assert_eq!(
+            //     proof.claim_over_projection[0], expected_projection_claim,
+            //     "Last round: projection claim does not match evaluation of the projected witness"
+            // );
 
-            // Compute expected conjugate claim over projected witness
-            let mut expected_projection_conj_claim = RingElement::zero(Representation::IncompleteNTT);
-            for (w, r) in projected_witness.iter().zip(eval_points_inner_conj_expanded.preprocessed_row.iter()) {
-                temp *= (w, r);
-                expected_projection_conj_claim += &temp;
-            }
+            // // Compute expected conjugate claim over projected witness
+            // let mut expected_projection_conj_claim = RingElement::zero(Representation::IncompleteNTT);
+            // for (w, r) in projected_witness.iter().zip(eval_points_inner_conj_expanded.preprocessed_row.iter()) {
+            //     temp *= (w, r);
+            //     expected_projection_conj_claim += &temp;
+            // }
 
-            assert_eq!(
-                proof.claim_over_projection[1], expected_projection_conj_claim,
-                "Last round: conjugate projection claim does not match evaluation of the projected witness"
-            );
+            // assert_eq!(
+            //     proof.claim_over_projection[1], expected_projection_conj_claim,
+            //     "Last round: conjugate projection claim does not match evaluation of the projected witness"
+            // );
 
             let comm_time = std::time::Instant::now();
 
             // Verify commitment: commit(folded_witness) should match folded commitments
             let folded_witness_commitment = commit_basic(crs, &folded_witness_matrix, RANK);
-            let projected_witness_commitment = commit_basic(crs, &projected_witness_matrix, RANK);
+            // let projected_witness_commitment = commit_basic(crs, &projected_witness_matrix, RANK);
 
             let elapsed = comm_time.elapsed();
             println!("Verifier commitment recomputation took {} µs", elapsed.as_micros());
@@ -2391,10 +2491,10 @@ pub fn verifier_round(
                     "Last round: folded witness commitment does not match"
                 );
 
-                assert_eq!(
-                    proof.projection_commitment[(r, 0)], projected_witness_commitment[(r, 0)],
-                    "Last round: projected witness commitment does not match"
-                );
+                // assert_eq!(
+                //     proof.projection_commitment[(r, 0)], projected_witness_commitment[(r, 0)],
+                //     "Last round: projected witness commitment does not match"
+                // );
             }
 
             verifier_context.load_data(
