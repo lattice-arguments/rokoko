@@ -45,7 +45,8 @@ use crate::{
 
 const DEBUG: bool = false;
 
-const WITNESS_DIM: usize = 2usize.pow(16);
+// 2^7 (degree) * 2^{19} (witness height) * 2 (witness width) = 2^27 
+const WITNESS_DIM: usize = 2usize.pow(19);
 const WITNESS_WIDTH: usize = 2usize;
 const RANK: usize = 8;
 
@@ -1940,7 +1941,9 @@ pub fn verifier_round(
     hash_wrapper: &mut HashWrapper,
     vdf_crs_param: Option<&vdf_crs>,
     vdf_outputs: Option<(&RingElement, &RingElement)>, // (y_0, y_t) - only for first round
+    round_index: usize,
 ) {
+    let round_start = std::time::Instant::now();
     // TODO: check linf, l2 cts
     // Replay prover's Fiat-Shamir: sample projection matrix, batching challenges
     let mut projection_matrix =
@@ -2195,6 +2198,8 @@ pub fn verifier_round(
                 evaluation_point_to_structured_row(&new_evaluation_points_inner_conjugated),
             ];
 
+            println!("Verifier round {} took {:?}", round_index, round_start.elapsed());
+
             verifier_round(
                 next,
                 crs,
@@ -2206,6 +2211,7 @@ pub fn verifier_round(
                 hash_wrapper,
                 None, // VDF only in first round
                 None, // no VDF outputs in recursive rounds
+                round_index + 1,
             );
         }
 
@@ -2351,6 +2357,7 @@ pub fn verifier_round(
                 "Verifier final check failed: tree evaluation does not match sumcheck claim"
             );
 
+            println!("Verifier round {} (last) took {:?}", round_index, round_start.elapsed());
             // No recursion at the last round
         }
 
@@ -2612,6 +2619,7 @@ pub fn execute() {
         &mut HashWrapper::new(),
         Some(&vdf_crs),
         Some((&y_0, &vdf_output.y_t)),
+        0,
     );
     let verify_duration = start.elapsed().as_nanos();
     println!("TOTAL Verify time: {:?} ns", verify_duration);
