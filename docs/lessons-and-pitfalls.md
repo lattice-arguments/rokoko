@@ -51,12 +51,23 @@ Line 46 of executor.rs. Set to `true` for extensive assertions during developmen
 - Verifier evaluates MLE[d'](x) = ∏_i ((1-x_i) + x_i · c^{2^i}) via tensor structure
 
 ## Proof Size
-Current p-26 config: ~3695 KB total proof
-- Rounds 0-8 (intermediate): ~42-81 KB each (dominated by decomposed_split_commitment ~48 KB)
-- Last round: ~3093 KB (dominated by folded_witness + projected_witness ~1536 KB each)
-- The last round witness data is the proof size bottleneck
+Current p-26 config: ~507 KB total proof
+- Intermediate rounds (0-3): includes decomposed_split_commitment + projection_commitment
+- IntermediateUnstructured rounds (4-6): smaller — no projection columns
+- Last round (7): dominated by folded_witness (~96 KB)
+
+## Verifier Timing (p-26, 8 rounds)
+- Intermediate rounds (0-3): ~275-400µs each
+- IntermediateUnstructured rounds (4-6): ~50-68µs each
+- Last round (7): ~273µs (commitment recomputation ~127µs)
+- Total verify: ~1.9ms
 
 ## Test Expectations
 - 77/78 tests pass (1 known failure: `test_index_out_of_bounds` in release mode)
-- Full end-to-end: prover ~12.4s, verifier ~9.5ms (p-26 config, release)
-- Per-round verifier timing: intermediate rounds ~360-414µs, last round ~7.6ms
+
+## IntermediateUnstructured: Key Design Points
+- `Prefix { prefix: 0, length: 0 }` means NO extended witness doubling; `paste_by_prefix` with length 0 requires src fills entire dest; `SelectorEq` with 0 prefix bits evaluates to constant 1
+- First IntermediateUnstructured round has 8 columns (from Intermediate's 8-col decomposition output); subsequent ones have 4 columns (2 split × 2 decomp chunks)
+- No projection matrix, no batching challenges, no type3 sumcheck
+- `build_round_config`'s else branch must return `Intermediate { next: IntermediateUnstructured(...) }`, NOT `IntermediateUnstructured` directly (which would skip the last Intermediate round)
+- Verifier `load_data`: `main_cols_points` start index must use `config.main_witness_prefix.length`, not hardcoded 1

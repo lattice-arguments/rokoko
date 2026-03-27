@@ -333,7 +333,124 @@ fn build_round_config(witness_length: usize, is_first_round: bool) -> RoundConfi
             next: Box::new(build_round_config(next_witness_length, false)),
         }
     } else {
-        RoundConfig::Last { common }
+        // Transition to unstructured rounds (no projection).
+        // The first unstructured round has 8 input columns (from
+        // the Intermediate decomposition). With prefix=0, witness_length
+        // does not include the factor-of-2 doubling.
+        let unstructured_cols = 8usize; // first unstructured inherits 8 cols from Intermediate output
+        let unstructured_witness_length = next_single_col_height * unstructured_cols;
+        let unstructured_single_col_height = next_single_col_height;
+        let next_unstructured_height = unstructured_single_col_height / 2;
+        let next_unstructured_cols = 4usize;
+        let next_unstructured_wl = next_unstructured_height * next_unstructured_cols;
+
+        let unstructured_common = RoundConfigCommon {
+            witness_length: unstructured_witness_length,
+            exact_binariness: false,
+            l2: true,
+            vdf: false,
+            inner_evaluation_claims: 2,
+            main_witness_columns: unstructured_cols,
+            main_witness_prefix: Prefix {
+                prefix: 0,
+                length: 0,
+            },
+        };
+
+        println!(
+            "Building unstructured round config: witness_length={}, single_col_height={}, next_height={}",
+            unstructured_witness_length, unstructured_single_col_height, next_unstructured_height
+        );
+
+        let next_unstructured_config = if next_unstructured_height >= PROJECTION_HEIGHT {
+            build_unstructured_round_config(next_unstructured_wl)
+        } else {
+            RoundConfig::Last {
+                common: RoundConfigCommon {
+                    witness_length: next_unstructured_wl,
+                    exact_binariness: false,
+                    l2: true,
+                    vdf: false,
+                    inner_evaluation_claims: 2,
+                    main_witness_columns: next_unstructured_cols,
+                    main_witness_prefix: Prefix {
+                        prefix: 0,
+                        length: 0,
+                    },
+                },
+            }
+        };
+
+        let next_config = RoundConfig::IntermediateUnstructured {
+            common: unstructured_common,
+            decomposition_base_log: 8,
+            next: Box::new(next_unstructured_config),
+        };
+
+        RoundConfig::Intermediate {
+            common,
+            decomposition_base_log: 8,
+            projection_ratio,
+            projection_prefix: Prefix {
+                prefix: main_witness_columns,
+                length: main_witness_columns.ilog2() as usize + 1,
+            },
+            next: Box::new(next_config),
+        }
+    }
+}
+
+const LAST_ROUND_THRESHOLD: usize = 256;
+/// Builds unstructured round configs (4 columns, prefix 0, no projection).
+/// Continues until single_col_height / 2 < PROJECTION_HEIGHT, then produces Last.
+fn build_unstructured_round_config(witness_length: usize) -> RoundConfig {
+    let main_witness_columns = 4usize;
+    let single_col_height = witness_length / main_witness_columns;
+    let next_single_col_height = single_col_height / 2;
+    let next_cols = 4usize;
+    let next_wl = next_single_col_height * next_cols;
+
+    println!(
+        "Building unstructured round config: witness_length={}, single_col_height={}, next_height={}",
+        witness_length, single_col_height, next_single_col_height
+    );
+
+    let common = RoundConfigCommon {
+        witness_length,
+        exact_binariness: false,
+        l2: true,
+        vdf: false,
+        inner_evaluation_claims: 2,
+        main_witness_columns,
+        main_witness_prefix: Prefix {
+            prefix: 0,
+            length: 0,
+        },
+    };
+
+    let next_config = if next_single_col_height >= LAST_ROUND_THRESHOLD {
+        build_unstructured_round_config(next_wl)
+    } else {
+        RoundConfig::Last {
+            common: RoundConfigCommon {
+                witness_length: next_wl,
+                exact_binariness: false,
+                l2: true,
+                vdf: false,
+                inner_evaluation_claims: 2,
+                main_witness_columns: next_cols,
+                main_witness_prefix: Prefix {
+                    prefix: 0,
+                    length: 0,
+                },
+            },
+        }
+    };
+
+    RoundConfig::IntermediateUnstructured {
+        common,
+        decomposition_base_log: 8,
+        next: Box::new(next_config),
     }
 }
 
@@ -454,7 +571,7 @@ fn init_prover_type_1_sumcheck(
     config: &RoundConfig,
     main_witness_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
 ) -> Type1ProverSumcheckContext {
-    let single_col_height = config.witness_length / 2 / config.main_witness_columns;
+    let single_col_height = (config.witness_length >> config.main_witness_prefix.length) / config.main_witness_columns;
     let total_vars = config.witness_length.ilog2() as usize;
     let inner_evaluation_sumcheck =
         ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
@@ -1056,6 +1173,7 @@ pub fn prover_round(
             _ => (None, None, None, None),
         };
 
+
     let vdf_challenge = if config.vdf {
         let mut challenge = RingElement::zero(Representation::IncompleteNTT);
         hash_wrapper.sample_ring_element_ntt_slots_into(&mut challenge);
@@ -1067,7 +1185,7 @@ pub fn prover_round(
     if DEBUG {
         println!("witness.data.len {:?}", witness.data.len());
     }
-    let mut extended_witness = new_vec_zero_preallocated(witness.data.len() * 2);
+    let mut extended_witness = new_vec_zero_preallocated(witness.data.len() << config.main_witness_prefix.length);
 
     let mut witness_conjugated = new_vec_zero_preallocated(witness.data.len());
     for (i, w) in witness.data.iter().enumerate() {
@@ -1269,7 +1387,7 @@ pub fn prover_round(
         );
     }
 
-    let outer_points_len = config.main_witness_columns.ilog2() as usize + 1; // extended witness is two times the original witness, so we need one more bit for the prefix
+    let outer_points_len = config.main_witness_columns.ilog2() as usize + config.main_witness_prefix.length;
     let evaluation_points_inner = evaluation_points
         .iter()
         .skip(outer_points_len)
@@ -1534,8 +1652,98 @@ pub fn prover_round(
             }
         }
 
-        RoundConfig::IntermediateUnstructured { next, .. } => {
-            panic!("Unstructured intermediate rounds are not implemented yet");
+        RoundConfig::IntermediateUnstructured {
+            decomposition_base_log,
+            next,
+            ..
+        } => {
+            // Same as Intermediate but without projection columns:
+            // fold → split → decompose → 4 columns (2 split × 2 decomp chunks)
+            let split_witness = VerticallyAlignedMatrix {
+                height: folded_witness.height / 2,
+                width: 2,
+                data: folded_witness.data,
+                used_cols: 2,
+            };
+
+            let mut decomposed_split_witness = VerticallyAlignedMatrix {
+                height: split_witness.height,
+                width: 4,
+                data: new_vec_zero_preallocated(split_witness.height * 4),
+                used_cols: 4,
+            };
+
+            decompose_chunks_into(
+                &mut decomposed_split_witness.data[..split_witness.height * 2],
+                &split_witness.data[..split_witness.height],
+                *decomposition_base_log,
+                2,
+            );
+
+            decompose_chunks_into(
+                &mut decomposed_split_witness.data[split_witness.height * 2..],
+                &split_witness.data[split_witness.height..],
+                *decomposition_base_log,
+                2,
+            );
+
+            let decomposed_split_commitment = commit_basic(crs, &decomposed_split_witness, RANK);
+
+            let new_evaluation_points_inner = evaluation_points
+                .iter()
+                .skip(outer_points_len + 1)
+                .cloned()
+                .collect::<Vec<_>>();
+
+            let new_evaluation_points_inner_expanded = PreprocessedRow::from_structured_row(
+                &evaluation_point_to_structured_row(&new_evaluation_points_inner),
+            );
+
+            let new_evaluation_points_inner_conjugated = new_evaluation_points_inner
+                .iter()
+                .map(RingElement::conjugate)
+                .collect::<Vec<_>>();
+
+            let new_evaluation_points_inner_conjugated_expanded =
+                PreprocessedRow::from_structured_row(&evaluation_point_to_structured_row(
+                    &new_evaluation_points_inner_conjugated,
+                ));
+
+            let new_claims = commit_basic_internal(
+                &vec![
+                    new_evaluation_points_inner_expanded,
+                    new_evaluation_points_inner_conjugated_expanded,
+                ],
+                &decomposed_split_witness,
+                2,
+            );
+
+            let next_level_eval_points = vec![
+                evaluation_point_to_structured_row(&new_evaluation_points_inner),
+                evaluation_point_to_structured_row(&new_evaluation_points_inner_conjugated),
+            ];
+            let next_level_proof = prover_round(
+                crs,
+                &decomposed_split_witness,
+                next,
+                sumcheck_context.next.as_mut().unwrap(),
+                &next_level_eval_points,
+                &new_claims,
+                hash_wrapper,
+                None,
+            );
+
+            SalsaaProof::IntermediateUnstructured {
+                common,
+                new_claims: new_claims.data,
+                decomposed_split_commitment,
+                next: Box::new(next_level_proof),
+                projection_image_ct: [0u64; 256],
+                projection_image_batched: [
+                    RingElement::zero(Representation::IncompleteNTT),
+                    RingElement::zero(Representation::IncompleteNTT),
+                ],
+            }
         }
 
         RoundConfig::Last { .. } => {
@@ -1640,7 +1848,7 @@ fn init_verifier_type_1_sumcheck(
     config: &RoundConfig,
     main_witness_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
 ) -> Type1VerifierSumcheckContext {
-    let single_col_height = config.witness_length / 2 / config.main_witness_columns;
+    let single_col_height = (config.witness_length >> config.main_witness_prefix.length) / config.main_witness_columns;
     let total_vars = config.witness_length.ilog2() as usize;
 
     let inner_evaluation_sumcheck = ElephantCell::new(
@@ -2075,7 +2283,7 @@ impl VerifierSumcheckContext {
         vdf_challenge: Option<&RingElement>,
         vdf_crs_param: Option<&vdf_crs>,
     ) {
-        let outer_points_len = config.main_witness_columns.ilog2() as usize + 1;
+        let outer_points_len = config.main_witness_columns.ilog2() as usize + config.main_witness_prefix.length;
         let outer_points = &evaluation_points_ring[0..outer_points_len].to_vec();
         let outer_points_expanded =
             PreprocessedRow::from_structured_row(&evaluation_point_to_structured_row(outer_points))
@@ -2103,7 +2311,7 @@ impl VerifierSumcheckContext {
             _ => {}
         }
 
-        let mut main_cols_points = evaluation_points_ring[1..outer_points_len].to_vec();
+        let mut main_cols_points = evaluation_points_ring[config.main_witness_prefix.length..outer_points_len].to_vec();
         for r in main_cols_points.iter_mut() {
             r.conjugate_in_place();
         }
@@ -2389,7 +2597,7 @@ pub fn verifier_round(
     let mut folding_challenges = new_vec_zero_preallocated(config.main_witness_columns);
     hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut folding_challenges);
 
-    let outer_points_len = config.main_witness_columns.ilog2() as usize + 1;
+    let outer_points_len = config.main_witness_columns.ilog2() as usize + config.main_witness_prefix.length;
     let layer = &evaluation_points_ring[outer_points_len];
     let conj_layer = layer.conjugate();
 
@@ -2558,6 +2766,144 @@ pub fn verifier_round(
                 hash_wrapper,
                 None, // VDF only in first round
                 None, // no VDF outputs in recursive rounds
+                round_index + 1,
+            );
+        }
+
+        (
+            RoundConfig::IntermediateUnstructured {
+                decomposition_base_log,
+                next,
+                ..
+            },
+            SalsaaProof::IntermediateUnstructured {
+                new_claims,
+                decomposed_split_commitment,
+                next: next_proof,
+                ..
+            },
+        ) => {
+            // Recompose claims: width=2 (no projection columns)
+            let recomposed_claims = HorizontallyAlignedMatrix {
+                height: 2,
+                width: 2,
+                data: compose_from_decomposed(new_claims, *decomposition_base_log, 2),
+            };
+
+            assert_eq!(
+                folded_claim,
+                &(&(&*ONE - layer) * &recomposed_claims[(0, 0)])
+                    + &(layer * &recomposed_claims[(0, 1)]),
+                "IntermediateUnstructured: recomposed claim does not match the folded claim"
+            );
+
+            assert_eq!(
+                folded_conj_claim,
+                &(&(&*ONE - &conj_layer) * &recomposed_claims[(1, 0)])
+                    + &(&conj_layer * &recomposed_claims[(1, 1)]),
+                "IntermediateUnstructured: recomposed conjugate claim does not match"
+            );
+
+            // Recompose commitments: width=2 (no projection)
+            let recomposed_commitments = HorizontallyAlignedMatrix {
+                height: RANK,
+                width: 2,
+                data: compose_from_decomposed(
+                    &decomposed_split_commitment.data,
+                    *decomposition_base_log,
+                    2,
+                ),
+            };
+
+            let mut temp = RingElement::zero(Representation::IncompleteNTT);
+            for r in 0..RANK {
+                let layer = crs.structured_ck_for_wit_dim(
+                    (config.witness_length >> config.main_witness_prefix.length)
+                        / config.main_witness_columns,
+                )[r]
+                    .tensor_layers
+                    .get(0)
+                    .unwrap();
+
+                let mut folded_commitment_r = RingElement::zero(Representation::IncompleteNTT);
+                for i in 0..config.main_witness_columns {
+                    temp *= (&folding_challenges[i], &commitment[(r, i)]);
+                    folded_commitment_r += &temp;
+                }
+
+                assert_eq!(
+                    folded_commitment_r,
+                    &(&(&*ONE - layer) * &recomposed_commitments[(r, 0)])
+                        + &(layer * &recomposed_commitments[(r, 1)]),
+                    "IntermediateUnstructured: recomposed commitment does not match"
+                );
+            }
+
+            verifier_context.load_data(
+                config,
+                proof,
+                &evaluation_points_ring,
+                evaluation_points_inner,
+                &evaluation_points_outer,
+                &batching_challenges,
+                &projection_matrix,
+                &combination,
+                qe,
+                vdf_challenge.as_ref(),
+                vdf_crs_param,
+            );
+
+            let verifier_eval = verifier_context
+                .field_combiner_evaluation
+                .borrow_mut()
+                .evaluate_at_ring_point(&evaluation_points_ring)
+                .clone();
+
+            assert_eq!(
+                verifier_eval, batched_claim_over_field,
+                "IntermediateUnstructured: tree evaluation does not match sumcheck claim"
+            );
+
+            // Recurse into the next round
+            let new_evaluation_points_inner = evaluation_points_ring
+                .iter()
+                .skip(outer_points_len + 1)
+                .cloned()
+                .collect::<Vec<_>>();
+
+            let new_evaluation_points_inner_conjugated = new_evaluation_points_inner
+                .iter()
+                .map(RingElement::conjugate)
+                .collect::<Vec<_>>();
+
+            let next_level_eval_points = vec![
+                evaluation_point_to_structured_row(&new_evaluation_points_inner),
+                evaluation_point_to_structured_row(&new_evaluation_points_inner_conjugated),
+            ];
+
+            let recomposed_new_claims = HorizontallyAlignedMatrix {
+                height: 2,
+                width: next.main_witness_columns,
+                data: new_claims.clone(),
+            };
+
+            println!(
+                "Verifier round {} (unstructured) took {:?}",
+                round_index,
+                round_start.elapsed()
+            );
+
+            verifier_round(
+                next,
+                crs,
+                verifier_context.next.as_mut().unwrap(),
+                decomposed_split_commitment,
+                next_proof,
+                &next_level_eval_points,
+                &recomposed_new_claims,
+                hash_wrapper,
+                None,
+                None,
                 round_index + 1,
             );
         }
