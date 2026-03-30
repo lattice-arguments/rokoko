@@ -186,16 +186,18 @@ impl<E: SumcheckElement> EvaluationSumcheckData for CombinerEvaluation<E> {
             );
             self.result += &self.scratch;
             let elapsed = start.elapsed();
-            if let Some(names) = &self.names {
-                println!(
-                    "CombinerEvaluation: Evaluated {} in {:?}",
-                    names[i], elapsed
-                );
-            } else {
-                println!(
-                    "CombinerEvaluation: Evaluated sumcheck {} in {:?}",
-                    i, elapsed
-                );
+            if elapsed.as_micros() > 400 {
+                if let Some(names) = &self.names {
+                    println!(
+                        "CombinerEvaluation: Evaluated {} in {:?}",
+                        names[i], elapsed
+                    );
+                } else {
+                    println!(
+                        "CombinerEvaluation: Evaluated sumcheck {} in {:?}",
+                        i, elapsed
+                    );
+                }
             }
         }
 
