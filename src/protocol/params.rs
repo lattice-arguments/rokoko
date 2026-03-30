@@ -13,13 +13,19 @@ use crate::{
     },
 };
 
-pub static DECOMP_8_LAST_LEVEL: AuxRecursionConfig = AuxRecursionConfig {
+pub static DECOMP_8_LAST_LEVEL: LazyLock<AuxRecursionConfig> = LazyLock::new(|| AuxRecursionConfig {
     decomposition_base_log: 7,
     decomposition_chunks: 8,
-    rank: 1,
+    rank: per_config(1, 1, 2),
     diag_blocks: 1,
-    next: None,
-};
+    next: cfg_p30(Some(Box::new(AuxRecursionConfig {
+        decomposition_base_log: 7,
+        decomposition_chunks: 8,
+        rank: per_config(1, 1, 2),
+        diag_blocks: 1,
+        next: None,
+    })), None),
+});
 
 // This config is a bit special as I cannot just handle it in the first round
 // Returns `if_p30` if the "p-30" feature is enabled at runtime, otherwise `if_not_p30`.
