@@ -128,8 +128,33 @@ fn build_type4_verifier_context(
         );
 
         let data_len = 1 << (total_vars - current.prefix.length);
-        let ck_evals = (0..current.rank)
-            .map(|i| pseudo_structured_row_ck_evaluation(crs, total_vars, data_len, i, 0))
+
+        let blockwise_rank = current.rank / current.diag_blocks;
+        let block_data_len = data_len / current.diag_blocks;
+
+        let block_selector_evaluations = if current.diag_blocks > 1 {
+            Some(
+                (0..current.diag_blocks)
+                    .map(|b| {
+                        selector_evaluation_from_prefix(
+                            &Prefix {
+                                prefix: current.prefix.prefix
+                                    * current.diag_blocks.next_power_of_two()
+                                    + b,
+                                length: current.prefix.length
+                                    + current.diag_blocks.next_power_of_two().ilog2() as usize,
+                            },
+                            total_vars,
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        };
+
+        let ck_evals = (0..blockwise_rank)
+            .map(|i| pseudo_structured_row_ck_evaluation(crs, total_vars, block_data_len, i, 0))
             .collect::<Vec<_>>();
 
         let data_selected_eval = ElephantCell::new(ProductSumcheckEvaluation::new(
@@ -160,34 +185,36 @@ fn build_type4_verifier_context(
 
         let outputs = (0..current.rank)
             .map(|i| {
-                let ck_with_data = ElephantCell::new(ProductSumcheckEvaluation::new(
-                    ck_evals[i].clone(),
-                    data_selected_eval.clone(),
-                ));
+                let i_in_block = i % blockwise_rank;
+                let block_i = i / blockwise_rank;
+
+                let lhs = if let Some(ref block_sels) = block_selector_evaluations {
+                    let block_data_selected = ElephantCell::new(ProductSumcheckEvaluation::new(
+                        block_sels[block_i].clone(),
+                        combined_witness_eval.clone(),
+                    ));
+                    ElephantCell::new(ProductSumcheckEvaluation::new(
+                        ck_evals[i_in_block].clone(),
+                        block_data_selected,
+                    ))
+                } else {
+                    ElephantCell::new(ProductSumcheckEvaluation::new(
+                        ck_evals[i_in_block].clone(),
+                        data_selected_eval.clone(),
+                    ))
+                };
+
                 ElephantCell::new(DiffSumcheckEvaluation::new(
-                    ck_with_data,
+                    lhs,
                     recomposed_child_evals[i].clone(),
                 ))
             })
             .collect::<Vec<_>>();
 
-        // ck_evals
-        //     .iter()
-        //     .map(|ck_eval| {
-        //         let ck_with_data = ElephantCell::new(ProductSumcheckEvaluation::new(
-        //             ck_eval.clone(),
-        //             data_selected_eval.clone(),
-        //         ));
-        //         ElephantCell::new(DiffSumcheckEvaluation::new(
-        //             ck_with_data,
-        //             recomposed_child_evals[i].clone(),
-        //         ))
-        //     })
-        //     .collect::<Vec<_>>();
-
         layers.push(Type4LayerVerifierContext {
             selector_evaluation: selector_eval,
             child_selector_evaluations: child_selectors_evals,
+            block_selector_evaluations,
             combiner_evaluation: combiner_eval,
             ck_evaluations: ck_evals,
             outputs,

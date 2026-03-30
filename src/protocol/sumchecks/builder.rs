@@ -98,17 +98,55 @@ fn build_type4_sumcheck_context(
             })
             .collect::<Vec<_>>();
 
-        let mut ck_sumchecks = Vec::with_capacity(current.rank);
-        for i in 0..current.rank {
-            ck_sumchecks.push(ck_sumcheck(crs, total_vars, data_len, i, 0));
+        let blockwise_rank = current.rank / current.diag_blocks;
+        let block_data_len = data_len / current.diag_blocks;
+
+        let block_selector_sumchecks = if current.diag_blocks > 1 {
+            Some(
+                (0..current.diag_blocks)
+                    .map(|b| {
+                        sumcheck_from_prefix(
+                            &Prefix {
+                                prefix: current.prefix.prefix
+                                    * current.diag_blocks.next_power_of_two()
+                                    + b,
+                                length: current.prefix.length
+                                    + current.diag_blocks.next_power_of_two().ilog2() as usize,
+                            },
+                            total_vars,
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        };
+
+        let mut ck_sumchecks = Vec::with_capacity(blockwise_rank);
+        for i in 0..blockwise_rank {
+            ck_sumchecks.push(ck_sumcheck(crs, total_vars, block_data_len, i, 0));
         }
 
         let outputs = (0..current.rank)
             .map(|i| {
-                let lhs = ElephantCell::new(ProductSumcheck::new(
-                    ck_sumchecks[i].clone(),
-                    data_selected_sumcheck.clone(),
-                ));
+                let i_in_block = i % blockwise_rank;
+                let block_i = i / blockwise_rank;
+
+                let lhs = if let Some(ref block_sels) = block_selector_sumchecks {
+                    let block_data_selected = ElephantCell::new(ProductSumcheck::new(
+                        block_sels[block_i].clone(),
+                        combined_witness_sumcheck.clone(),
+                    ));
+                    ElephantCell::new(ProductSumcheck::new(
+                        ck_sumchecks[i_in_block].clone(),
+                        block_data_selected,
+                    ))
+                } else {
+                    ElephantCell::new(ProductSumcheck::new(
+                        ck_sumchecks[i_in_block].clone(),
+                        data_selected_sumcheck.clone(),
+                    ))
+                };
 
                 let rhs = recomposed_child_sumchecks[i].clone();
                 ElephantCell::new(DiffSumcheck::new(lhs, rhs))
@@ -118,6 +156,7 @@ fn build_type4_sumcheck_context(
         layers.push(Type4LayerSumcheckContext {
             selector_sumcheck,
             child_selector_sumcheck: Some(child_selector_sumchecks),
+            block_selector_sumchecks,
             combiner_sumcheck: Some(combiner_sumcheck),
             data_selected_sumcheck,
             // rhs_sumcheck: recomposed_child_sumcheck,

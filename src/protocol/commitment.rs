@@ -164,15 +164,20 @@ pub fn recursive_commit(
         config.decomposition_chunks,
     );
 
-    let ck = crs.ck_for_wit_dim(committed_data.len());
+    let blockwise_rank = config.rank / config.diag_blocks;
+    let block_size = committed_data.len() / config.diag_blocks;
+    let ck = crs.ck_for_wit_dim(block_size);
 
     let mut commitment = new_vec_zero_preallocated(config.rank);
 
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
-    for r in 0..config.rank {
-        for (elem, data_elem) in ck[r].preprocessed_row.iter().zip(committed_data.iter()) {
-            temp *= (elem, data_elem);
-            commitment[r] += &temp;
+    for b in 0..config.diag_blocks {
+        for r in 0..blockwise_rank {
+            let data_slice = committed_data.iter().skip(b * block_size);
+            for (elem, data_elem) in ck[r].preprocessed_row.iter().zip(data_slice) {
+                temp *= (elem, data_elem);
+                commitment[b * blockwise_rank + r] += &temp;
+            }
         }
     }
 
@@ -214,6 +219,7 @@ mod tests {
             decomposition_base_log: 3, // base 8
             decomposition_chunks: 4,
             rank: 2,
+            diag_blocks: 1,
             prefix: Prefix {
                 prefix: 0,
                 length: 0,

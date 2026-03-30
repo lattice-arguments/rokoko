@@ -246,6 +246,7 @@ pub struct Type3SumcheckContext {
 pub struct Type4LayerSumcheckContext {
     pub selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
     pub child_selector_sumcheck: Option<Vec<ElephantCell<SelectorEq<RingElement>>>>,
+    pub block_selector_sumchecks: Option<Vec<ElephantCell<SelectorEq<RingElement>>>>,
     pub combiner_sumcheck: Option<ElephantCell<LinearSumcheck<RingElement>>>,
     pub data_selected_sumcheck: ElephantCell<ProductSumcheck<RingElement>>,
     // pub rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
@@ -324,6 +325,11 @@ fn partial_evaluate_type4(ctx: &mut Type4SumcheckContext, r: &RingElement) {
         layer.selector_sumcheck.borrow_mut().partial_evaluate(r);
         if let Some(child_sel) = &layer.child_selector_sumcheck {
             for sel in child_sel.iter() {
+                sel.borrow_mut().partial_evaluate(r);
+            }
+        }
+        if let Some(block_sels) = &layer.block_selector_sumchecks {
+            for sel in block_sels.iter() {
                 sel.borrow_mut().partial_evaluate(r);
             }
         }
