@@ -49,6 +49,34 @@ pub fn commit_basic_internal(
     commitment
 }
 
+pub fn commit_basic_internal_diag(
+    ck: &CK,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    rank: usize,
+    diag_blocks: usize,
+) -> BasicCommitment {
+    let blockwise_rank = rank / diag_blocks;
+    let mut commitment =
+        HorizontallyAlignedMatrix::new_zero_preallocated(rank.next_power_of_two(), witness.width);
+
+    let mut temp = RingElement::zero(Representation::IncompleteNTT);
+    for b in 0..diag_blocks {
+        for (i, row) in ck.iter().take(blockwise_rank).enumerate() {
+            for col in 0..witness.used_cols {
+                let wintess_clow = witness
+                    .col(col)
+                    .iter()
+                    .skip(b * witness.height / diag_blocks); // we skip the first b blocks of the witness since they are not used in this commitment
+                for (elem, w_elem) in row.preprocessed_row.iter().zip(wintess_clow) {
+                    temp *= (elem, w_elem);
+                    *commitment.index_mut((b * blockwise_rank + i, col)) += &temp;
+                }
+            }
+        }
+    }
+    commitment
+}
+
 // this is first level commit for FW = Y
 pub fn commit_basic(
     crs: &CRS,
@@ -57,6 +85,18 @@ pub fn commit_basic(
 ) -> BasicCommitment {
     let ck = crs.ck_for_wit_dim(witness.height);
     let commitment = commit_basic_internal(ck, witness, rank);
+
+    commitment
+}
+
+pub fn commit_basic_diag(
+    crs: &CRS,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    rank: usize,
+    diag_blocks: usize,
+) -> BasicCommitment {
+    let ck = crs.ck_for_wit_dim(witness.height / diag_blocks);
+    let commitment = commit_basic_internal_diag(ck, witness, rank, diag_blocks);
 
     commitment
 }
@@ -72,6 +112,7 @@ pub struct RecursionConfig {
     pub decomposition_base_log: usize,
     pub decomposition_chunks: usize,
     pub rank: usize,
+    pub diag_blocks: usize,
     pub prefix: Prefix,
     pub next: Option<Box<RecursionConfig>>,
 }

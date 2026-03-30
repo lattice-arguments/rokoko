@@ -58,6 +58,10 @@ impl SumcheckContext {
                 .basic_commitment_row_sumcheck
                 .borrow_mut()
                 .partial_evaluate(r);
+            type0_sc
+                .folded_witness_block_selector_sumcheck
+                .borrow_mut()
+                .partial_evaluate(r);
         }
         self.opening_combiner_sumcheck
             .borrow_mut()
@@ -178,6 +182,7 @@ impl SumcheckContext {
 ///   LHS: selector · (recomposed_folded_witness · CK_row)
 ///   RHS: commitment_selector · (recomposed_commitment · fold_challenge)
 pub struct Type0SumcheckContext {
+    pub folded_witness_block_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
     pub basic_commitment_row_sumcheck: ElephantCell<SelectorEq<RingElement>>,
     pub output: ElephantCell<DiffSumcheck<RingElement>>,
 }

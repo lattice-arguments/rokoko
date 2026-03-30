@@ -8,7 +8,9 @@ use crate::{
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
-        commitment::{commit_basic, recursive_commit, BasicCommitment, CommitmentWithAux},
+        commitment::{
+            commit_basic, commit_basic_diag, recursive_commit, BasicCommitment, CommitmentWithAux,
+        },
         config::{
             paste_by_prefix, paste_recursive_commitment, Config, ConfigBase, NextRoundCommitment,
             Projection, RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig,
@@ -518,10 +520,11 @@ pub fn prover_round(
                         next_round_witness.data.len(),
                         next_sumcheck_config.witness_height * next_sumcheck_config.witness_width
                     );
-                    let basic_commitment = commit_basic(
+                    let basic_commitment = commit_basic_diag(
                         &crs,
                         &next_round_witness,
                         next_sumcheck_config.basic_commitment_rank,
+                        next_sumcheck_config.basic_commitment_diag_blocks,
                     );
 
                     let next_round_rc_commitment_with_aux = recursive_commit(

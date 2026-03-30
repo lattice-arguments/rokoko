@@ -261,12 +261,14 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
         config.commitment_recursion.decomposition_chunks.ilog2() as usize,
     );
 
-    let commitment_key_rows_evaluation = (0..config.basic_commitment_rank)
+    let blockwise_rank = config.basic_commitment_rank / config.basic_commitment_diag_blocks;
+
+    let commitment_key_rows_evaluation = (0..blockwise_rank)
         .map(|i| {
             pseudo_structured_row_ck_evaluation(
                 crs,
                 total_vars,
-                config.witness_height,
+                config.witness_height / config.basic_commitment_diag_blocks,
                 i,
                 config.witness_decomposition_chunks.ilog2() as usize,
             )
@@ -345,12 +347,29 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                 total_vars,
             );
 
+            let i_in_block = i % blockwise_rank;
+            let block_i = i / blockwise_rank;
+
+            let folded_witness_block_selector_evaluation = selector_evaluation_from_prefix(
+                &Prefix {
+                    prefix: config.folded_witness_prefix.prefix
+                        * config.basic_commitment_diag_blocks.next_power_of_two()
+                        + block_i,
+                    length: config.folded_witness_prefix.length
+                        + config
+                            .basic_commitment_diag_blocks
+                            .next_power_of_two()
+                            .ilog2() as usize,
+                },
+                total_vars,
+            );
+
             let ck_with_folded = ElephantCell::new(ProductSumcheckEvaluation::new(
-                commitment_key_rows_evaluation[i].clone(),
+                commitment_key_rows_evaluation[i_in_block].clone(),
                 recomposed_folded_witness.clone(),
             ));
             let lhs = ElephantCell::new(ProductSumcheckEvaluation::new(
-                folded_witness_selector_evaluation.clone(),
+                folded_witness_block_selector_evaluation.clone(),
                 ck_with_folded.clone(),
             ));
 
