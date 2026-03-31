@@ -88,8 +88,8 @@ pub static P: LazyLock<Config> = LazyLock::new(|| {
         commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
-            rank: per_config(8, 32, 512),
-            diag_blocks: per_config(4, 16, 256),
+            rank: per_config(16, 32, 512),
+            diag_blocks: per_config(8, 16, 256),
             next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
         },
         opening_recursion: AuxRecursionConfig {
@@ -119,8 +119,8 @@ pub static P_1: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| {
         witness_width: per_config(16, 32, 64),
         projection_ratio: 2usize.pow(5),
         projection_height: 2usize.pow(8),
-        basic_commitment_rank: per_config(12, 24, 56),
-        basic_commitment_diag_blocks: per_config(2, 4, 8),
+        basic_commitment_rank: per_config(24, 24, 56),
+        basic_commitment_diag_blocks: per_config(4, 4, 8),
         nof_openings: 2,
         commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
@@ -139,8 +139,8 @@ pub static P_1: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| {
         projection_recursion: AuxProjection::Type0(AuxRecursionConfig {
             decomposition_base_log: 10,
             decomposition_chunks: 2,
-            rank: per_config(2, 8, 128),
-            diag_blocks: per_config(1, 4, 32),
+            rank: per_config(4, 8, 128),
+            diag_blocks: per_config(2, 4, 32),
             next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
         }),
 
