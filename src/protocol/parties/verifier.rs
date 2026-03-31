@@ -89,16 +89,13 @@ pub fn verifier_round(
                         _ => panic!("Expected recursive commitment for next round."),
                     };
 
-                    let inner_vec = new_evaluation_points_inner.to_vec();
-                    let outer_vec = new_evaluation_points_outer.to_vec();
-
                     let inner_rows = [
-                        evaluation_point_to_structured_row(&inner_vec),
-                        evaluation_point_to_structured_row_conjugate(&inner_vec),
+                        evaluation_point_to_structured_row(new_evaluation_points_inner),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_inner),
                     ];
                     let outer_rows = [
-                        evaluation_point_to_structured_row(&outer_vec),
-                        evaluation_point_to_structured_row_conjugate(&outer_vec),
+                        evaluation_point_to_structured_row(new_evaluation_points_outer),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
                     ];
                     let new_claims = [
                         round_proof.claim_over_witness.clone(),
@@ -136,16 +133,13 @@ pub fn verifier_round(
                         _ => panic!("Expected simple commitment for next round."),
                     };
 
-                    let inner_vec = new_evaluation_points_inner.to_vec();
-                    let outer_vec = new_evaluation_points_outer.to_vec();
-
                     let inner_rows = [
-                        evaluation_point_to_structured_row(&inner_vec),
-                        evaluation_point_to_structured_row_conjugate(&inner_vec),
+                        evaluation_point_to_structured_row(new_evaluation_points_inner),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_inner),
                     ];
                     let outer_rows = [
-                        evaluation_point_to_structured_row(&outer_vec),
-                        evaluation_point_to_structured_row_conjugate(&outer_vec),
+                        evaluation_point_to_structured_row(new_evaluation_points_outer),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
                     ];
                     let new_claims = [
                         round_proof.claim_over_witness.clone(),

@@ -13,14 +13,14 @@ pub struct Opening {
     pub evaluation_points_outer: Vec<PreprocessedRow>,
 }
 
-pub fn evaluation_point_to_structured_row(evaluation_point: &Vec<RingElement>) -> StructuredRow {
+pub fn evaluation_point_to_structured_row(evaluation_point: &[RingElement]) -> StructuredRow {
     StructuredRow {
-        tensor_layers: evaluation_point.clone(),
+        tensor_layers: evaluation_point.to_vec(),
     }
 }
 
 pub fn evaluation_point_to_structured_row_conjugate(
-    evaluation_point: &Vec<RingElement>,
+    evaluation_point: &[RingElement],
 ) -> StructuredRow {
     StructuredRow {
         tensor_layers: evaluation_point.iter().map(|x| x.conjugate()).collect(),

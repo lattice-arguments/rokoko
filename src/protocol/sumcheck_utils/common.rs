@@ -81,6 +81,13 @@ pub trait HighOrderSumcheckData {
         None
     }
 
+    /// Expose the raw interleaved data for LS-first Karatsuba.
+    /// Returns the full data slice where data[2i] = val@0, data[2i+1] = val@1.
+    /// Only `LinearSumcheck` during data rounds overrides this.
+    fn as_interleaved_data(&self) -> Option<&[Self::Element]> {
+        None
+    }
+
     /// Return the contiguous half-hypercube range `[start, end)` outside which
     /// `is_univariate_polynomial_zero_at_point` is guaranteed to return `true`.
     /// Nodes that carry a sparse selector (e.g. `SelectorEq`) override this so
