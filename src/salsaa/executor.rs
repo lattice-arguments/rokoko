@@ -1,5 +1,5 @@
-use std::{array, process::Output};
 use std::sync::LazyLock;
+use std::{array, process::Output};
 
 use num::range;
 use rand::rand_core::le;
@@ -9,25 +9,32 @@ use crate::protocol::config::ConfigBase;
 use crate::protocol::project_2::verifier_sample_projection_challenges;
 use crate::{
     common::{
-        arithmetic::{ALL_ONE_COEFFS, ONE, ZERO, field_to_ring_element_into},
+        arithmetic::{
+            field_to_ring_element_into, precompute_structured_values_fast, ALL_ONE_COEFFS, ONE,
+            ZERO,
+        },
         config::{self, DEGREE, HALF_DEGREE, MOD_Q, NOF_BATCHES},
         decomposition::{compose_from_decomposed, decompose_chunks_into},
         hash::HashWrapper,
-        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
+        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         projection_matrix::{self, ProjectionMatrix},
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         sampling::sample_random_short_vector,
         structured_row::{PreprocessedRow, StructuredRow},
         sumcheck_element::SumcheckElement,
     },
+    hexl::bindings::{add_mod, eltwise_mult_mod, multiply_mod},
     protocol::{
-        commitment::{self, BasicCommitment, Prefix, commit_basic, commit_basic_internal},
-        config::{SizeableProof, paste_by_prefix, to_kb},
+        commitment::{self, commit_basic, commit_basic_internal, BasicCommitment, Prefix},
+        config::{paste_by_prefix, to_kb, SizeableProof},
         crs::{self, CRS},
         fold::fold,
         open::{claim, evaluation_point_to_structured_row},
         project::{self, prepare_i16_witness, project},
-        project_2::{BatchedProjectionChallengesSuccinct, batch_projection_n_times, compute_j_batched, project_coefficients},
+        project_2::{
+            batch_projection_n_times, compute_j_batched, project_coefficients,
+            BatchedProjectionChallengesSuccinct,
+        },
         sumcheck_utils::{
             combiner::{Combiner, CombinerEvaluation},
             common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
@@ -258,7 +265,7 @@ pub enum RoundConfig {
         next: Box<RoundConfig>,
     },
     IntermediateUnstructured {
-        projection_ratio: usize, 
+        projection_ratio: usize,
         common: RoundConfigCommon,
         decomposition_base_log: u64,
         next: Box<RoundConfig>,
@@ -391,7 +398,7 @@ fn build_round_config(extended_witness_length: usize, is_first_round: bool) -> R
         let next_config = RoundConfig::IntermediateUnstructured {
             common: unstructured_common,
             decomposition_base_log: 8,
-            projection_ratio: next_unstructured_height / PROJECTION_HEIGHT, // for now, we assume that each column is projected to PROJECTION_HEIGHT Zq elements., 
+            projection_ratio: next_unstructured_height / PROJECTION_HEIGHT, // for now, we assume that each column is projected to PROJECTION_HEIGHT Zq elements.,
             next: Box::new(next_unstructured_config),
         };
 
@@ -580,8 +587,8 @@ fn init_prover_type_1_sumcheck(
     config: &RoundConfig,
     main_witness_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
 ) -> Type1ProverSumcheckContext {
-    let single_col_height =
-        (config.extended_witness_length >> config.main_witness_prefix.length) / config.main_witness_columns;
+    let single_col_height = (config.extended_witness_length >> config.main_witness_prefix.length)
+        / config.main_witness_columns;
     let total_vars = config.extended_witness_length.ilog2() as usize;
     let inner_evaluation_sumcheck =
         ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(
@@ -666,7 +673,8 @@ fn init_prover_type_3_sumcheck(
             let c2_len = config.main_witness_columns;
             let c1_len = PROJECTION_HEIGHT;
             // (c_2 \otimes c_0 \otimes c_1^T J) · witness = (c_2 \otimes c_0 \otimes c_1)^T projected_witness
-            let single_col_height = config.extended_witness_length / 2 / config.main_witness_columns;
+            let single_col_height =
+                config.extended_witness_length / 2 / config.main_witness_columns;
 
             let c0_len: usize = single_col_height / (PROJECTION_HEIGHT * projection_ratio);
             assert!(c0_len > 0, "c0_len must be greater than 0");
@@ -950,7 +958,8 @@ impl BatchingChallenges {
             } => {
                 let c2_len = config.main_witness_columns;
                 let c1_len = PROJECTION_HEIGHT;
-                let single_col_height = config.extended_witness_length / 2 / config.main_witness_columns;
+                let single_col_height =
+                    config.extended_witness_length / 2 / config.main_witness_columns;
                 let c0_len: usize = single_col_height / (PROJECTION_HEIGHT * projection_ratio);
                 assert!(c0_len > 0, "c0_len must be greater than 0");
                 let mut result = Self {
@@ -1181,14 +1190,35 @@ pub fn prover_round(
             _ => (None, None, None, None),
         };
 
-    let (unstructured_projection_matrix, batched_image, unstructured_batching_challenges, projection_ct) = match config {
-        RoundConfig::IntermediateUnstructured { projection_ratio, .. } => {
-            println!("Using unstructured projection with ratio {}", projection_ratio);
+    let (
+        unstructured_projection_matrix,
+        batched_image,
+        unstructured_batching_challenges,
+        projection_ct,
+    ) = match config {
+        RoundConfig::IntermediateUnstructured {
+            projection_ratio, ..
+        } => {
+            println!(
+                "Using unstructured projection with ratio {}",
+                projection_ratio
+            );
             let mut projection_matrix = ProjectionMatrix::new(*projection_ratio, PROJECTION_HEIGHT);
             projection_matrix.sample(hash_wrapper);
             let projection = project_coefficients(witness, &projection_matrix);
-            let (batched_image, challenges ) = batch_projection_n_times(witness, &projection_matrix, hash_wrapper, NOF_BATCHES, false);
-            (Some(projection_matrix), Some(batched_image), Some(challenges), Some(projection))
+            let (batched_image, challenges) = batch_projection_n_times(
+                witness,
+                &projection_matrix,
+                hash_wrapper,
+                NOF_BATCHES,
+                false,
+            );
+            (
+                Some(projection_matrix),
+                Some(batched_image),
+                Some(challenges),
+                Some(projection),
+            )
         }
         _ => (None, None, None, None),
     };
@@ -1891,8 +1921,8 @@ fn init_verifier_type_1_sumcheck(
     config: &RoundConfig,
     main_witness_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
 ) -> Type1VerifierSumcheckContext {
-    let single_col_height =
-        (config.extended_witness_length >> config.main_witness_prefix.length) / config.main_witness_columns;
+    let single_col_height = (config.extended_witness_length >> config.main_witness_prefix.length)
+        / config.main_witness_columns;
     let total_vars = config.extended_witness_length.ilog2() as usize;
 
     let inner_evaluation_sumcheck = ElephantCell::new(
@@ -1939,7 +1969,8 @@ fn init_verifier_type_3_sumcheck(
         } => {
             let c2_len = config.main_witness_columns;
             let c1_len = PROJECTION_HEIGHT;
-            let single_col_height = config.extended_witness_length / 2 / config.main_witness_columns;
+            let single_col_height =
+                config.extended_witness_length / 2 / config.main_witness_columns;
             let c0_len: usize = single_col_height / (PROJECTION_HEIGHT * projection_ratio);
             let total_vars = config.extended_witness_length.ilog2() as usize;
 
@@ -2491,27 +2522,32 @@ impl VerifierSumcheckContext {
     }
 }
 
-impl ConfigBase for RoundConfig {    
+impl ConfigBase for RoundConfig {
     fn witness_height(&self) -> usize {
-        self.extended_witness_length / (self.main_witness_columns * 2usize.pow(self.main_witness_prefix.length as u32)) 
+        self.extended_witness_length
+            / (self.main_witness_columns * 2usize.pow(self.main_witness_prefix.length as u32))
     }
-    
+
     fn witness_width(&self) -> usize {
         self.main_witness_columns * 2usize.pow(self.main_witness_prefix.length as u32)
     }
-    
+
     fn projection_ratio(&self) -> usize {
         match self {
-            RoundConfig::Intermediate { projection_ratio, .. } => *projection_ratio,
-            RoundConfig::IntermediateUnstructured { projection_ratio, .. } => *projection_ratio,
+            RoundConfig::Intermediate {
+                projection_ratio, ..
+            } => *projection_ratio,
+            RoundConfig::IntermediateUnstructured {
+                projection_ratio, ..
+            } => *projection_ratio,
             _ => 0,
         }
     }
-    
+
     fn projection_height(&self) -> usize {
         PROJECTION_HEIGHT
     }
-    
+
     fn basic_commitment_rank(&self) -> usize {
         panic!("basic_commitment_rank is not defined for RoundConfig");
     }
@@ -2545,22 +2581,94 @@ pub fn verifier_round(
     };
 
     let (projection_matrix_unstructures, projection_challenges_unstructured) = match config {
-
-        RoundConfig::IntermediateUnstructured { projection_ratio, .. } => {
+        RoundConfig::IntermediateUnstructured {
+            projection_ratio, ..
+        } => {
             let mut projection_matrix = ProjectionMatrix::new(*projection_ratio, PROJECTION_HEIGHT);
             projection_matrix.sample(hash_wrapper);
-            let challenges: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] = array::from_fn(|_| {
-                verifier_sample_projection_challenges(&projection_matrix, config, hash_wrapper)
-            });
+            let challenges: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] =
+                array::from_fn(|_| {
+                    verifier_sample_projection_challenges(&projection_matrix, config, hash_wrapper)
+                });
             (Some(projection_matrix), Some(challenges))
         }
-        _ => (None, None)
+        _ => (None, None),
     };
 
     match proof {
-        SalsaaProof::IntermediateUnstructured { projection_image_ct, .. } => {
+        SalsaaProof::IntermediateUnstructured {
+            projection_image_ct,
+            projection_image_batched,
+            ..
+        } => {
             let l2_norm_proj = l2_norm_coeffs(&projection_image_ct.data);
-            println!("L2 norm of projection image (unstructured): {}", l2_norm_proj);
+            println!(
+                "L2 norm of projection image (unstructured): {}",
+                l2_norm_proj
+            );
+
+            let challenges = projection_challenges_unstructured.as_ref().expect(
+                "Missing projection challenges for IntermediateUnstructured verifier round",
+            );
+            let mut temp = RingElement::zero(Representation::IncompleteNTT);
+            for i in 0..NOF_BATCHES {
+                let c_0_values = precompute_structured_values_fast(&challenges[i].c_0_layers);
+                let c_1_values = precompute_structured_values_fast(&challenges[i].c_1_layers);
+                debug_assert_eq!(
+                    c_1_values.len() % DEGREE,
+                    0,
+                    "c_1_values must be divisible by DEGREE"
+                );
+                let rows_per_chunk = c_1_values.len() / DEGREE;
+                debug_assert!(rows_per_chunk > 0, "rows_per_chunk must be non-zero");
+                debug_assert_eq!(
+                    projection_image_ct.height % rows_per_chunk,
+                    0,
+                    "projection_image_ct height must be divisible by rows_per_chunk"
+                );
+                let num_chunks = projection_image_ct.height / rows_per_chunk;
+                debug_assert_eq!(c_0_values.len(), num_chunks, "c_0_values length mismatch");
+
+                for k in 0..projection_image_batched.width {
+                    let mut expected_ct = 0u64;
+                    for chunk_idx in 0..num_chunks {
+                        let mut chunk_ct = 0u64;
+                        let chunk_row_base = chunk_idx * rows_per_chunk;
+                        for row_in_chunk in 0..rows_per_chunk {
+                            let row = chunk_row_base + row_in_chunk;
+                            unsafe {
+                                eltwise_mult_mod(
+                                    temp.v.as_mut_ptr(),
+                                    c_1_values.as_ptr().add(DEGREE * row_in_chunk),
+                                    projection_image_ct[(row, k)].v.as_ptr(),
+                                    DEGREE as u64,
+                                    MOD_Q,
+                                );
+                            }
+                            for l in 0..DEGREE {
+                                chunk_ct += temp.v[l];
+                            }
+                        }
+                        chunk_ct %= MOD_Q;
+                        unsafe {
+                            expected_ct = add_mod(
+                                expected_ct,
+                                multiply_mod(chunk_ct, c_0_values[chunk_idx], MOD_Q),
+                                MOD_Q,
+                            );
+                        }
+                    }
+                    let ct = projection_image_batched[(i, k)].constant_term_from_incomplete_ntt();
+                    assert_eq!(
+                        ct, expected_ct,
+                        "Projection constant term consistency check failed at batch {}, column {}",
+                        i, k
+                    );
+                }
+            }
+            println!(
+                "Projection image consistency check passed for IntermediateUnstructured round"
+            );
         }
         _ => {}
     }
