@@ -566,19 +566,9 @@ pub fn prover_round(
 
                     let evaluation_points = &sumcheck_output.5;
 
-                    let (new_evaluation_points_inner, new_evaluation_points_outer) =
+                    let (new_evaluation_points_outer, new_evaluation_points_inner) =
                         evaluation_points
-                            .split_at(evaluation_points.len() - next_sumcheck_config.witness_width.ilog2() as usize);
-                    let inner_vec = new_evaluation_points_inner
-                        .iter()
-                        .cloned()
-                        .rev()
-                        .collect::<Vec<_>>();
-                    let outer_vec = new_evaluation_points_outer
-                        .iter()
-                        .cloned()
-                        .rev()
-                        .collect::<Vec<_>>();
+                            .split_at(next_sumcheck_config.witness_width.ilog2() as usize);
                     (
                         Some(RoundProof::Sumcheck(
                             prover_round(
@@ -587,12 +577,16 @@ pub fn prover_round(
                                 &next_round_commitment_with_aux,
                                 &next_round_witness,
                                 &vec![
-                                    evaluation_point_to_structured_row(&inner_vec),
-                                    evaluation_point_to_structured_row_conjugate(&inner_vec),
+                                    evaluation_point_to_structured_row(new_evaluation_points_inner),
+                                    evaluation_point_to_structured_row_conjugate(
+                                        new_evaluation_points_inner,
+                                    ),
                                 ],
                                 &vec![
-                                    evaluation_point_to_structured_row(&outer_vec),
-                                    evaluation_point_to_structured_row_conjugate(&outer_vec),
+                                    evaluation_point_to_structured_row(new_evaluation_points_outer),
+                                    evaluation_point_to_structured_row_conjugate(
+                                        new_evaluation_points_outer,
+                                    ),
                                 ],
                                 sumcheck_context.next.as_mut().unwrap(),
                                 false,
@@ -632,32 +626,25 @@ pub fn prover_round(
 
                     let evaluation_points = &sumcheck_output.5;
 
-                    let (new_evaluation_points_inner, new_evaluation_points_outer) =
+                    let (new_evaluation_points_outer, new_evaluation_points_inner) =
                         evaluation_points
-                            .split_at(evaluation_points.len() - next_simple_config.witness_width.ilog2() as usize);
-
-                    let inner_vec = new_evaluation_points_inner
-                        .iter()
-                        .cloned()
-                        .rev()
-                        .collect::<Vec<_>>();
-                    let outer_vec = new_evaluation_points_outer
-                        .iter()
-                        .cloned()
-                        .rev()
-                        .collect::<Vec<_>>();
+                            .split_at(next_simple_config.witness_width.ilog2() as usize);
                     (
                         Some(RoundProof::Simple(prover_round_simple(
                             next_simple_config,
                             &basic_commitment,
                             &next_round_witness,
                             &vec![
-                                evaluation_point_to_structured_row(&inner_vec),
-                                evaluation_point_to_structured_row_conjugate(&inner_vec),
+                                evaluation_point_to_structured_row(new_evaluation_points_inner),
+                                evaluation_point_to_structured_row_conjugate(
+                                    new_evaluation_points_inner,
+                                ),
                             ],
                             &vec![
-                                evaluation_point_to_structured_row(&outer_vec),
-                                evaluation_point_to_structured_row_conjugate(&outer_vec),
+                                evaluation_point_to_structured_row(new_evaluation_points_outer),
+                                evaluation_point_to_structured_row_conjugate(
+                                    new_evaluation_points_outer,
+                                ),
                             ],
                             Some(hash_wrapper),
                         ))),

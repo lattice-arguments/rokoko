@@ -373,39 +373,40 @@ impl<E: SumcheckElement> EvaluationSumcheckData for BasicEvaluationLinearSumchec
         }
 
         let data_variable_count = self.data.len().ilog2() as usize;
-        let _prefix_size = self.variable_count - data_variable_count - self.suffix;
-
-        // point layout (LS-first order):
-        //   point[0..suffix]  → suffix (LS dummy) challenges
-        //   point[suffix..suffix+data_variable_count] → data challenges (LS to MS of data)
-        //   point[suffix+data_variable_count..] → prefix (MS dummy) challenges
-
         let mut current_len = self.data.len();
+        let data_point = &point[self.suffix..self.suffix + data_variable_count];
 
-        for i in 0..point.len() {
-            // Skip suffix rounds
-            if i < self.suffix {
-                continue;
-            }
-            // Skip prefix rounds
-            if i >= self.suffix + data_variable_count {
-                continue;
-            }
-
+        for r in data_point.iter() {
             // Data round: fold even/odd pairs
-            let r = &point[i];
             let half = current_len / 2;
-            for j in 0..half {
-                let idx0 = 2 * j;
-                let idx1 = idx0 + 1;
-                let mut delta = self.data[idx1].clone();
-                delta -= &self.data[idx0];
-                delta *= r;
-                self.data[idx0] += &delta;
-                // compact: move data[2j] → data[j]
-                if j != idx0 {
-                    let val = self.data[idx0].clone();
-                    self.data[j] = val;
+            if half > 0 {
+                // Fast in-place LS-first fold+compact:
+                // pair (2j, 2j+1) -> folded value at position j.
+                //
+                // SAFETY:
+                // - p0=2j, p1=2j+1 are in-bounds for j<half
+                // - output index j is distinct from p0/p1 for j>=1
+                // - j=0 is handled separately where output==p0
+                unsafe {
+                    let ptr = self.data.as_mut_ptr();
+
+                    // j = 0
+                    let p0 = ptr;
+                    let p1 = ptr.add(1);
+                    (*p1) -= &*p0;
+                    (*p1) *= r;
+                    (*p0) += &*p1;
+
+                    // j >= 1
+                    for j in 1..half {
+                        let out = ptr.add(j);
+                        let p0 = ptr.add(2 * j);
+                        let p1 = ptr.add(2 * j + 1);
+                        (*p1) -= &*p0;
+                        (*p1) *= r;
+                        (*p0) += &*p1;
+                        (*out).set_from(&*p0);
+                    }
                 }
             }
             current_len = half;
@@ -489,7 +490,10 @@ impl<E: SumcheckElement> StructuredRowEvaluationLinearSumcheck<E> {
 
     pub fn load_from(&mut self, src: StructuredRow<E>) {
         debug_assert!(src.tensor_layers.len() == self.variable_count - self.suffix - self.prefix);
-        self.data = Some(src);
+        // Normalize once to LS-first so evaluate() can zip directly with LS-first challenges.
+        let mut normalized = src;
+        normalized.tensor_layers.reverse();
+        self.data = Some(normalized);
     }
 }
 
@@ -517,9 +521,9 @@ impl<E: SumcheckElement + 'static> EvaluationSumcheckData
         // so layer[k] pairs with data_point[k] directly.
         let data_point = &point[self.suffix..self.suffix + data_variable_count];
 
-        // tensor_layers are stored from MS to LS (the last layer is LSB),
-        // while LS-first challenges arrive from LS to MS.
-        for (layer, r) in data.tensor_layers.iter().rev().zip(data_point.iter()) {
+        // tensor_layers were normalized to LS-first in load_from(),
+        // so layer[k] pairs directly with data_point[k].
+        for (layer, r) in data.tensor_layers.iter().zip(data_point.iter()) {
             // Compute: (1-layer)*(1-r) + layer*r = 1 - layer - r + 2*layer*r
             self.scratch.set_from(layer);
             self.scratch *= r; // layer*r

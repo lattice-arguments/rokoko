@@ -80,33 +80,22 @@ pub fn verifier_round(
                         None => panic!("Next sumcheck config must be present."),
                     };
 
-                    let (new_evaluation_points_inner, new_evaluation_points_outer) =
+                    let (new_evaluation_points_outer, new_evaluation_points_inner) =
                         evaluation_points
-                            .split_at(evaluation_points.len() - next_sumcheck_config.witness_width.ilog2() as usize);
+                            .split_at(next_sumcheck_config.witness_width.ilog2() as usize);
 
                     let next_round_commiments_recursive = match &next_round_commitment {
                         NextRoundCommitment::Recursive(rc) => rc,
                         _ => panic!("Expected recursive commitment for next round."),
                     };
 
-                    let inner_vec = new_evaluation_points_inner
-                        .iter()
-                        .cloned()
-                        .rev()
-                        .collect::<Vec<_>>();
-                    let outer_vec = new_evaluation_points_outer
-                        .iter()
-                        .cloned()
-                        .rev()
-                        .collect::<Vec<_>>();
-
                     let inner_rows = [
-                        evaluation_point_to_structured_row(&inner_vec),
-                        evaluation_point_to_structured_row_conjugate(&inner_vec),
+                        evaluation_point_to_structured_row(new_evaluation_points_inner),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_inner),
                     ];
                     let outer_rows = [
-                        evaluation_point_to_structured_row(&outer_vec),
-                        evaluation_point_to_structured_row_conjugate(&outer_vec),
+                        evaluation_point_to_structured_row(new_evaluation_points_outer),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
                     ];
                     let new_claims = [
                         round_proof.claim_over_witness.clone(),
@@ -135,33 +124,22 @@ pub fn verifier_round(
                         None => panic!("Next simple config must be present."),
                     };
 
-                    let (new_evaluation_points_inner, new_evaluation_points_outer) =
+                    let (new_evaluation_points_outer, new_evaluation_points_inner) =
                         evaluation_points
-                            .split_at(evaluation_points.len() - next_simple_config.witness_width.ilog2() as usize);
+                            .split_at(next_simple_config.witness_width.ilog2() as usize);
 
                     let commitment = match &next_round_commitment {
                         NextRoundCommitment::Simple(basic_commitment) => basic_commitment,
                         _ => panic!("Expected simple commitment for next round."),
                     };
 
-                    let inner_vec = new_evaluation_points_inner
-                        .iter()
-                        .cloned()
-                        .rev()
-                        .collect::<Vec<_>>();
-                    let outer_vec = new_evaluation_points_outer
-                        .iter()
-                        .cloned()
-                        .rev()
-                        .collect::<Vec<_>>();
-
                     let inner_rows = [
-                        evaluation_point_to_structured_row(&inner_vec),
-                        evaluation_point_to_structured_row_conjugate(&inner_vec),
+                        evaluation_point_to_structured_row(new_evaluation_points_inner),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_inner),
                     ];
                     let outer_rows = [
-                        evaluation_point_to_structured_row(&outer_vec),
-                        evaluation_point_to_structured_row_conjugate(&outer_vec),
+                        evaluation_point_to_structured_row(new_evaluation_points_outer),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
                     ];
                     let new_claims = [
                         round_proof.claim_over_witness.clone(),

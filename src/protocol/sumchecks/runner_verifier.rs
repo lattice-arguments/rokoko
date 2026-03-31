@@ -288,10 +288,10 @@ pub fn sumcheck_verifier(
 
         hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
 
-        let sum = poly_over_field.at_zero() + poly_over_field.at_one();
-        if sum != batched_claim_over_field {
-            panic!("Round check failed");
-        }
+        assert_eq!(
+            poly_over_field.at_zero() + poly_over_field.at_one(),
+            batched_claim_over_field
+        );
 
         let mut f = QuadraticExtension::zero();
 
@@ -315,18 +315,17 @@ pub fn sumcheck_verifier(
         &qe,
     );
 
-    let computed = verifier_sumcheck_context
-        .field_combiner_evaluation
-        .borrow_mut()
-        .evaluate(&evaluation_points)
-        .clone();
-
-    if &batched_claim_over_field != &computed {
-        panic!("Verifier final evaluation mismatch");
-    }
+    assert_eq!(
+        &batched_claim_over_field,
+        verifier_sumcheck_context
+            .field_combiner_evaluation
+            .borrow_mut()
+            .evaluate(&evaluation_points)
+    );
 
     let eps = evaluation_points
         .iter()
+        .rev()
         .map(|f| {
             let mut r = field_to_ring_element(f);
             r.from_homogenized_field_extensions_to_incomplete_ntt();
