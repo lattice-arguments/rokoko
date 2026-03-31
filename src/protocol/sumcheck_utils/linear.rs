@@ -312,9 +312,8 @@ impl<E: SumcheckElement> SumcheckBaseData for LinearSumcheck<E> {
             // Move folded result from idx0 → slot i.
             if i != idx0 {
                 // idx0 = 2*i, which equals i only when i=0.
-                // For i>=1, copy to the compacted position.
-                let val = left[idx0].clone();
-                self.data[i] = val;
+                // For i>=1, copy to the compacted position without allocation.
+                self.data[i].set_from(&left[idx0]);
             }
         }
         // Clear the compacted tail: indices [fold_end, half) are outside the
