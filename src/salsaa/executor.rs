@@ -1,17 +1,19 @@
-use std::process::Output;
+use std::{array, process::Output};
 use std::sync::LazyLock;
 
 use num::range;
 use rand::rand_core::le;
 
+use crate::protocol::config::ConfigBase;
+use crate::protocol::project_2::verifier_sample_projection_challenges;
 use crate::{
     common::{
         arithmetic::{ALL_ONE_COEFFS, ONE, ZERO, field_to_ring_element_into},
-        config::{self, DEGREE, HALF_DEGREE, MOD_Q},
+        config::{self, DEGREE, HALF_DEGREE, MOD_Q, NOF_BATCHES},
         decomposition::{compose_from_decomposed, decompose_chunks_into},
         hash::HashWrapper,
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
-        projection_matrix::ProjectionMatrix,
+        projection_matrix::{self, ProjectionMatrix},
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         sampling::sample_random_short_vector,
         structured_row::{PreprocessedRow, StructuredRow},
@@ -24,7 +26,7 @@ use crate::{
         fold::fold,
         open::{claim, evaluation_point_to_structured_row},
         project::{self, prepare_i16_witness, project},
-        project_2::{compute_j_batched, project_coefficients},
+        project_2::{BatchedProjectionChallengesSuccinct, batch_projection_n_times, compute_j_batched, project_coefficients},
         sumcheck_utils::{
             combiner::{Combiner, CombinerEvaluation},
             common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
@@ -455,7 +457,7 @@ fn build_unstructured_round_config(extended_witness_length: usize) -> RoundConfi
     RoundConfig::IntermediateUnstructured {
         common,
         decomposition_base_log: 8,
-        projection_ratio: next_single_col_height / PROJECTION_HEIGHT, // for now, we assume that each column is projected to PROJECTION_HEIGHT Zq elements.
+        projection_ratio: single_col_height / PROJECTION_HEIGHT, // for now, we assume that each column is projected to PROJECTION_HEIGHT Zq elements.
         next: Box::new(next_config),
     }
 }
@@ -1150,9 +1152,7 @@ pub fn prover_round(
 ) -> SalsaaProof {
     let (projection_matrix, projection_commitment, projected_witness, batching_challenges) =
         match config {
-            RoundConfig::Intermediate {
-                projection_ratio, ..
-            } => {
+            RoundConfig::Intermediate { .. } => {
                 let witness_16 = prepare_i16_witness(witness);
 
                 let mut projection_matrix = ProjectionMatrix::new(witness.width, 256);
@@ -1180,8 +1180,17 @@ pub fn prover_round(
             _ => (None, None, None, None),
         };
 
-    // match config {
-    //     RoundConfig::IntermediateUnstructured { next, .. } => {
+    let (unstructured_projection_matrix, batched_image, unstructured_batching_challenges) = match config {
+        RoundConfig::IntermediateUnstructured { projection_ratio, .. } => {
+            println!("Using unstructured projection with ratio {}", projection_ratio);
+            let mut projection_matrix = ProjectionMatrix::new(*projection_ratio, PROJECTION_HEIGHT);
+            projection_matrix.sample(hash_wrapper);
+            let projection = project_coefficients(witness, &projection_matrix);
+            let (batched_image, challenges ) = batch_projection_n_times(witness, &projection_matrix, hash_wrapper, NOF_BATCHES, false);
+            (Some(projection_matrix), Some(batched_image), Some(challenges))
+        }
+        _ => (None, None, None),
+    };
     //         // witness coeff = witness.height * DEGREE
     //         // outout =  PROJECTION_HEIGHT
     //         // ratio = witness.height * DEGREE / PROJECTION_HEIGHT
@@ -2484,6 +2493,31 @@ impl VerifierSumcheckContext {
     }
 }
 
+impl ConfigBase for RoundConfig {    
+    fn witness_height(&self) -> usize {
+        self.extended_witness_length / (self.main_witness_columns * 2usize.pow(self.main_witness_prefix.length as u32)) 
+    }
+    
+    fn witness_width(&self) -> usize {
+        self.main_witness_columns * 2usize.pow(self.main_witness_prefix.length as u32)
+    }
+    
+    fn projection_ratio(&self) -> usize {
+        match self {
+            RoundConfig::Intermediate { projection_ratio, .. } => *projection_ratio,
+            RoundConfig::IntermediateUnstructured { projection_ratio, .. } => *projection_ratio,
+            _ => 0,
+        }
+    }
+    
+    fn projection_height(&self) -> usize {
+        PROJECTION_HEIGHT
+    }
+    
+    fn basic_commitment_rank(&self) -> usize {
+        panic!("basic_commitment_rank is not defined for RoundConfig");
+    }
+}
 pub fn verifier_round(
     config: &RoundConfig,
     crs: &CRS,
@@ -2510,6 +2544,18 @@ pub fn verifier_round(
     let batching_challenges = match config {
         RoundConfig::Intermediate { .. } => Some(BatchingChallenges::sample(config, hash_wrapper)),
         _ => None,
+    };
+
+    let (projection_matrix_unstructures, projection_challenges_unstructured) = match config {
+        RoundConfig::IntermediateUnstructured { projection_ratio, .. } => {
+            let mut projection_matrix = ProjectionMatrix::new(*projection_ratio, PROJECTION_HEIGHT);
+            projection_matrix.sample(hash_wrapper);
+            let challenges: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] = array::from_fn(|_| {
+                verifier_sample_projection_challenges(&projection_matrix, config, hash_wrapper)
+            });
+            (Some(projection_matrix), Some(challenges))
+        }
+        _ => (None, None)
     };
 
     let vdf_challenge = if config.vdf {
