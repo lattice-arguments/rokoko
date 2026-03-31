@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{
     common::{ring_arithmetic::RingElement, sumcheck_element::SumcheckElement},
@@ -9,6 +10,8 @@ use crate::{
         polynomial::{add_poly_in_place, Polynomial},
     },
 };
+
+static COMBINER_DEBUG_PRINTED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(test)]
 use crate::{
@@ -97,15 +100,26 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
         polynomial.set_zero();
         polynomial.num_coefficients = 0;
 
+        let debug = COMBINER_DEBUG_PRINTED.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok();
+
         let mut output_poly = self.output_poly.borrow_mut();
 
-        for (sumcheck, challenge) in self.sumchecks.iter().zip(self.challenges.iter()) {
+        for (idx, (sumcheck, challenge)) in self.sumchecks.iter().zip(self.challenges.iter()).enumerate() {
             output_poly.set_zero();
             output_poly.num_coefficients = 0;
 
             sumcheck
                 .get_ref()
                 .univariate_polynomial_into(&mut output_poly);
+
+            if debug {
+                // Print at_zero + at_one (sum) for this child
+                let at0 = output_poly.at_zero();
+                let at1 = output_poly.at_one();
+                let mut sum = at1.clone();
+                sum += &at0;
+                println!("  COMBINER child[{}] num_coeff={}", idx, output_poly.num_coefficients);
+            }
 
             // Scale by the batching challenge and accumulate
             for j in 0..output_poly.num_coefficients {

@@ -566,9 +566,10 @@ pub fn prover_round(
 
                     let evaluation_points = &sumcheck_output.5;
 
-                    let (new_evaluation_points_outer, new_evaluation_points_inner) =
+                    // LS-first: first challenges are inner (LS), last log(witness_width) are outer (MS).
+                    let (new_evaluation_points_inner, new_evaluation_points_outer) =
                         evaluation_points
-                            .split_at(next_sumcheck_config.witness_width.ilog2() as usize);
+                            .split_at(evaluation_points.len() - next_sumcheck_config.witness_width.ilog2() as usize);
                     (
                         Some(RoundProof::Sumcheck(
                             prover_round(
@@ -630,9 +631,10 @@ pub fn prover_round(
 
                     let evaluation_points = &sumcheck_output.5;
 
-                    let (new_evaluation_points_outer, new_evaluation_points_inner) =
+                    // LS-first: first challenges are inner (LS), last log(witness_width) are outer (MS).
+                    let (new_evaluation_points_inner, new_evaluation_points_outer) =
                         evaluation_points
-                            .split_at(next_simple_config.witness_width.ilog2() as usize);
+                            .split_at(evaluation_points.len() - next_simple_config.witness_width.ilog2() as usize);
 
                     (
                         Some(RoundProof::Simple(prover_round_simple(

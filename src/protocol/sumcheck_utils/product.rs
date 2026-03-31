@@ -85,15 +85,19 @@ impl<E: SumcheckElement> ProductSumcheck<E> {
     fn ensure_const_flags(&self) {
         let vc = self.lhs_sumcheck.get_ref().variable_count();
         if self.const_flag_vc.get() != vc {
+            // Probe a point known to be in the non-zero range of both children
+            // (since that's where we'll actually call constant_at_point).
+            let (range_start, _) = self.non_zero_range().unwrap_or((0, 1));
+            let probe = HypercubePoint::new(range_start);
             let lhs_c = self
                 .lhs_sumcheck
                 .get_ref()
-                .constant_univariate_polynomial_at_point_available_by_ref(HypercubePoint::new(0))
+                .constant_univariate_polynomial_at_point_available_by_ref(probe)
                 .is_some();
             let rhs_c = self
                 .rhs_sumcheck
                 .get_ref()
-                .constant_univariate_polynomial_at_point_available_by_ref(HypercubePoint::new(0))
+                .constant_univariate_polynomial_at_point_available_by_ref(probe)
                 .is_some();
             self.lhs_const_flag.set(lhs_c);
             self.rhs_const_flag.set(rhs_c);
@@ -265,6 +269,62 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
             }
 
             // C1 = C_mid - C0 - C2 (C_mid is currently in coeff[1])
+            let (first, rest) = polynomial.coefficients.split_at_mut(1);
+            let (second, third) = rest.split_at_mut(1);
+            second[0] -= &first[0];
+            second[0] -= &third[0];
+
+            return;
+        }
+
+        // Case 1b: both children expose interleaved data (LS-first layout).
+        // data[2i] = val@0, data[2i+1] = val@1.
+        // Karatsuba with stride-2 access.
+        let lhs_interleaved = self.lhs_sumcheck.get_ref().as_interleaved_data();
+        let rhs_interleaved = self.rhs_sumcheck.get_ref().as_interleaved_data();
+
+        if let (Some(a_data), Some(b_data)) = (lhs_interleaved, rhs_interleaved) {
+            polynomial.set_zero();
+            polynomial.num_coefficients = 3;
+
+            let mut temp = Self::Element::zero();
+            let mut temp_a = Self::Element::zero();
+            let mut temp_b = Self::Element::zero();
+
+            // Number of pairs: each pair is at (2p, 2p+1).
+            // a_data and b_data may be trimmed to non_zero_end.
+            let a_pairs = a_data.len() / 2;
+            let b_pairs = b_data.len() / 2;
+            let dense_end = a_pairs.min(b_pairs);
+
+            // For pairs beyond the shorter slice, the missing elements are zero.
+            // We need to know the full number of pairs from one side.
+            let _half_hypercube = 1 << (self.variable_count() - 1);
+
+            // Region 1: [0, dense_end) — both sides have data, full Karatsuba
+            for p in 0..dense_end {
+                let a0 = &a_data[2 * p];
+                let a1 = &a_data[2 * p + 1];
+                let b0 = &b_data[2 * p];
+                let b1 = &b_data[2 * p + 1];
+
+                temp *= (a0, b0);
+                polynomial.coefficients[0] += &temp; // C0
+
+                temp *= (a1, b1);
+                polynomial.coefficients[1] += &temp; // C_mid
+
+                temp_a.set_from(a1);
+                temp_a -= a0;
+                temp_b.set_from(b1);
+                temp_b -= b0;
+                temp *= (&temp_a, &temp_b);
+                polynomial.coefficients[2] += &temp; // C2
+            }
+
+            // Region 2: one side has data, other is zero — contributes nothing.
+
+            // C1 = C_mid - C0 - C2
             let (first, rest) = polynomial.coefficients.split_at_mut(1);
             let (second, third) = rest.split_at_mut(1);
             second[0] -= &first[0];

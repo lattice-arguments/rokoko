@@ -80,9 +80,10 @@ pub fn verifier_round(
                         None => panic!("Next sumcheck config must be present."),
                     };
 
-                    let (new_evaluation_points_outer, new_evaluation_points_inner) =
+                    // LS-first: first challenges are inner (LS), last log(witness_width) are outer (MS).
+                    let (new_evaluation_points_inner, new_evaluation_points_outer) =
                         evaluation_points
-                            .split_at(next_sumcheck_config.witness_width.ilog2() as usize);
+                            .split_at(evaluation_points.len() - next_sumcheck_config.witness_width.ilog2() as usize);
 
                     let next_round_commiments_recursive = match &next_round_commitment {
                         NextRoundCommitment::Recursive(rc) => rc,
@@ -127,9 +128,10 @@ pub fn verifier_round(
                         None => panic!("Next simple config must be present."),
                     };
 
-                    let (new_evaluation_points_outer, new_evaluation_points_inner) =
+                    // LS-first: first challenges are inner (LS), last log(witness_width) are outer (MS).
+                    let (new_evaluation_points_inner, new_evaluation_points_outer) =
                         evaluation_points
-                            .split_at(next_simple_config.witness_width.ilog2() as usize);
+                            .split_at(evaluation_points.len() - next_simple_config.witness_width.ilog2() as usize);
 
                     let commitment = match &next_round_commitment {
                         NextRoundCommitment::Simple(basic_commitment) => basic_commitment,

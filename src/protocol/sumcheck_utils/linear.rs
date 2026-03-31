@@ -97,8 +97,30 @@ impl<E: SumcheckElement> Index<HypercubePoint> for LinearSumcheck<E> {
     type Output = E;
 
     fn index(&self, index: HypercubePoint) -> &Self::Output {
-        let index_masked = index.shifted(self.suffix).masked(self.index_mask);
-        &self.data[index_masked.coordinates] // masking to ignore prefixed variables
+        // LS-first indexing: the current variable being folded is the LS bit.
+        // Even indices = value at 0, odd indices = value at 1.
+        // A HypercubePoint p identifies one pair within the data array.
+        // When suffix > 0, we're still in dummy rounds (suffix vars are LS,
+        // folded first, so they're consumed before data).  During suffix
+        // rounds the data doesn't split, so we just mask the prefix away.
+        //
+        // During data rounds the point selects which even/odd pair we look at.
+        // self[p] returns data[2*p_masked] (the val-at-0 side of the pair).
+        if self.data.len() == 1 {
+            return &self.data[0];
+        }
+        if self.suffix > 0 || self.variable_count > self.data.len().trailing_zeros() as usize + self.suffix {
+            // Prefix/suffix round — data isn't being split.
+            // For suffix rounds the LS `suffix` bits of the point are the
+            // dummy suffix variables; the data dimension lives in the bits
+            // above them.  Shift them out before masking.
+            let index_shifted = index.shifted(self.suffix);
+            let index_masked = index_shifted.masked(self.index_mask);
+            return &self.data[index_masked.coordinates];
+        }
+        // Data round, LS-first: point p → even slot 2p.
+        let p = index.masked(self.data.len() / 2 - 1).coordinates;
+        &self.data[2 * p]
     }
 }
 
@@ -117,15 +139,18 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
         &self,
         point: HypercubePoint,
     ) -> Option<&Self::Element> {
-        if self.variable_count > self.data.len().trailing_zeros() as usize + self.suffix {
-            // we have some prefixed variables
+        // LS-first: suffix variables are folded first. While suffix > 0,
+        // we're in a dummy LS round — the polynomial is constant (just
+        // the data value at this point).
+        if self.suffix > 0 {
             return Some(&self[point]);
         }
 
-        if self.data.len() == 1 && self.suffix > 0 {
-            // only suffix variables remain
+        if self.data.len() == 1 {
+            // All data variables consumed; remaining are prefix dummies.
             return Some(&self[point]);
         }
+
         None
     }
 
@@ -135,27 +160,30 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
         point: HypercubePoint,
         polynomial: &mut Polynomial<E>,
     ) {
-        // Current round splits the hypercube into two halves depending on the
-        // value of the highest-order variable.
-        let len = 1 << self.variable_count;
-        let half = len / 2;
-        polynomial.coefficients[0].set_from(&self[point]); // constant term
-                                                           // polynomial.coefficients[0] += &self[point]; // constant term
+        // LS-first: current variable is the least-significant (bit 0 of index).
+        // For data round: data[2p] = value@0, data[2p+1] = value@1.
 
-        if self.variable_count > self.data.len().trailing_zeros() as usize + self.suffix {
-            // we have some prefixed variables
+        // Suffix round (LS dummies, folded first under LS-first): constant.
+        if self.suffix > 0 {
+            polynomial.coefficients[0].set_from(&self[point]);
             polynomial.num_coefficients = 1;
             return;
         }
 
-        if self.data.len() == 1 && self.suffix > 0 {
-            // only suffix variables remain
+        // Data is fully folded but prefix variables remain: constant.
+        if self.data.len() == 1 {
+            polynomial.coefficients[0].set_from(&self.data[0]);
             polynomial.num_coefficients = 1;
             return;
         }
 
-        polynomial.coefficients[1].set_from(&self[point.moved(half)]); // coeff of x
-        polynomial.coefficients[1] -= &self[point]; // coeff of x
+        // Data round: pair at (2p, 2p+1).
+        let p = point.masked(self.data.len() / 2 - 1).coordinates;
+        let idx0 = 2 * p;
+        let idx1 = 2 * p + 1;
+        polynomial.coefficients[0].set_from(&self.data[idx0]);
+        polynomial.coefficients[1].set_from(&self.data[idx1]);
+        polynomial.coefficients[1] -= &self.data[idx0];
         polynomial.num_coefficients = 2;
     }
 
@@ -168,48 +196,51 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
     }
 
     fn as_data_slices(&self) -> Option<(&[Self::Element], &[Self::Element])> {
-        // Only provide slices when there are no prefix/suffix complications
-        // and we have real two-half data.
-        if self.variable_count > self.data.len().trailing_zeros() as usize + self.suffix {
-            return None;
-        }
-        if self.data.len() <= 1 {
-            return None;
-        }
+        // Under LS-first, data is interleaved: even indices = val@0, odd = val@1.
+        // We can't provide two contiguous halves. Return None so callers
+        // (ProductSumcheck Karatsuba) fall back to the per-point path.
+        None
+    }
+
+    fn as_interleaved_data(&self) -> Option<&[Self::Element]> {
+        // Only expose interleaved data when the data fills the full hypercube
+        // for the current variable count (no prefix/suffix remaining).
+        // For sumchecks with prefix variables, data.len() < 2^variable_count
+        // during early rounds, so this correctly returns None.
         if self.suffix > 0 {
             return None;
         }
-        let half = self.data.len() / 2;
-        // Trim the high half to the actual non-zero region. Callers
-        // (ProductSumcheck Karatsuba) check hi.len() < lo.len() and
-        // handle the zero tail with a cheaper loop.
-        let hi_end = if self.non_zero_end > half {
-            self.non_zero_end.min(self.data.len())
-        } else {
-            half // non_zero_end <= half means entire high half is zero
-        };
-        Some((&self.data[..half], &self.data[half..hi_end]))
+        if self.data.len() <= 1 {
+            return None;
+        }
+        // data.len() must equal 2^variable_count (no pending prefix variables).
+        if self.data.len() != (1usize << self.variable_count) {
+            return None;
+        }
+        let nz_end = self.non_zero_end.min(self.data.len());
+        Some(&self.data[..nz_end])
     }
 
     fn non_zero_range(&self) -> Option<(usize, usize)> {
-        // Only meaningful when there are no prefix/suffix complications.
-        if self.suffix > 0
-            || self.variable_count > self.data.len().trailing_zeros() as usize + self.suffix
-        {
+        // LS-first: during suffix rounds or prefix rounds, no meaningful range.
+        if self.suffix > 0 {
             return None;
         }
         if self.data.len() <= 1 {
             return None;
         }
+        // Only valid when data fills the full hypercube (no prefix active).
+        if self.data.len() != (1usize << self.variable_count) {
+            return None;
+        }
         let half = self.data.len() / 2;
-        if self.non_zero_end <= half {
-            // The entire high half is zero. A point p has a zero
-            // polynomial iff data[p] is also zero — which is guaranteed
-            // for p >= non_zero_end.
-            Some((0, self.non_zero_end))
+        // non_zero_end tracks pairs: pair i covers data[2i] and data[2i+1].
+        // Points run over [0, half), and pair i is non-zero if 2i < non_zero_end,
+        // i.e. i < ceil(non_zero_end / 2).
+        let pair_nz = (self.non_zero_end + 1) / 2;
+        if pair_nz < half {
+            Some((0, pair_nz))
         } else {
-            // Low half is fully populated, so every point has a
-            // potentially non-zero polynomial. No range to trim.
             None
         }
     }
@@ -224,65 +255,58 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
 
 impl<E: SumcheckElement> SumcheckBaseData for LinearSumcheck<E> {
     fn partial_evaluate(&mut self, value: &E) {
-        // Fold the highest-order variable using the provided random challenge.
-        // When there are prefixed variables, they are ignored and the claim is
-        // scaled accordingly.
-        if self.variable_count > self.data.len().trailing_zeros() as usize + self.suffix {
-            // we have some prefixed variables
-            self.variable_count -= 1;
-            return;
-        }
+        // LS-first folding: suffix (LS dummies) are consumed first,
+        // then actual data variables, then prefix (MS dummies) last.
 
-        if self.data.len() == 1 && self.suffix > 0 {
-            // only suffix variables remain
+        // Suffix round: LS dummy variable, data is constant across it.
+        if self.suffix > 0 {
             self.variable_count -= 1;
             self.suffix -= 1;
             return;
         }
 
+        // Prefix round: MS dummy variable, data is constant across it.
+        if self.data.len() == 1 {
+            self.variable_count -= 1;
+            return;
+        }
+
+        // Data round: fold even/odd pairs.
+        // data[2i] = value at current_var=0, data[2i+1] = value at current_var=1.
+        // folded[i] = data[2i] + (data[2i+1] - data[2i]) * r
         let n = self.data.len();
         if n % 2 != 0 {
             panic!("Sumcheck data length must be a power of 2");
         }
         let half = n / 2;
-        let (left_half, right_half) = self.data.split_at_mut(half);
 
-        // How many entries in the right half are actually non-zero?
-        let right_nz = if self.non_zero_end > half {
-            (self.non_zero_end - half).min(half)
-        } else {
-            0
-        };
+        // even_nz: number of folded output slots that might be non-zero.
+        // Pair i has even=data[2i], odd=data[2i+1]. If 2i >= non_zero_end
+        // then both are zero → folded[i] is zero.
+        let pair_nz = (self.non_zero_end + 1) / 2; // ceil(non_zero_end / 2)
+        let fold_end = pair_nz.min(half);
 
-        // Region 1: [0, right_nz) — general fold, both halves may be non-zero.
-        // folded[i] = left[i] + (right[i] - left[i]) * r
-        for i in 0..right_nz {
-            right_half[i] -= &left_half[i];
-            right_half[i] *= value;
-            left_half[i] += &right_half[i];
-        }
-
-        // Region 2: [right_nz, left_nz) — right half is zero.
-        // folded[i] = left[i] + (0 - left[i]) * r = left[i] * (1 - r)
-        let left_nz = self.non_zero_end.min(half);
-        if right_nz < left_nz {
-            let mut one_minus_r = Self::Element::one();
-            one_minus_r -= value;
-            for i in right_nz..left_nz {
-                left_half[i] *= &one_minus_r;
+        for i in 0..fold_end {
+            let idx0 = 2 * i;
+            let idx1 = 2 * i + 1;
+            // delta = data[2i+1] - data[2i]
+            // Use split_at_mut to get non-overlapping references.
+            let (left, right) = self.data.split_at_mut(idx1);
+            // left[idx0] = data[2i], right[0] = data[2i+1]
+            right[0] -= &left[idx0];
+            right[0] *= value;
+            left[idx0] += &right[0];
+            // Move folded result from idx0 → slot i.
+            if i != idx0 {
+                // idx0 = 2*i, which equals i only when i=0.
+                // For i>=1, copy to the compacted position.
+                let val = left[idx0].clone();
+                self.data[i] = val;
             }
         }
 
-        // Region 3: [left_nz, half) — both halves zero, result stays zero.
-        // (nothing to do)
-
         self.data.truncate(half);
-        // After folding: if non_zero_end <= half, it stays the same
-        // (zero-zero folds to zero). Otherwise all left entries became
-        // non-zero, so non_zero_end = half.
-        if self.non_zero_end > half {
-            self.non_zero_end = half;
-        }
+        self.non_zero_end = fold_end;
         self.variable_count -= 1;
     }
 
@@ -336,45 +360,48 @@ impl<E: SumcheckElement> EvaluationSumcheckData for BasicEvaluationLinearSumchec
             return &self.data[0];
         }
 
-        // Evaluate the multilinear extension at the given point by folding.
-        // This achieves O(n) complexity instead of O(n * log(n)).
-
+        // LS-first evaluation: suffix vars first, then data vars, then prefix vars.
         if point.len() != self.variable_count {
             panic!("Point has incorrect number of variables");
         }
 
         let data_variable_count = self.data.len().ilog2() as usize;
-        let prefix_size = self.variable_count - data_variable_count - self.suffix;
+        let _prefix_size = self.variable_count - data_variable_count - self.suffix;
 
-        // Fold through all variables in order
+        // point layout (LS-first order):
+        //   point[0..suffix]  → suffix (LS dummy) challenges
+        //   point[suffix..suffix+data_variable_count] → data challenges (LS to MS of data)
+        //   point[suffix+data_variable_count..] → prefix (MS dummy) challenges
+
         let mut current_len = self.data.len();
-        let mut current_variable = 0;
 
-        for r in point.iter() {
-            // Handle prefix variables (don't fold data, just advance)
-            if current_variable < prefix_size {
-                current_variable += 1;
+        for i in 0..point.len() {
+            // Skip suffix rounds
+            if i < self.suffix {
+                continue;
+            }
+            // Skip prefix rounds
+            if i >= self.suffix + data_variable_count {
                 continue;
             }
 
-            // Handle suffix variables (don't fold data, just advance)
-            if current_variable >= prefix_size + data_variable_count {
-                current_variable += 1;
-                continue;
-            }
-
-            // Fold the data array using the current random value
-            // For each pair (a, b) at positions i and i + half,
-            // compute a + (b - a) * r and store in position i
+            // Data round: fold even/odd pairs
+            let r = &point[i];
             let half = current_len / 2;
-            for i in 0..half {
-                let mut delta = self.data[i + half].clone();
-                delta -= &self.data[i];
+            for j in 0..half {
+                let idx0 = 2 * j;
+                let idx1 = idx0 + 1;
+                let mut delta = self.data[idx1].clone();
+                delta -= &self.data[idx0];
                 delta *= r;
-                self.data[i] += &delta;
+                self.data[idx0] += &delta;
+                // compact: move data[2j] → data[j]
+                if j != idx0 {
+                    let val = self.data[idx0].clone();
+                    self.data[j] = val;
+                }
             }
             current_len = half;
-            current_variable += 1;
         }
 
         // After all folds, data[0] contains the evaluation
@@ -476,9 +503,12 @@ impl<E: SumcheckElement + 'static> EvaluationSumcheckData
 
         let data = self.data.as_ref().expect("Data not loaded");
         let data_variable_count = data.tensor_layers.len();
-        let prefix_size = self.variable_count - data_variable_count - self.suffix;
 
-        let data_point = &point[prefix_size..prefix_size + data_variable_count];
+        // LS-first: point layout is [suffix..., data..., prefix...]
+        // Data challenges are at indices [self.suffix .. self.suffix + data_variable_count).
+        // Both tensor_layers and data_point are in the same LS-first order,
+        // so layer[k] pairs with data_point[k] directly.
+        let data_point = &point[self.suffix..self.suffix + data_variable_count];
 
         for (layer, r) in data.tensor_layers.iter().zip(data_point.iter()) {
             // Compute: (1-layer)*(1-r) + layer*r = 1 - layer - r + 2*layer*r
@@ -556,18 +586,20 @@ mod tests {
 
         debug_assert!(sumcheck.data.len() == 1);
 
+        // LS-first: r0 folds x0 (bit 0), r1 folds x1 (bit 1), r2 folds x2 (bit 2).
+        // data[b0 + 2*b1 + 4*b2] evaluated at x0=r0, x1=r1, x2=r2.
         debug_assert_eq!(
             sumcheck.data[0],
             RingElement::constant(
                 (MOD_Q as i64
-                    + 1 * (1 - 42) * (1 - 1337) * (1 - 524)
-                    + 2 * 42 * (1 - 1337) * (1 - 524)
-                    + 3 * (1 - 42) * 1337 * (1 - 524)
-                    + 4 * 42 * 1337 * (1 - 524)
-                    + 5 * (1 - 42) * (1 - 1337) * 524
-                    + 6 * 42 * (1 - 1337) * 524
-                    + 7 * (1 - 42) * 1337 * 524
-                    + 8 * 42 * 1337 * 524) as u64,
+                    + 1 * (1 - 524) * (1 - 1337) * (1 - 42)
+                    + 2 * 524 * (1 - 1337) * (1 - 42)
+                    + 3 * (1 - 524) * 1337 * (1 - 42)
+                    + 4 * 524 * 1337 * (1 - 42)
+                    + 5 * (1 - 524) * (1 - 1337) * 42
+                    + 6 * 524 * (1 - 1337) * 42
+                    + 7 * (1 - 524) * 1337 * 42
+                    + 8 * 524 * 1337 * 42) as u64,
                 Representation::IncompleteNTT
             )
         )
@@ -593,24 +625,25 @@ mod tests {
 
         let mut poly = Polynomial::new(2);
 
-        // First round polynomial should encode how the highest-order variable
-        // toggles between the left and right halves of the data vector.
-        sumcheck.univariate_polynomial_into(&mut poly);
+        // First round polynomial encodes x0 (the LSB under LS-first).
+        // data[2i]=val@x0=0, data[2i+1]=val@x0=1.
+        // constant = sum of data[0]+data[2]+data[4]+data[6] = 1+3+5+7
+        // linear   = sum of (data[1]-data[0])+(data[3]-data[2])+(data[5]-data[4])+(data[7]-data[6])
 
-        // poly 1 + (5 - 1) * x + 2 + (6 - 2) * x + 3 + (7 - 3) * x + 4 + (8 - 4) * x
+        sumcheck.univariate_polynomial_into(&mut poly);
 
         debug_assert_eq!(
             poly.coefficients[0],
-            RingElement::constant(1 + 2 + 3 + 4, Representation::IncompleteNTT)
-        ); // sum of all elements
+            RingElement::constant(1 + 3 + 5 + 7, Representation::IncompleteNTT)
+        );
 
         debug_assert_eq!(
             poly.coefficients[1],
             RingElement::constant(
-                (5 - 1) + (6 - 2) + (7 - 3) + (8 - 4),
+                (2 - 1) + (4 - 3) + (6 - 5) + (8 - 7),
                 Representation::IncompleteNTT
             )
-        ); // computed manually
+        );
     }
 
     #[test]
@@ -631,33 +664,39 @@ mod tests {
         let mut sumcheck = LinearSumcheck::new_with_prefixed_sufixed_data(data.len(), 2, 0);
         sumcheck.load_from(&data);
 
-        // Now, the sumcheck has 2 prefixed variables, so when we index with HypercubePoint.
+        // prefix=2, suffix=0, data_size=8 → variable_count=5.
+        // LS-first order: rounds 0,1,2 fold data vars (x0 LSB → x2 MSB),
+        //   rounds 3,4 are prefix dummy rounds (data.len()==1).
 
         let mut poly = Polynomial::new(0);
 
         sumcheck.univariate_polynomial_into(&mut poly);
 
-        // the first polynomial is over x_0 which is prefixed and should be ignored.
-        // Therefore, the polynomial should be a constant equal to the sum of all data points times 2.
-        // The factor of 2 comes from the fact that the sumcheck claim is has to account for dummy variables.
+        // Round 0: data round, folding x0. Hypercube has 2^4=16 points.
+        // Each pair (data[2i], data[2i+1]) appears 4 times (prefix bits give 2^2=4 aliases).
+        // constant = 4*(1+3+5+7) = 64, linear = 4*(1+1+1+1) = 16
         debug_assert_eq!(
             poly.coefficients[0],
             RingElement::constant(
-                (1 + 2 + 3 + 4 + 5 + 6 + 7 + 8) * 2,
+                (1 + 3 + 5 + 7) * 4,
                 Representation::IncompleteNTT
             )
         );
 
         debug_assert_eq!(
             poly.coefficients[1],
-            RingElement::constant(0, Representation::IncompleteNTT)
+            RingElement::constant(
+                ((2 - 1) + (4 - 3) + (6 - 5) + (8 - 7)) * 4,
+                Representation::IncompleteNTT
+            )
         );
 
-        debug_assert_eq!(poly.num_coefficients, 1);
+        debug_assert_eq!(poly.num_coefficients, 2);
 
         let mut claim = poly.at_zero();
         claim += &poly.at_one();
 
+        // claim should equal sum over full hypercube = sum(data) * 2^(prefix+suffix) = 36 * 4 = 144
         debug_assert_eq!(
             claim,
             RingElement::constant(
@@ -670,29 +709,13 @@ mod tests {
 
         let new_claim = poly.at(&r0);
 
-        debug_assert_eq!(
-            new_claim,
-            RingElement::constant(
-                (1 + 2 + 3 + 4 + 5 + 6 + 7 + 8) * 2,
-                Representation::IncompleteNTT
-            )
-        );
-
         sumcheck.partial_evaluate(&r0);
 
         sumcheck.univariate_polynomial_into(&mut poly);
 
-        debug_assert_eq!(
-            poly.coefficients[0],
-            RingElement::constant(1 + 2 + 3 + 4 + 5 + 6 + 7 + 8, Representation::IncompleteNTT)
-        );
-
-        debug_assert_eq!(
-            poly.coefficients[1],
-            RingElement::constant(0, Representation::IncompleteNTT)
-        );
-
-        debug_assert_eq!(poly.num_coefficients, 1);
+        // Round 1: data round, folding x1. data_size=4. variable_count=4.
+        // Hypercube has 2^3=8 points. Each pair appears 4 times (prefix).
+        debug_assert_eq!(poly.num_coefficients, 2);
 
         debug_assert_eq!(&poly.at_zero() + &poly.at_one(), new_claim);
 
@@ -700,28 +723,12 @@ mod tests {
 
         let new_claim = poly.at(&r1);
 
-        debug_assert_eq!(
-            new_claim,
-            RingElement::constant(1 + 2 + 3 + 4 + 5 + 6 + 7 + 8, Representation::IncompleteNTT)
-        );
-
         sumcheck.partial_evaluate(&r1);
 
         sumcheck.univariate_polynomial_into(&mut poly);
 
-        debug_assert_eq!(
-            poly.coefficients[0],
-            RingElement::constant(1 + 2 + 3 + 4, Representation::IncompleteNTT)
-        );
-
-        debug_assert_eq!(
-            poly.coefficients[1],
-            RingElement::constant(
-                (5 - 1) + (6 - 2) + (7 - 3) + (8 - 4),
-                Representation::IncompleteNTT
-            )
-        );
-
+        // Round 2: data round, folding x2 (MSB of data). data_size=2. variable_count=3.
+        // Hypercube has 2^2=4 points. Each pair appears 4 times (prefix).
         debug_assert_eq!(poly.num_coefficients, 2);
 
         debug_assert_eq!(&poly.at_zero() + &poly.at_one(), new_claim);
@@ -734,6 +741,9 @@ mod tests {
 
         sumcheck.univariate_polynomial_into(&mut poly);
 
+        // Round 3: prefix dummy round. data.len()==1. Constant polynomial.
+        debug_assert_eq!(poly.num_coefficients, 1);
+
         debug_assert_eq!(&poly.at_zero() + &poly.at_one(), new_claim);
 
         let r3 = RingElement::constant(7, Representation::IncompleteNTT);
@@ -743,6 +753,9 @@ mod tests {
         sumcheck.partial_evaluate(&r3);
 
         sumcheck.univariate_polynomial_into(&mut poly);
+
+        // Round 4: prefix dummy round. Constant polynomial.
+        debug_assert_eq!(poly.num_coefficients, 1);
 
         debug_assert_eq!(&poly.at_zero() + &poly.at_one(), new_claim);
 
@@ -754,19 +767,19 @@ mod tests {
 
         debug_assert!(sumcheck.data.len() == 1);
 
-        // now, we make a final check using r2, r3, r4
+        // LS-first: r0=x0, r1=x1, r2=x2. Final evaluation = MLE(x0=r0, x1=r1, x2=r2).
         debug_assert_eq!(
             sumcheck.final_evaluations(),
             &RingElement::constant(
                 (MOD_Q as i64
-                    + 1 * (1 - 19) * (1 - 7) * (1 - 42)
-                    + 2 * 19 * (1 - 7) * (1 - 42)
-                    + 3 * (1 - 19) * 7 * (1 - 42)
-                    + 4 * 19 * 7 * (1 - 42)
-                    + 5 * (1 - 19) * (1 - 7) * 42
-                    + 6 * 19 * (1 - 7) * 42
-                    + 7 * (1 - 19) * 7 * 42
-                    + 8 * 19 * 7 * 42) as u64,
+                    + 1 * (1 - 524) * (1 - 1337) * (1 - 42)
+                    + 2 * 524 * (1 - 1337) * (1 - 42)
+                    + 3 * (1 - 524) * 1337 * (1 - 42)
+                    + 4 * 524 * 1337 * (1 - 42)
+                    + 5 * (1 - 524) * (1 - 1337) * 42
+                    + 6 * 524 * (1 - 1337) * 42
+                    + 7 * (1 - 524) * 1337 * 42
+                    + 8 * 524 * 1337 * 42) as u64,
                 Representation::IncompleteNTT
             )
         );

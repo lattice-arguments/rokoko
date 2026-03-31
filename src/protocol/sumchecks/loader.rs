@@ -44,6 +44,8 @@ pub fn load_sumcheck_data(
     let non_zero_end =
         (config.composed_witness_length as f64 * config.next_level_usage_ratio).round() as usize;
 
+    println!("    loader: non_zero_end = {}, composed_witness_length = {}", non_zero_end, config.composed_witness_length);
+
     // Load combined witness
     sumcheck_context
         .combined_witness_sumcheck
