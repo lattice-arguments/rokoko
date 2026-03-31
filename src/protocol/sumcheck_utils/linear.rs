@@ -26,6 +26,10 @@ pub struct LinearSumcheck<E: SumcheckElement = RingElement> {
     index_mask: usize,
     suffix: usize,
     poly_scratch: RefCell<Polynomial<E>>,
+    // Index past the last non-zero entry in `data`. Everything in
+    // data[non_zero_end..] is guaranteed zero. Used to skip work in
+    // partial_evaluate, non_zero_range, and batched Karatsuba.
+    non_zero_end: usize,
 }
 
 impl<E: SumcheckElement> LinearSumcheck<E> {
@@ -54,9 +58,11 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
             index_mask: count - 1, // this mask will be used to ignore prefixed variables
             poly_scratch: RefCell::new(Polynomial::new(2)),
             suffix: suffix_size,
+            non_zero_end: count,
         }
     }
     /// Populate the internal buffer with the provided values.
+    /// Scans backwards to find the actual non-zero boundary.
     pub fn load_from(&mut self, src: &[E]) {
         assert_eq!(
             src.len(),
@@ -66,6 +72,24 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
             src.len()
         );
         self.data.clone_from_slice(src);
+        self.non_zero_end = self.data.len();
+    }
+
+    /// Load data and explicitly set the non-zero boundary. The caller
+    /// guarantees that src[non_zero_end..] is all zero. Avoids the
+    /// backward scan when the boundary is already known (e.g. from
+    /// the config's usage count).
+    pub fn load_from_with_non_zero_end(&mut self, src: &[E], non_zero_end: usize) {
+        assert_eq!(
+            src.len(),
+            self.data.len(),
+            "Source data length must match the sumcheck data length, expected {}, got {}",
+            self.data.len(),
+            src.len()
+        );
+        debug_assert!(non_zero_end <= src.len());
+        self.data.clone_from_slice(src);
+        self.non_zero_end = non_zero_end;
     }
 }
 
@@ -156,7 +180,38 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
             return None;
         }
         let half = self.data.len() / 2;
-        Some((&self.data[..half], &self.data[half..]))
+        // Trim the high half to the actual non-zero region. Callers
+        // (ProductSumcheck Karatsuba) check hi.len() < lo.len() and
+        // handle the zero tail with a cheaper loop.
+        let hi_end = if self.non_zero_end > half {
+            self.non_zero_end.min(self.data.len())
+        } else {
+            half // non_zero_end <= half means entire high half is zero
+        };
+        Some((&self.data[..half], &self.data[half..hi_end]))
+    }
+
+    fn non_zero_range(&self) -> Option<(usize, usize)> {
+        // Only meaningful when there are no prefix/suffix complications.
+        if self.suffix > 0
+            || self.variable_count > self.data.len().trailing_zeros() as usize + self.suffix
+        {
+            return None;
+        }
+        if self.data.len() <= 1 {
+            return None;
+        }
+        let half = self.data.len() / 2;
+        if self.non_zero_end <= half {
+            // The entire high half is zero. A point p has a zero
+            // polynomial iff data[p] is also zero — which is guaranteed
+            // for p >= non_zero_end.
+            Some((0, self.non_zero_end))
+        } else {
+            // Low half is fully populated, so every point has a
+            // potentially non-zero polynomial. No range to trim.
+            None
+        }
     }
 
     fn final_evaluations_test_only(&self) -> Self::Element {
@@ -189,15 +244,45 @@ impl<E: SumcheckElement> SumcheckBaseData for LinearSumcheck<E> {
         if n % 2 != 0 {
             panic!("Sumcheck data length must be a power of 2");
         }
-        let (left_half, right_half) = self.data.split_at_mut(n / 2);
-        // For each pair (a, b) corresponding to variable values 0 and 1,
-        // compute a + (b - a) * r, overwriting the left half in place.
-        for i in 0..(n / 2) {
+        let half = n / 2;
+        let (left_half, right_half) = self.data.split_at_mut(half);
+
+        // How many entries in the right half are actually non-zero?
+        let right_nz = if self.non_zero_end > half {
+            (self.non_zero_end - half).min(half)
+        } else {
+            0
+        };
+
+        // Region 1: [0, right_nz) — general fold, both halves may be non-zero.
+        // folded[i] = left[i] + (right[i] - left[i]) * r
+        for i in 0..right_nz {
             right_half[i] -= &left_half[i];
             right_half[i] *= value;
             left_half[i] += &right_half[i];
         }
-        self.data.truncate(n / 2);
+
+        // Region 2: [right_nz, left_nz) — right half is zero.
+        // folded[i] = left[i] + (0 - left[i]) * r = left[i] * (1 - r)
+        let left_nz = self.non_zero_end.min(half);
+        if right_nz < left_nz {
+            let mut one_minus_r = Self::Element::one();
+            one_minus_r -= value;
+            for i in right_nz..left_nz {
+                left_half[i] *= &one_minus_r;
+            }
+        }
+
+        // Region 3: [left_nz, half) — both halves zero, result stays zero.
+        // (nothing to do)
+
+        self.data.truncate(half);
+        // After folding: if non_zero_end <= half, it stays the same
+        // (zero-zero folds to zero). Otherwise all left entries became
+        // non-zero, so non_zero_end = half.
+        if self.non_zero_end > half {
+            self.non_zero_end = half;
+        }
         self.variable_count -= 1;
     }
 
