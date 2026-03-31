@@ -325,6 +325,7 @@ pub fn sumcheck_verifier(
 
     let eps = evaluation_points
         .iter()
+        .rev()
         .map(|f| {
             let mut r = field_to_ring_element(f);
             r.from_homogenized_field_extensions_to_incomplete_ntt();

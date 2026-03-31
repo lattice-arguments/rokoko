@@ -85,15 +85,19 @@ impl<E: SumcheckElement> ProductSumcheck<E> {
     fn ensure_const_flags(&self) {
         let vc = self.lhs_sumcheck.get_ref().variable_count();
         if self.const_flag_vc.get() != vc {
+            // Probe a point known to be in the non-zero range of both children
+            // (since that's where we'll actually call constant_at_point).
+            let (range_start, _) = self.non_zero_range().unwrap_or((0, 1));
+            let probe = HypercubePoint::new(range_start);
             let lhs_c = self
                 .lhs_sumcheck
                 .get_ref()
-                .constant_univariate_polynomial_at_point_available_by_ref(HypercubePoint::new(0))
+                .constant_univariate_polynomial_at_point_available_by_ref(probe)
                 .is_some();
             let rhs_c = self
                 .rhs_sumcheck
                 .get_ref()
-                .constant_univariate_polynomial_at_point_available_by_ref(HypercubePoint::new(0))
+                .constant_univariate_polynomial_at_point_available_by_ref(probe)
                 .is_some();
             self.lhs_const_flag.set(lhs_c);
             self.rhs_const_flag.set(rhs_c);
@@ -172,7 +176,8 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
                 // SAFETY: single-threaded access; the returned reference is consumed
                 // before the next call to this method overwrites the cache.
                 let cache = unsafe { &mut *self.const_cache.as_ptr() };
-                *cache *= (lc, rc);
+                cache.set_from(lc);
+                *cache *= rc;
                 Some(cache)
             }
             _ => None,
@@ -197,6 +202,11 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
             //   C_mid = Σ a_hi[p] * b_hi[p]
             //   C2   = Σ (a_hi[p]-a_lo[p]) * (b_hi[p]-b_lo[p])
             //   C1   = C_mid - C0 - C2
+            //
+            // When the high-half slices are trimmed (shorter than low-half),
+            // we split into a dense region (full Karatsuba) and a sparse
+            // tail where both high halves are zero (C2_tail = C0_tail,
+            // C_mid_tail = 0 — only 1 mul instead of 3).
             polynomial.set_zero();
             polynomial.num_coefficients = 3;
 
@@ -205,25 +215,123 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
             let mut temp_b = Self::Element::zero();
 
             let n = a_lo.len();
-            for p in 0..n {
-                // C0 += a_lo[p] * b_lo[p]
+            let a_hi_len = a_hi.len();
+            let b_hi_len = b_hi.len();
+            let dense_end = a_hi_len.min(b_hi_len);
+
+            // Region 1: [0, dense_end) — both high halves present, full Karatsuba
+            for p in 0..dense_end {
                 temp *= (&a_lo[p], &b_lo[p]);
                 polynomial.coefficients[0] += &temp;
 
-                // C_mid (accumulated into coeff[1]) += a_hi[p] * b_hi[p]
                 temp *= (&a_hi[p], &b_hi[p]);
                 polynomial.coefficients[1] += &temp;
 
-                // C2 += (a_hi[p]-a_lo[p]) * (b_hi[p]-b_lo[p])
                 temp_a.set_from(&a_hi[p]);
-                temp_a -= &a_lo[p]; // temp_a = a_hi - a_lo
+                temp_a -= &a_lo[p];
                 temp_b.set_from(&b_hi[p]);
-                temp_b -= &b_lo[p]; // temp_b = b_hi - b_lo
+                temp_b -= &b_lo[p];
                 temp *= (&temp_a, &temp_b);
                 polynomial.coefficients[2] += &temp;
             }
 
+            // Region 2: [dense_end, max_hi) — one high half non-zero, other zero.
+            // When b_hi is zero: C_mid += a_hi*0 = 0,
+            //   C2 += (a_hi-a_lo)*(0-b_lo) so we subtract (a_hi-a_lo)*b_lo from C2.
+            if a_hi_len > dense_end {
+                for p in dense_end..a_hi_len {
+                    temp *= (&a_lo[p], &b_lo[p]);
+                    polynomial.coefficients[0] += &temp;
+                    // C2 += (a_hi - a_lo) * (0 - b_lo) = -((a_hi-a_lo)*b_lo)
+                    // = a_lo*b_lo - a_hi*b_lo
+                    polynomial.coefficients[2] += &temp; // +a_lo*b_lo
+                    temp *= (&a_hi[p], &b_lo[p]);
+                    polynomial.coefficients[2] -= &temp; // -a_hi*b_lo
+                }
+            } else if b_hi_len > dense_end {
+                for p in dense_end..b_hi_len {
+                    temp *= (&a_lo[p], &b_lo[p]);
+                    polynomial.coefficients[0] += &temp;
+                    polynomial.coefficients[2] += &temp;
+                    temp *= (&a_lo[p], &b_hi[p]);
+                    polynomial.coefficients[2] -= &temp;
+                }
+            }
+
+            let max_hi = a_hi_len.max(b_hi_len);
+
+            // Region 3: [max_hi, n) — both high halves zero.
+            // poly_a = [a_lo, -a_lo], poly_b = [b_lo, -b_lo].
+            // C0 += a_lo*b_lo, C_mid += 0, C2 += a_lo*b_lo (= C0 contribution).
+            for p in max_hi..n {
+                temp *= (&a_lo[p], &b_lo[p]);
+                polynomial.coefficients[0] += &temp;
+                polynomial.coefficients[2] += &temp;
+            }
+
             // C1 = C_mid - C0 - C2 (C_mid is currently in coeff[1])
+            let (first, rest) = polynomial.coefficients.split_at_mut(1);
+            let (second, third) = rest.split_at_mut(1);
+            second[0] -= &first[0];
+            second[0] -= &third[0];
+
+            return;
+        }
+
+        // Case 1b: both children expose interleaved data (LS-first layout).
+        // data[2i] = val@0, data[2i+1] = val@1.
+        // Karatsuba with stride-2 access.
+        let lhs_interleaved = self.lhs_sumcheck.get_ref().as_interleaved_data();
+        let rhs_interleaved = self.rhs_sumcheck.get_ref().as_interleaved_data();
+
+        if let (Some(a_data), Some(b_data)) = (lhs_interleaved, rhs_interleaved) {
+            polynomial.set_zero();
+            polynomial.num_coefficients = 3;
+
+            let mut temp = Self::Element::zero();
+            let mut temp_a = Self::Element::zero();
+            let mut temp_b = Self::Element::zero();
+
+            // Number of possibly non-zero pairs. If the slice has odd length,
+            // the last pair has an implicit odd entry equal to zero.
+            let a_pairs = (a_data.len() + 1) / 2;
+            let b_pairs = (b_data.len() + 1) / 2;
+            let dense_end = a_pairs.min(b_pairs);
+            let zero = Self::Element::zero();
+
+            // Region 1: [0, dense_end) — both sides have data, full Karatsuba
+            for p in 0..dense_end {
+                let idx0 = 2 * p;
+                let a0 = &a_data[idx0];
+                let a1 = if idx0 + 1 < a_data.len() {
+                    &a_data[idx0 + 1]
+                } else {
+                    &zero
+                };
+                let b0 = &b_data[idx0];
+                let b1 = if idx0 + 1 < b_data.len() {
+                    &b_data[idx0 + 1]
+                } else {
+                    &zero
+                };
+
+                temp *= (a0, b0);
+                polynomial.coefficients[0] += &temp; // C0
+
+                temp *= (a1, b1);
+                polynomial.coefficients[1] += &temp; // C_mid
+
+                temp_a.set_from(a1);
+                temp_a -= a0;
+                temp_b.set_from(b1);
+                temp_b -= b0;
+                temp *= (&temp_a, &temp_b);
+                polynomial.coefficients[2] += &temp; // C2
+            }
+
+            // Region 2: one side has data, other is zero — contributes nothing.
+
+            // C1 = C_mid - C0 - C2
             let (first, rest) = polynomial.coefficients.split_at_mut(1);
             let (second, third) = rest.split_at_mut(1);
             second[0] -= &first[0];
@@ -291,7 +399,8 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
                     .get_ref()
                     .constant_univariate_polynomial_at_point_available_by_ref(point)
                     .unwrap();
-                polynomial.coefficients[0] *= (lc, rc);
+                polynomial.coefficients[0].set_from(lc);
+                polynomial.coefficients[0] *= rc;
                 polynomial.num_coefficients = 1;
             }
             (true, false) => {
@@ -387,10 +496,9 @@ impl EvaluationSumcheckData for ProductSumcheckEvaluation {
     type Element = RingElement;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
-        self.result *= (
-            self.lhs_evaluation.borrow_mut().evaluate(&point),
-            self.rhs_evaluation.borrow_mut().evaluate(&point),
-        );
+        self.result
+            .set_from(self.lhs_evaluation.borrow_mut().evaluate(point));
+        self.result *= self.rhs_evaluation.borrow_mut().evaluate(point);
         &self.result
     }
 }
