@@ -26,7 +26,7 @@ use super::context::SumcheckContext;
 /// data preparation from the main sumcheck execution flow.
 pub fn load_sumcheck_data(
     sumcheck_context: &mut SumcheckContext,
-    _config: &SumcheckConfig,
+    config: &SumcheckConfig,
     combined_witness: &Vec<RingElement>,
     conjugated_combined_witness: &Vec<RingElement>,
     folding_challenges: &Vec<RingElement>,
@@ -37,11 +37,22 @@ pub fn load_sumcheck_data(
     combination: &Vec<RingElement>,
     qe: &[QuadraticExtension; HALF_DEGREE],
 ) {
+    // The witness vector is padded to composed_witness_length (a power of 2),
+    // but only a fraction is actually used. Passing the non-zero boundary
+    // lets LinearSumcheck skip zero-tail work in partial_evaluate and
+    // Karatsuba inner products.
+    let used_columns =
+        (config.composed_witness_length as f64 * config.next_level_usage_ratio).ceil() as usize;
+    let non_zero_end = used_columns
+        .min(config.composed_witness_length)
+        .min(combined_witness.len())
+        .min(conjugated_combined_witness.len());
+
     // Load combined witness
     sumcheck_context
         .combined_witness_sumcheck
         .borrow_mut()
-        .load_from(combined_witness);
+        .load_from_with_non_zero_end(combined_witness, non_zero_end);
 
     // Load folding challenges
     sumcheck_context
@@ -53,7 +64,7 @@ pub fn load_sumcheck_data(
         .type5sumcheck
         .conjugated_combined_witness
         .borrow_mut()
-        .load_from(&conjugated_combined_witness);
+        .load_from_with_non_zero_end(&conjugated_combined_witness, non_zero_end);
 
     // Load inner evaluation points (type1)
     for (type1_sc, eval_point) in sumcheck_context

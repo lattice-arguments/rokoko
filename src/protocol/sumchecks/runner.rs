@@ -217,6 +217,8 @@ pub fn sumcheck(
         .final_evaluations()
         .clone();
 
+    evaluation_points.reverse();
+
     (
         claim_over_witness,
         claim_over_witness_conjugate,

@@ -58,6 +58,15 @@ impl<E: SumcheckElement> Polynomial<E> {
         }
         self.num_coefficients = 0;
     }
+
+    /// Copy the contents of `other` into `self`.
+    #[inline]
+    pub fn copy_from(&mut self, other: &Polynomial<E>) {
+        self.num_coefficients = other.num_coefficients;
+        for i in 0..other.num_coefficients {
+            self.coefficients[i].set_from(&other.coefficients[i]);
+        }
+    }
 }
 
 /// Multiply two polynomials and store the result in `result`.
