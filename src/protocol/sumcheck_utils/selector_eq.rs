@@ -87,10 +87,11 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SelectorEq<E> {
             if !self.is_univariate_polynomial_zero_at_point(point) {
                 return Some(&self.current_claim);
             }
-            // Point is in the zero region — polynomial is zero (degree 0),
-            // but we can't return a pointer to zero here. Callers should
-            // check is_zero first. Returning None is safe because the caller
-            // will fall through to the general path which also returns zero.
+            // Point is in the zero region — polynomial is logically zero (degree 0),
+            // but we can't return a pointer to zero here. Callers must first check
+            // is_univariate_polynomial_zero_at_point; if it returns true, they
+            // should treat the polynomial as identically zero rather than relying
+            // on the general evaluation path.
             return None;
         }
         None
