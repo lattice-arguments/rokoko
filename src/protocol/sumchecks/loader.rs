@@ -41,8 +41,12 @@ pub fn load_sumcheck_data(
     // but only a fraction is actually used. Passing the non-zero boundary
     // lets LinearSumcheck skip zero-tail work in partial_evaluate and
     // Karatsuba inner products.
-    let non_zero_end =
-        (config.composed_witness_length as f64 * config.next_level_usage_ratio).round() as usize;
+    let used_columns =
+        (config.composed_witness_length as f64 * config.next_level_usage_ratio).ceil() as usize;
+    let non_zero_end = used_columns
+        .min(config.composed_witness_length)
+        .min(combined_witness.len())
+        .min(conjugated_combined_witness.len());
 
     // Load combined witness
     sumcheck_context

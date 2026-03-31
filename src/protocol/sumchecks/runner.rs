@@ -174,12 +174,6 @@ pub fn sumcheck(
             .field_combiner
             .borrow_mut()
             .univariate_polynomial_into(&mut poly_over_field);
-        let time_poly_c = t1.elapsed();
-        println!(
-            "    Extracted univariate polynomial at variable {}: {} ms",
-            sumcheck_context.combiner.borrow().variable_count(),
-            time_poly_c.as_millis()
-        );
         time_poly += t1.elapsed().as_millis();
 
         hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
@@ -196,12 +190,6 @@ pub fn sumcheck(
 
         let t2 = std::time::Instant::now();
         sumcheck_context.partial_evaluate_all(&r);
-        let pe_time = t2.elapsed();
-        println!(
-            "    Partial evaluation at variable {}: {} ms",
-            sumcheck_context.combiner.borrow().variable_count(),
-            pe_time.as_millis()
-        );
         time_eval += t2.elapsed().as_millis();
 
         polys.push(poly_over_field);
