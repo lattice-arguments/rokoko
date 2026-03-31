@@ -37,43 +37,32 @@ fn batch_claims(
 
     // Type0: zero claims (difference sumchecks)
     idx += config.basic_commitment_rank;
-    println!("  [batch_claims] after type0: idx={}", idx);
 
     // Type1: zero claims (difference sumchecks)
     idx += config.nof_openings;
-    println!("  [batch_claims] after type1: idx={}", idx);
 
     // Type2: claims for evaluations
-    let mut type2_contribution = RingElement::zero(Representation::IncompleteNTT);
     for claim in claims.iter() {
         let mut weighted = claim.clone();
         weighted *= &combination[idx];
         batched_claim += &weighted;
-        type2_contribution += &weighted;
         idx += 1;
     }
-    println!("  [batch_claims] after type2: idx={}, type2_contribution ct={}",
-        idx, type2_contribution.constant_term_from_incomplete_ntt());
 
     if rc_projection_inner.is_some() {
         // Type3: zero claim (difference sumcheck)
         idx += 1;
-        println!("  [batch_claims] after type3: idx={}", idx);
     }
 
     if rcs_projection_1_inner.is_some() {
         // Type3_1_A: zero claim (difference sumcheck) + consistence between ct comm and bp comm
-        let mut type3_1_contribution = RingElement::zero(Representation::IncompleteNTT);
         for i in 0..NOF_BATCHES {
             idx += 1;
             let mut weighted = rcs_projection_1_constant_term_claims.as_ref().unwrap()[i].clone();
             weighted *= &combination[idx];
             batched_claim += &weighted;
-            type3_1_contribution += &weighted;
             idx += 1;
         }
-        println!("  [batch_claims] after type3_1: idx={}, type3_1_contribution ct={}",
-            idx, type3_1_contribution.constant_term_from_incomplete_ntt());
     }
 
     // Type4: Three recursion trees (commitment, opening, projection)
@@ -115,38 +104,27 @@ fn batch_claims(
         let mut current = recursion_config;
         while let Some(next) = current.next.as_deref() {
             idx += current.rank; // Each layer has rank outputs, all zero claims
-            println!("  [batch_claims] type4[{}] skip internal layer rank={}: idx={}", recursion_idx, current.rank, idx);
             current = next;
         }
 
         // Output layer: rc_inner claims
-        let mut type4_contribution = RingElement::zero(Representation::IncompleteNTT);
         for rc_value in rc_inner.iter() {
             let mut weighted = rc_value.clone();
             weighted *= &combination[idx];
             batched_claim += &weighted;
-            type4_contribution += &weighted;
             idx += 1;
         }
-        println!("  [batch_claims] type4[{}] output layer: idx={}, rc_inner.len()={}, contribution ct={}",
-            recursion_idx, idx, rc_inner.len(), type4_contribution.constant_term_from_incomplete_ntt());
     }
 
     // Type5: norm claim
     let mut weighted_norm = norm_claim.clone();
     weighted_norm *= &combination[idx];
     batched_claim += &weighted_norm;
-    println!("  [batch_claims] type5 norm: idx={}, contribution ct={}", idx,
-        weighted_norm.constant_term_from_incomplete_ntt());
     idx += 1;
 
     let mut weighted_norm = most_inner_norm_claim.clone();
     weighted_norm *= &combination[idx];
     batched_claim += &weighted_norm;
-    println!("  [batch_claims] type5 most_inner_norm: idx={}, contribution ct={}", idx,
-        weighted_norm.constant_term_from_incomplete_ntt());
-
-    println!("  [batch_claims] total: batched_claim ct={}", batched_claim.constant_term_from_incomplete_ntt());
 
     batched_claim
 }
@@ -239,9 +217,6 @@ pub fn sumcheck_verifier(
     let mut combination = new_vec_zero_preallocated(num_sumchecks);
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
 
-    println!("    VERIFIER num_sumchecks = {}", num_sumchecks);
-    println!("    VERIFIER combination[0] ct = {}", combination[0].constant_term_from_incomplete_ntt());
-
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
@@ -315,9 +290,6 @@ pub fn sumcheck_verifier(
 
         let sum = poly_over_field.at_zero() + poly_over_field.at_one();
         if sum != batched_claim_over_field {
-            println!("ROUND {} CHECK FAILED!", round_proof.polys.len() - num_vars - 1);
-            println!("  at_zero + at_one = {:?}", sum);
-            println!("  batched_claim    = {:?}", batched_claim_over_field);
             panic!("Round check failed");
         }
 
@@ -350,25 +322,6 @@ pub fn sumcheck_verifier(
         .clone();
 
     if &batched_claim_over_field != &computed {
-        println!("VERIFIER MISMATCH!");
-        println!("  batched_claim_over_field = {:?}", batched_claim_over_field);
-        println!("  computed from combiner   = {:?}", computed);
-        println!("  evaluation_points.len()  = {}", evaluation_points.len());
-
-        // Also evaluate combiner at ring level to see node-by-node
-        let ring_point: Vec<RingElement> = evaluation_points.iter().map(|qe| {
-            let mut r = field_to_ring_element(qe);
-            r.from_homogenized_field_extensions_to_incomplete_ntt();
-            r
-        }).collect();
-
-        let num_sc = verifier_sumcheck_context.combiner_evaluation.borrow().sumchecks_count();
-        println!("  num sumchecks = {}", num_sc);
-        // Force individual evaluation through CombinerEvaluation
-        // by just calling it
-        let ring_eval = verifier_sumcheck_context.combiner_evaluation.borrow_mut().evaluate(&ring_point).clone();
-        println!("  ring combiner eval ct = {}", ring_eval.constant_term_from_incomplete_ntt());
-
         panic!("Verifier final evaluation mismatch");
     }
 

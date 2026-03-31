@@ -80,7 +80,6 @@ pub fn verifier_round(
                         None => panic!("Next sumcheck config must be present."),
                     };
 
-                    // LS-first: first challenges are inner (LS), last log(witness_width) are outer (MS).
                     let (new_evaluation_points_inner, new_evaluation_points_outer) =
                         evaluation_points
                             .split_at(evaluation_points.len() - next_sumcheck_config.witness_width.ilog2() as usize);
@@ -90,8 +89,16 @@ pub fn verifier_round(
                         _ => panic!("Expected recursive commitment for next round."),
                     };
 
-                    let inner_vec = new_evaluation_points_inner.to_vec();
-                    let outer_vec = new_evaluation_points_outer.to_vec();
+                    let inner_vec = new_evaluation_points_inner
+                        .iter()
+                        .cloned()
+                        .rev()
+                        .collect::<Vec<_>>();
+                    let outer_vec = new_evaluation_points_outer
+                        .iter()
+                        .cloned()
+                        .rev()
+                        .collect::<Vec<_>>();
 
                     let inner_rows = [
                         evaluation_point_to_structured_row(&inner_vec),
@@ -128,7 +135,6 @@ pub fn verifier_round(
                         None => panic!("Next simple config must be present."),
                     };
 
-                    // LS-first: first challenges are inner (LS), last log(witness_width) are outer (MS).
                     let (new_evaluation_points_inner, new_evaluation_points_outer) =
                         evaluation_points
                             .split_at(evaluation_points.len() - next_simple_config.witness_width.ilog2() as usize);
@@ -138,8 +144,16 @@ pub fn verifier_round(
                         _ => panic!("Expected simple commitment for next round."),
                     };
 
-                    let inner_vec = new_evaluation_points_inner.to_vec();
-                    let outer_vec = new_evaluation_points_outer.to_vec();
+                    let inner_vec = new_evaluation_points_inner
+                        .iter()
+                        .cloned()
+                        .rev()
+                        .collect::<Vec<_>>();
+                    let outer_vec = new_evaluation_points_outer
+                        .iter()
+                        .cloned()
+                        .rev()
+                        .collect::<Vec<_>>();
 
                     let inner_rows = [
                         evaluation_point_to_structured_row(&inner_vec),

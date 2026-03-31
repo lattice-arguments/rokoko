@@ -111,10 +111,11 @@ impl<E: SumcheckElement> Index<HypercubePoint> for LinearSumcheck<E> {
         }
         if self.suffix > 0 || self.variable_count > self.data.len().trailing_zeros() as usize + self.suffix {
             // Prefix/suffix round — data isn't being split.
-            // For suffix rounds the LS `suffix` bits of the point are the
-            // dummy suffix variables; the data dimension lives in the bits
-            // above them.  Shift them out before masking.
-            let index_shifted = index.shifted(self.suffix);
+            // For suffix rounds under LS-first, the current round consumes
+            // one suffix bit now, so the half-hypercube point still contains
+            // the remaining (suffix - 1) suffix bits.
+            let suffix_shift = if self.suffix > 0 { self.suffix - 1 } else { 0 };
+            let index_shifted = index.shifted(suffix_shift);
             let index_masked = index_shifted.masked(self.index_mask);
             return &self.data[index_masked.coordinates];
         }
@@ -303,6 +304,12 @@ impl<E: SumcheckElement> SumcheckBaseData for LinearSumcheck<E> {
                 let val = left[idx0].clone();
                 self.data[i] = val;
             }
+        }
+        // Clear the compacted tail: indices [fold_end, half) are outside the
+        // guaranteed non-zero region after folding and may still contain stale
+        // values from the previous layout.
+        for i in fold_end..half {
+            self.data[i].set_zero();
         }
 
         self.data.truncate(half);
@@ -510,7 +517,9 @@ impl<E: SumcheckElement + 'static> EvaluationSumcheckData
         // so layer[k] pairs with data_point[k] directly.
         let data_point = &point[self.suffix..self.suffix + data_variable_count];
 
-        for (layer, r) in data.tensor_layers.iter().zip(data_point.iter()) {
+        // tensor_layers are stored from MS to LS (the last layer is LSB),
+        // while LS-first challenges arrive from LS to MS.
+        for (layer, r) in data.tensor_layers.iter().rev().zip(data_point.iter()) {
             // Compute: (1-layer)*(1-r) + layer*r = 1 - layer - r + 2*layer*r
             self.scratch.set_from(layer);
             self.scratch *= r; // layer*r

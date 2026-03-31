@@ -100,9 +100,6 @@ pub fn sumcheck(
     let mut combination = new_vec_zero_preallocated(num_sumchecks);
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
 
-    println!("    PROVER num_sumchecks = {}", num_sumchecks);
-    println!("    PROVER combination[0] ct = {}", combination[0].constant_term_from_incomplete_ntt());
-
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
@@ -166,98 +163,6 @@ pub fn sumcheck(
     let t_loop = std::time::Instant::now();
     let mut time_poly = 0;
     let mut time_eval = 0;
-    let mut first_round = true;
-
-    // DEBUG: print the field_combiner's claim (sum over hypercube)
-    {
-        let claim = sumcheck_context.field_combiner.borrow().claim();
-        println!("    PROVER field_combiner claim = {:?}", claim);
-    }
-
-    // DEBUG: print per-typed child claims to identify which one's sum != declared claim
-    {
-        use crate::protocol::sumcheck_utils::common::HighOrderSumcheckData;
-        let mut child_idx = 0usize;
-
-        // Type0: should sum to 0 — print LHS and RHS separately for [0]
-        for (i, sc) in sumcheck_context.type0sumchecks.iter().enumerate() {
-            let sum = sc.output.get_ref().claim();
-            println!("    [PROVER claim] type0[{}] (idx {}) ct={}", i, child_idx, sum.constant_term_from_incomplete_ntt());
-            if i == 0 {
-                let diff = sc.output.get_ref();
-                let mut lhs_poly = crate::protocol::sumcheck_utils::polynomial::Polynomial::new(0);
-                let mut rhs_poly = crate::protocol::sumcheck_utils::polynomial::Polynomial::new(0);
-                diff.lhs_sumcheck.get_ref().univariate_polynomial_into(&mut lhs_poly);
-                diff.rhs_sumcheck.get_ref().univariate_polynomial_into(&mut rhs_poly);
-                let lhs_zero = lhs_poly.at_zero();
-                let lhs_one = lhs_poly.at_one();
-                let mut lhs_sum = lhs_zero.clone();
-                lhs_sum += &lhs_one;
-                let rhs_zero = rhs_poly.at_zero();
-                let rhs_one = rhs_poly.at_one();
-                let mut rhs_sum = rhs_zero.clone();
-                rhs_sum += &rhs_one;
-                println!("    [TYPE0-0 DEBUG] LHS.sum ct={}", lhs_sum.constant_term_from_incomplete_ntt());
-                println!("    [TYPE0-0 DEBUG] RHS.sum ct={}", rhs_sum.constant_term_from_incomplete_ntt());
-            }
-            child_idx += 1;
-        }
-
-        // Type1: should sum to 0
-        for (i, sc) in sumcheck_context.type1sumchecks.iter().enumerate() {
-            let sum = sc.output.get_ref().claim();
-            println!("    [PROVER claim] type1[{}] (idx {}) ct={}", i, child_idx, sum.constant_term_from_incomplete_ntt());
-            child_idx += 1;
-        }
-
-        // Type2: should sum to claims[i]
-        for (i, sc) in sumcheck_context.type2sumchecks.iter().enumerate() {
-            let sum = sc.output.get_ref().claim();
-            println!("    [PROVER claim] type2[{}] (idx {}) ct={}", i, child_idx, sum.constant_term_from_incomplete_ntt());
-            child_idx += 1;
-        }
-
-        // Type3 or Type3_1
-        if let Some(ref type3sc) = sumcheck_context.type3sumcheck {
-            let sum = type3sc.output.get_ref().claim();
-            println!("    [PROVER claim] type3 (idx {}) ct={}", child_idx, sum.constant_term_from_incomplete_ntt());
-            child_idx += 1;
-        } else if let Some(ref type3_1_scs) = sumcheck_context.type3_1_sumchecks {
-            for (i, sc) in type3_1_scs.sumchecks.iter().enumerate() {
-                let sum_out = sc.output.get_ref().claim();
-                let sum_out2 = sc.output_2.get_ref().claim();
-                println!("    [PROVER claim] type3_1[{}].output (idx {}) ct={}", i, child_idx, sum_out.constant_term_from_incomplete_ntt());
-                child_idx += 1;
-                println!("    [PROVER claim] type3_1[{}].output_2 (idx {}) ct={}", i, child_idx, sum_out2.constant_term_from_incomplete_ntt());
-                child_idx += 1;
-            }
-        }
-
-        // Type4
-        for (t4_idx, t4) in sumcheck_context.type4sumchecks.iter().enumerate() {
-            for (l_idx, layer) in t4.layers.iter().enumerate() {
-                for (out_idx, out) in layer.outputs.iter().enumerate() {
-                    let sum = out.get_ref().claim();
-                    println!("    [PROVER claim] type4[{}].layer[{}].out[{}] (idx {}) ct={}", t4_idx, l_idx, out_idx, child_idx, sum.constant_term_from_incomplete_ntt());
-                    child_idx += 1;
-                }
-            }
-            for (out_idx, out) in t4.output_layer.outputs.iter().enumerate() {
-                let sum = out.get_ref().claim();
-                println!("    [PROVER claim] type4[{}].outlayer.out[{}] (idx {}) ct={}", t4_idx, out_idx, child_idx, sum.constant_term_from_incomplete_ntt());
-                child_idx += 1;
-            }
-        }
-
-        // Type5
-        {
-            let sum5 = sumcheck_context.type5sumcheck.output.get_ref().claim();
-            let sum5_2 = sumcheck_context.type5sumcheck.output_2.get_ref().claim();
-            println!("    [PROVER claim] type5.output (idx {}) ct={}", child_idx, sum5.constant_term_from_incomplete_ntt());
-            child_idx += 1;
-            println!("    [PROVER claim] type5.output_2 (idx {}) ct={}", child_idx, sum5_2.constant_term_from_incomplete_ntt());
-        }
-    }
 
     while num_vars > 0 {
         num_vars -= 1;
@@ -275,13 +180,6 @@ pub fn sumcheck(
             sumcheck_context.combiner.borrow().variable_count(),
             time_poly_c.as_millis()
         );
-        if first_round {
-            let sum = poly_over_field.at_zero() + poly_over_field.at_one();
-            println!("    PROVER round 0: at_zero = {:?}", poly_over_field.at_zero());
-            println!("    PROVER round 0: at_one  = {:?}", poly_over_field.at_one());
-            println!("    PROVER round 0: sum     = {:?}", sum);
-            first_round = false;
-        }
         time_poly += t1.elapsed().as_millis();
 
         hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);

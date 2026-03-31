@@ -176,7 +176,8 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
                 // SAFETY: single-threaded access; the returned reference is consumed
                 // before the next call to this method overwrites the cache.
                 let cache = unsafe { &mut *self.const_cache.as_ptr() };
-                *cache *= (lc, rc);
+                cache.set_from(lc);
+                *cache *= rc;
                 Some(cache)
             }
             _ => None,
@@ -291,22 +292,28 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
             let mut temp_a = Self::Element::zero();
             let mut temp_b = Self::Element::zero();
 
-            // Number of pairs: each pair is at (2p, 2p+1).
-            // a_data and b_data may be trimmed to non_zero_end.
-            let a_pairs = a_data.len() / 2;
-            let b_pairs = b_data.len() / 2;
+            // Number of possibly non-zero pairs. If the slice has odd length,
+            // the last pair has an implicit odd entry equal to zero.
+            let a_pairs = (a_data.len() + 1) / 2;
+            let b_pairs = (b_data.len() + 1) / 2;
             let dense_end = a_pairs.min(b_pairs);
-
-            // For pairs beyond the shorter slice, the missing elements are zero.
-            // We need to know the full number of pairs from one side.
-            let _half_hypercube = 1 << (self.variable_count() - 1);
+            let zero = Self::Element::zero();
 
             // Region 1: [0, dense_end) — both sides have data, full Karatsuba
             for p in 0..dense_end {
-                let a0 = &a_data[2 * p];
-                let a1 = &a_data[2 * p + 1];
-                let b0 = &b_data[2 * p];
-                let b1 = &b_data[2 * p + 1];
+                let idx0 = 2 * p;
+                let a0 = &a_data[idx0];
+                let a1 = if idx0 + 1 < a_data.len() {
+                    &a_data[idx0 + 1]
+                } else {
+                    &zero
+                };
+                let b0 = &b_data[idx0];
+                let b1 = if idx0 + 1 < b_data.len() {
+                    &b_data[idx0 + 1]
+                } else {
+                    &zero
+                };
 
                 temp *= (a0, b0);
                 polynomial.coefficients[0] += &temp; // C0
@@ -392,7 +399,8 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
                     .get_ref()
                     .constant_univariate_polynomial_at_point_available_by_ref(point)
                     .unwrap();
-                polynomial.coefficients[0] *= (lc, rc);
+                polynomial.coefficients[0].set_from(lc);
+                polynomial.coefficients[0] *= rc;
                 polynomial.num_coefficients = 1;
             }
             (true, false) => {
@@ -488,10 +496,9 @@ impl EvaluationSumcheckData for ProductSumcheckEvaluation {
     type Element = RingElement;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
-        self.result *= (
-            self.lhs_evaluation.borrow_mut().evaluate(&point),
-            self.rhs_evaluation.borrow_mut().evaluate(&point),
-        );
+        self.result
+            .set_from(self.lhs_evaluation.borrow_mut().evaluate(point));
+        self.result *= self.rhs_evaluation.borrow_mut().evaluate(point);
         &self.result
     }
 }
