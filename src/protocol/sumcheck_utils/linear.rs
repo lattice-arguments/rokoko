@@ -107,7 +107,9 @@ impl<E: SumcheckElement> Index<HypercubePoint> for LinearSumcheck<E> {
         if self.data.len() == 1 {
             return &self.data[0];
         }
-        if self.suffix > 0 || self.variable_count > self.data.len().trailing_zeros() as usize + self.suffix {
+        if self.suffix > 0
+            || self.variable_count > self.data.len().trailing_zeros() as usize + self.suffix
+        {
             // Prefix/suffix round — data isn't being split.
             // For suffix rounds under LS-first, the current round consumes
             // one suffix bit now, so the half-hypercube point still contains
@@ -313,7 +315,9 @@ impl<E: SumcheckElement> SumcheckBaseData for LinearSumcheck<E> {
             if i != idx0 {
                 // idx0 = 2*i, which equals i only when i=0.
                 // For i>=1, copy to the compacted position without allocation.
-                self.data[i].set_from(&left[idx0]);
+                // Split left at idx0 so source and destination are disjoint.
+                let (prefix, from_idx0) = left.split_at_mut(idx0);
+                prefix[i].set_from(&from_idx0[0]);
             }
         }
         // Clear the compacted tail: indices [fold_end, half) are outside the
@@ -679,10 +683,7 @@ mod tests {
         // constant = 4*(1+3+5+7) = 64, linear = 4*(1+1+1+1) = 16
         debug_assert_eq!(
             poly.coefficients[0],
-            RingElement::constant(
-                (1 + 3 + 5 + 7) * 4,
-                Representation::IncompleteNTT
-            )
+            RingElement::constant((1 + 3 + 5 + 7) * 4, Representation::IncompleteNTT)
         );
 
         debug_assert_eq!(

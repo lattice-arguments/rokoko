@@ -452,7 +452,8 @@ pub fn prover_round(
             }
             _ => {
                 assert!(
-                    next_level_width as f64 * argued_witness_bound * argued_witness_bound < (MOD_Q as f64 / 2f64),
+                    next_level_width as f64 * argued_witness_bound * argued_witness_bound
+                        < (MOD_Q as f64 / 2f64),
                     "Witness bound too large for inner-product norm extraction!"
                 );
             }
