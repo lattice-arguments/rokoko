@@ -376,37 +376,15 @@ impl<E: SumcheckElement> EvaluationSumcheckData for BasicEvaluationLinearSumchec
         let mut current_len = self.data.len();
         let data_point = &point[self.suffix..self.suffix + data_variable_count];
 
-        for r in data_point.iter() {
-            // Data round: fold even/odd pairs
+        // Keep MS-style in-memory folding, but consume LS-ordered challenges by reversing.
+        for r in data_point.iter().rev() {
             let half = current_len / 2;
             if half > 0 {
-                // Fast in-place LS-first fold+compact:
-                // pair (2j, 2j+1) -> folded value at position j.
-                //
-                // SAFETY:
-                // - p0=2j, p1=2j+1 are in-bounds for j<half
-                // - output index j is distinct from p0/p1 for j>=1
-                // - j=0 is handled separately where output==p0
-                unsafe {
-                    let ptr = self.data.as_mut_ptr();
-
-                    // j = 0
-                    let p0 = ptr;
-                    let p1 = ptr.add(1);
-                    (*p1) -= &*p0;
-                    (*p1) *= r;
-                    (*p0) += &*p1;
-
-                    // j >= 1
-                    for j in 1..half {
-                        let out = ptr.add(j);
-                        let p0 = ptr.add(2 * j);
-                        let p1 = ptr.add(2 * j + 1);
-                        (*p1) -= &*p0;
-                        (*p1) *= r;
-                        (*p0) += &*p1;
-                        (*out).set_from(&*p0);
-                    }
+                let (left, right) = self.data[..current_len].split_at_mut(half);
+                for i in 0..half {
+                    right[i] -= &left[i];
+                    right[i] *= r;
+                    left[i] += &right[i];
                 }
             }
             current_len = half;
