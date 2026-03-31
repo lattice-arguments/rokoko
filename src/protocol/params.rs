@@ -88,8 +88,8 @@ pub static P: LazyLock<Config> = LazyLock::new(|| {
         commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
-            rank: per_config(16, 32, 512),
-            diag_blocks: per_config(8, 16, 256),
+            rank: per_config(16, 64, 1024),
+            diag_blocks: per_config(8, 32, 512),
             next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
         },
         opening_recursion: AuxRecursionConfig {
