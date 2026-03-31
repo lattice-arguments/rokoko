@@ -53,6 +53,44 @@ impl HighOrderSumcheckData for RingToFieldCombiner {
         &self.scratch_poly
     }
 
+    /// Compute the ring-level polynomial first in one pass, then convert only
+    /// the resulting coefficients (typically 3–4) to field-level.
+    ///
+    /// The default impl iterates over all half-hypercube points and for each
+    /// point calls `univariate_polynomial_at_point_into` which performs a
+    /// field conversion (`from_incomplete_ntt_to_homogenized_field_extensions`
+    /// + HALF_DEGREE QE multiplications) per coefficient per point.  With
+    /// H=65536 and 3 coefficients that is ~200K expensive conversions.
+    ///
+    /// Since the field conversion is linear, we can instead:
+    ///  1. Ask the ring-level sumcheck to produce its polynomial once.
+    ///  2. Convert each coefficient (≤4 of them) to field.
+    ///
+    /// This cuts conversions from O(H) to O(1).
+    fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
+        let mut ring_poly = self.temp_poly.borrow_mut();
+        ring_poly.set_zero();
+        ring_poly.num_coefficients = 0;
+
+        // Compute the full ring-level polynomial (Combiner's output-first loop)
+        self.sumcheck
+            .get_ref()
+            .univariate_polynomial_into(&mut ring_poly);
+
+        // Convert the result to field
+        polynomial.set_zero();
+        for i in 0..ring_poly.num_coefficients {
+            ring_poly.coefficients[i].from_incomplete_ntt_to_homogenized_field_extensions();
+            let mut coeff = ring_poly.coefficients[i].split_into_quadratic_extensions();
+            for j in 0..HALF_DEGREE {
+                coeff[j] *= &self.challenge_vec[j];
+                polynomial.coefficients[i] += &coeff[j];
+            }
+            ring_poly.coefficients[i].representation = Representation::IncompleteNTT;
+        }
+        polynomial.num_coefficients = ring_poly.num_coefficients;
+    }
+
     fn univariate_polynomial_at_point_into(
         &self,
         point: super::hypercube_point::HypercubePoint, // this is just the usize so we pass it by value

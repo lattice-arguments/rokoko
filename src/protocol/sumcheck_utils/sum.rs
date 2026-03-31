@@ -25,6 +25,8 @@ pub struct SumSumcheck<E: SumcheckElement = RingElement> {
     lhs_eval_poly: RefCell<Polynomial<E>>,
     rhs_eval_poly: RefCell<Polynomial<E>>,
     scratch_poly: RefCell<Polynomial<E>>,
+
+    const_cache: RefCell<E>,
 }
 
 impl<E: SumcheckElement> SumSumcheck<E> {
@@ -44,6 +46,7 @@ impl<E: SumcheckElement> SumSumcheck<E> {
             lhs_eval_poly: RefCell::new(Polynomial::new(0)),
             rhs_eval_poly: RefCell::new(Polynomial::new(0)),
             scratch_poly: RefCell::new(Polynomial::new(0)),
+            const_cache: RefCell::new(E::zero()),
         }
     }
 }
@@ -80,6 +83,67 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SumSumcheck<E> {
     }
 
     #[inline]
+    fn constant_univariate_polynomial_at_point_available_by_ref(
+        &self,
+        point: HypercubePoint,
+    ) -> Option<&Self::Element> {
+        let lhs_const = self
+            .lhs_sumcheck
+            .get_ref()
+            .constant_univariate_polynomial_at_point_available_by_ref(point);
+        let rhs_const = self
+            .rhs_sumcheck
+            .get_ref()
+            .constant_univariate_polynomial_at_point_available_by_ref(point);
+
+        // Both constant and both non-zero → sum
+        if let (Some(lc), Some(rc)) = (lhs_const, rhs_const) {
+            let cache = unsafe { &mut *self.const_cache.as_ptr() };
+            cache.set_from(lc);
+            *cache += rc;
+            return Some(cache);
+        }
+
+        // One constant and other is zero → propagate the constant
+        if let Some(lc) = lhs_const {
+            if self
+                .rhs_sumcheck
+                .get_ref()
+                .is_univariate_polynomial_zero_at_point(point)
+            {
+                return Some(lc);
+            }
+        }
+        if let Some(rc) = rhs_const {
+            if self
+                .lhs_sumcheck
+                .get_ref()
+                .is_univariate_polynomial_zero_at_point(point)
+            {
+                return Some(rc);
+            }
+        }
+        None
+    }
+
+    #[inline]
+    /// Override: Σ_p (LHS(p) + RHS(p)) = Σ_p LHS(p) + Σ_p RHS(p).
+    ///
+    /// Avoids the per-point constant-availability tree traversal and lets
+    /// each child handle its own zero-skipping internally.
+    fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
+        self.lhs_sumcheck
+            .get_ref()
+            .univariate_polynomial_into(polynomial);
+
+        let mut rhs_poly = self.rhs_eval_poly.borrow_mut();
+        rhs_poly.set_zero();
+        self.rhs_sumcheck
+            .get_ref()
+            .univariate_polynomial_into(&mut rhs_poly);
+        add_poly_in_place(polynomial, &rhs_poly);
+    }
+
     fn univariate_polynomial_at_point_into(
         &self,
         point: HypercubePoint,

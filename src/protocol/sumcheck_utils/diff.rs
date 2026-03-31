@@ -19,9 +19,11 @@ pub struct DiffSumcheck<E: SumcheckElement = RingElement> {
     pub lhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
     pub rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
 
-    lhs_eval_poly: RefCell<Polynomial<E>>,
     rhs_eval_poly: RefCell<Polynomial<E>>,
     scratch_poly: RefCell<Polynomial<E>>,
+
+    // Cached constant difference when both children are constant at a point.
+    const_cache: RefCell<E>,
 }
 
 impl<E: SumcheckElement> DiffSumcheck<E> {
@@ -38,9 +40,9 @@ impl<E: SumcheckElement> DiffSumcheck<E> {
         DiffSumcheck {
             lhs_sumcheck,
             rhs_sumcheck,
-            lhs_eval_poly: RefCell::new(Polynomial::new(0)),
             rhs_eval_poly: RefCell::new(Polynomial::new(0)),
             scratch_poly: RefCell::new(Polynomial::new(0)),
+            const_cache: RefCell::new(E::zero()),
         }
     }
 }
@@ -77,12 +79,73 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
     }
 
     #[inline]
+    fn constant_univariate_polynomial_at_point_available_by_ref(
+        &self,
+        point: HypercubePoint,
+    ) -> Option<&Self::Element> {
+        let lhs_const = self
+            .lhs_sumcheck
+            .get_ref()
+            .constant_univariate_polynomial_at_point_available_by_ref(point);
+        let rhs_const = self
+            .rhs_sumcheck
+            .get_ref()
+            .constant_univariate_polynomial_at_point_available_by_ref(point);
+        match (lhs_const, rhs_const) {
+            (Some(lc), Some(rc)) => {
+                let cache = unsafe { &mut *self.const_cache.as_ptr() };
+                cache.set_from(lc);
+                *cache -= rc;
+                Some(cache)
+            }
+            // If only one side is constant and the other is zero, we can still
+            // propagate constants.
+            (Some(lc), None) => {
+                if self
+                    .rhs_sumcheck
+                    .get_ref()
+                    .is_univariate_polynomial_zero_at_point(point)
+                {
+                    Some(lc)
+                } else {
+                    None
+                }
+            }
+            (None, Some(_rc)) => {
+                // LHS is not constant; if it's zero, result is -rc, but we'd need
+                // to negate, which requires cache storage. Skip for now.
+                None
+            }
+            (None, None) => None,
+        }
+    }
+
+    /// Override: Σ_p (LHS(p) - RHS(p)) = Σ_p LHS(p) - Σ_p RHS(p).
+    ///
+    /// The default implementation iterates every half-hypercube point and
+    /// performs expensive constant-availability checks that traverse the entire
+    /// Product tree only to return `None`.  By delegating directly to each
+    /// child's `univariate_polynomial_into`, we let them handle their own
+    /// zero-skipping internally, eliminating redundant tree traversals.
+    fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
+        self.lhs_sumcheck
+            .get_ref()
+            .univariate_polynomial_into(polynomial);
+
+        let mut rhs_poly = self.rhs_eval_poly.borrow_mut();
+        rhs_poly.set_zero();
+        self.rhs_sumcheck
+            .get_ref()
+            .univariate_polynomial_into(&mut rhs_poly);
+        sub_poly_in_place(polynomial, &rhs_poly);
+    }
+
+    #[inline]
     fn univariate_polynomial_at_point_into(
         &self,
         point: HypercubePoint,
         polynomial: &mut Polynomial<E>,
     ) {
-        let _lhs_eval_poly = self.lhs_eval_poly.borrow_mut();
         let lhs_sumcheck = &self.lhs_sumcheck;
         if !lhs_sumcheck
             .get_ref()

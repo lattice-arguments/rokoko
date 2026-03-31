@@ -143,6 +143,22 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
         self.variable_count
     }
 
+    fn as_data_slices(&self) -> Option<(&[Self::Element], &[Self::Element])> {
+        // Only provide slices when there are no prefix/suffix complications
+        // and we have real two-half data.
+        if self.variable_count > self.data.len().trailing_zeros() as usize + self.suffix {
+            return None;
+        }
+        if self.data.len() <= 1 {
+            return None;
+        }
+        if self.suffix > 0 {
+            return None;
+        }
+        let half = self.data.len() / 2;
+        Some((&self.data[..half], &self.data[half..]))
+    }
+
     fn final_evaluations_test_only(&self) -> Self::Element {
         if self.data.len() != 1 {
             panic!("Sumcheck is not fully evaluated yet");

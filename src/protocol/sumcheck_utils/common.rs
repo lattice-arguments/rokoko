@@ -74,6 +74,28 @@ pub trait HighOrderSumcheckData {
         None
     }
 
+    /// Expose the raw data as (low_half, high_half) slices for batched
+    /// inner-product computation.  Only `LinearSumcheck` with no prefix/suffix
+    /// variables overrides this.
+    fn as_data_slices(&self) -> Option<(&[Self::Element], &[Self::Element])> {
+        None
+    }
+
+    /// Return the contiguous half-hypercube range `[start, end)` outside which
+    /// `is_univariate_polynomial_zero_at_point` is guaranteed to return `true`.
+    /// Nodes that carry a sparse selector (e.g. `SelectorEq`) override this so
+    /// that callers can iterate only the relevant points.
+    fn non_zero_range(&self) -> Option<(usize, usize)> {
+        None
+    }
+
+    /// When `bypass = true`, per-point cache stores in
+    /// `univariate_polynomial_at_point_into` are skipped.  Used by
+    /// `univariate_polynomial_into` during sweeps where each point is visited
+    /// once and the cache would never hit.  Implementations that maintain a
+    /// per-point cache should override this and propagate to children.
+    fn set_cache_bypass(&self, _bypass: bool) {}
+
     fn final_evaluations_test_only(&self) -> Self::Element;
 }
 

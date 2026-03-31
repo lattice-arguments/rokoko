@@ -24,6 +24,8 @@ pub struct Combiner<E: SumcheckElement = RingElement> {
     challenges: Vec<E>,
     temp_poly: RefCell<Polynomial<E>>,
     scratch_poly: RefCell<Polynomial<E>>,
+    // Scratch space for the output-first loop in univariate_polynomial_into.
+    output_poly: RefCell<Polynomial<E>>,
 }
 
 impl<E: SumcheckElement> Combiner<E> {
@@ -39,6 +41,7 @@ impl<E: SumcheckElement> Combiner<E> {
             challenges: E::allocate_zero_vec(sumchecks_len),
             scratch_poly: RefCell::new(super::polynomial::Polynomial::new(0)),
             temp_poly: RefCell::new(super::polynomial::Polynomial::new(0)),
+            output_poly: RefCell::new(super::polynomial::Polynomial::new(0)),
         }
     }
 
@@ -77,6 +80,39 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
 
     fn get_scratch_poly(&self) -> &RefCell<super::polynomial::Polynomial<E>> {
         &self.scratch_poly
+    }
+
+    /// Instead of the default point-first loop (iterate H half-hypercube points,
+    /// and for each point iterate all N outputs with an is_zero check), we flip
+    /// the loop order: iterate outputs first, let each output compute its own
+    /// full univariate polynomial, scale by the batching challenge, accumulate.
+    ///
+    /// This matters because (a) the point-first path does N*H ~3M vtable
+    /// dispatches for is_zero alone (N=48, H=65536), and (b) flipping the order
+    /// lets each child's univariate_polynomial_into override fire -- that's
+    /// where the batched Karatsuba, algebraic delegation, non_zero_range
+    /// skipping etc. live. Without this, the default path only ever calls
+    /// univariate_polynomial_at_point_into, so those bulk overrides never fire.
+    fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<E>) {
+        polynomial.set_zero();
+        polynomial.num_coefficients = 0;
+
+        let mut output_poly = self.output_poly.borrow_mut();
+
+        for (sumcheck, challenge) in self.sumchecks.iter().zip(self.challenges.iter()) {
+            output_poly.set_zero();
+            output_poly.num_coefficients = 0;
+
+            sumcheck
+                .get_ref()
+                .univariate_polynomial_into(&mut output_poly);
+
+            // Scale by the batching challenge and accumulate
+            for j in 0..output_poly.num_coefficients {
+                output_poly.coefficients[j] *= challenge;
+            }
+            add_poly_in_place(polynomial, &output_poly);
+        }
     }
 
     #[inline]

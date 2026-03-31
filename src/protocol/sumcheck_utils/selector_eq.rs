@@ -71,6 +71,19 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SelectorEq<E> {
         self.total_variable_count
     }
 
+    #[inline]
+    fn constant_univariate_polynomial_at_point_available_by_ref(
+        &self,
+        _point: HypercubePoint,
+    ) -> Option<&Self::Element> {
+        if self.selector_variable_count == 0 {
+            // All selector bits consumed; the function is a constant equal to
+            // the accumulated claim for every point in the remaining hypercube.
+            return Some(&self.current_claim);
+        }
+        None
+    }
+
     fn is_univariate_polynomial_zero_at_point(&self, point: HypercubePoint) -> bool {
         if self.selector_variable_count == 0 {
             return false; // now we have a constant function
@@ -81,6 +94,19 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SelectorEq<E> {
 
         let selector_bits = self.selector & ((1 << self.selector_variable_count - 1) - 1); // mask to get only the relevant bits
         point_higher_bits.coordinates != selector_bits
+    }
+
+    fn non_zero_range(&self) -> Option<(usize, usize)> {
+        if self.selector_variable_count == 0 {
+            return None; // constant → non-zero everywhere
+        }
+        // Non-zero points: those where the upper bits (below the current
+        // variable) match `selector_bits`.
+        let selector_bits = self.selector & ((1 << (self.selector_variable_count - 1)) - 1);
+        let shift = self.total_variable_count - self.selector_variable_count;
+        let start = selector_bits << shift;
+        let end = (selector_bits + 1) << shift;
+        Some((start, end))
     }
 
     fn univariate_polynomial_at_point_into(
