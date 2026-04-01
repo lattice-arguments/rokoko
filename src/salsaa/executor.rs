@@ -2987,7 +2987,7 @@ pub fn verifier_round(
                     );
                 }
             }
-            println!("Projection image consistency check passed");
+            println!("Projection image consistency ct check passed");
         }
     }
 
