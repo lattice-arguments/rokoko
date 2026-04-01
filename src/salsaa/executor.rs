@@ -59,8 +59,8 @@ use crate::{
 
 const DEBUG: bool = true;
 
-// 2^7 (degree) * 2^{19} (witness height) * 2 (witness width) = 2^27
-const WITNESS_DIM: usize = 2usize.pow(14);
+// const WITNESS_DIM: usize = 2usize.pow(14);
+const WITNESS_DIM: usize = 2usize.pow(19); // most can fit on 64 GB
 const WITNESS_WIDTH: usize = 2usize;
 const RANK: usize = 8;
 
@@ -514,50 +514,47 @@ pub struct ProverSumcheckContext {
 
 // VDF sumcheck: we prove that M · w = b where M is the VDF matrix and b = (-y_0, 0, ..., 0, y_t).
 //
-// The VDF matrix has the structure:
-// |-----------------|      | ------- |
-// | g               |      |  -y_0   |
-// | a g             |      |    0    |
-// |   a g           |      |    0    |
-// |     a g         |      |    0    |
-// |       a g       |  w = |    0    |
-// |         a g     |      |    0    |
-// |           a g   |      |    0    |
-// |             a g |      |    0    |
-// |               a |      |   y_t   |
-// |-----------------|      | ------- |
+// A is a VDF_MATRIX_HEIGHT × VDF_MATRIX_WIDTH CRS matrix.
+// G = I_{VDF_MATRIX_HEIGHT} ⊗ g^T is the gadget matrix (block-diagonal binary decomposition).
+//   G is VDF_MATRIX_HEIGHT × VDF_MATRIX_WIDTH, where VDF_MATRIX_WIDTH = VDF_BITS * VDF_MATRIX_HEIGHT.
+//   Each block row r of G has g^T = (1, 2, 4, ..., 2^{VDF_BITS-1}) in columns [r*VDF_BITS..(r+1)*VDF_BITS) and zeros elsewhere.
 //
-// where w = (w_0 // w_1) i.e. the columns are stacked (matching our vertical memory alignment).
+// Per VDF step, the matrix block involves G and A, each with VDF_MATRIX_HEIGHT rows.
+// The step stride VDF_STRIDE = VDF_MATRIX_HEIGHT ensures that A-powers for step i
+// overlap with G-powers for step i+1, yielding a telescoping claim.
 //
-// We batch the rows with challenge powers (vdf_step_powers)^T = (1, c, c^2, ..., c^{2K}):
+// The full VDF matrix has the structure:
+//   |------------------|      |-------- |
+//   | G                |      | -y_0    |   <- G · w_0 = -y_0  (HEIGHT rows)
+//   | A  G             |      |  0      |   <- A · w_0 + G · w_1 = 0  (HEIGHT rows each)
+//   |    A  G          |      |  0      |
+//   |       A  G       |  w = |  0      |
+//   |          ...     |      |  ...    |
+//   |           A  G   |      |  0      |
+//   |              A   |      |  y_t    |   <- A · w_{last} = y_t  (HEIGHT rows)
+//   |------------------|      |-------- |
 //
-//                |-----------------|                         | ------- |
-//                | g               |                         |  -y_0   |
-//                | a g             |                         |    0    |
-//                |   a g           |                         |    0    |
-//                |     a g         |                         |    0    |
-//  step_powers^T |       a g       |  w = step_powers^T      |    0    |
-//                |         a g     |                         |    0    |
-//                |           a g   |                         |    0    |
-//                |             a g |                         |    0    |
-//                |               a |                         |   y_t   |
-//                |-----------------|                         | ------- |
+// where y_0, y_t ∈ R^{VDF_MATRIX_HEIGHT} and w = (w_0 // w_1) (columns stacked vertically).
 //
-// We factor this into two vectors:
-//   vdf_batched_row^T = (1, c) ⊗ (g // a)
-//     = [2^0 + c·a_0, 2^1 + c·a_1, ..., 2^63 + c·a_63]  (batched matrix column)
-//   vdf_step_powers^T = (1, c, c^2, ..., c^{2K-1})  (challenge powers weighting each step)
+// We batch all rows with consecutive powers of challenge c.
+// VDF_STRIDE = HEIGHT, so step i uses G-powers c^{HEIGHT*i}..c^{HEIGHT*i + HEIGHT-1}
+// and A-powers c^{HEIGHT*(i+1)}..c^{HEIGHT*(i+1) + HEIGHT-1} (which overlap with G of step i+1).
+// This overlap makes intermediate y values telescope in the batched claim.
+//
+// We factor this into:
+//   vdf_batched_row[j] = sum_{r=0}^{HEIGHT-1} c^r · G[r,j] + sum_{r=0}^{HEIGHT-1} c^{HEIGHT+r} · A[r,j]
+//     For j in [r*VDF_BITS..(r+1)*VDF_BITS): G[r,j] = 2^{j - r*VDF_BITS}, other G rows are 0.
+//     So: vdf_batched_row[j] = c^{j/VDF_BITS} · 2^{j%VDF_BITS} + sum_{r=0}^{HEIGHT-1} c^{HEIGHT+r} · A[r,j]
+//   vdf_step_powers[i] = c^{VDF_STRIDE * i}  for i = 0..2K-1
 //
 // So the batched relation becomes:
-//   (vdf_step_powers^T ⊗ vdf_batched_row^T) · w = -y_0 + c^{2K} · y_t
+//   (vdf_step_powers ⊗ vdf_batched_row) · w = sum_{r=0}^{HEIGHT-1} c^r · (-y_0[r]) + c^{VDF_STRIDE*2K+r} · y_t[r]
 //
-// All of the logic generalises to any t that is a power of two (i.e. WITNESS_DIM * 2).
-// The full product (vdf_step_powers ⊗ vdf_batched_row) is one sumcheck for the prover.
 // For the verifier:
-//   - MLE[vdf_batched_row] evaluation is one small sumcheck (64 elements)
+//   - MLE[vdf_batched_row] evaluation is a small sumcheck (VDF_MATRIX_WIDTH elements)
 //   - MLE[vdf_step_powers] evaluation is efficient via the tensor structure:
-//     vdf_step_powers = (1, c^{t/2}) ⊗ (1, c^{t/4}) ⊗ ... ⊗ (1, c)
-//     MLE[vdf_step_powers](x) = prod_i ((1-x_i) + x_i · c^{t/2^{i+1}})
+//     vdf_step_powers[i] = c^{VDF_STRIDE*i}, so MLE = prod_k ((1-x_k) + x_k · c^{VDF_STRIDE * 2^{n-1-k}})
+//     with iterative squaring: c_power starts at c^{VDF_STRIDE} and squares each step.
 
 pub struct VDFProverSumcheckContext {
     pub vdf_step_powers_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
@@ -1273,28 +1270,50 @@ impl ProverSumcheckContext {
             let c = vdf_challenge.expect("VDF sumcheck enabled but no vdf_challenge provided");
             let vdf_crs_ref = vdf_crs_param.expect("VDF sumcheck enabled but no vdf_crs provided");
 
-            // Compute vdf_batched_row[j] = 2^j + c * a_j for j = 0..63
-            // (2^j reduced mod q since RingElement::constant doesn't reduce)
+            // Compute vdf_batched_row[j] for j = 0..VDF_MATRIX_WIDTH-1:
+            //   vdf_batched_row[j] = c^{j/VDF_BITS} · 2^{j%VDF_BITS} + sum_{r=0}^{HEIGHT-1} c^{HEIGHT+r} · A[r,j]
+            // The G contribution: block row (j/VDF_BITS) contributes 2^{j%VDF_BITS} with weight c^{j/VDF_BITS}.
+            // The A contribution: each row r contributes A[r,j] with weight c^{HEIGHT+r}.
             let mut batched_row: Vec<RingElement> = Vec::with_capacity(VDF_MATRIX_WIDTH);
-            let mut ca_j = RingElement::zero(Representation::IncompleteNTT);
+            // Precompute c powers: c^0, c^1, ..., c^{2*HEIGHT-1}
+            // (G uses c^0..c^{HEIGHT-1}, A uses c^{HEIGHT}..c^{2*HEIGHT-1})
+            let num_local_powers = 2 * VDF_MATRIX_HEIGHT;
+            let mut c_powers: Vec<RingElement> = Vec::with_capacity(num_local_powers);
+            c_powers.push(RingElement::constant(1, Representation::IncompleteNTT));
+            for _ in 1..num_local_powers {
+                let prev = c_powers.last().unwrap().clone();
+                c_powers.push(&prev * c);
+            }
+            let mut temp_a = RingElement::zero(Representation::IncompleteNTT);
             for j in 0..VDF_MATRIX_WIDTH {
+                let block = j / VDF_BITS;
+                let bit = j % VDF_BITS;
+                // G contribution: c^{block} · 2^{bit}
                 let mut row_j =
-                    RingElement::constant((1u64 << j) % MOD_Q, Representation::IncompleteNTT);
-                ca_j *= (c, &vdf_crs_ref.A[(0, j)]);
-                row_j += &ca_j;
+                    RingElement::constant((1u64 << bit) % MOD_Q, Representation::IncompleteNTT);
+                row_j *= &c_powers[block];
+                // A contributions: sum_{r=0}^{HEIGHT-1} c^{HEIGHT+r} · A[r,j]
+                for r in 0..VDF_MATRIX_HEIGHT {
+                    temp_a *= (&c_powers[VDF_MATRIX_HEIGHT + r], &vdf_crs_ref.A[(r, j)]);
+                    row_j += &temp_a;
+                }
                 batched_row.push(row_j);
             }
             vdf.vdf_batched_row_sumcheck
                 .borrow_mut()
                 .load_from(&batched_row);
 
-            // Compute vdf_step_powers[i] = c^i for i = 0..2K
+            // Compute vdf_step_powers[i] = c^{VDF_STRIDE * i} for i = 0..2K-1
             let two_k = witness.len() / 2 / VDF_MATRIX_WIDTH;
+            let mut c_stride = RingElement::constant(1, Representation::IncompleteNTT);
+            for _ in 0..VDF_STRIDE {
+                c_stride *= c;
+            }
             let mut step_powers: Vec<RingElement> = Vec::with_capacity(two_k);
             let mut c_power = RingElement::constant(1, Representation::IncompleteNTT);
             for _ in 0..two_k {
                 step_powers.push(c_power.clone());
-                c_power *= c;
+                c_power *= &c_stride;
             }
             vdf.vdf_step_powers_sumcheck
                 .borrow_mut()
@@ -1312,7 +1331,11 @@ pub fn prover_round(
     claims: &HorizontallyAlignedMatrix<RingElement>,
     // evaluation_points_outer: &Vec<StructuredRow>,
     hash_wrapper: &mut HashWrapper,
-    vdf_params: Option<(&RingElement, &RingElement, &vdf_crs)>, // (y_0, y_t, crs) - only for first round
+    vdf_params: Option<(
+        &[RingElement; VDF_MATRIX_HEIGHT],
+        &[RingElement; VDF_MATRIX_HEIGHT],
+        &vdf_crs,
+    )>, // (y_0, y_t, crs) - only for first round
 ) -> SalsaaProof {
     let (projection_matrix, projection_commitment, projected_witness, batching_challenges) =
         match config {
@@ -2623,7 +2646,9 @@ impl VerifierSumcheckContext {
         evaluation_points_outer: &[RingElement],
         batching_challenges: &Option<BatchingChallenges>,
         projection_matrix: &Option<ProjectionMatrix>,
-        projection_challenges_unstructured: &Option<[BatchedProjectionChallengesSuccinct; NOF_BATCHES]>,
+        projection_challenges_unstructured: &Option<
+            [BatchedProjectionChallengesSuccinct; NOF_BATCHES],
+        >,
         combination: &[RingElement],
         qe: [QuadraticExtension; HALF_DEGREE],
         vdf_challenge: Option<&RingElement>,
@@ -2734,9 +2759,9 @@ impl VerifierSumcheckContext {
         }
 
         if let Some(type31_evals) = &mut self.type31evaluations {
-            let challenges = projection_challenges_unstructured.as_ref().expect(
-                "Missing projection challenges for type 3.1 verifier sumcheck",
-            );
+            let challenges = projection_challenges_unstructured
+                .as_ref()
+                .expect("Missing projection challenges for type 3.1 verifier sumcheck");
             for (batch_idx, type31_eval) in type31_evals.iter_mut().enumerate() {
                 let c_0_structured = StructuredRow {
                     tensor_layers: challenges[batch_idx]
@@ -2772,15 +2797,27 @@ impl VerifierSumcheckContext {
             let vdf_crs_ref =
                 vdf_crs_param.expect("VDF evaluation enabled but no vdf_crs provided");
 
-            // Compute vdf_batched_row[j] = 2^j + c * a_j for j = 0..63
-            // (2^j reduced mod q since RingElement::constant doesn't reduce)
+            // Compute vdf_batched_row[j] for j = 0..VDF_MATRIX_WIDTH-1:
+            //   vdf_batched_row[j] = c^{j/VDF_BITS} · 2^{j%VDF_BITS} + Σ_{r} c^{HEIGHT+r} · A[r,j]
             let mut batched_row: Vec<RingElement> = Vec::with_capacity(VDF_MATRIX_WIDTH);
-            let mut ca_j = RingElement::zero(Representation::IncompleteNTT);
+            let num_local_powers = 2 * VDF_MATRIX_HEIGHT;
+            let mut c_powers: Vec<RingElement> = Vec::with_capacity(num_local_powers);
+            c_powers.push(RingElement::constant(1, Representation::IncompleteNTT));
+            for _ in 1..num_local_powers {
+                let prev = c_powers.last().unwrap().clone();
+                c_powers.push(&prev * c);
+            }
+            let mut temp_a = RingElement::zero(Representation::IncompleteNTT);
             for j in 0..VDF_MATRIX_WIDTH {
+                let block = j / VDF_BITS;
+                let bit = j % VDF_BITS;
                 let mut row_j =
-                    RingElement::constant((1u64 << j) % MOD_Q, Representation::IncompleteNTT);
-                ca_j *= (c, &vdf_crs_ref.A[(0, j)]);
-                row_j += &ca_j;
+                    RingElement::constant((1u64 << bit) % MOD_Q, Representation::IncompleteNTT);
+                row_j *= &c_powers[block];
+                for r in 0..VDF_MATRIX_HEIGHT {
+                    temp_a *= (&c_powers[VDF_MATRIX_HEIGHT + r], &vdf_crs_ref.A[(r, j)]);
+                    row_j += &temp_a;
+                }
                 batched_row.push(row_j);
             }
             vdf_eval
@@ -2788,22 +2825,24 @@ impl VerifierSumcheckContext {
                 .borrow_mut()
                 .load_from(&batched_row);
 
-            // Compute MLE[vdf_step_powers](x) = prod_i ((1-x_i) + x_i * c^{2^i})
-            // step_powers variables: skip prefix=1 (MSB column selector), take log2(2K) vars
+            // Compute MLE[vdf_step_powers](x) where step_powers[i] = c^{VDF_STRIDE * i}
+            // MLE = prod_k ((1-x_k) + x_k · (c^{VDF_STRIDE})^{2^{n-1-k}})
+            // We iterate in reverse with c_power starting at c^{VDF_STRIDE} and squaring.
             let two_k = config.extended_witness_length / 2 / VDF_MATRIX_WIDTH;
             let step_powers_num_vars = two_k.ilog2() as usize;
             let prefix = 1usize; // MSB selector bit (column selector)
             let step_powers_vars = &evaluation_points_ring[prefix..prefix + step_powers_num_vars];
 
-            // Variables are MSB-first: step_powers_vars[0] = MSB of step index.
-            // MLE[vdf_step_powers](x) = prod_i [(1-x_i) + x_i * c^{2^{n-1-i}}]
-            // Iterate in reverse so c_power starts at c^{2^0} and pairs with LSB.
             let mut mle_step_powers = RingElement::constant(1, Representation::IncompleteNTT);
-            let mut c_power = c.clone(); // c^{2^0} = c
+            // c_power starts at c^{VDF_STRIDE} (not c^1)
+            let mut c_power = RingElement::constant(1, Representation::IncompleteNTT);
+            for _ in 0..VDF_STRIDE {
+                c_power *= c;
+            }
             let mut temp_sq = RingElement::zero(Representation::IncompleteNTT);
             let mut term = RingElement::zero(Representation::IncompleteNTT);
             for x_i in step_powers_vars.iter().rev() {
-                // factor = (1 - x_i) + x_i * c^{2^k}
+                // factor = (1 - x_i) + x_i * c_power
                 let mut factor = &*ONE - x_i;
                 term *= (x_i, &c_power);
                 factor += &term;
@@ -2869,7 +2908,10 @@ pub fn verifier_round(
     claims: &HorizontallyAlignedMatrix<RingElement>,
     hash_wrapper: &mut HashWrapper,
     vdf_crs_param: Option<&vdf_crs>,
-    vdf_outputs: Option<(&RingElement, &RingElement)>, // (y_0, y_t) - only for first round
+    vdf_outputs: Option<(
+        &[RingElement; VDF_MATRIX_HEIGHT],
+        &[RingElement; VDF_MATRIX_HEIGHT],
+    )>, // (y_0, y_t) - only for first round
     round_index: usize,
 ) {
     let round_start = std::time::Instant::now();
@@ -2978,8 +3020,7 @@ pub fn verifier_round(
                             );
                         }
                     }
-                    let ct =
-                        projection_image_batched[(i, k)].constant_term_from_incomplete_ntt();
+                    let ct = projection_image_batched[(i, k)].constant_term_from_incomplete_ntt();
                     assert_eq!(
                         ct, expected_ct,
                         "Projection constant term consistency check failed at batch {}, column {}",
@@ -3050,12 +3091,13 @@ pub fn verifier_round(
             projection_image_batched,
             ..
         } => {
-            let challenges = projection_challenges_unstructured.as_ref().expect(
-                "Missing projection challenges for type31 claims",
-            );
+            let challenges = projection_challenges_unstructured
+                .as_ref()
+                .expect("Missing projection challenges for type31 claims");
             let mut claims_vec = Vec::with_capacity(NOF_BATCHES);
             for batch_idx in 0..NOF_BATCHES {
-                let c_2_values = precompute_structured_values_fast(&challenges[batch_idx].c_2_layers);
+                let c_2_values =
+                    precompute_structured_values_fast(&challenges[batch_idx].c_2_layers);
                 let mut claim = RingElement::zero(Representation::IncompleteNTT);
                 let mut temp = RingElement::zero(Representation::IncompleteNTT);
                 for k in 0..projection_image_batched.width {
@@ -3632,11 +3674,15 @@ pub fn verifier_round(
     }
 }
 
-/// Computes ip_vdf_claim = -y_0 + c^{2K} * y_t from the VDF challenge and outputs.
+/// Computes ip_vdf_claim = Σ_r c^r·(-y_0[r]) + c^{VDF_STRIDE·2K+r}·y_t[r] from the VDF challenge and outputs.
 fn compute_ip_vdf_claim(
     config: &RoundConfig,
     vdf_challenge: Option<&RingElement>,
-    vdf_params: Option<(&RingElement, &RingElement, &vdf_crs)>,
+    vdf_params: Option<(
+        &[RingElement; VDF_MATRIX_HEIGHT],
+        &[RingElement; VDF_MATRIX_HEIGHT],
+        &vdf_crs,
+    )>,
 ) -> Option<RingElement> {
     if !config.vdf {
         return None;
@@ -3644,18 +3690,42 @@ fn compute_ip_vdf_claim(
     let c = vdf_challenge.expect("VDF enabled but no challenge");
     let (y_0, y_t, _) = vdf_params.expect("VDF enabled but no params");
     let two_k = config.extended_witness_length / 2 / VDF_MATRIX_WIDTH;
-    let mut c_power = RingElement::constant(1, Representation::IncompleteNTT);
+
+    // Compute c^{VDF_STRIDE * 2K}
+    let mut c_stride = RingElement::constant(1, Representation::IncompleteNTT);
+    for _ in 0..VDF_STRIDE {
+        c_stride *= c;
+    }
+    let mut c_stride_2k = RingElement::constant(1, Representation::IncompleteNTT);
     for _ in 0..two_k {
+        c_stride_2k *= &c_stride;
+    }
+
+    // claim = Σ_r c^r · (-y_0[r]) + Σ_r c^{VDF_STRIDE·2K + r} · y_t[r]
+    let mut claim = RingElement::zero(Representation::IncompleteNTT);
+    let mut c_power = RingElement::constant(1, Representation::IncompleteNTT); // c^r
+    let mut temp = RingElement::zero(Representation::IncompleteNTT);
+    for r in 0..VDF_MATRIX_HEIGHT {
+        // -c^r · y_0[r]
+        temp *= (&c_power, &y_0[r]);
+        claim -= &temp;
+        // c^{VDF_STRIDE·2K + r} · y_t[r]
+        temp *= (&c_stride_2k, &c_power); // temp = c^{VDF_STRIDE*2K + r}
+        let mut weighted_yt = temp.clone();
+        weighted_yt *= &y_t[r];
+        claim += &weighted_yt;
         c_power *= c;
     }
-    let mut claim = y_0.negate();
-    c_power *= y_t;
-    claim += &c_power;
     Some(claim)
 }
 
-const VDF_MATRIX_WIDTH: usize = 64;
-const VDF_MATRIX_HEIGHT: usize = 1;
+const VDF_MATRIX_HEIGHT: usize = 4;
+const VDF_BITS: usize = 64;
+const VDF_MATRIX_WIDTH: usize = VDF_BITS * VDF_MATRIX_HEIGHT;
+/// Step stride for c-powers: consecutive steps are spaced VDF_MATRIX_HEIGHT apart.
+/// Within each step, G uses c^{0..HEIGHT-1} and A uses c^{HEIGHT..2*HEIGHT-1}.
+/// A-powers for step i overlap with G-powers for step i+1, giving telescoping.
+const VDF_STRIDE: usize = VDF_MATRIX_HEIGHT;
 pub struct vdf_crs {
     A: HorizontallyAlignedMatrix<RingElement>,
 }
@@ -3725,55 +3795,25 @@ pub fn decompose_binary_into(element: &RingElement, target: &mut [RingElement]) 
 }
 
 pub struct VDFOutput {
-    y_int: RingElement, // TODO: this y_int is not needed but let's keep it for now
-    y_t: RingElement,
+    y_int: [RingElement; VDF_MATRIX_HEIGHT], // TODO: this y_int is not needed but let's keep it for now
+    y_t: [RingElement; VDF_MATRIX_HEIGHT],
     trace_witness: VerticallyAlignedMatrix<RingElement>,
 }
-pub fn execute_vdf(y_0: &RingElement, dim: usize, vdf_crs: &vdf_crs) -> VDFOutput {
+pub fn execute_vdf(
+    y_0: &[RingElement; VDF_MATRIX_HEIGHT],
+    dim: usize,
+    vdf_crs: &vdf_crs,
+) -> VDFOutput {
     let vdf_crs_ref = vdf_crs;
 
-    // g = (1, 2, 4, .., 2^63)
-    // we want to obtain the following form
+    // VDF with G = I_{HEIGHT} ⊗ g^T (gadget) and A (HEIGHT × WIDTH CRS matrix).
     //
-    // |-----------------|      | ------- |
-    // | g               |      |  -y_0   |
-    // | a g             |      |    0    |
-    // |   a g           |      |    0    |
-    // |     a g         |      |    0    |
-    // |       a g       |  w = |    0    |
-    // |         a g     |      |    0    |
-    // |           a g   |      |    0    |
-    // |             a g |      |    0    |
-    // |               a |      |   y_t   |
-    // |-----------------|      | ------- |
-    // t = 8
-    // and in VDF we compute it like
-    // w_0 = g^{-1} (-y_0)
-    // (a g) * (w_0 || w_1) = 0
-    // a w_0 = - g w_1
-    // w_1 = g^{-1} (- a w_0) and we call y_1 = a w_0
-    // w_2 = g^{-1} (- a w_1) and we call y_2 = a w_1
-    // w_3 = g^{-1} (- a w_2) and we call y_3 = a w_2
-    // w_4 = g^{-1} (- a w_3) and we call y_4 = a w_3
-    // w_5 = g^{-1} (- a w_4) and we call y_5 = a w_4
-    // w_6 = g^{-1} (- a w_5) and we call y_6 = a w_5
-    // w_7 = g^{-1} (- a w_6) and we call y_7 = a w_6
-    // y_8 = a w_7
-
-    // |---------|    |---------|     |--------------|
-    // | g       |    | w_0 w_4 |     | -y_0   -y_4  |
-    // | a g     |    | w_1 w_5 |     |   0     0    |
-    // |   a g   |  * | w_2 w_6 |   = |   0     0    |
-    // |     a g |    | w_3 w_7 |     |   0     0    |
-    // |       a |    |---------|     |  y_4   y_8   |
-    // |---------|                    |--------------|
-
-    // we call y_int = y_4
-    // then we can split the wintess witness into two cols
+    // Per step:
+    //   w_step = G^{-1}(-y_step)   — decompose each component of y_step into VDF_BITS binary planes
+    //   y_{step+1} = A · w_step    — full matrix-vector product giving HEIGHT outputs
     //
-    // This intuition naturally generalises to any t = 2^k,
-    // i.e. t = WITNESS_DIM/64*2 (2 columns, 64 for decomposition)
-    //
+    // The witness is split into two columns (matching vertical memory alignment).
+    // y_int is the intermediate value at the column boundary.
 
     let mut trace_witness = VerticallyAlignedMatrix {
         height: dim,
@@ -3785,39 +3825,56 @@ pub fn execute_vdf(y_0: &RingElement, dim: usize, vdf_crs: &vdf_crs) -> VDFOutpu
     let steps_per_col = dim / VDF_MATRIX_WIDTH;
     let total_steps = steps_per_col * 2;
 
-    let mut neg_y = y_0.negate();
-    let mut y_int = RingElement::zero(Representation::IncompleteNTT);
+    let mut neg_y: [RingElement; VDF_MATRIX_HEIGHT] = std::array::from_fn(|r| y_0[r].negate());
+    let mut y_int: [RingElement; VDF_MATRIX_HEIGHT] =
+        std::array::from_fn(|_| RingElement::zero(Representation::IncompleteNTT));
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
 
-    println!("Executing VDF with {} steps", total_steps);
+    println!("Executing delay function with {} steps", total_steps);
+    // y_{step+1} = A · w_step: full matrix-vector product
+    let mut y_next: [RingElement; VDF_MATRIX_HEIGHT] =
+        std::array::from_fn(|_| RingElement::zero(Representation::IncompleteNTT));
+    let vdf_start = std::time::Instant::now();
     for step in 0..total_steps {
         let col = step / steps_per_col;
         let row_in_col = step % steps_per_col;
         let base_row = row_in_col * VDF_MATRIX_WIDTH;
 
-        // w_step = g^{-1}(-y_step) = decompose_binary(-y_step)
-        // Write directly into the trace_witness column-major slice
+        // w_step = G^{-1}(-y_step): decompose each component into VDF_BITS binary planes
         let data_offset = col * dim + base_row;
-        decompose_binary_into(
-            &neg_y,
-            &mut trace_witness.data[data_offset..data_offset + VDF_MATRIX_WIDTH],
-        );
+        for r in 0..VDF_MATRIX_HEIGHT {
+            decompose_binary_into(
+                &neg_y[r],
+                &mut trace_witness.data
+                    [data_offset + r * VDF_BITS..data_offset + (r + 1) * VDF_BITS],
+            );
+        }
 
-        // y_{step+1} = <a, w_step> = sum_j a_j * bits[j]
-        let mut y_next = RingElement::zero(Representation::IncompleteNTT);
-        for j in 0..VDF_MATRIX_WIDTH {
-            temp *= (&vdf_crs_ref.A[(0, j)], &trace_witness.data[data_offset + j]);
-            y_next += &temp;
+        for r in 0..VDF_MATRIX_HEIGHT {
+            for j in 0..VDF_MATRIX_WIDTH {
+                temp *= (&vdf_crs_ref.A[(r, j)], &trace_witness.data[data_offset + j]);
+                if j == 0 {
+                    y_next[r].set_from(&temp);
+                } else {
+                    y_next[r] += &temp;
+                }
+            }
         }
 
         if step == steps_per_col - 1 {
             y_int = y_next.clone();
         }
 
-        neg_y = y_next.negate();
+        neg_y = std::array::from_fn(|r| y_next[r].negate());
     }
+    let vdf_duration = vdf_start.elapsed().as_micros();
+    println!("Delay function executed in {:?} µs", vdf_duration);
+    println!(
+        "Avg step time: {:?} µs",
+        vdf_duration as f64 / (total_steps as f64)
+    );
 
-    let y_t = neg_y.negate();
+    let y_t: [RingElement; VDF_MATRIX_HEIGHT] = std::array::from_fn(|r| neg_y[r].negate());
 
     VDFOutput {
         y_int,
@@ -3833,11 +3890,9 @@ pub fn execute() {
     let vdf_crs = vdf_init();
 
     println!("CRS generated. Starting execution...");
-    let vdf_start = std::time::Instant::now();
-    let y_0: RingElement = RingElement::random(Representation::IncompleteNTT); // TODO: from hash
+    let y_0: [RingElement; VDF_MATRIX_HEIGHT] =
+        std::array::from_fn(|_| RingElement::random(Representation::IncompleteNTT)); // TODO: from hash
     let vdf_output = execute_vdf(&y_0, WITNESS_DIM, &vdf_crs);
-    let vdf_duration = vdf_start.elapsed().as_millis();
-    println!("VDF executed in {:?} ms", vdf_duration);
 
     let mut sumcheck_context = init_prover_sumcheck(&crs, &CONFIG);
 
@@ -3973,86 +4028,105 @@ mod tests {
 
     /// Verify the matrix equation from execute_vdf:
     ///
-    /// | g       |    | w_0 w_K |     | -y_0   -y_int |
-    /// | a g     |    | w_1 ... |     |   0      0    |
-    /// |   a g   |  * | ...     |  =  |   0      0    |
-    /// |     a g |    | ...     |     |   0      0    |
-    /// |       a |    |---------|     |  y_int  y_t   |
+    /// | G       |    | w_0 w_K |     | -y_0   -y_int |
+    /// | A G     |    | w_1 ... |     |   0      0    |
+    /// |   A G   |  * | ...     |  =  |   0      0    |
+    /// |     A G |    | ...     |     |   0      0    |
+    /// |       A |    |---------|     |  y_int  y_t   |
     ///
-    /// where K = steps_per_col and g recomposes binary (sum_j 2^j * bit_j).
+    /// where K = steps_per_col and G = I_{HEIGHT} ⊗ g^T recomposes
+    /// each component independently via sum_j 2^j * bit_j.
     #[test]
     fn test_vdf_matrix_equation() {
-        let test_dim: usize = 1 << 12; // 4096, giving 2^6 = 64 steps per column
-        let y_0 = RingElement::random(Representation::IncompleteNTT);
+        let test_dim: usize = 1 << 12; // 4096, giving steps_per_col = 4096 / 128 = 32
+        let y_0: [RingElement; VDF_MATRIX_HEIGHT] =
+            std::array::from_fn(|_| RingElement::random(Representation::IncompleteNTT));
         let vdf_crs = vdf_init();
         let vdf_output = execute_vdf(&y_0, test_dim, &vdf_crs);
 
         let steps_per_col = test_dim / VDF_MATRIX_WIDTH;
         let w = &vdf_output.trace_witness;
 
-        // Helper: compute g * w_block = recompose binary = sum_j 2^j * w[(base+j, col)]
-        // We work in EvenOdd to do the weighted sum, then convert back.
-        let recompose = |base_row: usize, col: usize| -> RingElement {
-            let mut result = RingElement::zero(Representation::IncompleteNTT);
-            result.from_incomplete_ntt_to_even_odd_coefficients();
-            for j in 0..VDF_MATRIX_WIDTH {
-                let mut bit_copy = w[(base_row + j, col)].clone();
-                bit_copy.from_incomplete_ntt_to_even_odd_coefficients();
-                let shift = 1u64 << j;
-                for k in 0..DEGREE {
-                    result.v[k] = (result.v[k] + bit_copy.v[k] * shift) % MOD_Q;
+        // Helper: compute G * w_block where G = I_{HEIGHT} ⊗ g^T.
+        // Component r recomposes VDF_BITS bits starting at offset r * VDF_BITS.
+        let recompose = |base_row: usize, col: usize| -> [RingElement; VDF_MATRIX_HEIGHT] {
+            std::array::from_fn(|r| {
+                let mut result = RingElement::zero(Representation::IncompleteNTT);
+                result.from_incomplete_ntt_to_even_odd_coefficients();
+                for j in 0..VDF_BITS {
+                    let mut bit_copy = w[(base_row + r * VDF_BITS + j, col)].clone();
+                    bit_copy.from_incomplete_ntt_to_even_odd_coefficients();
+                    let shift = 1u64 << j;
+                    for k in 0..DEGREE {
+                        result.v[k] = (result.v[k] + bit_copy.v[k] * shift) % MOD_Q;
+                    }
                 }
-            }
-            result.from_even_odd_coefficients_to_incomplete_ntt_representation();
-            result
+                result.from_even_odd_coefficients_to_incomplete_ntt_representation();
+                result
+            })
         };
 
-        // Helper: compute a * w_block = <A[0], w_block> = sum_j A[(0,j)] * w[(base+j, col)]
-        let inner_product_a = |base_row: usize, col: usize| -> RingElement {
-            let mut result = RingElement::zero(Representation::IncompleteNTT);
-            let mut temp = RingElement::zero(Representation::IncompleteNTT);
-            for j in 0..VDF_MATRIX_WIDTH {
-                temp *= (&vdf_crs.A[(0, j)], &w[(base_row + j, col)]);
-                result += &temp;
-            }
-            result
+        // Helper: compute A * w_block where A is HEIGHT × WIDTH.
+        // Returns one ring element per row of A.
+        let inner_product_a = |base_row: usize, col: usize| -> [RingElement; VDF_MATRIX_HEIGHT] {
+            std::array::from_fn(|r| {
+                let mut result = RingElement::zero(Representation::IncompleteNTT);
+                let mut temp = RingElement::zero(Representation::IncompleteNTT);
+                for j in 0..VDF_MATRIX_WIDTH {
+                    temp *= (&vdf_crs.A[(r, j)], &w[(base_row + j, col)]);
+                    result += &temp;
+                }
+                result
+            })
         };
 
         let zero = RingElement::zero(Representation::IncompleteNTT);
 
         // Check both columns
-        let y_starts = [&y_0, &vdf_output.y_int];
-        let y_ends = [&vdf_output.y_int, &vdf_output.y_t];
+        let y_starts: [&[RingElement; VDF_MATRIX_HEIGHT]; 2] = [&y_0, &vdf_output.y_int];
+        let y_ends: [&[RingElement; VDF_MATRIX_HEIGHT]; 2] = [&vdf_output.y_int, &vdf_output.y_t];
 
         for col in 0..2 {
-            // First row: g * w_0 = -y_start
+            // First row: G * w_0 = -y_start
             let gw0 = recompose(0, col);
-            assert_eq!(
-                gw0,
-                y_starts[col].negate(),
-                "Column {}: g * w_0 != -y_start",
-                col
-            );
-
-            // Middle rows: a * w_i + g * w_{i+1} = 0
-            for i in 0..steps_per_col - 1 {
-                let aw_i = inner_product_a(i * VDF_MATRIX_WIDTH, col);
-                let gw_next = recompose((i + 1) * VDF_MATRIX_WIDTH, col);
-                let sum = &aw_i + &gw_next;
+            for r in 0..VDF_MATRIX_HEIGHT {
                 assert_eq!(
-                    sum,
-                    zero,
-                    "Column {}, row {}: a*w_{} + g*w_{} != 0",
+                    gw0[r],
+                    y_starts[col][r].negate(),
+                    "Column {}, component {}: G * w_0 != -y_start",
                     col,
-                    i + 1,
-                    i,
-                    i + 1
+                    r
                 );
             }
 
-            // Last row: a * w_{last} = y_end
+            // Middle rows: A * w_i + G * w_{i+1} = 0
+            for i in 0..steps_per_col - 1 {
+                let aw_i = inner_product_a(i * VDF_MATRIX_WIDTH, col);
+                let gw_next = recompose((i + 1) * VDF_MATRIX_WIDTH, col);
+                for r in 0..VDF_MATRIX_HEIGHT {
+                    let sum = &aw_i[r] + &gw_next[r];
+                    assert_eq!(
+                        sum,
+                        zero,
+                        "Column {}, step {}, component {}: A*w_{} + G*w_{} != 0",
+                        col,
+                        i + 1,
+                        r,
+                        i,
+                        i + 1
+                    );
+                }
+            }
+
+            // Last row: A * w_last = y_end
             let aw_last = inner_product_a((steps_per_col - 1) * VDF_MATRIX_WIDTH, col);
-            assert_eq!(aw_last, *y_ends[col], "Column {}: a * w_last != y_end", col);
+            for r in 0..VDF_MATRIX_HEIGHT {
+                assert_eq!(
+                    aw_last[r], y_ends[col][r],
+                    "Column {}, component {}: A * w_last != y_end",
+                    col, r
+                );
+            }
         }
     }
 }
