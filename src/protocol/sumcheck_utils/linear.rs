@@ -89,6 +89,11 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
         self.data.clone_from_slice(src);
         self.non_zero_end = non_zero_end;
     }
+
+    pub fn load_from_at_index(&mut self, src: &[E], index: usize) {
+        let len = src.len();
+        self.data[index..index + len].clone_from_slice(src);
+    }
 }
 
 impl<E: SumcheckElement> Index<HypercubePoint> for LinearSumcheck<E> {

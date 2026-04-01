@@ -21,6 +21,8 @@ use crate::common::{
 };
 
 pub fn init_common() {
+    seed_rng("Widziałem lotne w powietrzu bociany długim szeregiem");
+
     LazyLock::force(&SHIFT_FACTORS);
     LazyLock::force(&FIELD_SHIFT_FACTOR);
     LazyLock::force(&INV_HALF_DEGREE);

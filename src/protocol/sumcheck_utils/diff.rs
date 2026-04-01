@@ -146,6 +146,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
         point: HypercubePoint,
         polynomial: &mut Polynomial<E>,
     ) {
+        polynomial.set_zero();
         let lhs_sumcheck = &self.lhs_sumcheck;
         if !lhs_sumcheck
             .get_ref()

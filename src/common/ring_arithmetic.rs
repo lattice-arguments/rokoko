@@ -1,7 +1,7 @@
 use crate::common::config::*;
 use crate::hexl::bindings::*;
 use crate::protocol::config::SizeableProof;
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 use std::cell::RefCell;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};
 use std::sync::LazyLock;
@@ -26,8 +26,15 @@ pub struct RingElement {
 }
 
 thread_local! {
-    static RNG: RefCell<rand::rngs::ThreadRng> =
-        RefCell::new(rand::rng());
+    static RNG: RefCell<rand::rngs::StdRng> =
+        RefCell::new(rand::rngs::StdRng::from_os_rng());
+}
+
+pub fn seed_rng(seed: &str) {
+    let seed_bytes: [u8; 32] = *blake3::hash(seed.as_bytes()).as_bytes();
+    RNG.with(|cell| {
+        *cell.borrow_mut() = rand::rngs::StdRng::from_seed(seed_bytes);
+    });
 }
 
 impl RingElement {
@@ -129,6 +136,24 @@ impl RingElement {
                 MOD_Q,
             );
         }
+
+        element.to_representation(representation);
+
+        element
+    }
+
+    pub fn random_bounded_unsigned(representation: Representation, bound: u64) -> Self {
+        let mut element = Self {
+            v: [0; DEGREE],
+            representation: Representation::Coefficients,
+        };
+
+        RNG.with(|cell| {
+            let mut rng = cell.borrow_mut();
+            for i in 0..DEGREE {
+                element.v[i] = rng.random_range(0..bound);
+            }
+        });
 
         element.to_representation(representation);
 
@@ -445,6 +470,112 @@ impl RingElement {
     pub fn conjugate(&self) -> RingElement {
         let mut result = RingElement::new(self.representation);
         self.conjugate_into(&mut result);
+        result
+    }
+
+    pub fn negate(&self) -> RingElement {
+        let zero = RingElement::zero(self.representation);
+        &zero - self
+    }
+
+    // 1 us
+    pub fn inverse(&self) -> RingElement {
+        assert_eq!(
+            self.representation,
+            Representation::HomogenizedFieldExtensions
+        );
+
+        // Each slot is Z_q[X]/(X^2 - beta) where beta = FIELD_SHIFT_FACTOR.
+        // Slot i represents a_i + b_i*X with a_i = v[i], b_i = v[i + HALF_DEGREE].
+        // Inverse: (a + bX)^{-1} = (a - bX) / (a^2 - beta * b^2)
+        //
+        // We use Montgomery's batch inversion trick to compute all norm inverses
+        // with a single inv_mod call.
+
+        let beta = *FIELD_SHIFT_FACTOR;
+        let mut result = RingElement::new(Representation::HomogenizedFieldExtensions);
+
+        // Step 1: Compute norms n_i = a_i^2 - beta * b_i^2
+        let mut norms = [0u64; HALF_DEGREE];
+        let mut temp = [0u64; HALF_DEGREE];
+
+        unsafe {
+            // norms[i] = a_i^2
+            eltwise_mult_mod(
+                norms.as_mut_ptr(),
+                self.v.as_ptr(),
+                self.v.as_ptr(),
+                HALF_DEGREE as u64,
+                MOD_Q,
+            );
+
+            // temp[i] = b_i^2
+            eltwise_mult_mod(
+                temp.as_mut_ptr(),
+                self.v.as_ptr().add(HALF_DEGREE),
+                self.v.as_ptr().add(HALF_DEGREE),
+                HALF_DEGREE as u64,
+                MOD_Q,
+            );
+
+            // norms[i] = -beta * b_i^2 + a_i^2
+            eltwise_fma_mod(
+                norms.as_mut_ptr(),
+                temp.as_ptr(),
+                MOD_Q - beta,
+                norms.as_ptr(),
+                HALF_DEGREE as u64,
+                MOD_Q,
+            );
+        }
+
+        // Step 2: Montgomery batch inversion of norms
+        let mut prefix_products = [0u64; HALF_DEGREE];
+        prefix_products[0] = norms[0];
+        for i in 1..HALF_DEGREE {
+            prefix_products[i] = unsafe { multiply_mod(prefix_products[i - 1], norms[i], MOD_Q) };
+        }
+
+        let mut inv = unsafe { inv_mod(prefix_products[HALF_DEGREE - 1], MOD_Q) };
+
+        let mut norm_inverses = [0u64; HALF_DEGREE];
+        for i in (1..HALF_DEGREE).rev() {
+            norm_inverses[i] = unsafe { multiply_mod(inv, prefix_products[i - 1], MOD_Q) };
+            inv = unsafe { multiply_mod(inv, norms[i], MOD_Q) };
+        }
+        norm_inverses[0] = inv;
+
+        // Step 3: result = (a - bX) * n^{-1}
+        // result_even[i] = a_i * n_i^{-1}
+        // result_odd[i]  = -b_i * n_i^{-1}
+        unsafe {
+            eltwise_mult_mod(
+                result.v.as_mut_ptr(),
+                self.v.as_ptr(),
+                norm_inverses.as_ptr(),
+                HALF_DEGREE as u64,
+                MOD_Q,
+            );
+
+            eltwise_mult_mod(
+                result.v.as_mut_ptr().add(HALF_DEGREE),
+                self.v.as_ptr().add(HALF_DEGREE),
+                norm_inverses.as_ptr(),
+                HALF_DEGREE as u64,
+                MOD_Q,
+            );
+
+            // Negate the odd part: result_odd = 0 - result_odd
+            temp.fill(0);
+            eltwise_sub_mod(
+                result.v.as_mut_ptr().add(HALF_DEGREE),
+                temp.as_ptr(),
+                result.v.as_ptr().add(HALF_DEGREE),
+                HALF_DEGREE as u64,
+                MOD_Q,
+            );
+        }
+
         result
     }
 
@@ -1197,6 +1328,7 @@ impl SizeableProof for QuadraticExtension {
 #[cfg(test)]
 mod tests {
     use crate::common::init_common;
+    use rand::SeedableRng;
 
     use super::*;
 
@@ -1553,5 +1685,51 @@ mod tests {
                 "Fused ring mult diverged from reference"
             );
         }
+    }
+
+    #[test]
+    fn test_inverse_times_self_is_one() {
+        init_common();
+
+        for _ in 0..10 {
+            let a = RingElement::random(Representation::HomogenizedFieldExtensions);
+            let a_inv = a.inverse();
+
+            let mut product = RingElement::new(Representation::HomogenizedFieldExtensions);
+            incomplete_ntt_multiplication_homogenized(&mut product, &a, &a_inv);
+
+            let one = RingElement::one(Representation::HomogenizedFieldExtensions);
+            assert_eq!(product.v, one.v, "a * a^{{-1}} should equal 1");
+        }
+    }
+
+    #[test]
+    fn test_inverse_slot_by_slot() {
+        init_common();
+
+        let a = RingElement::random(Representation::HomogenizedFieldExtensions);
+        let a_inv = a.inverse();
+
+        let slots = a.split_into_quadratic_extensions();
+        let inv_slots = a_inv.split_into_quadratic_extensions();
+
+        let one = QuadraticExtension { coeffs: [1, 0] };
+        for i in 0..HALF_DEGREE {
+            let product = slots[i] * inv_slots[i];
+            assert_eq!(
+                product, one,
+                "Slot {i} inverse incorrect: {:?} * {:?} = {:?}",
+                slots[i], inv_slots[i], product
+            );
+        }
+    }
+
+    #[test]
+    fn test_inverse_of_one_is_one() {
+        init_common();
+
+        let one = RingElement::one(Representation::HomogenizedFieldExtensions);
+        let one_inv = one.inverse();
+        assert_eq!(one.v, one_inv.v, "1^{{-1}} should equal 1");
     }
 }

@@ -360,6 +360,9 @@ pub fn field_to_ring_element_into(r: &mut RingElement, fe: &QuadraticExtension) 
 pub static ONE: LazyLock<RingElement> =
     LazyLock::new(|| RingElement::one(Representation::IncompleteNTT));
 
+pub static ALL_ONE_COEFFS: LazyLock<RingElement> =
+    LazyLock::new(|| RingElement::all(1, Representation::IncompleteNTT));
+
 pub static TWO: LazyLock<RingElement> =
     LazyLock::new(|| RingElement::constant(2, Representation::IncompleteNTT));
 

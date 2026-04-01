@@ -1,5 +1,6 @@
 use crate::common::{
-    ring_arithmetic::Representation,
+    matrix::HorizontallyAlignedMatrix,
+    ring_arithmetic::{Representation, RingElement},
     sampling::sample_random_vector,
     structured_row::{PreprocessedRow, StructuredRow},
 };
@@ -31,14 +32,27 @@ impl CRS {
     pub fn gen_crs(max_wit_dim: usize, max_module_size: usize) -> CRS {
         debug_assert!(max_wit_dim.is_power_of_two());
 
+        let shared_v_module = HorizontallyAlignedMatrix::<RingElement> {
+            data: sample_random_vector(
+                max_wit_dim.ilog2() as usize * max_module_size,
+                Representation::IncompleteNTT,
+            ),
+            width: max_wit_dim.ilog2() as usize,
+            height: max_module_size,
+        };
+
         let (cks, structured_cks): (Vec<_>, Vec<_>) = (1..=max_wit_dim.ilog2() as usize)
-            .map(|nof_tensor_layers| {
+            .map(|i| {
                 let mut ck = Vec::with_capacity(max_module_size);
                 let mut sck = Vec::with_capacity(max_module_size);
 
-                for _ in 0..max_module_size {
-                    let v_module =
-                        sample_random_vector(nof_tensor_layers, Representation::IncompleteNTT);
+                for j in 0..max_module_size {
+                    let v_module = shared_v_module
+                        .row(j)
+                        .iter()
+                        .skip(max_wit_dim.ilog2() as usize - i)
+                        .cloned()
+                        .collect();
 
                     let structured_row = StructuredRow {
                         tensor_layers: v_module,
