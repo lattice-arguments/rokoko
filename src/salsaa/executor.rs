@@ -57,7 +57,7 @@ use crate::{
     },
 };
 
-const DEBUG: bool = false;
+const DEBUG: bool = true;
 
 // 2^7 (degree) * 2^{19} (witness height) * 2 (witness width) = 2^27
 const WITNESS_DIM: usize = 2usize.pow(14);
@@ -403,7 +403,10 @@ fn build_round_config(extended_witness_length: usize, is_first_round: bool) -> R
         let next_config = RoundConfig::IntermediateUnstructured {
             common: unstructured_common,
             decomposition_base_log: 8,
-            projection_ratio: std::cmp::min(DEGREE * unstructured_single_col_height / PROJECTION_HEIGHT, MAX_UNSTRUCT_PROJ_RATIO),
+            projection_ratio: std::cmp::min(
+                DEGREE * unstructured_single_col_height / PROJECTION_HEIGHT,
+                MAX_UNSTRUCT_PROJ_RATIO,
+            ),
             next: Box::new(next_unstructured_config),
         };
 
@@ -470,7 +473,10 @@ fn build_unstructured_round_config(extended_witness_length: usize) -> RoundConfi
     RoundConfig::IntermediateUnstructured {
         common,
         decomposition_base_log: 8,
-        projection_ratio: std::cmp::min(DEGREE * single_col_height / PROJECTION_HEIGHT, MAX_UNSTRUCT_PROJ_RATIO), // for now, we assume that each column is projected to PROJECTION_HEIGHT Zq elements.
+        projection_ratio: std::cmp::min(
+            DEGREE * single_col_height / PROJECTION_HEIGHT,
+            MAX_UNSTRUCT_PROJ_RATIO,
+        ), // for now, we assume that each column is projected to PROJECTION_HEIGHT Zq elements.
         next: Box::new(next_config),
     }
 }
@@ -1460,26 +1466,33 @@ pub fn prover_round(
     if DEBUG {
         let ip_vdf_claim = compute_ip_vdf_claim(config, vdf_challenge.as_ref(), vdf_params);
 
-        let claim = sumcheck_context.type1sumcheck[0].output.borrow().claim();
+        if sumcheck_context.type1sumcheck.len() > 0 {
+            let claim = sumcheck_context.type1sumcheck[0].output.borrow().claim();
 
-        let mut expected_claim = ZERO.clone();
-        for (c, r) in claims.row(0).iter().zip(evaluation_points_outer.iter()) {
-            expected_claim += &(c * r);
+            let mut expected_claim = ZERO.clone();
+            for (c, r) in claims.row(0).iter().zip(evaluation_points_outer.iter()) {
+                expected_claim += &(c * r);
+            }
+            assert_eq!(claim, expected_claim, "Claim from the sumcheck does not match the expected claim computed from the committed witness and the evaluation points");
         }
-        assert_eq!(claim, expected_claim, "Claim from the sumcheck does not match the expected claim computed from the committed witness and the evaluation points");
 
-        let projection_claim = sumcheck_context
-            .type3sumcheck
-            .as_ref()
-            .unwrap()
-            .output
-            .borrow()
-            .claim();
-        let expected_projection_claim = ZERO.clone();
-        assert_eq!(
-            projection_claim, expected_projection_claim,
-            "Projection claim from the sumcheck does not match the expected projection claim"
-        );
+        match config {
+            RoundConfig::Intermediate { .. } => {
+                let projection_claim = sumcheck_context
+                    .type3sumcheck
+                    .as_ref()
+                    .unwrap()
+                    .output
+                    .borrow()
+                    .claim();
+                let expected_projection_claim = ZERO.clone();
+                assert_eq!(
+                projection_claim, expected_projection_claim,
+                "Projection claim from the sumcheck does not match the expected projection claim"
+            );
+            }
+            _ => {}
+        };
 
         if config.l2 {
             let l2_claim = sumcheck_context
@@ -1539,10 +1552,10 @@ pub fn prover_round(
                 {
                     let projection_claim = type31.output.borrow().claim();
                     let batch_image = &batched_image.as_ref().unwrap().row(batch_idx);
-                    let challenges = &unstructured_batching_challenges
-                        .as_ref()
-                        .unwrap()[batch_idx].c_2_values;
-                    let mut expected_projection_claim = RingElement::zero(Representation::IncompleteNTT);
+                    let challenges =
+                        &unstructured_batching_challenges.as_ref().unwrap()[batch_idx].c_2_values;
+                    let mut expected_projection_claim =
+                        RingElement::zero(Representation::IncompleteNTT);
                     let mut temp = RingElement::zero(Representation::IncompleteNTT);
                     for (c, r) in batch_image.iter().zip(challenges.iter()) {
                         temp *= (c, &RingElement::constant(*r, Representation::IncompleteNTT));
