@@ -301,7 +301,7 @@ const NUM_COLUMNS_INITIAL: usize = 2;
 
 const PROJECTION_HEIGHT: usize = 256;
 
-const MAX_UNSTRUCT_PROJ_RATIO: usize = 128; // to prevent degenerate projection configs with very large proj matrx
+const MAX_UNSTRUCT_PROJ_RATIO: usize = 8; // to prevent degenerate projection configs with very large proj matrx
 
 /// Recursively builds the round config chain.
 /// - First round: uses NUM_COLUMNS_INITIAL columns, projection_ratio=2, VDF+exact_binariness enabled.
