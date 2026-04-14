@@ -1,5 +1,3 @@
-use num::range;
-
 use crate::{
     common::{
         arithmetic::HALF_WAY_MOD_Q,
@@ -12,43 +10,11 @@ use crate::{
     hexl::bindings::{eltwise_reduce_mod, multiply_mod},
     protocol::{
         commitment::Prefix,
-        crs::CRS,
         sumcheck_utils::{
-            elephant_cell::ElephantCell, linear::LinearSumcheck, selector_eq::SelectorEq,
+            elephant_cell::ElephantCell, selector_eq::SelectorEq,
         },
     },
 };
-
-/// Builds sumchecks for recomposing base-`2^{base_log}` decomposition:
-/// - `combiner_sumcheck`: carries radix weights (1, base, base², ...)
-/// - `constant_sumcheck`: holds the signed-digit offset to subtract
-///
-/// Prefix padding enables composition without re-indexing the hypercube.
-pub(crate) fn composition_sumcheck(
-    base_log: u64,
-    chunks: usize,
-    total_vars: usize,
-) -> ElephantCell<LinearSumcheck<RingElement>> {
-    let conmposition_basis = range(0, chunks)
-        .map(|i| {
-            // Basis element corresponding to 2^{base_log * i}
-            RingElement::constant(1u64 << (base_log * i as u64), Representation::IncompleteNTT)
-        })
-        .collect::<Vec<RingElement>>();
-    let combiner_sumcheck = ElephantCell::new(
-        LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
-            conmposition_basis.len(),
-            total_vars - conmposition_basis.len().ilog2() as usize,
-            0,
-        ),
-    );
-
-    combiner_sumcheck
-        .borrow_mut()
-        .load_from(&conmposition_basis);
-
-    combiner_sumcheck
-}
 
 /// Creates a selector (SelectorEq) that evaluates to 1 where the first `prefix.length`
 /// bits match `prefix.prefix`, and 0 elsewhere. Used to enforce constraints only on
@@ -62,34 +28,6 @@ pub(crate) fn sumcheck_from_prefix(
         prefix.length,
         total_vars,
     ))
-}
-
-/// Loads the i-th row of the commitment key into a linear sumcheck with appropriate padding:
-/// - `wit_dim`: dimension for this CK row (varies for recursive layers)
-/// - `sufix`: trailing variables for decomposition chunks
-/// - prefix padding aligns with the global hypercube
-///
-/// Uses preprocessed CRS data to avoid recomputing tensor structures.
-pub(crate) fn ck_sumcheck(
-    crs: &CRS,
-    total_vars: usize,
-    wit_dim: usize,
-    i: usize,
-    sufix: usize,
-) -> ElephantCell<LinearSumcheck<RingElement>> {
-    let ck = crs.ck_for_wit_dim(wit_dim);
-
-    let sumcheck = ElephantCell::new(
-        LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
-            wit_dim,
-            total_vars - wit_dim.ilog2() as usize - sufix,
-            sufix,
-        ),
-    );
-
-    sumcheck.borrow_mut().load_from(&ck[i].preprocessed_row);
-
-    sumcheck
 }
 
 /// Computes tensor product a ⊗ b = [a0·b0, a0·b1, ..., a0·b_{n-1}, a1·b0, ..., a_{m-1}·b_{n-1}].
@@ -219,43 +157,6 @@ pub(crate) fn projection_coefficients(
     }
 
     result
-}
-
-/// Splits projection_flatter into two components for the elder/LS variable separation.
-///
-/// This function decomposes a projection flattening vector into:
-/// - projection_flatter_0: operates on "elder variables" (block indices)
-/// - projection_flatter_1: operates on "LS variables" (within-block indices)
-///
-/// The split follows the tensor structure: given a StructuredRow with tensor_layers,
-/// we partition the layers at the boundary between block-level and within-block indexing.
-/// Specifically, if we have `blocks = witness_height / inner_width`, then the first
-/// `blocks.ilog2()` layers correspond to block selection (elder), and the remaining
-/// `height.ilog2()` layers handle within-block positions (LS).
-///
-/// This decomposition enables us to structure the projection coefficient sumcheck as a
-/// product of two independent linear sumchecks, which can improve verifier efficiency
-/// when the two components have different sparsity patterns or when we want to fold
-/// them separately.
-pub(crate) fn split_projection_flatter(
-    projection_flatter: &StructuredRow,
-    projection_height: usize,
-) -> (StructuredRow, StructuredRow) {
-    let height = projection_height;
-    let height_log = height.ilog2() as usize;
-    let tensor_layers = &projection_flatter.tensor_layers;
-
-    debug_assert!(tensor_layers.len() >= height_log);
-    let block_layers = tensor_layers.len() - height_log;
-
-    let projection_flatter_0 = StructuredRow {
-        tensor_layers: tensor_layers[..block_layers].to_vec(),
-    };
-    let projection_flatter_1 = StructuredRow {
-        tensor_layers: tensor_layers[block_layers..].to_vec(),
-    };
-
-    (projection_flatter_0, projection_flatter_1)
 }
 
 /// Computes the product of projection_flatter_1 with the projection matrix.

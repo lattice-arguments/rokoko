@@ -163,7 +163,7 @@ impl ProverSumcheckContext {
                 row_j *= &c_powers[block];
                 // A contributions: sum_{r=0}^{HEIGHT-1} c^{HEIGHT+r} · A[r,j]
                 for r in 0..VDF_MATRIX_HEIGHT {
-                    temp_a *= (&c_powers[VDF_MATRIX_HEIGHT + r], &vdf_crs_ref.A[(r, j)]);
+                    temp_a *= (&c_powers[VDF_MATRIX_HEIGHT + r], &vdf_crs_ref.data[(r, j)]);
                     row_j += &temp_a;
                 }
                 batched_row.push(row_j);

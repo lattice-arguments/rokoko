@@ -195,7 +195,7 @@ impl VerifierSumcheckContext {
                     RingElement::constant((1u64 << bit) % MOD_Q, Representation::IncompleteNTT);
                 row_j *= &c_powers[block];
                 for r in 0..VDF_MATRIX_HEIGHT {
-                    temp_a *= (&c_powers[VDF_MATRIX_HEIGHT + r], &vdf_crs_ref.A[(r, j)]);
+                    temp_a *= (&c_powers[VDF_MATRIX_HEIGHT + r], &vdf_crs_ref.data[(r, j)]);
                     row_j += &temp_a;
                 }
                 batched_row.push(row_j);

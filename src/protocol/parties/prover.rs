@@ -23,7 +23,7 @@ use crate::{
     },
 };
 
-fn prover_round_intermediate(
+fn structured_round(
     crs: &CRS,
     witness: &VerticallyAlignedMatrix<RingElement>,
     config: &RoundConfig,
@@ -251,7 +251,7 @@ fn prover_round_intermediate(
     }
 }
 
-fn prover_round_intermediate_unstructured(
+fn unstructured_round(
     crs: &CRS,
     witness: &VerticallyAlignedMatrix<RingElement>,
     config: &RoundConfig,
@@ -423,7 +423,7 @@ fn prover_round_intermediate_unstructured(
     }
 }
 
-fn prover_round_last(
+fn last_round(
     witness: &VerticallyAlignedMatrix<RingElement>,
     config: &RoundConfig, // must be RoundConfig::Last
     sumcheck_context: &mut ProverSumcheckContext,
@@ -545,7 +545,7 @@ pub fn prover_round(
     )>,
 ) -> SalsaaProof {
     match config {
-        RoundConfig::Intermediate { .. } => prover_round_intermediate(
+        RoundConfig::Intermediate { .. } => structured_round(
             crs,
             witness,
             config,
@@ -555,7 +555,7 @@ pub fn prover_round(
             hash_wrapper,
             vdf_params,
         ),
-        RoundConfig::IntermediateUnstructured { .. } => prover_round_intermediate_unstructured(
+        RoundConfig::IntermediateUnstructured { .. } => unstructured_round(
             crs,
             witness,
             config,
@@ -564,7 +564,7 @@ pub fn prover_round(
             claims,
             hash_wrapper,
         ),
-        RoundConfig::Last { .. } => prover_round_last(
+        RoundConfig::Last { .. } => last_round(
             witness,
             config,
             sumcheck_context,
