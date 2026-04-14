@@ -1,256 +1,192 @@
+use crate::protocol::parties::prover::vdf_crs;
 use crate::{
     common::{
-        arithmetic::{field_to_ring_element_into, precompute_structured_values_fast},
-        config::{DEGREE, HALF_DEGREE, NOF_BATCHES},
+        arithmetic::field_to_ring_element_into,
+        config::*,
         matrix::new_vec_zero_preallocated,
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        ring_arithmetic::{Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
-        config::SumcheckConfig,
-        open::Opening,
+        project::BatchingChallenges,
         project_2::BatchedProjectionChallenges,
-        sumchecks::helpers::{
-            projection_flatter_1_times_matrix, split_projection_flatter, tensor_product_u64,
-        },
+        sumchecks::{context::ProverSumcheckContext, helpers::projection_flatter_1_times_matrix},
     },
 };
 
-use super::context::SumcheckContext;
-
-/// Loads all data into the sumcheck context.
-///
-/// This function encapsulates all the `load_from` calls that populate the sumcheck
-/// gadgets with their actual input values. By extracting this logic, we separate
-/// data preparation from the main sumcheck execution flow.
-pub fn load_sumcheck_data(
-    sumcheck_context: &mut SumcheckContext,
-    config: &SumcheckConfig,
-    combined_witness: &Vec<RingElement>,
-    conjugated_combined_witness: &Vec<RingElement>,
-    folding_challenges: &Vec<RingElement>,
-    challenges_batching_projection_1: &Option<&[BatchedProjectionChallenges; NOF_BATCHES]>,
-    opening: &Opening,
-    projection_matrix: &ProjectionMatrix,
-    projection_matrix_flatter: &Option<(PreprocessedRow, StructuredRow)>,
-    combination: &Vec<RingElement>,
-    qe: &[QuadraticExtension; HALF_DEGREE],
-) {
-    // The witness vector is padded to composed_witness_length (a power of 2),
-    // but only a fraction is actually used. Passing the non-zero boundary
-    // lets LinearSumcheck skip zero-tail work in partial_evaluate and
-    // Karatsuba inner products.
-    let used_columns =
-        (config.composed_witness_length as f64 * config.next_level_usage_ratio).ceil() as usize;
-    let non_zero_end = used_columns
-        .min(config.composed_witness_length)
-        .min(combined_witness.len())
-        .min(conjugated_combined_witness.len());
-
-    // Load combined witness
-    sumcheck_context
-        .combined_witness_sumcheck
-        .borrow_mut()
-        .load_from_with_non_zero_end(combined_witness, non_zero_end);
-
-    // Load folding challenges
-    sumcheck_context
-        .folding_challenges_sumcheck
-        .borrow_mut()
-        .load_from(&folding_challenges);
-
-    sumcheck_context
-        .type5sumcheck
-        .conjugated_combined_witness
-        .borrow_mut()
-        .load_from_with_non_zero_end(&conjugated_combined_witness, non_zero_end);
-
-    // Load inner evaluation points (type1)
-    for (type1_sc, eval_point) in sumcheck_context
-        .type1sumchecks
-        .iter()
-        .zip(opening.evaluation_points_inner.iter())
-    {
-        type1_sc
-            .inner_evaluation_sumcheck
+impl ProverSumcheckContext {
+    pub fn load_data(
+        &mut self,
+        witness: &Vec<RingElement>,
+        witness_conjugated: &Vec<RingElement>,
+        evaluation_points_inner: &Vec<StructuredRow>,
+        evaluation_points_outer: &Vec<RingElement>,
+        projection_matrix: &Option<ProjectionMatrix>,
+        projection_batching_challenges: &Option<BatchingChallenges>,
+        unstructured_projection_batching_challenges: &Option<
+            [BatchedProjectionChallenges; NOF_BATCHES],
+        >,
+        vdf_challenge: Option<&RingElement>,
+        vdf_crs_param: Option<&vdf_crs>,
+    ) {
+        self.witness_sumcheck.borrow_mut().load_from(&witness);
+        self.witness_conjugated_sumcheck
             .borrow_mut()
-            .load_from(&eval_point.preprocessed_row);
-    }
-
-    // Load outer evaluation points (type2)
-    for (type2_sc, eval_point) in sumcheck_context
-        .type2sumchecks
-        .iter()
-        .zip(opening.evaluation_points_outer.iter())
-    {
-        type2_sc
-            .outer_evaluation_sumcheck
-            .borrow_mut()
-            .load_from(&eval_point.preprocessed_row);
-    }
-
-    // Load projection data (type3)
-    // LHS: Split into flatter_0 (elder/block variables) and flatter_1·matrix (LS/within-block variables)
-    if let Some(type3_sc) = &mut sumcheck_context.type3sumcheck {
-        let (projection_flatter_0_structured, projection_flatter_1_structured) =
-            split_projection_flatter(
-                &projection_matrix_flatter.as_ref().unwrap().1,
-                projection_matrix.projection_height,
+            .load_from(&witness_conjugated);
+        if let Some(projection_challenges) = projection_batching_challenges {
+            let c0_expanded = PreprocessedRow::from_structured_row(&projection_challenges.c0);
+            let c1_expanded = PreprocessedRow::from_structured_row(&projection_challenges.c1);
+            let c2_expanded = PreprocessedRow::from_structured_row(&projection_challenges.c2);
+            let flattened_projection = projection_flatter_1_times_matrix(
+                projection_matrix.as_ref().unwrap(),
+                &c1_expanded,
             );
+            let mut flattened_projection_ring =
+                new_vec_zero_preallocated(flattened_projection.len());
 
-        // Load flatter_0 (block-level weights)
-        let projection_flatter_0_preprocessed =
-            PreprocessedRow::from_structured_row(&projection_flatter_0_structured);
-        type3_sc
-            .lhs_flatter_0_sumcheck
-            .borrow_mut()
-            .load_from(&projection_flatter_0_preprocessed.preprocessed_row);
+            for (i, el) in flattened_projection.iter().enumerate() {
+                field_to_ring_element_into(&mut flattened_projection_ring[i], el);
+                // TODO: I Spent 1h debugging this and it turned out that I forgot to convert the flattened projection matrix from homogenized field extensions to incomplete NTT, which is what the sumcheck expects. Rethink the interfaces here to avoid such issues in the future, maybe by having a clear type for the per rep.
+                flattened_projection_ring[i].from_homogenized_field_extensions_to_incomplete_ntt();
+            }
+            if let Some(type3) = &mut self.type3sumcheck {
+                type3
+                    .c0r_sumcheck
+                    .borrow_mut()
+                    .load_from(&c0_expanded.preprocessed_row);
+                type3
+                    .c1r_sumcheck
+                    .borrow_mut()
+                    .load_from(&c1_expanded.preprocessed_row);
+                type3
+                    .c2r_sumcheck
+                    .borrow_mut()
+                    .load_from(&c2_expanded.preprocessed_row);
 
-        // Load flatter_1 · projection_matrix (within-block coefficients)
-        let projection_flatter_1_preprocessed =
-            PreprocessedRow::from_structured_row(&projection_flatter_1_structured);
-        let flatter_1_times_matrix = projection_flatter_1_times_matrix(
-            projection_matrix,
-            &projection_flatter_1_preprocessed,
-        );
-
-        let mut flatter_1_times_matrix_ring =
-            new_vec_zero_preallocated(flatter_1_times_matrix.len());
-
-        for i in 0..flatter_1_times_matrix.len() {
-            field_to_ring_element_into(
-                &mut flatter_1_times_matrix_ring[i],
-                &flatter_1_times_matrix[i],
-            );
-            flatter_1_times_matrix_ring[i].from_homogenized_field_extensions_to_incomplete_ntt();
+                type3
+                    .c0l_sumcheck
+                    .borrow_mut()
+                    .load_from(&c0_expanded.preprocessed_row);
+                type3
+                    .c2l_sumcheck
+                    .borrow_mut()
+                    .load_from(&c2_expanded.preprocessed_row);
+                type3
+                    .flattened_projection_matrix_sumcheck
+                    .borrow_mut()
+                    .load_from(&flattened_projection_ring);
+            } else {
+                panic!(
+                    "Projection batching challenges provided but type3 sumcheck is not initialized"
+                );
+            }
         }
 
-        type3_sc
-            .lhs_flatter_1_times_matrix_sumcheck
-            .borrow_mut()
-            .load_from(&flatter_1_times_matrix_ring);
-
-        // RHS: Split into fold_challenge and projection_flatter (Product)
-        type3_sc
-            .rhs_fold_challenge_sumcheck
-            .borrow_mut()
-            .load_from(folding_challenges);
-
-        type3_sc
-            .rhs_projection_flatter_sumcheck
-            .borrow_mut()
-            .load_from(
-                &projection_matrix_flatter
-                    .as_ref()
-                    .unwrap()
-                    .0
-                    .preprocessed_row,
-            );
-    }
-
-    // Load type3_1_sumchecks if present (batched projections)
-    if let Some(type3_1_contexts) = &mut sumcheck_context.type3_1_sumchecks {
-        if let Some(challenges) = challenges_batching_projection_1 {
-            // Each batch gets its own (c_0_values, c_1_values, j_batched) tuple
-            for (_batch_idx, (type3_1_ctx, challenges)) in type3_1_contexts
-                .sumchecks
-                .iter_mut()
-                .zip(challenges.iter())
-                .enumerate()
+        if let Some(unstructured_projection_challenges) =
+            unstructured_projection_batching_challenges
+        {
+            for (batch_idx, batch_challenges) in
+                unstructured_projection_challenges.iter().enumerate()
             {
                 // Lift c_0_values from u64 to RingElement and load into lhs_flatter_0
-                let c_0_ring: Vec<RingElement> = challenges
+                let c_0_ring: Vec<RingElement> = batch_challenges
                     .c_0_values
                     .iter()
                     .map(|&val| RingElement::constant(val, Representation::IncompleteNTT))
                     .collect();
 
-                type3_1_ctx
-                    .lhs_flatter_0_sumcheck
-                    .borrow_mut()
-                    .load_from(&c_0_ring);
-
-                type3_1_ctx
-                    .lhs_flatter_1_times_matrix_sumcheck
-                    .borrow_mut()
-                    .load_from(&challenges.j_batched);
-
-                // consistency
-
-                let (e_0_values, e_1_values) = {
-                    let mut e_0_layers = Vec::new();
-                    let mut e_1_layers = Vec::new();
-                    for (i, &layer) in challenges.c_1_layers.iter().enumerate() {
-                        if i < challenges.c_1_layers.len() - DEGREE.ilog2() as usize {
-                            e_0_layers.push(layer);
-                        } else {
-                            e_1_layers.push(layer);
-                        }
-                    }
-                    (
-                        precompute_structured_values_fast(&e_0_layers),
-                        precompute_structured_values_fast(&e_1_layers),
-                    )
-                };
-
-                let lhs_multipier_ring = challenges
+                let c_2_ring: Vec<RingElement> = batch_challenges
                     .c_2_values
                     .iter()
-                    .map(|&x| RingElement::constant(x, Representation::IncompleteNTT))
-                    .collect::<Vec<RingElement>>();
+                    .map(|&val| RingElement::constant(val, Representation::IncompleteNTT))
+                    .collect();
 
-                let rhs_multipier_ring: Vec<RingElement> = {
-                    // c_2 \otimes c_0 \otimes e_0
-                    // first over u64
-                    let values_0 =
-                        tensor_product_u64(&challenges.c_2_values, &challenges.c_0_values);
-                    let values_1 = tensor_product_u64(&values_0, &e_0_values);
-                    let vals_over_ring = values_1
-                        .iter()
-                        .map(|&x| RingElement::constant(x, Representation::IncompleteNTT))
-                        .collect::<Vec<RingElement>>();
-                    vals_over_ring
-                };
-                let e = {
-                    let mut e = RingElement::zero(Representation::Coefficients);
-                    for (i, &val) in e_1_values.iter().enumerate() {
-                        e.v[i as usize] = val;
-                    }
-                    e.from_coefficients_to_even_odd_coefficients();
-                    e.from_even_odd_coefficients_to_incomplete_ntt_representation();
-                    e.conjugate_in_place();
-                    e
-                };
-
-                type3_1_ctx
-                    .lhs_consistency_flatter_sumcheck
-                    .borrow_mut()
-                    .load_from(&lhs_multipier_ring);
-                type3_1_ctx
-                    .rhs_consistency_flatter_sumcheck
-                    .borrow_mut()
-                    .load_from(&rhs_multipier_ring);
-                type3_1_ctx
-                    .rhs_scalar_consistency_sumcheck
-                    .borrow_mut()
-                    .load_from(&vec![e]);
+                if let Some(type31sumchecks) = &mut self.type31sumchecks {
+                    type31sumchecks[batch_idx]
+                        .c_0_sumcheck
+                        .borrow_mut()
+                        .load_from(&c_0_ring);
+                    type31sumchecks[batch_idx]
+                        .c_2_sumcheck
+                        .borrow_mut()
+                        .load_from(&c_2_ring);
+                    type31sumchecks[batch_idx]
+                        .j_batched_sumcheck
+                        .borrow_mut()
+                        .load_from(&batch_challenges.j_batched);
+                } else {
+                    panic!(
+                        "Unstructured projection batching challenges provided but type 3.1 sumcheck is not initialized"
+                    );
+                }
             }
-            // RHS: fold_challenge (same for all batches, already loaded in folding_challenges_sumcheck)
-            type3_1_contexts
-                .rhs_fold_challenge_sumcheck
+        }
+        for (i, type1) in self.type1sumcheck.iter_mut().enumerate() {
+            let evaluation_points_inner_expanded =
+                PreprocessedRow::from_structured_row(&evaluation_points_inner[i]);
+            type1
+                .inner_evaluation_sumcheck
                 .borrow_mut()
-                .load_from(folding_challenges);
+                .load_from(&evaluation_points_inner_expanded.preprocessed_row);
+            type1
+                .outer_evaluation_sumcheck
+                .borrow_mut()
+                .load_from(&evaluation_points_outer);
+        }
+
+        if let Some(vdf) = &mut self.vdfsumcheck {
+            let c = vdf_challenge.expect("VDF sumcheck enabled but no vdf_challenge provided");
+            let vdf_crs_ref = vdf_crs_param.expect("VDF sumcheck enabled but no vdf_crs provided");
+
+            // Compute vdf_batched_row[j] for j = 0..VDF_MATRIX_WIDTH-1:
+            //   vdf_batched_row[j] = c^{j/VDF_BITS} · 2^{j%VDF_BITS} + sum_{r=0}^{HEIGHT-1} c^{HEIGHT+r} · A[r,j]
+            // The G contribution: block row (j/VDF_BITS) contributes 2^{j%VDF_BITS} with weight c^{j/VDF_BITS}.
+            // The A contribution: each row r contributes A[r,j] with weight c^{HEIGHT+r}.
+            let mut batched_row: Vec<RingElement> = Vec::with_capacity(VDF_MATRIX_WIDTH);
+            // Precompute c powers: c^0, c^1, ..., c^{2*HEIGHT-1}
+            // (G uses c^0..c^{HEIGHT-1}, A uses c^{HEIGHT}..c^{2*HEIGHT-1})
+            let num_local_powers = 2 * VDF_MATRIX_HEIGHT;
+            let mut c_powers: Vec<RingElement> = Vec::with_capacity(num_local_powers);
+            c_powers.push(RingElement::constant(1, Representation::IncompleteNTT));
+            for _ in 1..num_local_powers {
+                let prev = c_powers.last().unwrap().clone();
+                c_powers.push(&prev * c);
+            }
+            let mut temp_a = RingElement::zero(Representation::IncompleteNTT);
+            for j in 0..VDF_MATRIX_WIDTH {
+                let block = j / VDF_BITS;
+                let bit = j % VDF_BITS;
+                // G contribution: c^{block} · 2^{bit}
+                let mut row_j =
+                    RingElement::constant((1u64 << bit) % MOD_Q, Representation::IncompleteNTT);
+                row_j *= &c_powers[block];
+                // A contributions: sum_{r=0}^{HEIGHT-1} c^{HEIGHT+r} · A[r,j]
+                for r in 0..VDF_MATRIX_HEIGHT {
+                    temp_a *= (&c_powers[VDF_MATRIX_HEIGHT + r], &vdf_crs_ref.A[(r, j)]);
+                    row_j += &temp_a;
+                }
+                batched_row.push(row_j);
+            }
+            vdf.vdf_batched_row_sumcheck
+                .borrow_mut()
+                .load_from(&batched_row);
+
+            // Compute vdf_step_powers[i] = c^{VDF_STRIDE * i} for i = 0..2K-1
+            let two_k = witness.len() / 2 / VDF_MATRIX_WIDTH;
+            let mut c_stride = RingElement::constant(1, Representation::IncompleteNTT);
+            for _ in 0..VDF_STRIDE {
+                c_stride *= c;
+            }
+            let mut step_powers: Vec<RingElement> = Vec::with_capacity(two_k);
+            let mut c_power = RingElement::constant(1, Representation::IncompleteNTT);
+            for _ in 0..two_k {
+                step_powers.push(c_power.clone());
+                c_power *= &c_stride;
+            }
+            vdf.vdf_step_powers_sumcheck
+                .borrow_mut()
+                .load_from(&step_powers);
         }
     }
-
-    sumcheck_context
-        .combiner
-        .borrow_mut()
-        .load_challenges_from(&combination);
-
-    sumcheck_context
-        .field_combiner
-        .borrow_mut()
-        .load_challenges_from(qe.clone());
 }

@@ -1,12 +1,62 @@
-use crate::common::{
-    arithmetic::{
-        centered_coeffs_u64_to_i64_inplace, pack_i64_to_i16_deg16, project_one_row_i16_to_u64,
+use crate::{
+    common::{
+        arithmetic::{
+            centered_coeffs_u64_to_i64_inplace, pack_i64_to_i16_deg16, project_one_row_i16_to_u64,
+        },
+        config::{DEGREE, PROJECTION_HEIGHT},
+        hash::HashWrapper,
+        matrix::{new_vec_zero_preallocated, VerticallyAlignedMatrix},
+        projection_matrix::ProjectionMatrix,
+        ring_arithmetic::{Representation, RingElement},
+        structured_row::StructuredRow,
     },
-    config::DEGREE,
-    matrix::VerticallyAlignedMatrix,
-    projection_matrix::ProjectionMatrix,
-    ring_arithmetic::{Representation, RingElement},
+    protocol::config::RoundConfig,
 };
+
+pub struct BatchingChallenges {
+    // in succinct form
+    pub c0: StructuredRow<RingElement>,
+    pub c1: StructuredRow<RingElement>,
+    pub c2: StructuredRow<RingElement>,
+}
+
+impl BatchingChallenges {
+    pub fn sample(config: &RoundConfig, hash_wrapper: &mut HashWrapper) -> Self {
+        match config {
+            RoundConfig::Intermediate {
+                projection_ratio, ..
+            } => {
+                let c2_len = config.main_witness_columns;
+                let c1_len = PROJECTION_HEIGHT;
+                let single_col_height =
+                    config.extended_witness_length / 2 / config.main_witness_columns;
+                let c0_len: usize = single_col_height / (PROJECTION_HEIGHT * projection_ratio);
+                assert!(c0_len > 0, "c0_len must be greater than 0");
+                let mut result = Self {
+                    c0: StructuredRow {
+                        tensor_layers: new_vec_zero_preallocated(c0_len.ilog2() as usize),
+                    },
+                    c1: StructuredRow {
+                        tensor_layers: new_vec_zero_preallocated(c1_len.ilog2() as usize),
+                    },
+                    c2: StructuredRow {
+                        tensor_layers: new_vec_zero_preallocated(c2_len.ilog2() as usize),
+                    },
+                };
+
+                hash_wrapper
+                    .sample_ring_element_ntt_slots_same_vec_into(&mut result.c0.tensor_layers);
+                hash_wrapper
+                    .sample_ring_element_ntt_slots_same_vec_into(&mut result.c1.tensor_layers);
+                hash_wrapper
+                    .sample_ring_element_ntt_slots_same_vec_into(&mut result.c2.tensor_layers);
+
+                result
+            }
+            _ => panic!("Batching challenges should only be sampled for rounds with projection"),
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 #[repr(align(64))]

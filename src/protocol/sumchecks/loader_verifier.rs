@@ -1,232 +1,250 @@
+use crate::common::config::*;
+use crate::protocol::project::BatchingChallenges;
 use crate::{
     common::{
-        arithmetic::precompute_structured_values_fast,
-        config::{DEGREE, HALF_DEGREE, NOF_BATCHES},
+        arithmetic::{ONE, ZERO},
+        config::{HALF_DEGREE, NOF_BATCHES},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
+        config::{RoundConfig, SalsaaProof},
+        open::evaluation_point_to_structured_row,
+        parties::prover::vdf_crs,
         project_2::BatchedProjectionChallengesSuccinct,
-        sumchecks::helpers::{projection_flatter_1_times_matrix, split_projection_flatter},
+        sumchecks::{
+            context_verifier::VerifierSumcheckContext, helpers::projection_flatter_1_times_matrix,
+        },
     },
 };
 
-use super::context_verifier::VerifierSumcheckContext;
+impl VerifierSumcheckContext {
+    pub fn load_data(
+        &mut self,
+        config: &RoundConfig,
+        proof: &SalsaaProof,
+        evaluation_points_ring: &[RingElement],
+        evaluation_points_inner: &[StructuredRow],
+        evaluation_points_outer: &[RingElement],
+        batching_challenges: &Option<BatchingChallenges>,
+        projection_matrix: &Option<ProjectionMatrix>,
+        projection_challenges_unstructured: &Option<
+            [BatchedProjectionChallengesSuccinct; NOF_BATCHES],
+        >,
+        combination: &[RingElement],
+        qe: [QuadraticExtension; HALF_DEGREE],
+        vdf_challenge: Option<&RingElement>,
+        vdf_crs_param: Option<&vdf_crs>,
+    ) {
+        let outer_points_len =
+            config.main_witness_columns.ilog2() as usize + config.main_witness_prefix.length;
+        let outer_points = &evaluation_points_ring[0..outer_points_len].to_vec();
+        let outer_points_expanded =
+            PreprocessedRow::from_structured_row(&evaluation_point_to_structured_row(outer_points))
+                .preprocessed_row;
 
-/// Loads verifier-side evaluation gadgets with public claims and evaluation points.
-///
-/// Unlike the prover loader, the verifier only sees folded claims rather than the
-/// full witness, so we seed the fake linear evaluations with those claims and load
-/// evaluation points in their structured form.
-pub fn load_verifier_sumcheck_data(
-    verifier_sumcheck_context: &mut VerifierSumcheckContext,
-    folding_challenges: &[RingElement],
-    claim_over_witness: &RingElement,
-    claim_over_witness_conjugate: &RingElement,
-    evaluation_points_inner: &[StructuredRow],
-    evaluation_points_outer: &[StructuredRow],
-    projection_matrix: &ProjectionMatrix,
-    projection_matrix_flatter_structured: &Option<StructuredRow>, // Only needed for type0 projection
-    challenges_3_1: &Option<[BatchedProjectionChallengesSuccinct; NOF_BATCHES]>,
-    combination: &[RingElement],
-    qe: &[QuadraticExtension; HALF_DEGREE],
-) {
-    verifier_sumcheck_context
-        .combined_witness_evaluation
-        .borrow_mut()
-        .set_result(claim_over_witness.clone());
+        let mut temp = ZERO.clone();
 
-    verifier_sumcheck_context
-        .type5evaluation
-        .conjugated_combined_witness_evaluation
-        .borrow_mut()
-        .set_result(claim_over_witness_conjugate.clone());
-
-    verifier_sumcheck_context
-        .folding_challenges_evaluation
-        .borrow_mut()
-        .load_from(folding_challenges);
-
-    for (type1_eval, point) in verifier_sumcheck_context
-        .type1evaluations
-        .iter()
-        .zip(evaluation_points_inner.iter())
-    {
-        type1_eval
-            .inner_evaluation
-            .borrow_mut()
-            .load_from(point.clone());
-    }
-
-    for (type2_eval, point) in verifier_sumcheck_context
-        .type2evaluations
-        .iter()
-        .zip(evaluation_points_outer.iter())
-    {
-        type2_eval
-            .outer_evaluation
-            .borrow_mut()
-            .load_from(point.clone());
-    }
-    if let Some(type3_eval) = &mut verifier_sumcheck_context.type3evaluation {
-        // Type3: projection image consistency with split LHS structure
-        // LHS: Prod(flatter_0, flatter_1·matrix) where flatter_0 covers elder (block) variables
-        // and flatter_1·matrix covers LS (within-block) variables
-
-        let (projection_flatter_0_structured, projection_flatter_1_structured) =
-            split_projection_flatter(
-                projection_matrix_flatter_structured.as_ref().unwrap(),
-                projection_matrix.projection_height,
-            );
-
-        type3_eval
-            .lhs_flatter_0_evaluation
-            .borrow_mut()
-            .load_from(projection_flatter_0_structured.clone());
-
-        // Load flatter_1 · projection_matrix (within-block coefficients)
-        let projection_flatter_1_preprocessed =
-            PreprocessedRow::from_structured_row(&projection_flatter_1_structured); // this is over field actually
-
-        let flatter_1_times_matrix = projection_flatter_1_times_matrix(
-            projection_matrix,
-            &projection_flatter_1_preprocessed,
-        );
-
-        type3_eval
-            .lhs_flatter_1_times_matrix_evaluation_field
-            .borrow_mut()
-            .load_from(&flatter_1_times_matrix);
-
-        // RHS: Split into projection_flatter and fold_challenge (Product)
-        type3_eval
-            .rhs_projection_flatter_evaluation
-            .borrow_mut()
-            .load_from(
-                projection_matrix_flatter_structured
-                    .as_ref()
-                    .unwrap()
-                    .clone(),
-            );
-
-        type3_eval
-            .rhs_fold_challenge_evaluation
-            .borrow_mut()
-            .load_from(folding_challenges);
-    }
-
-    if let Some(type3_1_eval) = &mut verifier_sumcheck_context.type3_1_evaluations {
-        // Type3_1_A: projection image consistency for type1.1 projection
-
-        type3_1_eval
-            .rhs_fold_challenge_evaluation
-            .borrow_mut()
-            .load_from(folding_challenges);
-
-        for (batch_idx, challenges) in challenges_3_1.as_ref().unwrap().iter().enumerate() {
-            type3_1_eval.sumchecks[batch_idx]
-                .lhs_flatter_1_times_matrix_evaluation
-                .borrow_mut()
-                .load_from(&challenges.j_batched);
-
-            let c_0_field = StructuredRow {
-                tensor_layers: challenges
-                    .c_0_layers
-                    .iter()
-                    .map(|e| QuadraticExtension { coeffs: [*e, 0] })
-                    .collect::<Vec<_>>(),
-            };
-            type3_1_eval.sumchecks[batch_idx]
-                .lhs_flatter_0_evaluation_field
-                .borrow_mut()
-                .load_from(c_0_field);
-
-            // consistency cehck between embedded constant terms
-            let (e_0_layers, e) = {
-                let mut e_0_layers = Vec::new();
-                let mut e_1_layers = Vec::new();
-                for (i, &layer) in challenges.c_1_layers.iter().enumerate() {
-                    if i < challenges.c_1_layers.len() - DEGREE.ilog2() as usize {
-                        e_0_layers.push(layer);
-                    } else {
-                        e_1_layers.push(layer);
-                    }
-                }
-
-                let e_1_values = precompute_structured_values_fast(&e_1_layers);
-                let mut e = RingElement::zero(Representation::Coefficients);
-                for (i, &val) in e_1_values.iter().enumerate() {
-                    e.v[i as usize] = val;
-                }
-                e.from_coefficients_to_even_odd_coefficients();
-                e.from_even_odd_coefficients_to_incomplete_ntt_representation();
-                e.conjugate_in_place();
-                (e_0_layers, e)
-            };
-
-            let lhs_layers_fields = StructuredRow {
-                tensor_layers: challenges
-                    .c_2_layers
-                    .iter()
-                    .map(|&x| QuadraticExtension { coeffs: [x, 0] })
-                    .collect::<Vec<QuadraticExtension>>(),
-            };
-
-            let rhs_layers_field = {
-                let mut layers = Vec::new();
-                for c_2 in &challenges.c_2_layers {
-                    layers.push(QuadraticExtension { coeffs: [*c_2, 0] });
-                }
-
-                for c_0 in &challenges.c_0_layers {
-                    layers.push(QuadraticExtension { coeffs: [*c_0, 0] });
-                }
-
-                for layer in &e_0_layers {
-                    layers.push(QuadraticExtension {
-                        coeffs: [*layer, 0],
-                    });
-                }
-                StructuredRow {
-                    tensor_layers: layers,
-                }
-            };
-
-            type3_1_eval.sumchecks[batch_idx]
-                .lhs_consistency_flatter_evaluation_field
-                .borrow_mut()
-                .load_from(lhs_layers_fields);
-
-            type3_1_eval.sumchecks[batch_idx]
-                .rhs_consistency_flatter_evaluation_field
-                .borrow_mut()
-                .load_from(rhs_layers_field);
-
-            type3_1_eval.sumchecks[batch_idx]
-                .rhs_scalar_consistency_evaluation
-                .borrow_mut()
-                .load_from(&vec![e]);
+        let mut claim_over_witness = ZERO.clone();
+        for (claim, outer) in proof.claims.row(0).iter().zip(outer_points_expanded.iter()) {
+            temp *= (claim, outer);
+            claim_over_witness += &temp;
         }
+
+        match proof {
+            SalsaaProof::Intermediate {
+                claim_over_projection,
+                ..
+            } => {
+                temp *= (
+                    claim_over_projection.get(0).unwrap(),
+                    &outer_points_expanded[config.main_witness_columns],
+                );
+                claim_over_witness += &temp;
+            }
+            _ => {}
+        }
+
+        let mut main_cols_points =
+            evaluation_points_ring[config.main_witness_prefix.length..outer_points_len].to_vec();
+        for r in main_cols_points.iter_mut() {
+            r.conjugate_in_place();
+        }
+        let main_cols_points_expanded = PreprocessedRow::from_structured_row(
+            &evaluation_point_to_structured_row(&main_cols_points),
+        )
+        .preprocessed_row;
+
+        let mut claim_over_conjugated_witness = ZERO.clone();
+        for (claim, outer) in proof
+            .claims
+            .row(1)
+            .iter()
+            .zip(main_cols_points_expanded.iter())
+        {
+            temp *= (claim, outer);
+            claim_over_conjugated_witness += &temp;
+        }
+        claim_over_conjugated_witness.conjugate_in_place();
+
+        self.witness_evaluation
+            .borrow_mut()
+            .set_result(claim_over_witness);
+        self.witness_conjugated_evaluation
+            .borrow_mut()
+            .set_result(claim_over_conjugated_witness);
+
+        for (i, type1_eval) in self.type1evaluations.iter().enumerate() {
+            type1_eval
+                .inner_evaluation_sumcheck
+                .borrow_mut()
+                .load_from(evaluation_points_inner[i].clone());
+            type1_eval
+                .outer_evaluation_sumcheck
+                .borrow_mut()
+                .load_from(evaluation_points_outer);
+        }
+
+        if let Some(type3_eval) = &mut self.type3evaluation {
+            let c1_expanded =
+                PreprocessedRow::from_structured_row(&batching_challenges.as_ref().unwrap().c1);
+
+            let flattened_projection = projection_flatter_1_times_matrix(
+                projection_matrix.as_ref().unwrap(),
+                &c1_expanded,
+            );
+
+            type3_eval
+                .flattened_projection_matrix_evaluation
+                .borrow_mut()
+                .load_from(&flattened_projection);
+            type3_eval
+                .c0l_evaluation
+                .borrow_mut()
+                .load_from(batching_challenges.as_ref().unwrap().c0.clone());
+            type3_eval
+                .c2l_evaluation
+                .borrow_mut()
+                .load_from(batching_challenges.as_ref().unwrap().c2.clone());
+            type3_eval
+                .c0r_evaluation
+                .borrow_mut()
+                .load_from(batching_challenges.as_ref().unwrap().c0.clone());
+            type3_eval
+                .c1r_evaluation
+                .borrow_mut()
+                .load_from(batching_challenges.as_ref().unwrap().c1.clone());
+            type3_eval
+                .c2r_evaluation
+                .borrow_mut()
+                .load_from(batching_challenges.as_ref().unwrap().c2.clone());
+        }
+
+        if let Some(type31_evals) = &mut self.type31evaluations {
+            let challenges = projection_challenges_unstructured
+                .as_ref()
+                .expect("Missing projection challenges for type 3.1 verifier sumcheck");
+            for (batch_idx, type31_eval) in type31_evals.iter_mut().enumerate() {
+                let c_0_structured = StructuredRow {
+                    tensor_layers: challenges[batch_idx]
+                        .c_0_layers
+                        .iter()
+                        .map(|&val| RingElement::constant(val, Representation::IncompleteNTT))
+                        .collect(),
+                };
+                let c_2_structured = StructuredRow {
+                    tensor_layers: challenges[batch_idx]
+                        .c_2_layers
+                        .iter()
+                        .map(|&val| RingElement::constant(val, Representation::IncompleteNTT))
+                        .collect(),
+                };
+                type31_eval
+                    .c_0_evaluation
+                    .borrow_mut()
+                    .load_from(c_0_structured);
+                type31_eval
+                    .c_2_evaluation
+                    .borrow_mut()
+                    .load_from(c_2_structured);
+                type31_eval
+                    .j_batched_evaluation
+                    .borrow_mut()
+                    .load_from(&challenges[batch_idx].j_batched);
+            }
+        }
+
+        if let Some(vdf_eval) = &mut self.vdfevaluation {
+            let c = vdf_challenge.expect("VDF evaluation enabled but no vdf_challenge provided");
+            let vdf_crs_ref =
+                vdf_crs_param.expect("VDF evaluation enabled but no vdf_crs provided");
+
+            // Compute vdf_batched_row[j] for j = 0..VDF_MATRIX_WIDTH-1:
+            //   vdf_batched_row[j] = c^{j/VDF_BITS} · 2^{j%VDF_BITS} + Σ_{r} c^{HEIGHT+r} · A[r,j]
+            let mut batched_row: Vec<RingElement> = Vec::with_capacity(VDF_MATRIX_WIDTH);
+            let num_local_powers = 2 * VDF_MATRIX_HEIGHT;
+            let mut c_powers: Vec<RingElement> = Vec::with_capacity(num_local_powers);
+            c_powers.push(RingElement::constant(1, Representation::IncompleteNTT));
+            for _ in 1..num_local_powers {
+                let prev = c_powers.last().unwrap().clone();
+                c_powers.push(&prev * c);
+            }
+            let mut temp_a = RingElement::zero(Representation::IncompleteNTT);
+            for j in 0..VDF_MATRIX_WIDTH {
+                let block = j / VDF_BITS;
+                let bit = j % VDF_BITS;
+                let mut row_j =
+                    RingElement::constant((1u64 << bit) % MOD_Q, Representation::IncompleteNTT);
+                row_j *= &c_powers[block];
+                for r in 0..VDF_MATRIX_HEIGHT {
+                    temp_a *= (&c_powers[VDF_MATRIX_HEIGHT + r], &vdf_crs_ref.A[(r, j)]);
+                    row_j += &temp_a;
+                }
+                batched_row.push(row_j);
+            }
+            vdf_eval
+                .vdf_batched_row_evaluation
+                .borrow_mut()
+                .load_from(&batched_row);
+
+            // Compute MLE[vdf_step_powers](x) where step_powers[i] = c^{VDF_STRIDE * i}
+            // MLE = prod_k ((1-x_k) + x_k · (c^{VDF_STRIDE})^{2^{n-1-k}})
+            // We iterate in reverse with c_power starting at c^{VDF_STRIDE} and squaring.
+            let two_k = config.extended_witness_length / 2 / VDF_MATRIX_WIDTH;
+            let step_powers_num_vars = two_k.ilog2() as usize;
+            let prefix = 1usize; // MSB selector bit (column selector)
+            let step_powers_vars = &evaluation_points_ring[prefix..prefix + step_powers_num_vars];
+
+            let mut mle_step_powers = RingElement::constant(1, Representation::IncompleteNTT);
+            // c_power starts at c^{VDF_STRIDE} (not c^1)
+            let mut c_power = RingElement::constant(1, Representation::IncompleteNTT);
+            for _ in 0..VDF_STRIDE {
+                c_power *= c;
+            }
+            let mut temp_sq = RingElement::zero(Representation::IncompleteNTT);
+            let mut term = RingElement::zero(Representation::IncompleteNTT);
+            for x_i in step_powers_vars.iter().rev() {
+                // factor = (1 - x_i) + x_i * c_power
+                let mut factor = &*ONE - x_i;
+                term *= (x_i, &c_power);
+                factor += &term;
+                mle_step_powers *= &factor;
+                // c_power = c_power^2 for next iteration
+                temp_sq *= (&c_power, &c_power);
+                std::mem::swap(&mut c_power, &mut temp_sq);
+            }
+            vdf_eval
+                .vdf_step_powers_evaluation
+                .borrow_mut()
+                .set_result(mle_step_powers);
+        }
+
+        self.combiner_evaluation
+            .borrow_mut()
+            .load_challenges_from(combination);
+        self.field_combiner_evaluation
+            .borrow_mut()
+            .load_challenges_from(qe);
     }
-    // Load combiner challenges
-    verifier_sumcheck_context
-        .combiner_evaluation
-        .borrow_mut()
-        .load_challenges_from(combination);
-
-    verifier_sumcheck_context
-        .field_combiner_evaluation
-        .borrow_mut()
-        .load_challenges_from(qe.clone());
-
-    verifier_sumcheck_context
-        .combiner_evaluation
-        .borrow_mut()
-        .load_challenges_from(&combination);
-
-    verifier_sumcheck_context
-        .field_combiner_evaluation
-        .borrow_mut()
-        .load_challenges_from(qe.clone());
 }

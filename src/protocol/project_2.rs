@@ -10,7 +10,7 @@ use crate::{
         ring_arithmetic::{Representation, RingElement},
     },
     hexl::bindings::{add_mod, eltwise_reduce_mod, multiply_mod},
-    protocol::config::{ConfigBase, SimpleConfig},
+    protocol::config::ConfigBase,
 };
 
 /// Computes J_batched = c'_1^T * J_embedded
@@ -689,15 +689,9 @@ pub fn verifier_sample_projection_challenges(
     config: &dyn ConfigBase,
     hash_wrapper: &mut HashWrapper,
 ) -> BatchedProjectionChallengesSuccinct {
-    let is_simple_config = (config as &dyn Any).is::<SimpleConfig>(); // we don't batch over columns in simple config
-
     let (c_0_layers, c_1_layers, c_2_layers) = sample_layers(
         projection_matrix,
-        if is_simple_config {
-            1
-        } else {
-            config.witness_width()
-        },
+        config.witness_width(),
         config.witness_height(),
         hash_wrapper,
     );

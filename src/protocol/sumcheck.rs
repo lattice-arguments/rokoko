@@ -36,21 +36,3 @@
 //!   step), but can be adapted for interactive prover/verifier operation.
 //!
 //! - `sumchecks::mod`: Module glue and exports.
-//!
-//! **Public API:**
-//!
-//! For backward compatibility, this file re-exports the main types and functions that
-//! external code depends on. If you're looking to understand or modify the sumcheck
-//! logic, start with `sumchecks/builder.rs` (for setup) and `sumchecks/runner.rs`
-//! (for execution).
-
-// Re-export the public API
-pub use crate::protocol::sumchecks::{
-    builder::init_sumcheck,
-    context::{
-        SumcheckContext, Type0SumcheckContext, Type1SumcheckContext, Type2SumcheckContext,
-        Type3SumcheckContext, Type4LayerSumcheckContext, Type4OutputLayerSumcheckContext,
-        Type4SumcheckContext,
-    },
-    runner::sumcheck,
-};

@@ -2,13 +2,12 @@ use std::{any::Any, sync::LazyLock};
 
 use crate::{
     common::{
+        config::*,
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         ring_arithmetic::{QuadraticExtension, RingElement},
     },
     protocol::{
-        commitment::{Prefix, RecursionConfig, RecursiveCommitment, RecursiveCommitmentWithAux},
-        config_generator::{AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig},
-        params::P,
+        commitment::{BasicCommitment, Prefix, RecursionConfig},
         sumcheck_utils::polynomial::Polynomial,
     },
 };
@@ -38,195 +37,6 @@ pub enum Projection {
     Skip,
 }
 
-pub static SOMEWHAT_REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| {
-    AuxSumcheckConfig {
-        witness_height: 2usize.pow(15),   // 2^15
-        witness_width: 2usize.pow(6),     // 2^6
-        projection_ratio: 2usize.pow(6),  // 2^6
-        projection_height: 2usize.pow(8), // 2^8
-        basic_commitment_rank: 4,
-        nof_openings: 1,
-        commitment_recursion: AuxRecursionConfig {
-            decomposition_base_log: 15, // 2^5 (witness_width) * 2^2 (rank) * 2^2 (decomp) = 2^9
-            decomposition_chunks: 4,
-            rank: 1,
-            next: Some(Box::new(AuxRecursionConfig {
-                decomposition_base_log: 7,
-                decomposition_chunks: 8, // 1 (rank) * 8 (decomp) = 2^3
-                rank: 1,
-                next: None,
-            })),
-        },
-        opening_recursion: AuxRecursionConfig {
-            decomposition_base_log: 15, // 2^5 (witness_width) * 2^0 (nof openings) * 2^2 (decomp) = 2^7
-            decomposition_chunks: 4, // for now, there's no reason why decomposition_chunks here shall be different from commitment_recursion.decomposition_chunks. I will use that assumption in sumcheck.
-            rank: 1,
-            next: None,
-        },
-        projection_recursion: AuxProjection::Type0(AuxRecursionConfig {
-            // 2^14 (witness_height) * 2^5 (witness_width) / 2^5 (projection_ratio) * 2^0 (decomp) = 2^14
-            decomposition_base_log: 20, // no decomposition
-            decomposition_chunks: 1,
-            rank: 1,
-            next: None,
-        }),
-
-        witness_decomposition_chunks: 2,
-        witness_decomposition_base_log: 10, // no decomposition
-
-        next: Some(Box::new(AuxConfig::Sumcheck(AuxSumcheckConfig {
-            witness_height: 2usize.pow(10),
-            witness_width: 2usize.pow(7),
-            projection_ratio: 2usize.pow(7),
-            projection_height: 2usize.pow(8),
-            basic_commitment_rank: 2,
-            nof_openings: 2,
-            commitment_recursion: AuxRecursionConfig {
-                decomposition_base_log: 15, // 2^5 (witness_width) * 2^2 (rank) * 2^2 (decomp) = 2^9
-                decomposition_chunks: 4,
-                rank: 1,
-                next: Some(Box::new(AuxRecursionConfig {
-                    decomposition_base_log: 7,
-                    decomposition_chunks: 8, // 1 (rank) * 8 (decomp) = 2^3
-                    rank: 1,
-                    next: None,
-                })),
-            },
-            opening_recursion: AuxRecursionConfig {
-                decomposition_base_log: 15, // 2^5 (witness_width) * 2^0 (nof openings) * 2^2 (decomp) = 2^7
-                decomposition_chunks: 4, // for now, there's no reason why decomposition_chunks here shall be different from commitment_recursion.decomposition_chunks. I will use that assumption in sumcheck.
-                rank: 1,
-                next: None,
-            },
-            projection_recursion: AuxProjection::Type1 {
-                nof_batches: 2,
-                recursion_constant_term: AuxRecursionConfig {
-                    decomposition_base_log: 15,
-                    decomposition_chunks: 4,
-                    rank: 1,
-                    next: None,
-                },
-                recursion_batched_projection: AuxRecursionConfig {
-                    decomposition_base_log: 15,
-                    decomposition_chunks: 4,
-                    rank: 1,
-                    next: None,
-                },
-            },
-
-            witness_decomposition_chunks: 2,
-            witness_decomposition_base_log: 10, // no decomposition
-
-            next: None,
-        }))),
-    }
-    .generate_config()
-});
-
-pub static TOY_CONFIG: LazyLock<Config> = LazyLock::new(|| {
-    AuxSumcheckConfig {
-        witness_height: 512,
-        witness_width: 16,
-        projection_ratio: 32,
-        projection_height: 8, // small for testing
-        basic_commitment_rank: 2,
-        nof_openings: 1,
-
-        commitment_recursion: AuxRecursionConfig {
-            decomposition_base_log: 15,
-            decomposition_chunks: 4,
-            rank: 1,
-            next: Some(Box::new(AuxRecursionConfig {
-                decomposition_base_log: 7,
-                decomposition_chunks: 8,
-                rank: 1,
-                next: None,
-            })),
-        },
-        opening_recursion: AuxRecursionConfig {
-            decomposition_base_log: 15,
-            decomposition_chunks: 4,
-            rank: 1,
-            next: None,
-        },
-        projection_recursion: AuxProjection::Type0(AuxRecursionConfig {
-            decomposition_base_log: 15,
-            decomposition_chunks: 2,
-            rank: 1,
-            next: None,
-        }),
-
-        witness_decomposition_chunks: 2,
-        witness_decomposition_base_log: 15,
-        next: None,
-    }
-    .generate_config()
-});
-
-pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
-    AuxSumcheckConfig {
-        witness_height: 1024,
-        witness_width: 16,
-        projection_ratio: 32,
-        projection_height: 256,
-        basic_commitment_rank: 2,
-        nof_openings: 1,
-
-        commitment_recursion: AuxRecursionConfig {
-            decomposition_base_log: 15,
-            decomposition_chunks: 4,
-            rank: 1,
-            next: Some(Box::new(AuxRecursionConfig {
-                decomposition_base_log: 7,
-                decomposition_chunks: 8,
-                rank: 1,
-                next: None,
-            })),
-        },
-        opening_recursion: AuxRecursionConfig {
-            decomposition_base_log: 15,
-            decomposition_chunks: 4,
-            rank: 1,
-            next: None,
-        },
-        projection_recursion: AuxProjection::Type1 {
-            nof_batches: 2,
-            recursion_constant_term: AuxRecursionConfig {
-                decomposition_base_log: 10,
-                decomposition_chunks: 2,
-                rank: 1,
-                next: None,
-            },
-            recursion_batched_projection: AuxRecursionConfig {
-                decomposition_base_log: 15,
-                decomposition_chunks: 4,
-                rank: 1,
-                next: None,
-            },
-        },
-
-        witness_decomposition_chunks: 2,
-        witness_decomposition_base_log: 15,
-        next: Some(Box::new(AuxConfig::Simple(SimpleConfig {
-            witness_height: 256,
-            witness_width: 16,
-            projection_ratio: 128,
-            projection_height: 256,
-            projection_nof_batches: 2,
-            basic_commitment_rank: 2,
-        }))),
-    }
-    .generate_config()
-});
-
-pub static CONFIG: LazyLock<Config> = LazyLock::new(|| P.clone());
-
-#[derive(Clone)]
-pub enum Config {
-    Sumcheck(SumcheckConfig),
-    Simple(SimpleConfig),
-}
-
 pub trait ConfigBase: Any {
     fn witness_height(&self) -> usize;
     fn witness_width(&self) -> usize;
@@ -235,270 +45,467 @@ pub trait ConfigBase: Any {
     fn basic_commitment_rank(&self) -> usize;
 }
 
-#[derive(Clone)]
-pub struct SumcheckConfig {
-    pub witness_height: usize,
-    pub witness_width: usize,
-    pub projection_ratio: usize,  // shall be likely the witness_height
-    pub projection_height: usize, // likely 256 unless for testing
-    pub commitment_recursion: RecursionConfig,
-    pub next_level_usage_ratio: f64, // we always assume that width is a power of two, but next_level_usage_ratio can be less than 1. I.e. for width = 16, and next_level_usage_ratio = 0.51, we only use 9 cols in the next level.
-    pub opening_recursion: RecursionConfig,
-    pub projection_recursion: Projection,
-    pub nof_openings: usize,
-
-    pub witness_decomposition_base_log: usize,
-    pub witness_decomposition_chunks: usize,
-    pub folded_witness_prefix: Prefix,
-
-    pub basic_commitment_rank: usize,
-    pub composed_witness_length: usize,
-
-    pub next: Option<Box<Config>>, // for multiple rounds
-}
-
-impl ConfigBase for SumcheckConfig {
-    fn witness_height(&self) -> usize {
-        self.witness_height
-    }
-
-    fn witness_width(&self) -> usize {
-        self.witness_width
-    }
-
-    fn projection_ratio(&self) -> usize {
-        self.projection_ratio
-    }
-
-    fn projection_height(&self) -> usize {
-        self.projection_height
-    }
-    fn basic_commitment_rank(&self) -> usize {
-        self.basic_commitment_rank
-    }
-}
-
-#[derive(Clone)]
-pub struct SimpleConfig {
-    pub witness_height: usize,
-    pub witness_width: usize,
-    pub projection_ratio: usize,  // shall be likely the witness_height
-    pub projection_height: usize, // likely 256 unless for testing
-    pub projection_nof_batches: usize,
-    pub basic_commitment_rank: usize,
-    // pub next: Option<Box<SimpleConfig>>, // for multiple rounds
-}
-
-impl ConfigBase for SimpleConfig {
-    fn witness_height(&self) -> usize {
-        self.witness_height
-    }
-
-    fn witness_width(&self) -> usize {
-        self.witness_width
-    }
-
-    fn projection_ratio(&self) -> usize {
-        self.projection_ratio
-    }
-
-    fn projection_height(&self) -> usize {
-        self.projection_height
-    }
-    fn basic_commitment_rank(&self) -> usize {
-        self.basic_commitment_rank
-    }
-}
-
-pub enum RoundProof {
-    Sumcheck(SumcheckRoundProof),
-    Simple(SimpleRoundProof),
-}
-
-pub enum NextRoundCommitment {
-    Recursive(RecursiveCommitment), // if the next round is sumcheck
-    Simple(HorizontallyAlignedMatrix<RingElement>), // if the next round is simple
-}
-
 pub trait SizeableProof {
     fn size_in_bits(&self) -> usize;
-}
-
-pub struct SumcheckRoundProof {
-    pub polys: Vec<Polynomial<QuadraticExtension>>,
-    pub claim_over_witness: RingElement,
-    pub claim_over_witness_conjugate: RingElement,
-    pub norm_claim: RingElement,
-    pub most_inner_norm_claim: RingElement,
-    pub rc_opening_inner: Vec<RingElement>,
-    pub rc_projection_inner: Option<Vec<RingElement>>,
-    pub rcs_projection_1_inner: Option<(Vec<RingElement>, Vec<RingElement>)>,
-    pub constant_term_claims: Option<Vec<RingElement>>,
-    pub next_round_commitment: Option<NextRoundCommitment>,
-    pub next: Option<Box<RoundProof>>,
 }
 
 pub fn to_kb(size_in_bits: usize) -> f64 {
     size_in_bits as f64 / 8.0 / 1024.0
 }
 
-impl SizeableProof for SumcheckRoundProof {
-    fn size_in_bits(&self) -> usize {
-        let mut size = 0;
-        for poly in &self.polys {
-            for coeff in &poly.coefficients[0..poly.num_coefficients] {
-                size += coeff.size_in_bits();
-            }
-        }
-        println!("Polys size: {} KB, ", to_kb(size));
+pub struct SalsaaProofCommon {
+    pub sumcheck_transcript: Vec<Polynomial<QuadraticExtension>>,
+    pub ip_l2_claim: Option<RingElement>,
+    pub ip_linf_claim: Option<RingElement>,
+    pub(crate) claims: HorizontallyAlignedMatrix<RingElement>,
+}
 
-        let mut claims_size = 0;
-        let claims = vec![
-            &self.claim_over_witness,
-            &self.claim_over_witness_conjugate,
-            &self.norm_claim,
-            &self.most_inner_norm_claim,
-        ];
-        for claim in claims {
-            claims_size += claim.size_in_bits();
-        }
-        size += claims_size;
-        println!("Claims size: {} KB, ", to_kb(claims_size));
+#[derive(Clone)]
+pub struct RoundConfigCommon {
+    pub main_witness_prefix: Prefix,
+    pub main_witness_columns: usize,
+    pub extended_witness_length: usize,
+    pub exact_binariness: bool, // whether the proof should be for exact binariness
+    pub vdf: bool,              // for the first round
+    pub l2: bool,               // whether the proof should be for l2 norm of the witness
+    pub inner_evaluation_claims: usize, // how many inner evaluation claims we want to make, this determines the number of type1 sumchecks we need
+}
 
-        let mut rc_opening_inner_size = 0;
-        for el in &self.rc_opening_inner {
-            rc_opening_inner_size += el.size_in_bits();
-        }
+#[derive(Clone)]
+pub enum RoundConfig {
+    Intermediate {
+        common: RoundConfigCommon,
+        decomposition_base_log: u64,
+        projection_ratio: usize, // set 0 for no projection
+        projection_prefix: Prefix,
+        next: Box<RoundConfig>,
+    },
+    IntermediateUnstructured {
+        projection_ratio: usize,
+        common: RoundConfigCommon,
+        decomposition_base_log: u64,
+        next: Box<RoundConfig>,
+    },
+    Last {
+        common: RoundConfigCommon,
+        projection_ratio: usize,
+    },
+}
 
-        size += rc_opening_inner_size;
-        println!(
-            "RC opening inner size: {} KB, ",
-            to_kb(rc_opening_inner_size)
-        );
-
-        if let Some(rc_projection_inner) = &self.rc_projection_inner {
-            let mut rc_projection_inner_size = 0;
-            for el in rc_projection_inner {
-                rc_projection_inner_size += el.size_in_bits();
-            }
-            size += rc_projection_inner_size;
-            println!(
-                "RC projection 0 inner size: {} KB, ",
-                to_kb(rc_projection_inner_size)
-            );
-        }
-
-        if let Some((rcs_projection_1_inner_0, rcs_projection_1_inner_1)) =
-            &self.rcs_projection_1_inner
-        {
-            let mut rcs_projection_1_inner_size = 0;
-            for el in rcs_projection_1_inner_0 {
-                rcs_projection_1_inner_size += el.size_in_bits();
-            }
-            for el in rcs_projection_1_inner_1 {
-                rcs_projection_1_inner_size += el.size_in_bits();
-            }
-            size += rcs_projection_1_inner_size;
-            println!(
-                "RCs projection 1 inner size: {} KB, ",
-                to_kb(rcs_projection_1_inner_size)
-            );
-        }
-
-        if let Some(constant_term_claims) = &self.constant_term_claims {
-            let mut constant_term_claims_size = 0;
-            for el in constant_term_claims {
-                constant_term_claims_size += el.size_in_bits();
-            }
-            size += constant_term_claims_size;
-            println!(
-                "Constant term claims size: {} KB, ",
-                to_kb(constant_term_claims_size)
-            );
-        }
-
-        let next_round_size = if let Some(next_round_commitment) = &self.next_round_commitment {
-            match next_round_commitment {
-                NextRoundCommitment::Recursive(rc) => {
-                    let mut rc_size = 0;
-                    for el in rc {
-                        rc_size += el.size_in_bits();
-                    }
-                    rc_size
-                }
-                NextRoundCommitment::Simple(mat) => {
-                    let mut mat_size = 0;
-                    for el in &mat.data {
-                        mat_size += el.size_in_bits();
-                    }
-                    mat_size
-                }
-            }
-        } else {
-            0
-        };
-        size += next_round_size;
-        println!(
-            "Next round commitment size: {} KB, ",
-            to_kb(next_round_size)
-        );
-        println!("Total sumcheck round proof size: {} KB \n\n\n", to_kb(size));
-
-        size + if let Some(next) = &self.next {
-            match &**next {
-                RoundProof::Sumcheck(sc_next) => sc_next.size_in_bits(),
-                RoundProof::Simple(s_next) => s_next.size_in_bits(),
-            }
-        } else {
-            0
+impl std::ops::Deref for RoundConfig {
+    type Target = RoundConfigCommon;
+    fn deref(&self) -> &RoundConfigCommon {
+        match self {
+            RoundConfig::Intermediate { common, .. } => common,
+            RoundConfig::Last { common, .. } => common,
+            RoundConfig::IntermediateUnstructured { common, .. } => common,
         }
     }
 }
 
-pub struct SimpleRoundProof {
-    pub folded_witness: VerticallyAlignedMatrix<RingElement>,
-    pub projection_image_ct: VerticallyAlignedMatrix<RingElement>, // cosntant term projection image embedded
-    pub batched_projection_image: HorizontallyAlignedMatrix<RingElement>,
-    pub opening_rhs: HorizontallyAlignedMatrix<RingElement>,
+impl RoundConfig {
+    pub fn is_last(&self) -> bool {
+        matches!(self, RoundConfig::Last { .. })
+    }
 }
 
-impl SizeableProof for SimpleRoundProof {
+fn ring_vec_size(v: &[RingElement]) -> usize {
+    v.iter().map(|e| e.size_in_bits()).sum()
+}
+
+/// Recursively builds the round config chain.
+/// - First round: uses NUM_COLUMNS_INITIAL columns, projection_ratio=2, VDF+exact_binariness enabled.
+/// - Subsequent rounds: 8 columns, projection_ratio=8, L2 enabled.
+/// - Recursion stops when the *next* round's single_col_height would be < PROJECTION_HEIGHT * projection_ratio
+///   (i.e., the next round couldn't support projection).
+fn build_round_config(extended_witness_length: usize, is_first_round: bool) -> RoundConfig {
+    let main_witness_columns = if is_first_round {
+        NUM_COLUMNS_INITIAL
+    } else {
+        8
+    };
+
+    // only for structured case
+    let projection_ratio = if is_first_round { 2 } else { 8 };
+
+    let single_col_height = extended_witness_length / 2 / main_witness_columns;
+    // After fold+split+decompose, next round's column height = single_col_height / 2
+    let next_single_col_height = single_col_height / 2;
+    let next_main_witness_columns = 8usize;
+    let next_projection_ratio = 8usize;
+    let can_recurse = next_single_col_height >= PROJECTION_HEIGHT * next_projection_ratio;
+    println!("Building round config: extended_witness_length={}, single_col_height={}, next_single_col_height={}, can_recurse={}", extended_witness_length, single_col_height, next_single_col_height, can_recurse);
+
+    let inner_evaluation_claims = if is_first_round { 0 } else { 2 };
+
+    let common = RoundConfigCommon {
+        extended_witness_length,
+        exact_binariness: is_first_round,
+        l2: !is_first_round,
+        vdf: is_first_round,
+        inner_evaluation_claims,
+        main_witness_columns,
+        main_witness_prefix: Prefix {
+            prefix: 0b0,
+            length: 1,
+        },
+    };
+
+    if can_recurse {
+        let next_extended_witness_length = next_single_col_height * next_main_witness_columns * 2;
+        RoundConfig::Intermediate {
+            common,
+            decomposition_base_log: 8,
+            projection_ratio,
+            projection_prefix: Prefix {
+                prefix: main_witness_columns,
+                length: main_witness_columns.ilog2() as usize + 1,
+            },
+            next: Box::new(build_round_config(next_extended_witness_length, false)),
+        }
+    } else {
+        // Transition to unstructured rounds (no projection).
+        // The first unstructured round has 8 input columns (from
+        // the Intermediate decomposition). With prefix=0, extended_witness_length
+        // does not include the factor-of-2 doubling.
+        let unstructured_cols = 8usize; // first unstructured inherits 8 cols from Intermediate output
+        let unstructured_extended_witness_length = next_single_col_height * unstructured_cols;
+        let unstructured_single_col_height = next_single_col_height;
+        let next_unstructured_height = unstructured_single_col_height / 2;
+        let next_unstructured_cols = 4usize;
+        let next_unstructured_wl = next_unstructured_height * next_unstructured_cols;
+
+        let unstructured_common = RoundConfigCommon {
+            extended_witness_length: unstructured_extended_witness_length,
+            exact_binariness: false,
+            l2: true,
+            vdf: false,
+            inner_evaluation_claims: 2,
+            main_witness_columns: unstructured_cols,
+            main_witness_prefix: Prefix {
+                prefix: 0,
+                length: 0,
+            },
+        };
+
+        println!(
+            "Building unstructured round config: extended_witness_length={}, single_col_height={}, next_height={}",
+            unstructured_extended_witness_length, unstructured_single_col_height, next_unstructured_height
+        );
+
+        let next_unstructured_config = if next_unstructured_height >= PROJECTION_HEIGHT {
+            build_unstructured_round_config(next_unstructured_wl)
+        } else {
+            RoundConfig::Last {
+                common: RoundConfigCommon {
+                    extended_witness_length: next_unstructured_wl,
+                    exact_binariness: false,
+                    l2: true,
+                    vdf: false,
+                    inner_evaluation_claims: 2,
+                    main_witness_columns: next_unstructured_cols,
+                    main_witness_prefix: Prefix {
+                        prefix: 0,
+                        length: 0,
+                    },
+                },
+                projection_ratio: std::cmp::min(
+                    DEGREE * next_unstructured_height / PROJECTION_HEIGHT,
+                    MAX_UNSTRUCT_PROJ_RATIO,
+                ),
+            }
+        };
+
+        let next_config = RoundConfig::IntermediateUnstructured {
+            common: unstructured_common,
+            decomposition_base_log: 8,
+            projection_ratio: std::cmp::min(
+                DEGREE * unstructured_single_col_height / PROJECTION_HEIGHT,
+                MAX_UNSTRUCT_PROJ_RATIO,
+            ),
+            next: Box::new(next_unstructured_config),
+        };
+
+        RoundConfig::Intermediate {
+            common,
+            decomposition_base_log: 8,
+            projection_ratio,
+            projection_prefix: Prefix {
+                prefix: main_witness_columns,
+                length: main_witness_columns.ilog2() as usize + 1,
+            },
+            next: Box::new(next_config),
+        }
+    }
+}
+
+impl ConfigBase for RoundConfig {
+    fn witness_height(&self) -> usize {
+        self.extended_witness_length
+            / (self.main_witness_columns * 2usize.pow(self.main_witness_prefix.length as u32))
+    }
+
+    fn witness_width(&self) -> usize {
+        self.main_witness_columns * 2usize.pow(self.main_witness_prefix.length as u32)
+    }
+
+    fn projection_ratio(&self) -> usize {
+        match self {
+            RoundConfig::Intermediate {
+                projection_ratio, ..
+            } => *projection_ratio,
+            RoundConfig::IntermediateUnstructured {
+                projection_ratio, ..
+            } => *projection_ratio,
+            RoundConfig::Last {
+                projection_ratio, ..
+            } => *projection_ratio,
+        }
+    }
+
+    fn projection_height(&self) -> usize {
+        PROJECTION_HEIGHT
+    }
+
+    fn basic_commitment_rank(&self) -> usize {
+        panic!("basic_commitment_rank is not defined for RoundConfig");
+    }
+}
+
+/// Builds unstructured round configs (4 columns, prefix 0, unstructured projection).
+/// Continues until single_col_height / 2 < PROJECTION_HEIGHT, then produces Last.
+fn build_unstructured_round_config(extended_witness_length: usize) -> RoundConfig {
+    let main_witness_columns = 4usize;
+    let single_col_height = extended_witness_length / main_witness_columns;
+    let next_single_col_height = single_col_height / 2;
+    let next_cols = 4usize;
+    let next_wl = next_single_col_height * next_cols;
+
+    println!(
+        "Building unstructured round config: extended_witness_length={}, single_col_height={}, next_height={}",
+        extended_witness_length, single_col_height, next_single_col_height
+    );
+
+    let common = RoundConfigCommon {
+        extended_witness_length,
+        exact_binariness: false,
+        l2: true,
+        vdf: false,
+        inner_evaluation_claims: 2,
+        main_witness_columns,
+        main_witness_prefix: Prefix {
+            prefix: 0,
+            length: 0,
+        },
+    };
+
+    let next_config = if next_single_col_height >= LAST_ROUND_THRESHOLD {
+        build_unstructured_round_config(next_wl)
+    } else {
+        RoundConfig::Last {
+            common: RoundConfigCommon {
+                extended_witness_length: next_wl,
+                exact_binariness: false,
+                l2: true,
+                vdf: false,
+                inner_evaluation_claims: 2,
+                main_witness_columns: next_cols,
+                main_witness_prefix: Prefix {
+                    prefix: 0,
+                    length: 0,
+                },
+            },
+            projection_ratio: std::cmp::min(
+                DEGREE * next_single_col_height / PROJECTION_HEIGHT,
+                MAX_UNSTRUCT_PROJ_RATIO,
+            ),
+        }
+    };
+
+    RoundConfig::IntermediateUnstructured {
+        common,
+        decomposition_base_log: 8,
+        projection_ratio: std::cmp::min(
+            DEGREE * single_col_height / PROJECTION_HEIGHT,
+            MAX_UNSTRUCT_PROJ_RATIO,
+        ), // for now, we assume that each column is projected to PROJECTION_HEIGHT Zq elements.
+        next: Box::new(next_config),
+    }
+}
+
+pub static CONFIG: LazyLock<RoundConfig> =
+    LazyLock::new(|| build_round_config(WITNESS_DIM * WITNESS_WIDTH * 2, true));
+
+pub enum SalsaaProof {
+    Intermediate {
+        projection_commitment: BasicCommitment,
+        common: SalsaaProofCommon,
+        new_claims: HorizontallyAlignedMatrix<RingElement>,
+        decomposed_split_commitment: BasicCommitment,
+        next: Box<SalsaaProof>,
+        claim_over_projection: Vec<RingElement>,
+    },
+    IntermediateUnstructured {
+        common: SalsaaProofCommon,
+        new_claims: Vec<RingElement>,
+        decomposed_split_commitment: BasicCommitment,
+        next: Box<SalsaaProof>,
+        projection_image_ct: VerticallyAlignedMatrix<RingElement>,
+        projection_image_batched: HorizontallyAlignedMatrix<RingElement>,
+    },
+    Last {
+        common: SalsaaProofCommon,
+        folded_witness: Vec<RingElement>,
+        projection_image_ct: VerticallyAlignedMatrix<RingElement>,
+        projection_image_batched: HorizontallyAlignedMatrix<RingElement>,
+    },
+}
+
+impl std::ops::Deref for SalsaaProof {
+    type Target = SalsaaProofCommon;
+    fn deref(&self) -> &SalsaaProofCommon {
+        match self {
+            SalsaaProof::Intermediate { common, .. } => common,
+            SalsaaProof::Last { common, .. } => common,
+            SalsaaProof::IntermediateUnstructured { common, .. } => common,
+        }
+    }
+}
+
+impl SizeableProof for SalsaaProof {
     fn size_in_bits(&self) -> usize {
-        let mut size = 0;
-        for el in &self.folded_witness.data {
-            size += el.size_in_bits();
-        }
-        println!("Folded witness size: {} KB, ", to_kb(size));
+        let common = &**self;
 
-        let mut projection_image_ct_size = 0;
-        for el in &self.projection_image_ct.data {
-            projection_image_ct_size += el.size_in_bits();
+        // Sumcheck transcript (polynomials)
+        let mut polys_size = 0;
+        for poly in &common.sumcheck_transcript {
+            for coeff in &poly.coefficients[0..poly.num_coefficients] {
+                polys_size += coeff.size_in_bits();
+            }
         }
-        size += projection_image_ct_size;
+        println!("  Polys: {:.2} KB", to_kb(polys_size));
+
+        // Claims matrix
+        let claims_size = ring_vec_size(&common.claims.data);
+        println!("  Claims: {:.2} KB", to_kb(claims_size));
+
+        // Claim over projection
+        let proj_claim_size = match self {
+            SalsaaProof::Intermediate {
+                claim_over_projection,
+                ..
+            } => ring_vec_size(claim_over_projection),
+            SalsaaProof::Last { .. } => 0,
+            SalsaaProof::IntermediateUnstructured { .. } => 0,
+        };
+
+        println!("  Claim over projection: {:.2} KB", to_kb(proj_claim_size));
+
+        // Projection commitment
+        let proj_commit_size = match self {
+            SalsaaProof::Intermediate {
+                projection_commitment,
+                ..
+            } => ring_vec_size(&projection_commitment.data),
+            SalsaaProof::Last { .. } => 0,
+            SalsaaProof::IntermediateUnstructured { .. } => 0,
+        };
+
+        println!("  Projection commitment: {:.2} KB", to_kb(proj_commit_size));
+
+        // Norm claims
+        let l2_size = common.ip_l2_claim.as_ref().map_or(0, |c| c.size_in_bits());
+        let linf_size = common
+            .ip_linf_claim
+            .as_ref()
+            .map_or(0, |c| c.size_in_bits());
         println!(
-            "Projection image ct size: {} KB, ",
-            to_kb(projection_image_ct_size)
+            "  L2 claim: {:.2} KB, Linf claim: {:.2} KB",
+            to_kb(l2_size),
+            to_kb(linf_size)
         );
 
-        let mut batched_projection_image_size = 0;
-        for el in &self.batched_projection_image.data {
-            batched_projection_image_size += el.size_in_bits();
-        }
-        size += batched_projection_image_size;
-        println!(
-            "Batched projection image size: {} KB, ",
-            to_kb(batched_projection_image_size)
-        );
+        let mut round_size =
+            polys_size + claims_size + proj_claim_size + proj_commit_size + l2_size + linf_size;
 
-        let mut opening_rhs_size = 0;
-        for el in &self.opening_rhs.data {
-            opening_rhs_size += el.size_in_bits();
-        }
-        size += opening_rhs_size;
-        println!("Opening RHS size: {} KB, ", to_kb(opening_rhs_size));
+        match self {
+            SalsaaProof::Intermediate {
+                new_claims,
+                decomposed_split_commitment,
+                next,
+                ..
+            } => {
+                let new_claims_size = ring_vec_size(&new_claims.data);
+                println!("  New claims: {:.2} KB", to_kb(new_claims_size));
 
-        println!("Total simple round proof size: {} KB \n\n\n", to_kb(size));
-        size
+                let decomp_commit_size = ring_vec_size(&decomposed_split_commitment.data);
+                println!(
+                    "  Decomposed split commitment: {:.2} KB",
+                    to_kb(decomp_commit_size)
+                );
+
+                round_size += new_claims_size + decomp_commit_size;
+                println!("  Round total: {:.2} KB", to_kb(round_size));
+
+                round_size + next.size_in_bits()
+            }
+            SalsaaProof::Last {
+                folded_witness,
+                projection_image_ct,
+                projection_image_batched,
+                ..
+            } => {
+                let folded_size = ring_vec_size(folded_witness);
+                println!("  Folded witness: {:.2} KB", to_kb(folded_size));
+
+                let projection_image_size = ring_vec_size(&projection_image_ct.data);
+                println!("  Projection image: {:.2} KB", to_kb(projection_image_size));
+
+                let batched_projection_size = ring_vec_size(&projection_image_batched.data);
+                println!(
+                    "  Batched projection: {:.2} KB",
+                    to_kb(batched_projection_size)
+                );
+
+                round_size += folded_size + batched_projection_size + projection_image_size;
+                println!("  Round total (last): {:.2} KB", to_kb(round_size));
+
+                round_size
+            }
+            SalsaaProof::IntermediateUnstructured {
+                new_claims,
+                decomposed_split_commitment,
+                projection_image_batched,
+                next,
+                ..
+            } => {
+                let new_claims_size = ring_vec_size(new_claims);
+                println!("  New claims: {:.2} KB", to_kb(new_claims_size));
+
+                let decomp_commit_size = ring_vec_size(&decomposed_split_commitment.data);
+                println!(
+                    "  Decomposed split commitment: {:.2} KB",
+                    to_kb(decomp_commit_size)
+                );
+
+                let projection_image_size = 256 * 64; // over estimated
+                println!("  Projection image: {:.2} KB", to_kb(projection_image_size));
+
+                let batched_projection_size = ring_vec_size(&projection_image_batched.data);
+                println!(
+                    "  Batched projection: {:.2} KB",
+                    to_kb(batched_projection_size)
+                );
+
+                round_size += new_claims_size
+                    + decomp_commit_size
+                    + projection_image_size
+                    + batched_projection_size;
+                println!("  Round total: {:.2} KB", to_kb(round_size));
+
+                round_size + next.size_in_bits()
+            }
+        }
     }
 }
 
@@ -514,18 +521,6 @@ pub fn paste_by_prefix(dest: &mut Vec<RingElement>, src: &Vec<RingElement>, pref
     let start = prefix.prefix << (dest.len().ilog2() as usize - prefix.length);
     unsafe {
         std::ptr::copy_nonoverlapping(src.as_ptr(), dest.as_mut_ptr().add(start), src.len());
-    }
-}
-
-pub fn paste_recursive_commitment(
-    dest: &mut Vec<RingElement>,
-    commitment: &RecursiveCommitmentWithAux,
-    config: &RecursionConfig,
-) {
-    paste_by_prefix(dest, &commitment.committed_data, &config.prefix);
-
-    if let (Some(next_commitment), Some(next_config)) = (&commitment.next, &config.next) {
-        paste_recursive_commitment(dest, next_commitment, next_config);
     }
 }
 

@@ -9,7 +9,7 @@ use crate::{
         elephant_cell::ElephantCell,
         linear::{
             BasicEvaluationLinearSumcheck, FakeEvaluationLinearSumcheck,
-            RingToFieldWrapperEvaluation, StructuredRowEvaluationLinearSumcheck,
+            StructuredRowEvaluationLinearSumcheck,
         },
         product::ProductSumcheckEvaluation,
         ring_to_field_combiner::RingToFieldCombinerEvaluation,
@@ -17,129 +17,64 @@ use crate::{
     },
 };
 
-/// Verifier's sumcheck context - mirrors SumcheckContext but with evaluation-only types.
-/// Uses ElephantCell for all evaluations to allow shared ownership, just like the prover.
 pub struct VerifierSumcheckContext {
-    // Base evaluations (leaf nodes that will be loaded with data)
-    pub combined_witness_evaluation: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
-    pub folded_witness_selector_evaluation: ElephantCell<SelectorEqEvaluation>,
-    pub folded_witness_combiner_evaluation:
-        ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-    pub folding_challenges_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-    pub basic_commitment_combiner_evaluation:
-        ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-    pub commitment_key_rows_evaluation:
-        Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
-    pub opening_combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-
-    // Type-specific contexts
-    pub type0evaluations: Vec<Type0VerifierContext>,
-    pub type1evaluations: Vec<Type1VerifierContext>,
-    pub type2evaluations: Vec<Type2VerifierContext>,
-    pub type3evaluation: Option<Type3VerifierContext>,
-    pub type3_1_evaluations: Option<Type3_1VerifierContextWrapper>,
-    pub type4evaluations: Vec<Type4VerifierContext>,
-    pub type5evaluation: Type5VerifierContext,
-
-    // Top-level combiners
+    pub witness_evaluation: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
+    pub witness_conjugated_evaluation: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
+    pub main_witness_selector_evaluation: ElephantCell<SelectorEqEvaluation>,
+    pub projection_selector_evaluation: Option<ElephantCell<SelectorEqEvaluation>>,
+    pub type1evaluations: Vec<Type1VerifierSumcheckContext>,
+    pub type3evaluation: Option<Type3VerifierSumcheckContext>,
+    pub type31evaluations: Option<[Type31VerifierSumcheckContext; NOF_BATCHES]>,
+    pub l2evaluation: Option<L2VerifierSumcheckContext>,
+    pub linfevaluation: Option<LinfVerifierSumcheckContext>,
+    pub vdfevaluation: Option<VDFVerifierSumcheckContext>,
     pub combiner_evaluation: ElephantCell<CombinerEvaluation<RingElement>>,
     pub field_combiner_evaluation: ElephantCell<RingToFieldCombinerEvaluation>,
     pub next: Option<Box<VerifierSumcheckContext>>,
 }
 
-impl VerifierSumcheckContext {
-    pub fn evaluate_at_point(&mut self, point: &Vec<RingElement>) -> QuadraticExtension {
-        self.field_combiner_evaluation
-            .borrow_mut()
-            .evaluate_at_ring_point(point)
-            .clone()
-    }
-}
-
-pub struct Type0VerifierContext {
-    pub basic_commitment_row_evaluation: ElephantCell<SelectorEqEvaluation>,
-    pub output: ElephantCell<DiffSumcheckEvaluation>,
-}
-
-pub struct Type1VerifierContext {
-    pub inner_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
-    pub opening_selector_evaluation: ElephantCell<SelectorEqEvaluation>,
-    pub output: ElephantCell<DiffSumcheckEvaluation>,
-}
-
-pub struct Type2VerifierContext {
-    pub outer_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
+pub struct L2VerifierSumcheckContext {
     pub output: ElephantCell<ProductSumcheckEvaluation>,
 }
 
-pub struct Type3VerifierContext {
-    pub projection_combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-    pub lhs_flatter_0_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
-    pub lhs_flatter_1_times_matrix_evaluation_field:
-        ElephantCell<BasicEvaluationLinearSumcheck<QuadraticExtension>>,
-    pub lhs_flatter_1_times_matrix_evaluation: ElephantCell<RingToFieldWrapperEvaluation>,
-    // RHS: Split into projection_flatter and fold_challenge
-    pub rhs_projection_flatter_evaluation:
-        ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
-    pub rhs_fold_challenge_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-    pub projection_selector_evaluation: ElephantCell<SelectorEqEvaluation>,
-    pub output: ElephantCell<DiffSumcheckEvaluation>,
-}
-
-pub struct Type3_1VerifierContext {
-    pub lhs_flatter_0_evaluation_field:
-        ElephantCell<StructuredRowEvaluationLinearSumcheck<QuadraticExtension>>,
-    pub lhs_flatter_0_evaluation: ElephantCell<RingToFieldWrapperEvaluation>,
-    pub lhs_flatter_1_times_matrix_evaluation:
-        ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-    pub projection_selector_evaluation: ElephantCell<SelectorEqEvaluation>,
-    pub output: ElephantCell<DiffSumcheckEvaluation>,
-
-    pub lhs_consistency_flatter_evaluation_field:
-        ElephantCell<StructuredRowEvaluationLinearSumcheck<QuadraticExtension>>,
-    pub rhs_consistency_flatter_evaluation_field:
-        ElephantCell<StructuredRowEvaluationLinearSumcheck<QuadraticExtension>>,
-
-    pub lhs_consistency_flatter_evaluation: ElephantCell<RingToFieldWrapperEvaluation>,
-    pub rhs_consistency_flatter_evaluation: ElephantCell<RingToFieldWrapperEvaluation>,
-
-    pub rhs_scalar_consistency_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-
-    pub output_2: ElephantCell<DiffSumcheckEvaluation>,
-}
-pub struct Type3_1VerifierContextWrapper {
-    pub sumchecks: [Type3_1VerifierContext; NOF_BATCHES],
-    pub projection_combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-    pub rhs_fold_challenge_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-    pub lhs_scalar_consistency_evaluation_field:
-        ElephantCell<BasicEvaluationLinearSumcheck<QuadraticExtension>>,
-    pub lhs_scalar_consistency_evaluation: ElephantCell<RingToFieldWrapperEvaluation>,
-}
-
-pub struct Type4VerifierContext {
-    pub layers: Vec<Type4LayerVerifierContext>,
-    pub output_layer: Type4OutputLayerVerifierContext,
-}
-
-pub struct Type4LayerVerifierContext {
-    pub selector_evaluation: ElephantCell<SelectorEqEvaluation>,
-    pub child_selector_evaluations: Vec<ElephantCell<SelectorEqEvaluation>>,
-    pub combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-    pub ck_evaluations: Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
-    pub outputs: Vec<ElephantCell<DiffSumcheckEvaluation>>,
-}
-
-pub struct Type4OutputLayerVerifierContext {
-    pub selector_evaluation: ElephantCell<SelectorEqEvaluation>,
-    pub ck_evaluations: Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
-    pub outputs: Vec<ElephantCell<ProductSumcheckEvaluation>>,
-}
-
-pub struct Type5VerifierContext {
-    pub conjugated_combined_witness_evaluation:
-        ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
+pub struct LinfVerifierSumcheckContext {
+    pub all_one_constant_evaluation: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
     pub output: ElephantCell<ProductSumcheckEvaluation>,
+    pub one_minus_wit_evaluation: ElephantCell<DiffSumcheckEvaluation>,
+    pub one_minus_wit_selector_evaluation: ElephantCell<ProductSumcheckEvaluation>,
+}
 
-    pub selectors: Vec<ElephantCell<SelectorEqEvaluation>>,
-    pub output_2: ElephantCell<ProductSumcheckEvaluation>,
+pub struct VDFVerifierSumcheckContext {
+    pub vdf_step_powers_evaluation: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
+    pub vdf_batched_row_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
+    pub output: ElephantCell<ProductSumcheckEvaluation>,
+}
+
+pub struct Type1VerifierSumcheckContext {
+    pub inner_evaluation_sumcheck: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
+    pub outer_evaluation_sumcheck: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
+    pub output: ElephantCell<ProductSumcheckEvaluation>,
+}
+
+pub struct Type3VerifierSumcheckContext {
+    pub c2l_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
+    pub c0l_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
+    // TODO: this can be over fields, then then mapped to rings?. Actually, all of those can be over fields (I guess?).
+    pub flattened_projection_matrix_evaluation:
+        ElephantCell<BasicEvaluationLinearSumcheck<QuadraticExtension>>,
+    pub c2r_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
+    pub c0r_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
+    pub c1r_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
+    pub lhs: ElephantCell<ProductSumcheckEvaluation>,
+    pub rhs: ElephantCell<ProductSumcheckEvaluation>,
+    pub output: ElephantCell<DiffSumcheckEvaluation>,
+}
+
+// Type 3.1 verifier: evaluates <c_2 ⊗ c_0 ⊗ j_batched, witness> at the sumcheck point.
+// c_2 and c_0 are succinct (StructuredRow), j_batched is explicit.
+pub struct Type31VerifierSumcheckContext {
+    pub c_2_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
+    pub c_0_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
+    pub j_batched_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
+    pub output: ElephantCell<ProductSumcheckEvaluation>,
 }

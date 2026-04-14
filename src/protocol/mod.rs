@@ -5,7 +5,6 @@ pub mod config;
 pub mod config_generator;
 pub mod fold;
 pub mod open;
-pub mod params;
 pub mod parties;
 pub mod project;
 pub mod project_2;
