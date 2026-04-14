@@ -493,6 +493,7 @@ pub fn project_coefficients(
 /// This allows sampling only `log(|c'_i|)` random values (the layers `l_j`)
 /// and computing any `c'_i[k]` on-the-fly from the binary representation of `k`.
 
+#[derive(Clone)]
 pub struct BatchedProjectionChallenges {
     pub c_0_values: Vec<u64>,
     pub c_1_values: Vec<u64>,
