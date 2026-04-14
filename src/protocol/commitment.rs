@@ -56,7 +56,6 @@ pub fn commit_basic(
     rank: usize,
 ) -> BasicCommitment {
     let ck = crs.ck_for_wit_dim(witness.height);
-    
 
     commit_basic_internal(ck, witness, rank)
 }
@@ -135,7 +134,10 @@ pub fn recursive_commit(
         }
     }
 
-    let next = config.next.as_ref().map(|next_config| Box::new(recursive_commit(crs, next_config, &commitment)));
+    let next = config
+        .next
+        .as_ref()
+        .map(|next_config| Box::new(recursive_commit(crs, next_config, &commitment)));
 
     RecursiveCommitmentWithAux {
         decomposition_base_log: config.decomposition_base_log,

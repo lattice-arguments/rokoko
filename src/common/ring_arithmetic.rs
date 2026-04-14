@@ -1227,18 +1227,10 @@ impl Mul for QuadraticExtension {
             [
                 add_mod(
                     multiply_mod(a, c, MOD_Q),
-                    multiply_mod(
-                        *FIELD_SHIFT_FACTOR,
-                        multiply_mod(b, d, MOD_Q),
-                        MOD_Q,
-                    ),
+                    multiply_mod(*FIELD_SHIFT_FACTOR, multiply_mod(b, d, MOD_Q), MOD_Q),
                     MOD_Q,
                 ),
-                add_mod(
-                    multiply_mod(a, d, MOD_Q),
-                    multiply_mod(b, c, MOD_Q),
-                    MOD_Q,
-                ),
+                add_mod(multiply_mod(a, d, MOD_Q), multiply_mod(b, c, MOD_Q), MOD_Q),
             ]
         };
         Self { coeffs }

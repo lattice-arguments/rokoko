@@ -1,18 +1,18 @@
-use crate::protocol::commitment::commit_basic;
-use crate::protocol::config::{to_kb, SizeableProof, CONFIG};
-use crate::protocol::crs::CRS;
-use crate::protocol::parties::prover::{prover_round, vdf_crs};
-use crate::protocol::parties::verifier::verifier_round;
-use crate::protocol::sumchecks::builder::init_prover_sumcheck;
-use crate::protocol::sumchecks::builder_verifier::init_verifier_sumcheck;
 use crate::{
     common::{
         config::*,
         hash::HashWrapper,
-        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
+        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         ring_arithmetic::{Representation, RingElement},
     },
-    protocol::config::RoundConfig,
+    protocol::{
+        commitment::commit_basic,
+        config::{to_kb, SizeableProof, CONFIG},
+        crs::CRS,
+        parties::{prover::prover_round, verifier::verifier_round},
+        sumchecks::{builder::init_prover_sumcheck, builder_verifier::init_verifier_sumcheck},
+        vdf::{run_vdf, vdf_init},
+    },
 };
 
 pub struct VDFOutput {
@@ -34,66 +34,6 @@ pub fn binary_witness_sampler() -> VerticallyAlignedMatrix<RingElement> {
         // data: vec![RingElement::all(0, Representation::IncompleteNTT); WITNESS_DIM * WITNESS_WIDTH],
         used_cols: WITNESS_WIDTH,
     }
-}
-
-// ==========================
-// Verifier Sumcheck Context
-// ==========================
-
-/// Computes ip_vdf_claim = Σ_r c^r·(-y_0[r]) + c^{VDF_STRIDE·2K+r}·y_t[r] from the VDF challenge and outputs.
-pub fn compute_ip_vdf_claim(
-    config: &RoundConfig,
-    vdf_challenge: Option<&RingElement>,
-    vdf_params: Option<(
-        &[RingElement; VDF_MATRIX_HEIGHT],
-        &[RingElement; VDF_MATRIX_HEIGHT],
-        &vdf_crs,
-    )>,
-) -> Option<RingElement> {
-    if !config.vdf {
-        return None;
-    }
-    let c = vdf_challenge.expect("VDF enabled but no challenge");
-    let (y_0, y_t, _) = vdf_params.expect("VDF enabled but no params");
-    let two_k = config.extended_witness_length / 2 / VDF_MATRIX_WIDTH;
-
-    // Compute c^{VDF_STRIDE * 2K}
-    let mut c_stride = RingElement::constant(1, Representation::IncompleteNTT);
-    for _ in 0..VDF_STRIDE {
-        c_stride *= c;
-    }
-    let mut c_stride_2k = RingElement::constant(1, Representation::IncompleteNTT);
-    for _ in 0..two_k {
-        c_stride_2k *= &c_stride;
-    }
-
-    // claim = Σ_r c^r · (-y_0[r]) + Σ_r c^{VDF_STRIDE·2K + r} · y_t[r]
-    let mut claim = RingElement::zero(Representation::IncompleteNTT);
-    let mut c_power = RingElement::constant(1, Representation::IncompleteNTT); // c^r
-    let mut temp = RingElement::zero(Representation::IncompleteNTT);
-    for r in 0..VDF_MATRIX_HEIGHT {
-        // -c^r · y_0[r]
-        temp *= (&c_power, &y_0[r]);
-        claim -= &temp;
-        // c^{VDF_STRIDE·2K + r} · y_t[r]
-        temp *= (&c_stride_2k, &c_power); // temp = c^{VDF_STRIDE*2K + r}
-        temp *= &y_t[r];
-        claim += &temp;
-        c_power *= c;
-    }
-    Some(claim)
-}
-
-pub fn vdf_init() -> vdf_crs {
-    println!("Initializing VDF CRS...");
-    let A = HorizontallyAlignedMatrix {
-        height: VDF_MATRIX_HEIGHT,
-        width: VDF_MATRIX_WIDTH,
-        data: (0..VDF_MATRIX_HEIGHT * VDF_MATRIX_WIDTH)
-            .map(|_| RingElement::random(Representation::IncompleteNTT))
-            .collect(),
-    };
-    vdf_crs { A }
 }
 
 /// Decomposes a RingElement into 64 bit-plane RingElements, writing into `target`.
@@ -149,90 +89,6 @@ pub fn decompose_binary_into(element: &RingElement, target: &mut [RingElement]) 
     }
 }
 
-pub fn execute_vdf(
-    y_0: &[RingElement; VDF_MATRIX_HEIGHT],
-    dim: usize,
-    vdf_crs: &vdf_crs,
-) -> VDFOutput {
-    let vdf_crs_ref = vdf_crs;
-
-    // VDF with G = I_{HEIGHT} ⊗ g^T (gadget) and A (HEIGHT × WIDTH CRS matrix).
-    //
-    // Per step:
-    //   w_step = G^{-1}(-y_step)   — decompose each component of y_step into VDF_BITS binary planes
-    //   y_{step+1} = A · w_step    — full matrix-vector product giving HEIGHT outputs
-    //
-    // The witness is split into two columns (matching vertical memory alignment).
-    // y_int is the intermediate value at the column boundary.
-
-    let mut trace_witness = VerticallyAlignedMatrix {
-        height: dim,
-        width: 2,
-        data: new_vec_zero_preallocated(dim * 2),
-        used_cols: 2,
-    };
-
-    let steps_per_col = dim / VDF_MATRIX_WIDTH;
-    let total_steps = steps_per_col * 2;
-
-    let mut neg_y: [RingElement; VDF_MATRIX_HEIGHT] = std::array::from_fn(|r| y_0[r].negate());
-    let mut y_int: [RingElement; VDF_MATRIX_HEIGHT] =
-        std::array::from_fn(|_| RingElement::zero(Representation::IncompleteNTT));
-    let mut temp = RingElement::zero(Representation::IncompleteNTT);
-
-    println!("Executing delay function with {} steps", total_steps);
-    // y_{step+1} = A · w_step: full matrix-vector product
-    let mut y_next: [RingElement; VDF_MATRIX_HEIGHT] =
-        std::array::from_fn(|_| RingElement::zero(Representation::IncompleteNTT));
-    let vdf_start = std::time::Instant::now();
-    for step in 0..total_steps {
-        let col = step / steps_per_col;
-        let row_in_col = step % steps_per_col;
-        let base_row = row_in_col * VDF_MATRIX_WIDTH;
-
-        // w_step = G^{-1}(-y_step): decompose each component into VDF_BITS binary planes
-        let data_offset = col * dim + base_row;
-        for r in 0..VDF_MATRIX_HEIGHT {
-            decompose_binary_into(
-                &neg_y[r],
-                &mut trace_witness.data
-                    [data_offset + r * VDF_BITS..data_offset + (r + 1) * VDF_BITS],
-            );
-        }
-
-        for r in 0..VDF_MATRIX_HEIGHT {
-            for j in 0..VDF_MATRIX_WIDTH {
-                temp *= (&vdf_crs_ref.A[(r, j)], &trace_witness.data[data_offset + j]);
-                if j == 0 {
-                    y_next[r].set_from(&temp);
-                } else {
-                    y_next[r] += &temp;
-                }
-            }
-        }
-
-        if step == steps_per_col - 1 {
-            y_int = y_next.clone();
-        }
-
-        neg_y = std::array::from_fn(|r| y_next[r].negate());
-    }
-    let vdf_duration = vdf_start.elapsed().as_micros();
-    println!("Delay function executed in {:?} µs", vdf_duration);
-    println!(
-        "Avg step time: {:?} µs",
-        vdf_duration as f64 / (total_steps as f64)
-    );
-
-    let y_t: [RingElement; VDF_MATRIX_HEIGHT] = std::array::from_fn(|r| neg_y[r].negate());
-
-    VDFOutput {
-        y_int,
-        y_t,
-        trace_witness,
-    }
-}
-
 pub fn execute() {
     println!("Generating CRS...");
 
@@ -242,7 +98,7 @@ pub fn execute() {
     println!("CRS generated. Starting execution...");
     let y_0: [RingElement; VDF_MATRIX_HEIGHT] =
         std::array::from_fn(|_| RingElement::random(Representation::IncompleteNTT)); // TODO: from hash
-    let vdf_output = execute_vdf(&y_0, WITNESS_DIM, &vdf_crs);
+    let vdf_output = run_vdf(&y_0, WITNESS_DIM, &vdf_crs);
 
     let mut sumcheck_context = init_prover_sumcheck(&crs, &CONFIG);
 
@@ -288,7 +144,7 @@ pub fn execute() {
         &mut verifier_context,
         &commitment,
         &proof,
-        &[],    // no evaluation points for first round
+        &[],        // no evaluation points for first round
         &no_claims, // no claims for first round
         &mut HashWrapper::new(),
         Some(&vdf_crs),

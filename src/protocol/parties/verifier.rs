@@ -1,18 +1,12 @@
-use std::array;
-
 use crate::common::config::*;
 use crate::common::norms::l2_norm_coeffs;
 use crate::protocol::config::{RoundConfig, SalsaaProof};
-use crate::protocol::parties::executor::compute_ip_vdf_claim;
-use crate::protocol::parties::prover::vdf_crs;
 use crate::protocol::project::BatchingChallenges;
 use crate::protocol::project_2::verifier_sample_projection_challenges;
 use crate::protocol::sumchecks::context_verifier::VerifierSumcheckContext;
 use crate::{
     common::{
-        arithmetic::{
-            field_to_ring_element_into, precompute_structured_values_fast, ONE,
-        },
+        arithmetic::{field_to_ring_element_into, precompute_structured_values_fast, ONE},
         config::{DEGREE, HALF_DEGREE, MOD_Q, NOF_BATCHES},
         decomposition::compose_from_decomposed,
         hash::HashWrapper,
@@ -28,8 +22,10 @@ use crate::{
         crs::CRS,
         open::evaluation_point_to_structured_row,
         project_2::BatchedProjectionChallengesSuccinct,
+        vdf::{compute_ip_vdf_claim, VDFCrs},
     },
 };
+use std::array;
 
 /// Computes the batched claim from individual sumcheck claims.
 /// Type1 sumchecks are product sumchecks with claims = <evaluation_outer, column_claims>,
@@ -119,7 +115,7 @@ pub fn verifier_round(
     evaluation_points_inner: &[StructuredRow],
     claims: &HorizontallyAlignedMatrix<RingElement>,
     hash_wrapper: &mut HashWrapper,
-    vdf_crs_param: Option<&vdf_crs>,
+    vdf_crs_param: Option<&VDFCrs>,
     vdf_outputs: Option<(
         &[RingElement; VDF_MATRIX_HEIGHT],
         &[RingElement; VDF_MATRIX_HEIGHT],
@@ -368,8 +364,6 @@ pub fn verifier_round(
         num_vars -= 1;
         let poly_over_field = &proof.sumcheck_transcript[round_idx];
 
-        
-
         hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
 
         assert_eq!(
@@ -381,8 +375,6 @@ pub fn verifier_round(
 
         let mut f = QuadraticExtension::zero();
         hash_wrapper.sample_field_element_into(&mut f);
-
-        
 
         batched_claim_over_field = poly_over_field.at(&f);
 
@@ -493,7 +485,8 @@ pub fn verifier_round(
                 let layer = crs.structured_ck_for_wit_dim(
                     config.extended_witness_length / 2 / config.main_witness_columns,
                 )[r]
-                    .tensor_layers.first()
+                    .tensor_layers
+                    .first()
                     .unwrap();
 
                 let mut folded_commitment_r = RingElement::zero(Representation::IncompleteNTT);
@@ -631,7 +624,8 @@ pub fn verifier_round(
                     (config.extended_witness_length >> config.main_witness_prefix.length)
                         / config.main_witness_columns,
                 )[r]
-                    .tensor_layers.first()
+                    .tensor_layers
+                    .first()
                     .unwrap();
 
                 let mut folded_commitment_r = RingElement::zero(Representation::IncompleteNTT);

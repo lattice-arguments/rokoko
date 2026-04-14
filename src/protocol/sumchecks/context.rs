@@ -1,13 +1,10 @@
 use crate::{
-    common::{
-        config::NOF_BATCHES,
-        ring_arithmetic::RingElement,
-    },
+    common::{config::NOF_BATCHES, ring_arithmetic::RingElement},
     protocol::sumcheck_utils::{
-            combiner::Combiner, common::SumcheckBaseData, diff::DiffSumcheck,
-            elephant_cell::ElephantCell, linear::LinearSumcheck, product::ProductSumcheck,
-            ring_to_field_combiner::RingToFieldCombiner, selector_eq::SelectorEq,
-        },
+        combiner::Combiner, common::SumcheckBaseData, diff::DiffSumcheck,
+        elephant_cell::ElephantCell, linear::LinearSumcheck, product::ProductSumcheck,
+        ring_to_field_combiner::RingToFieldCombiner, selector_eq::SelectorEq,
+    },
 };
 
 pub struct ProverSumcheckContext {
@@ -133,8 +130,9 @@ impl ProverSumcheckContext {
         self.main_witness_selector_sumcheck
             .borrow_mut()
             .partial_evaluate(r);
-        if let Some(sumcheck) = self.projection_selector_sumcheck
-            .as_ref() { sumcheck.borrow_mut().partial_evaluate(r) }
+        if let Some(sumcheck) = self.projection_selector_sumcheck.as_ref() {
+            sumcheck.borrow_mut().partial_evaluate(r)
+        }
         for type1 in &mut self.type1sumcheck {
             type1
                 .inner_evaluation_sumcheck

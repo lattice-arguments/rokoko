@@ -1,15 +1,7 @@
-use crate::common::config::*;
-use crate::protocol::config::{RoundConfig, SalsaaProof, SalsaaProofCommon};
-use crate::protocol::parties::executor::compute_ip_vdf_claim;
-use crate::protocol::project::BatchingChallenges;
-use crate::protocol::project_2::{batch_projection_n_times, project_coefficients};
-use crate::protocol::sumcheck_utils::common::HighOrderSumcheckData;
-use crate::protocol::sumcheck_utils::polynomial::Polynomial;
-use crate::protocol::sumchecks::context::ProverSumcheckContext;
 use crate::{
     common::{
         arithmetic::{field_to_ring_element_into, ALL_ONE_COEFFS, ONE, ZERO},
-        config::NOF_BATCHES,
+        config::{NOF_BATCHES, *},
         decomposition::{compose_from_decomposed, decompose_chunks_into},
         hash::HashWrapper,
         matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
@@ -20,18 +12,18 @@ use crate::{
     },
     protocol::{
         commitment::{commit_basic, commit_basic_internal},
-        config::paste_by_prefix,
+        config::{paste_by_prefix, RoundConfig, SalsaaProof, SalsaaProofCommon},
         crs::CRS,
         fold::fold,
         open::evaluation_point_to_structured_row,
-        project::{prepare_i16_witness, project},
+        project::{prepare_i16_witness, project, BatchingChallenges},
+        project_2::{batch_projection_n_times, project_coefficients},
+        sumcheck_utils::{common::HighOrderSumcheckData, polynomial::Polynomial},
+        sumchecks::context::ProverSumcheckContext,
+        vdf::compute_ip_vdf_claim,
+        vdf::VDFCrs,
     },
 };
-
-const VDF_MATRIX_HEIGHT: usize = 4;
-pub struct vdf_crs {
-    pub A: HorizontallyAlignedMatrix<RingElement>,
-}
 
 pub fn prover_round(
     crs: &CRS,
@@ -45,7 +37,7 @@ pub fn prover_round(
     vdf_params: Option<(
         &[RingElement; VDF_MATRIX_HEIGHT],
         &[RingElement; VDF_MATRIX_HEIGHT],
-        &vdf_crs,
+        &VDFCrs,
     )>, // (y_0, y_t, crs) - only for first round
 ) -> SalsaaProof {
     let (projection_matrix, projection_commitment, projected_witness, batching_challenges) =
@@ -169,8 +161,9 @@ pub fn prover_round(
     );
 
     if let RoundConfig::Intermediate {
-            projection_prefix, ..
-        } = config {
+        projection_prefix, ..
+    } = config
+    {
         paste_by_prefix(
             &mut extended_witness,
             &projected_witness.as_ref().unwrap().data,
@@ -236,9 +229,9 @@ pub fn prover_round(
                 .claim();
             let expected_projection_claim = ZERO.clone();
             assert_eq!(
-            projection_claim, expected_projection_claim,
-            "Projection claim from the sumcheck does not match the expected projection claim"
-        );
+                projection_claim, expected_projection_claim,
+                "Projection claim from the sumcheck does not match the expected projection claim"
+            );
         };
 
         if config.l2 {
@@ -539,10 +532,12 @@ pub fn prover_round(
                 let old_ck = crs.structured_ck_for_wit_dim(split_witness.height * 2);
 
                 let composed = compose_from_decomposed(
-                    &[decomposed_split_commitment[(0, 0)].clone(),
+                    &[
+                        decomposed_split_commitment[(0, 0)].clone(),
                         decomposed_split_commitment[(0, 1)].clone(),
                         decomposed_split_commitment[(0, 2)].clone(),
-                        decomposed_split_commitment[(0, 3)].clone()],
+                        decomposed_split_commitment[(0, 3)].clone(),
+                    ],
                     *decomposition_base_log,
                     2,
                 );
@@ -552,10 +547,12 @@ pub fn prover_round(
                 assert_eq!(composed[1], commitment_to_split_witness[(0, 1)], "Composed commitment from the decomposed split projected witness does not match the commitment to the projected witness");
 
                 let composed_projection = compose_from_decomposed(
-                    &[decomposed_split_commitment[(0, 4)].clone(),
+                    &[
+                        decomposed_split_commitment[(0, 4)].clone(),
                         decomposed_split_commitment[(0, 5)].clone(),
                         decomposed_split_commitment[(0, 6)].clone(),
-                        decomposed_split_commitment[(0, 7)].clone()],
+                        decomposed_split_commitment[(0, 7)].clone(),
+                    ],
                     *decomposition_base_log,
                     2,
                 );

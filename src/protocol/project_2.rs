@@ -1,4 +1,3 @@
-
 use crate::{
     common::{
         arithmetic::{precompute_structured_values_fast, HALF_WAY_MOD_Q_RING_CF},

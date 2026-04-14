@@ -11,3 +11,4 @@ pub mod project_2;
 pub mod sumcheck;
 pub mod sumcheck_utils;
 pub mod sumchecks;
+pub mod vdf;

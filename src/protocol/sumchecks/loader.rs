@@ -1,4 +1,3 @@
-use crate::protocol::parties::prover::vdf_crs;
 use crate::{
     common::{
         arithmetic::field_to_ring_element_into,
@@ -12,6 +11,7 @@ use crate::{
         project::BatchingChallenges,
         project_2::BatchedProjectionChallenges,
         sumchecks::{context::ProverSumcheckContext, helpers::projection_flatter_1_times_matrix},
+        vdf::VDFCrs,
     },
 };
 
@@ -28,7 +28,7 @@ impl ProverSumcheckContext {
             [BatchedProjectionChallenges; NOF_BATCHES],
         >,
         vdf_challenge: Option<&RingElement>,
-        vdf_crs_param: Option<&vdf_crs>,
+        vdf_crs_param: Option<&VDFCrs>,
     ) {
         self.witness_sumcheck.borrow_mut().load_from(witness);
         self.witness_conjugated_sumcheck

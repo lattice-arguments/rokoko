@@ -1,9 +1,7 @@
-use crate::common::config::*;
-use crate::protocol::project::BatchingChallenges;
 use crate::{
     common::{
         arithmetic::{ONE, ZERO},
-        config::{HALF_DEGREE, NOF_BATCHES},
+        config::{HALF_DEGREE, NOF_BATCHES, *},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
@@ -11,11 +9,12 @@ use crate::{
     protocol::{
         config::{RoundConfig, SalsaaProof},
         open::evaluation_point_to_structured_row,
-        parties::prover::vdf_crs,
+        project::BatchingChallenges,
         project_2::BatchedProjectionChallengesSuccinct,
         sumchecks::{
             context_verifier::VerifierSumcheckContext, helpers::projection_flatter_1_times_matrix,
         },
+        vdf::VDFCrs,
     },
 };
 
@@ -35,7 +34,7 @@ impl VerifierSumcheckContext {
         combination: &[RingElement],
         qe: [QuadraticExtension; HALF_DEGREE],
         vdf_challenge: Option<&RingElement>,
-        vdf_crs_param: Option<&vdf_crs>,
+        vdf_crs_param: Option<&VDFCrs>,
     ) {
         let outer_points_len =
             config.main_witness_columns.ilog2() as usize + config.main_witness_prefix.length;
@@ -53,9 +52,10 @@ impl VerifierSumcheckContext {
         }
 
         if let SalsaaProof::Intermediate {
-                claim_over_projection,
-                ..
-            } = proof {
+            claim_over_projection,
+            ..
+        } = proof
+        {
             temp *= (
                 claim_over_projection.first().unwrap(),
                 &outer_points_expanded[config.main_witness_columns],

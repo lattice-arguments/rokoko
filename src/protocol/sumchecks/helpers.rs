@@ -32,10 +32,7 @@ pub(crate) fn composition_sumcheck(
     let conmposition_basis = range(0, chunks)
         .map(|i| {
             // Basis element corresponding to 2^{base_log * i}
-            RingElement::constant(
-                1u64 << (base_log * i as u64),
-                Representation::IncompleteNTT,
-            )
+            RingElement::constant(1u64 << (base_log * i as u64), Representation::IncompleteNTT)
         })
         .collect::<Vec<RingElement>>();
     let combiner_sumcheck = ElephantCell::new(

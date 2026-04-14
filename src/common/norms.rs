@@ -9,13 +9,7 @@ pub fn inf_norm(vec: &Vec<RingElement>) -> u64 {
                 .v
                 .map(|x| x)
                 .iter()
-                .map(|&x| {
-                    if x > MOD_Q / 2 {
-                        MOD_Q - x
-                    } else {
-                        x
-                    }
-                })
+                .map(|&x| if x > MOD_Q / 2 { MOD_Q - x } else { x })
                 .max()
                 .unwrap_or(0)
         })
