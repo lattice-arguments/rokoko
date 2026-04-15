@@ -1,6 +1,6 @@
 use crate::protocol::commitment::{Prefix, RecursionConfig};
 use crate::protocol::config::{
-    Config, Projection, SimpleConfig, SumcheckConfig, Type1ProjectionConfig,
+    Config, IntermediateConfig, Projection, SimpleConfig, SumcheckConfig, Type1ProjectionConfig
 };
 
 #[derive(Clone)]
@@ -25,6 +25,7 @@ pub enum AuxProjection {
 #[derive(Clone)]
 pub enum AuxConfig {
     Sumcheck(AuxSumcheckConfig),
+    Intermediate(IntermediateConfig),
     Simple(SimpleConfig), // no prefix assignment needed
 }
 
@@ -356,6 +357,7 @@ impl AuxSumcheckConfig {
                 Box::new(match next.as_ref() {
                     AuxConfig::Sumcheck(cfg) => cfg.generate_config_inner(depth + 1),
                     AuxConfig::Simple(cfg) => Config::Simple(cfg.clone()),
+                    AuxConfig::Intermediate(cfg) => Config::Intermediate(cfg.clone()),
                 })
             }),
         })

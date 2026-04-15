@@ -2,17 +2,15 @@ use crate::{
     common::{
         decomposition::decompose,
         hash::HashWrapper,
-        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
+        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
-        commitment::{commit_basic, recursive_commit, BasicCommitment, CommitmentWithAux},
+        commitment::{BasicCommitment, CommitmentWithAux, commit_basic, recursive_commit},
         config::{
-            paste_by_prefix, paste_recursive_commitment, Config, ConfigBase, NextRoundCommitment,
-            Projection, RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig,
-            SumcheckRoundProof,
+            Config, ConfigBase, IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, Projection, RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof, paste_by_prefix, paste_recursive_commitment
         },
         crs::CRS,
         fold::fold,
@@ -22,7 +20,7 @@ use crate::{
         },
         project::{prepare_i16_witness, project},
         project_2::{batch_projection_n_times, project_coefficients},
-        sumcheck::{sumcheck, SumcheckContext},
+        sumcheck::{SumcheckContext, sumcheck},
     },
 };
 
@@ -50,6 +48,7 @@ fn config_base_from_config(config: &Config) -> &dyn ConfigBase {
     match config {
         Config::Sumcheck(sumcheck_config) => sumcheck_config,
         Config::Simple(simple_config) => simple_config,
+        Config::Intermediate(intermediate_config) => intermediate_config,
     }
 }
 
@@ -649,6 +648,61 @@ pub fn prover_round(
                         Some(NextRoundCommitment::Simple(basic_commitment)),
                     )
                 }
+                Config::Intermediate(next_intermediate_config) => {
+                    debug_assert_eq!(
+                        next_round_witness.data.len(),
+                        next_intermediate_config.witness_height * next_intermediate_config.witness_width
+                    );
+                    let basic_commitment = commit_basic(
+                        &crs,
+                        &next_round_witness,
+                        next_intermediate_config.basic_commitment_rank,
+                    );
+
+                    hash_wrapper.update_with_ring_element_slice(&basic_commitment.data);
+
+                    let sumcheck_output = sumcheck(
+                        &config,
+                        &next_round_witness.data,
+                        &projection_matrix,
+                        &fold_challenge,
+                        &rcs_projection_1
+                            .as_ref()
+                            .map(|(_, _, challenges)| challenges),
+                        &opening,
+                        sumcheck_context,
+                        &mut hash_wrapper,
+                    );
+
+                    let evaluation_points = &sumcheck_output.5;
+
+                     let (new_evaluation_points_outer, new_evaluation_points_inner) =
+                        evaluation_points
+                            .split_at(next_intermediate_config.witness_width.ilog2() as usize);
+                    (
+                        Some(RoundProof::Intermediate(prover_round_intermediate(
+                            next_intermediate_config,
+                            &basic_commitment,
+                            &next_round_witness,
+                            &vec![
+                                evaluation_point_to_structured_row(new_evaluation_points_inner),
+                                evaluation_point_to_structured_row_conjugate(
+                                    new_evaluation_points_inner,
+                                ),
+                            ],
+                            &vec![
+                                evaluation_point_to_structured_row(new_evaluation_points_outer),
+                                evaluation_point_to_structured_row_conjugate(
+                                    new_evaluation_points_outer,
+                                ),
+                            ],
+                            Some(hash_wrapper),
+                        ))),
+                        sumcheck_output,
+                        Some(NextRoundCommitment::Simple(basic_commitment)),
+                    )
+                }
+                    
             }
         }
     };
@@ -689,6 +743,19 @@ pub fn prover_round(
     let elapsed = start.elapsed().as_nanos();
     println!("Prover: {} ns", elapsed);
     (rp, claims)
+}
+
+pub fn prover_round_intermediate(
+    config: &IntermediateConfig,
+    commitment: &BasicCommitment,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    evaluation_points_inner: &Vec<StructuredRow>,
+    evaluation_points_outer: &Vec<StructuredRow>,
+    hash_wrapper: Option<HashWrapper>,
+) -> IntermediateRoundProof {
+    println!("Intermediate round proof is not implemented yet in prover.");
+    IntermediateRoundProof {
+    }
 }
 
 // this is only for the last round

@@ -5,7 +5,7 @@ use crate::{
         arithmetic::precompute_structured_values_fast,
         config::{DEGREE, MOD_Q, NOF_BATCHES},
         hash::HashWrapper,
-        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
+        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
         norms::l2_norm_coeffs,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
@@ -13,17 +13,16 @@ use crate::{
     },
     hexl::bindings::eltwise_mult_mod,
     protocol::{
-        commitment::{commit_basic, BasicCommitment},
+        commitment::{BasicCommitment, commit_basic},
         config::{
-            Config, NextRoundCommitment, RoundProof, SimpleConfig, SimpleRoundProof,
-            SumcheckConfig, SumcheckRoundProof,
+            Config, IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof
         },
-        crs::CRS,
+        crs::{self, CRS},
         open::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
             open_at,
         },
-        project_2::{verifier_sample_projection_challenges, BatchedProjectionChallengesSuccinct},
+        project_2::{BatchedProjectionChallengesSuccinct, verifier_sample_projection_challenges},
         sumchecks::{
             context_verifier::VerifierSumcheckContext, runner_verifier::sumcheck_verifier,
         },
@@ -157,10 +156,65 @@ pub fn verifier_round(
                         Some(hash_wrapper_verifier),
                     );
                 }
+                RoundProof::Intermediate(next_intermediate_round_proof) => {
+                    let next_intermediate_config = match &config.next {
+                        Some(next_config) => match next_config.as_ref() {
+                            Config::Intermediate(next_intermediate_config) => next_intermediate_config,
+                            _ => panic!("Expected intermediate config for next round."),
+                        },
+                        None => panic!("Next intermediate config must be present."),
+                    };
+
+                    let (new_evaluation_points_outer, new_evaluation_points_inner) =
+                        evaluation_points
+                            .split_at(next_intermediate_config.witness_width.ilog2() as usize);
+
+                    let commitment = match &next_round_commitment {
+                        NextRoundCommitment::Simple(basic_commitment) => basic_commitment,
+                        _ => panic!("Expected intermediate commitment for next round."),
+                    };
+
+                    let inner_rows = [
+                        evaluation_point_to_structured_row(new_evaluation_points_inner),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_inner),
+                    ];
+                    let outer_rows = [
+                        evaluation_point_to_structured_row(new_evaluation_points_outer),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
+                    ];
+                    let new_claims = [
+                        round_proof.claim_over_witness.clone(),
+                        round_proof.claim_over_witness_conjugate.conjugate(),
+                    ];
+
+                    verifier_round_intermediate(
+                        crs,
+                        next_intermediate_config,
+                        commitment,
+                        next_intermediate_round_proof,
+                        &inner_rows,
+                        &outer_rows,
+                        &new_claims,
+                        Some(hash_wrapper_verifier),
+                    );
+                }
             }
         }
         None => {}
     }
+}
+
+pub fn verifier_round_intermediate(
+    crs: &CRS,
+    config: &IntermediateConfig,
+    commitment: &BasicCommitment,
+    round_proof: &IntermediateRoundProof,
+    evaluation_points_inner: &[StructuredRow],
+    evaluation_points_outer: &[StructuredRow],
+    claims: &[RingElement],
+    hash_wrapper: Option<HashWrapper>,
+) {
+    println!("Intermediate round proof is not implemented yet in verifier.");
 }
 
 pub fn verifier_round_simple(

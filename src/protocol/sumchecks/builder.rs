@@ -909,6 +909,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                     Some(Box::new(init_sumcheck(crs, next_simple_config)))
                 }
                 Config::Simple(_) => None,
+                Config::Intermediate(_) => None, // TODO: there will be something here
             },
             None => None,
         },

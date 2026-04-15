@@ -224,6 +224,7 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| P.clone());
 #[derive(Clone)]
 pub enum Config {
     Sumcheck(SumcheckConfig),
+    Intermediate(IntermediateConfig),
     Simple(SimpleConfig),
 }
 
@@ -257,7 +258,41 @@ pub struct SumcheckConfig {
     pub next: Option<Box<Config>>, // for multiple rounds
 }
 
+
 impl ConfigBase for SumcheckConfig {
+    fn witness_height(&self) -> usize {
+        self.witness_height
+    }
+
+    fn witness_width(&self) -> usize {
+        self.witness_width
+    }
+
+    fn projection_ratio(&self) -> usize {
+        self.projection_ratio
+    }
+
+    fn projection_height(&self) -> usize {
+        self.projection_height
+    }
+    fn basic_commitment_rank(&self) -> usize {
+        self.basic_commitment_rank
+    }
+}
+
+#[derive(Clone)]
+pub struct IntermediateConfig {
+    pub witness_height: usize,
+    pub witness_width: usize,
+    pub projection_ratio: usize,  
+    pub projection_height: usize, 
+    pub nof_openings: usize,
+    pub projection_nof_batches: usize,
+    pub basic_commitment_rank: usize,
+    pub next: Option<Box<Config>>,
+}
+
+impl ConfigBase for IntermediateConfig {
     fn witness_height(&self) -> usize {
         self.witness_height
     }
@@ -313,11 +348,12 @@ impl ConfigBase for SimpleConfig {
 pub enum RoundProof {
     Sumcheck(SumcheckRoundProof),
     Simple(SimpleRoundProof),
+    Intermediate(IntermediateRoundProof),
 }
 
 pub enum NextRoundCommitment {
     Recursive(RecursiveCommitment), // if the next round is sumcheck
-    Simple(HorizontallyAlignedMatrix<RingElement>), // if the next round is simple
+    Simple(HorizontallyAlignedMatrix<RingElement>), // if the next round is simple or intermediate
 }
 
 pub trait SizeableProof {
@@ -448,6 +484,7 @@ impl SizeableProof for SumcheckRoundProof {
             match &**next {
                 RoundProof::Sumcheck(sc_next) => sc_next.size_in_bits(),
                 RoundProof::Simple(s_next) => s_next.size_in_bits(),
+                RoundProof::Intermediate(i_next) => i_next.size_in_bits(),
             }
         } else {
             0
@@ -499,6 +536,18 @@ impl SizeableProof for SimpleRoundProof {
 
         println!("Total simple round proof size: {} KB \n\n\n", to_kb(size));
         size
+    }
+}
+
+
+pub struct IntermediateRoundProof {
+    // TODO
+}
+
+impl SizeableProof for IntermediateRoundProof {
+    fn size_in_bits(&self) -> usize {
+        // TODO
+        0
     }
 }
 
