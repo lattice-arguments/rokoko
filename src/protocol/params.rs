@@ -338,20 +338,22 @@ pub static P_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
 
 pub static P_INTERMEDIATE: LazyLock<IntermediateConfig> = LazyLock::new(|| IntermediateConfig {
     witness_height: 2usize.pow(8),
-    witness_width: 4,
+    witness_width: 2usize.pow(2),
     projection_ratio: 2usize.pow(6),
     projection_height: 2usize.pow(8),
     basic_commitment_rank: 5,
     nof_openings: 2,
     projection_nof_batches: 2,
+    witness_decomposition_base_log: 8,
+    witness_decomposition_chunks: 2,
     next: Some(Box::new(Config::Simple(P_LAST.clone()))),
 });
 
 
 pub static P_LAST: LazyLock<SimpleConfig> = LazyLock::new(|| SimpleConfig {
-    witness_height: 2usize.pow(7),
+    witness_height: 2usize.pow(6),
     witness_width: 2usize.pow(3),
-    projection_ratio: 2usize.pow(6),
+    projection_ratio: 2usize.pow(5),
     projection_height: 2usize.pow(8),
     basic_commitment_rank: 7,
     projection_nof_batches: 2,

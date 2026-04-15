@@ -1,3 +1,4 @@
+use core::hash;
 use std::array;
 
 use crate::{
@@ -13,19 +14,14 @@ use crate::{
     },
     hexl::bindings::eltwise_mult_mod,
     protocol::{
-        commitment::{BasicCommitment, commit_basic},
-        config::{
+        commitment::{BasicCommitment, commit_basic}, config::{
             Config, IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof
-        },
-        crs::{self, CRS},
-        open::{
+        }, crs::{self, CRS}, fold, open::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
             open_at,
-        },
-        project_2::{BatchedProjectionChallengesSuccinct, verifier_sample_projection_challenges},
-        sumchecks::{
+        }, project_2::{BatchedProjectionChallengesSuccinct, verifier_sample_projection_challenges}, sumchecks::{
             context_verifier::VerifierSumcheckContext, runner_verifier::sumcheck_verifier,
-        },
+        }
     },
 };
 
@@ -214,7 +210,65 @@ pub fn verifier_round_intermediate(
     claims: &[RingElement],
     hash_wrapper: Option<HashWrapper>,
 ) {
-    println!("Intermediate round proof is not implemented yet in verifier.");
+
+    let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
+    hash_wrapper.update_with_ring_element_slice(&commitment.data);
+
+    let mut folding_challenges =
+        vec![RingElement::zero(Representation::IncompleteNTT); config.witness_width];
+    hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut folding_challenges);
+   
+        
+    let next_round_commitment = match round_proof.next_round_commitment.as_ref().unwrap_or_else(|| {
+        panic!(
+            "Next round commitment must be present for intermediate round proof."
+        )
+    }) {
+        NextRoundCommitment::Simple(basic_commitment) => basic_commitment,
+        _ => panic!("Expected simple commitment for intermediate round."),
+    };
+
+
+    let next_round_proof = round_proof.next.as_ref().unwrap_or_else(|| {
+        panic!(
+            "Next round proof must be present for intermediate round proof."
+        )
+    });
+
+    let next_round_config = config.next.as_ref().unwrap_or_else(|| {
+        panic!(
+            "Next round config must be present for intermediate round proof."
+        )
+    });
+
+    match (next_round_proof.as_ref(), next_round_config.as_ref()) {
+        (RoundProof::Simple(simple_round_proof), Config::Simple(simple_config)) => {
+            verifier_round_simple(
+                crs,
+                simple_config,
+                next_round_commitment,
+                simple_round_proof,
+                &vec![],
+                &vec![],
+                &vec![],
+                Some(hash_wrapper),
+            );
+        }
+        (RoundProof::Intermediate(intermediate_round_proof), Config::Intermediate(intermediate_config)) => {
+            verifier_round_intermediate(
+                crs,
+                intermediate_config,
+                next_round_commitment,
+                intermediate_round_proof,
+                &vec![],
+                &vec![],
+                &vec![],
+                Some(hash_wrapper),
+            );
+        }
+        _ => panic!("Next round proof and config type mismatch."),
+    }
+
 }
 
 pub fn verifier_round_simple(
@@ -277,7 +331,9 @@ pub fn verifier_round_simple(
     for i in 0..config.basic_commitment_rank {
         assert_eq!(
             commitment_of_folded_witness[(i, 0)],
-            folded_commitment[(i, 0)]
+            folded_commitment[(i, 0)],
+            "Folded commitment at row {} does not match expected value.",
+            i
         );
     }
 
@@ -370,6 +426,7 @@ pub fn verifier_round_simple(
 
     let mut evaluation = new_vec_zero_preallocated(round_proof.opening_rhs.height);
 
+    println!("round_proof.opening_rhs.height: {}", round_proof.opening_rhs.height);
     for i in 0..round_proof.opening_rhs.height {
         let preprocessed_row = PreprocessedRow::from_structured_row(&evaluation_points_outer[i]);
         for col in 0..round_proof.opening_rhs.width {

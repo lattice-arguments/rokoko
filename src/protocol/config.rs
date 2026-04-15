@@ -289,6 +289,10 @@ pub struct IntermediateConfig {
     pub nof_openings: usize,
     pub projection_nof_batches: usize,
     pub basic_commitment_rank: usize,
+
+    pub witness_decomposition_base_log: usize,
+    pub witness_decomposition_chunks: usize,
+
     pub next: Option<Box<Config>>,
 }
 
@@ -541,13 +545,43 @@ impl SizeableProof for SimpleRoundProof {
 
 
 pub struct IntermediateRoundProof {
-    // TODO
+    pub next_round_commitment: Option<NextRoundCommitment>,
+    pub next: Option<Box<RoundProof>>,
 }
 
 impl SizeableProof for IntermediateRoundProof {
     fn size_in_bits(&self) -> usize {
-        // TODO
-        0
+        let next_round_size = if let Some(next_round_commitment) = &self.next_round_commitment {
+            match next_round_commitment {
+                NextRoundCommitment::Recursive(rc) => {
+                    unreachable!("Intermediate round should not have recursive commitment for next round.")
+                }
+                NextRoundCommitment::Simple(mat) => {
+                    let mut mat_size = 0;
+                    for el in &mat.data {
+                        mat_size += el.size_in_bits();
+                    }
+                    mat_size
+                }
+            }
+        } else {
+            0
+        };
+        println!(
+            "Next round commitment size in intermediate round proof: {} KB, ",
+            to_kb(next_round_size)
+        );
+
+        
+        next_round_size + if let Some(next) = &self.next {
+            match &**next {
+                RoundProof::Sumcheck(sc_next) => sc_next.size_in_bits(),
+                RoundProof::Simple(s_next) => s_next.size_in_bits(),
+                RoundProof::Intermediate(i_next) => i_next.size_in_bits(),
+            }
+        } else {
+            0
+        }
     }
 }
 

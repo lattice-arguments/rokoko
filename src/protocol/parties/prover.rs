@@ -1,3 +1,5 @@
+use std::vec;
+
 use crate::{
     common::{
         decomposition::decompose,
@@ -681,6 +683,7 @@ pub fn prover_round(
                             .split_at(next_intermediate_config.witness_width.ilog2() as usize);
                     (
                         Some(RoundProof::Intermediate(prover_round_intermediate(
+                            crs,
                             next_intermediate_config,
                             &basic_commitment,
                             &next_round_witness,
@@ -746,6 +749,7 @@ pub fn prover_round(
 }
 
 pub fn prover_round_intermediate(
+    crs: &CRS,
     config: &IntermediateConfig,
     commitment: &BasicCommitment,
     witness: &VerticallyAlignedMatrix<RingElement>,
@@ -753,8 +757,94 @@ pub fn prover_round_intermediate(
     evaluation_points_outer: &Vec<StructuredRow>,
     hash_wrapper: Option<HashWrapper>,
 ) -> IntermediateRoundProof {
-    println!("Intermediate round proof is not implemented yet in prover.");
+    println!("Prover intermediate round started.");
+    let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
+
+    // println!("Intermediate round proof is not implemented yet in prover.");
+    let mut folding_challenge = vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
+    hash_wrapper.update_with_ring_element_slice(&commitment.data);
+    hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut folding_challenge);
+
+    let folded_witness = fold(&witness, &folding_challenge);
+
+    let folded_witness_decomposed = decompose(
+        &folded_witness.data,
+        config.witness_decomposition_base_log as u64,
+        config.witness_decomposition_chunks,
+    );
+
+    let base_next_round_config = config.next.as_ref().map(|c| config_base_from_config(c));
+
+    println!("Creating next round commitment.");
+
+    let next_round_witness = VerticallyAlignedMatrix {
+        height: if let Some(next_config) = &base_next_round_config {
+            next_config.witness_height()
+        } else {
+            1 // TODO: what to do?
+        },
+        width: if let Some(next_config) = &base_next_round_config {
+            next_config.witness_width()
+        } else {
+            1 // TODO: what to do?
+        },
+        used_cols: if let Some(next_config) = &base_next_round_config {
+            next_config.witness_width()
+        } else {
+            1 // TODO: what to do?
+        },
+        data: folded_witness_decomposed,
+    };
+
+    let next_round_commitment: HorizontallyAlignedMatrix<RingElement> = commit_basic(
+        &crs,
+        &next_round_witness,
+        base_next_round_config
+            .map(|c| c.basic_commitment_rank())
+            .unwrap()
+    );
+
+    println!("Next round commitment created of length {}.", next_round_commitment.data.len());
+
+    let next_level_proof = match &config.next {
+        None => {
+            unreachable!("Intermediate round proof should always have a next round config, as it is not the last round.")
+        }
+        Some(next_config) => {
+            match &next_config.as_ref() {
+                Config::Sumcheck(_) => {
+                    unreachable!("Next round after intermediate round should be simple or intermediate, not sumcheck.")
+                }
+                Config::Intermediate(next_intermediate_config) => {
+                    let proof = prover_round_intermediate(
+                        crs,
+                        next_intermediate_config,
+                        &next_round_commitment,
+                        &next_round_witness,
+                        &vec![],
+                        &vec![],
+                        Some(hash_wrapper),
+                    );
+                    RoundProof::Intermediate(proof)
+                }
+                Config::Simple(next_simple_config) => {
+                    let proof = prover_round_simple(
+                        next_simple_config,
+                        &next_round_commitment,
+                        &next_round_witness,
+                        &vec![],
+                        &vec![],
+                        Some(hash_wrapper),
+                    );
+                    RoundProof::Simple(proof)
+                }
+            }
+        }
+    };
+
     IntermediateRoundProof {
+        next_round_commitment: Some(NextRoundCommitment::Simple(next_round_commitment)),
+        next: Some(Box::new(next_level_proof))
     }
 }
 
@@ -767,11 +857,14 @@ pub fn prover_round_simple(
     evaluation_points_outer: &Vec<StructuredRow>,
     hash_wrapper: Option<HashWrapper>,
 ) -> SimpleRoundProof {
+    println!("Prover simple round started.");
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
 
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
 
     let opening = open_at(&witness, &evaluation_points_inner, &evaluation_points_outer);
+    println!("evaluation_points_inner length: {}, evaluation_points_outer length: {}", evaluation_points_inner.len(), evaluation_points_outer.len());
+    println!("opening height: {}, width: {}", opening.rhs.height, opening.rhs.width);
 
     hash_wrapper.update_with_ring_element_slice(&opening.rhs.data);
 
