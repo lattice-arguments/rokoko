@@ -1,0 +1,106 @@
+use crate::{
+    common::{
+        arithmetic::field_to_ring_element,
+        config::HALF_DEGREE,
+        hash::HashWrapper,
+        matrix::new_vec_zero_preallocated,
+        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        sumcheck_element::SumcheckElement,
+    },
+    protocol::{config::IntermediateConfig, sumcheck_utils::common::EvaluationSumcheckData},
+};
+
+use super::{
+    context_verifier::IntermediateVerifierSumcheckContext,
+    loader_verifier::load_intermediate_verifier_sumcheck_data,
+    runner::IntermediateType0SumcheckProof,
+};
+
+pub fn intermediate_sumcheck_verifier(
+    config: &IntermediateConfig,
+    verifier_sumcheck_context: &mut IntermediateVerifierSumcheckContext,
+    proof: &IntermediateType0SumcheckProof,
+    hash_wrapper: &mut HashWrapper,
+) -> Vec<RingElement> {
+    assert_eq!(
+        proof.type0_claims.len(),
+        config.basic_commitment_rank,
+        "Type0 claims length mismatch"
+    );
+
+    let num_sumchecks = verifier_sumcheck_context
+        .combiner_evaluation
+        .borrow()
+        .sumchecks_count();
+    let mut combination = new_vec_zero_preallocated(num_sumchecks);
+    hash_wrapper.sample_ring_element_vec_into(&mut combination);
+
+    let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
+    hash_wrapper.sample_ring_element_into(&mut combination_to_field);
+    combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
+    let qe: [QuadraticExtension; HALF_DEGREE] =
+        combination_to_field.split_into_quadratic_extensions();
+
+    let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
+    for (claim, challenge) in proof.type0_claims.iter().zip(combination.iter()) {
+        let mut weighted = claim.clone();
+        weighted *= challenge;
+        batched_claim += &weighted;
+    }
+
+    let mut batched_claim_over_field = {
+        let mut temp = batched_claim.clone();
+        temp.from_incomplete_ntt_to_homogenized_field_extensions();
+        let mut split = temp.split_into_quadratic_extensions();
+        let mut result = QuadraticExtension::zero();
+
+        for i in 0..HALF_DEGREE {
+            split[i] *= &qe[i];
+            result += &split[i];
+        }
+        result
+    };
+
+    let mut evaluation_points_field: Vec<QuadraticExtension> =
+        Vec::with_capacity(proof.polys.len());
+
+    for poly_over_field in proof.polys.iter() {
+        hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
+
+        assert_eq!(
+            poly_over_field.at_zero() + poly_over_field.at_one(),
+            batched_claim_over_field
+        );
+
+        let mut challenge = QuadraticExtension::zero();
+        hash_wrapper.sample_field_element_into(&mut challenge);
+
+        batched_claim_over_field = poly_over_field.at(&challenge);
+        evaluation_points_field.push(challenge);
+    }
+
+    load_intermediate_verifier_sumcheck_data(
+        verifier_sumcheck_context,
+        &proof.claim_over_witness,
+        &combination,
+        &qe,
+    );
+
+    assert_eq!(
+        &batched_claim_over_field,
+        verifier_sumcheck_context
+            .field_combiner_evaluation
+            .borrow_mut()
+            .evaluate(&evaluation_points_field)
+    );
+
+    evaluation_points_field
+        .iter()
+        .rev()
+        .map(|f| {
+            let mut r = field_to_ring_element(f);
+            r.from_homogenized_field_extensions_to_incomplete_ntt();
+            r
+        })
+        .collect()
+}

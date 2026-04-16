@@ -222,6 +222,24 @@ pub fn verifier_round_intermediate(
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
 
+    hash_wrapper.update_with_ring_element_slice(&round_proof.opening_rhs.data);
+
+     let mut evaluation = new_vec_zero_preallocated(round_proof.opening_rhs.height);
+    // verify claims
+    let mut temp = RingElement::zero(Representation::IncompleteNTT);
+    for i in 0..round_proof.opening_rhs.height {
+        let preprocessed_row = PreprocessedRow::from_structured_row(&evaluation_points_outer[i]);
+        for col in 0..round_proof.opening_rhs.width {
+            temp *= (
+                &round_proof.opening_rhs[(i, col)],
+                &preprocessed_row.preprocessed_row[col],
+            );
+            evaluation[i] += &temp;
+        }
+    }
+    assert_eq!(claims, &evaluation);
+
+
     let mut projection_matrix =
         ProjectionMatrix::new(config.projection_ratio, config.projection_height);
 
@@ -234,6 +252,7 @@ pub fn verifier_round_intermediate(
     let rows_per_chunk = config.projection_height / DEGREE;
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
 
+    // constant term consistency
     for i in 0..NOF_BATCHES {
         let c_0_values = precompute_structured_values_fast(&challenges[i].c_0_layers);
         let c_1_values = precompute_structured_values_fast(&challenges[i].c_1_layers);

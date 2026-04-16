@@ -44,7 +44,7 @@ fn selector_evaluation_from_prefix(
     ))
 }
 
-fn basic_evaluation_linear(
+pub fn basic_evaluation_linear(
     count: usize,
     prefix_size: usize,
     suffix_size: usize,
@@ -58,7 +58,7 @@ fn basic_evaluation_linear(
     )
 }
 
-fn load_combiner_evaluation_data(
+pub fn load_combiner_evaluation_data(
     base_log: u64,
     chunks: usize,
     total_vars: usize,
@@ -78,7 +78,7 @@ fn load_combiner_evaluation_data(
     combiner_evaluation
 }
 
-fn structured_row_ck_evaluation(
+pub fn structured_row_ck_evaluation(
     crs: &CRS,
     total_vars: usize,
     wit_dim: usize,

@@ -4,15 +4,17 @@ use crate::{
     common::{
         decomposition::decompose,
         hash::HashWrapper,
-        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
+        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
-        commitment::{BasicCommitment, CommitmentWithAux, commit_basic, recursive_commit},
+        commitment::{commit_basic, recursive_commit, BasicCommitment, CommitmentWithAux},
         config::{
-            Config, ConfigBase, IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, Projection, RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof, paste_by_prefix, paste_recursive_commitment
+            paste_by_prefix, paste_recursive_commitment, Config, ConfigBase, IntermediateConfig,
+            IntermediateRoundProof, NextRoundCommitment, Projection, RoundProof, SimpleConfig,
+            SimpleRoundProof, SumcheckConfig, SumcheckRoundProof,
         },
         crs::CRS,
         fold::fold,
@@ -22,7 +24,8 @@ use crate::{
         },
         project::{prepare_i16_witness, project},
         project_2::{batch_projection_n_times, project_coefficients},
-        sumcheck::{SumcheckContext, sumcheck}, sumchecks::context::NextSumcheckContext,
+        sumcheck::{sumcheck, SumcheckContext},
+        sumchecks::context::NextSumcheckContext,
     },
 };
 
@@ -769,6 +772,19 @@ pub fn prover_round_intermediate(
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
 
+
+    let opening = open_at(&witness, &evaluation_points_inner, &evaluation_points_outer);
+    println!(
+        "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
+        evaluation_points_inner.len(),
+        evaluation_points_outer.len()    );
+    println!(
+        "int opening height: {}, width: {}",
+        opening.rhs.height, opening.rhs.width
+    );
+
+    hash_wrapper.update_with_ring_element_slice(&opening.rhs.data);
+
     let mut projection_matrix =
         ProjectionMatrix::new(config.projection_ratio, config.projection_height);
     projection_matrix.sample(&mut hash_wrapper);
@@ -865,6 +881,7 @@ pub fn prover_round_intermediate(
     };
 
     IntermediateRoundProof {
+        opening_rhs: opening.rhs,
         next_round_commitment: Some(NextRoundCommitment::Simple(next_round_commitment)),
         projection_image_ct,
         batched_projection_image,

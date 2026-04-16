@@ -543,6 +543,7 @@ impl SizeableProof for SimpleRoundProof {
 }
 
 pub struct IntermediateRoundProof {
+    pub opening_rhs: HorizontallyAlignedMatrix<RingElement>,
     pub next_round_commitment: Option<NextRoundCommitment>,
     pub projection_image_ct: VerticallyAlignedMatrix<RingElement>,
     pub batched_projection_image: HorizontallyAlignedMatrix<RingElement>,
