@@ -1,7 +1,7 @@
 use crate::{
     common::{
         arithmetic::field_to_ring_element_into,
-        config::HALF_DEGREE,
+        config::{HALF_DEGREE, NOF_BATCHES},
         hash::HashWrapper,
         matrix::new_vec_zero_preallocated,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
@@ -32,7 +32,7 @@ pub fn run_intermediate_sumcheck(
     config: &IntermediateConfig,
     combined_witness: &[RingElement],
     evaluation_points_inner: &[StructuredRow],
-    challenges_batching_projection_1: &[BatchedProjectionChallenges; 2],
+    challenges_batching_projection_1: &[BatchedProjectionChallenges; NOF_BATCHES],
     sumcheck_context: &mut IntermediateSumcheckContext,
     hash_wrapper: &mut HashWrapper,
 ) -> (IntermediateSumcheckProof, Vec<RingElement>) {

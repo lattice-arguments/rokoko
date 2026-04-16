@@ -1,7 +1,7 @@
 use crate::{
     common::{
         arithmetic::field_to_ring_element,
-        config::HALF_DEGREE,
+        config::{HALF_DEGREE, NOF_BATCHES},
         hash::HashWrapper,
         matrix::new_vec_zero_preallocated,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
@@ -49,7 +49,7 @@ pub fn intermediate_sumcheck_verifier(
     folded_opening_claims: &[RingElement],
     folded_batched_projection_claims: &[RingElement],
     evaluation_points_inner: &[StructuredRow],
-    challenges_batching_projection_1: &[BatchedProjectionChallengesSuccinct; 2],
+    challenges_batching_projection_1: &[BatchedProjectionChallengesSuccinct; NOF_BATCHES],
     hash_wrapper: &mut HashWrapper,
 ) -> Vec<RingElement> {
     assert_eq!(
@@ -86,6 +86,12 @@ pub fn intermediate_sumcheck_verifier(
     let (batched_type3_1_claims, idx) =
         batch_claims_linear(folded_batched_projection_claims, &combination, idx);
     batched_claim += &batched_type3_1_claims;
+    assert!(
+        idx < combination.len(),
+        "Not enough combination challenges for norm claim (idx={}, len={})",
+        idx,
+        combination.len()
+    );
     let mut weighted_norm = proof.norm_claim.clone();
     weighted_norm *= &combination[idx];
     batched_claim += &weighted_norm;

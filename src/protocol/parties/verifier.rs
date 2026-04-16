@@ -182,7 +182,7 @@ pub fn verifier_round(
 
                     let commitment = match &next_round_commitment {
                         NextRoundCommitment::Simple(basic_commitment) => basic_commitment,
-                        _ => panic!("Expected intermediate commitment for next round."),
+                        _ => panic!("Expected NextRoundCommitment::Simple for intermediate next round."),
                     };
 
                     let inner_rows = [
@@ -223,6 +223,11 @@ pub(crate) fn fold_matrix_claims(
     matrix: &HorizontallyAlignedMatrix<RingElement>,
     folding_challenges: &[RingElement],
 ) -> Vec<RingElement> {
+    debug_assert_eq!(
+        folding_challenges.len(),
+        matrix.width,
+        "folding_challenges length must equal matrix width"
+    );
     let mut folded_claims = new_vec_zero_preallocated(matrix.height);
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
 

@@ -1,7 +1,6 @@
-use std::vec;
-
 use crate::{
     common::{
+        config::NOF_BATCHES,
         decomposition::decompose,
         hash::HashWrapper,
         matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
@@ -797,6 +796,11 @@ pub fn prover_round_intermediate(
     projection_matrix.sample(&mut hash_wrapper);
     let projection_image_ct = project_coefficients(witness, &projection_matrix);
     hash_wrapper.update_with_ring_element_slice(&projection_image_ct.data);
+    assert_eq!(
+        config.projection_nof_batches,
+        NOF_BATCHES,
+        "projection_nof_batches must equal NOF_BATCHES"
+    );
     let (batched_projection_image, challenges_batching_projection_1) = batch_projection_n_times(
         witness,
         &projection_matrix,
@@ -823,19 +827,31 @@ pub fn prover_round_intermediate(
 
     println!("Creating next round commitment.");
 
+    let next_round_config = base_next_round_config
+        .as_ref()
+        .expect("Intermediate round must have a next round config");
+    let height = next_round_config.witness_height();
+    let width = next_round_config.witness_width();
+    let used_cols = next_round_config.witness_width();
+    assert!(
+        used_cols <= width,
+        "next_round_witness used_cols ({}) exceeds width ({})",
+        used_cols,
+        width
+    );
+    assert_eq!(
+        folded_witness_decomposed.len(),
+        height * width,
+        "next_round_witness data length ({}) does not match expected {}x{} ({})",
+        folded_witness_decomposed.len(),
+        height,
+        width,
+        height * width
+    );
     let next_round_witness = VerticallyAlignedMatrix {
-        height: base_next_round_config
-            .as_ref()
-            .expect("Intermediate round must have a next round config")
-            .witness_height(),
-        width: base_next_round_config
-            .as_ref()
-            .expect("Intermediate round must have a next round config")
-            .witness_width(),
-        used_cols: base_next_round_config
-            .as_ref()
-            .expect("Intermediate round must have a next round config")
-            .witness_width(),
+        height,
+        width,
+        used_cols,
         data: folded_witness_decomposed,
     };
 
