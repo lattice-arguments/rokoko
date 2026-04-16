@@ -1,4 +1,3 @@
-use core::hash;
 use std::array;
 
 use crate::{
@@ -19,19 +18,16 @@ use crate::{
             Config, IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, RoundProof,
             SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof,
         },
-        crs::{self, CRS},
-        fold,
+        crs::CRS,
         intermediate_sumchecks::{
-            builder_verifier::init_intermediate_verifier,
             context_verifier::IntermediateVerifierSumcheckContext,
-            runner::IntermediateSumcheckProof, runner_verifier::intermediate_sumcheck_verifier,
+            runner_verifier::intermediate_sumcheck_verifier,
         },
         open::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
             open_at,
         },
         project_2::{verifier_sample_projection_challenges, BatchedProjectionChallengesSuccinct},
-        sumcheck_utils::sum,
         sumchecks::{
             context_verifier::{NextVerifierSumcheckContext, VerifierSumcheckContext},
             runner_verifier::sumcheck_verifier,
@@ -376,7 +372,6 @@ pub fn verifier_round_intermediate(
         l2_norm_proj
     );
 
- 
     let intermediate_evaluation_points = intermediate_sumcheck_verifier(
         config,
         sumcheck_context_verifier,
@@ -418,7 +413,6 @@ pub fn verifier_round_intermediate(
         round_proof.claim_over_witness.clone(),
         round_proof.claim_over_witness_conjugate.conjugate(),
     ];
-
 
     match (next_round_proof.as_ref(), next_round_config.as_ref()) {
         (RoundProof::Simple(simple_round_proof), Config::Simple(simple_config)) => {

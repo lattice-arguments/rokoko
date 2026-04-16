@@ -608,7 +608,7 @@ impl SizeableProof for IntermediateRoundProof {
 
         let next_round_size = if let Some(next_round_commitment) = &self.next_round_commitment {
             match next_round_commitment {
-                NextRoundCommitment::Recursive(rc) => {
+                NextRoundCommitment::Recursive(_) => {
                     unreachable!(
                         "Intermediate round should not have recursive commitment for next round."
                     )
@@ -636,14 +636,14 @@ impl SizeableProof for IntermediateRoundProof {
         );
 
         size + if let Some(next) = &self.next {
-                match &**next {
-                    RoundProof::Sumcheck(sc_next) => sc_next.size_in_bits(),
-                    RoundProof::Simple(s_next) => s_next.size_in_bits(),
-                    RoundProof::Intermediate(i_next) => i_next.size_in_bits(),
-                }
-            } else {
-                0
+            match &**next {
+                RoundProof::Sumcheck(sc_next) => sc_next.size_in_bits(),
+                RoundProof::Simple(s_next) => s_next.size_in_bits(),
+                RoundProof::Intermediate(i_next) => i_next.size_in_bits(),
             }
+        } else {
+            0
+        }
     }
 }
 

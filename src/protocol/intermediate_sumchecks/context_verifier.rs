@@ -1,5 +1,8 @@
 use crate::{
-    common::{config::NOF_BATCHES, ring_arithmetic::{QuadraticExtension, RingElement}},
+    common::{
+        config::NOF_BATCHES,
+        ring_arithmetic::{QuadraticExtension, RingElement},
+    },
     protocol::sumcheck_utils::{
         combiner::CombinerEvaluation,
         elephant_cell::ElephantCell,

@@ -61,16 +61,13 @@ pub fn load_intermediate_sumcheck_data(
         .zip(sumcheck_context.type3_1sumcheck.iter())
     {
         let c_0_ring: Vec<RingElement> = challenge
-                    .c_0_values
-                    .iter()
-                    .map(|&val| RingElement::constant(val, Representation::IncompleteNTT))
-                    .collect();
+            .c_0_values
+            .iter()
+            .map(|&val| RingElement::constant(val, Representation::IncompleteNTT))
+            .collect();
 
-        type3_1_sc
-            .c_0_sumcheck
-            .borrow_mut()
-            .load_from(&c_0_ring);
-        
+        type3_1_sc.c_0_sumcheck.borrow_mut().load_from(&c_0_ring);
+
         type3_1_sc
             .j_batched_sumcheck
             .borrow_mut()

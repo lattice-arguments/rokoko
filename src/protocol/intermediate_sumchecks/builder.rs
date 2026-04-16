@@ -1,5 +1,8 @@
 use crate::{
-    common::{config::{DEGREE, NOF_BATCHES}, ring_arithmetic::RingElement},
+    common::{
+        config::{DEGREE, NOF_BATCHES},
+        ring_arithmetic::RingElement,
+    },
     protocol::{
         config::{Config, IntermediateConfig},
         crs::CRS,
@@ -85,7 +88,8 @@ pub fn init_intermediate_sumcheck(
     let height = config.projection_height;
     let inner_width = config.projection_ratio * height / DEGREE;
     let blocks = config.witness_height / inner_width;
-    let type3_1sumcheck: [Type3_1IntermediateSumcheckContext; NOF_BATCHES] = std::array::from_fn(|_| {
+    let type3_1sumcheck: [Type3_1IntermediateSumcheckContext; NOF_BATCHES] =
+        std::array::from_fn(|_| {
             let c_0_sumcheck = ElephantCell::new(
                 LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
                     blocks,

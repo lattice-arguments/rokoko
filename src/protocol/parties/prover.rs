@@ -19,8 +19,7 @@ use crate::{
         crs::CRS,
         fold::fold,
         intermediate_sumchecks::{
-            builder::init_intermediate_sumcheck, context::IntermediateSumcheckContext,
-            runner::run_intermediate_sumcheck,
+            context::IntermediateSumcheckContext, runner::run_intermediate_sumcheck,
         },
         open::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
@@ -73,7 +72,7 @@ fn get_and_increment_round_id() -> usize {
 }
 
 #[allow(dead_code)]
-static DEBUG_HARDNESS_FROM_ROUND: usize = 0;
+static DEBUG_HARDNESS_FROM_ROUND: usize = 5;
 
 pub fn prover_round(
     crs: &CRS,
@@ -412,7 +411,6 @@ pub fn prover_round(
         };
 
         let recomposed_witness_bound = recommited_ell_2_norm_rest
-            // * (next_level_width as f64).sqrt() // norm conversion as we get argument about columsn separately in extraction, TODO: I think it is not necessary
             * (config
                 .witness_decomposition_base_log
                 .pow((config.witness_decomposition_chunks - 1) as u32)) as f64;
@@ -864,6 +862,80 @@ pub fn prover_round_intermediate(
         &mut hash_wrapper,
     );
 
+    #[cfg(feature = "debug-hardness")]
+    {
+        println!("=== Debug Hardness Check for Intermediate Round ===");
+        use crate::common::{
+            config::{DEGREE, MOD_Q},
+            estimator::{estimate_rsis_security, RSISParameters},
+            norms,
+        };
+
+        let recommited_ell_2_norm = norms::l2_norm(&next_round_witness.data);
+        let recommited_ell_inf_norm = norms::inf_norm(&next_round_witness.data);
+        println!(
+            "Next round witness norms: L_2 = {}, L_inf = {}, bit_len = {}, MOD_Q = {}",
+            recommited_ell_2_norm,
+            recommited_ell_inf_norm,
+            recommited_ell_inf_norm.ilog2(),
+            MOD_Q
+        );
+
+        let folded_witness_ell_2_norm = norms::l2_norm(&folded_witness.data);
+        let folded_witness_inf_norm = norms::inf_norm(&folded_witness.data);
+        println!(
+            "Folded witness norms: L_2 = {}, L_inf = {}, bit_len = {}, MOD_Q = {}",
+            folded_witness_ell_2_norm,
+            folded_witness_inf_norm,
+            folded_witness_inf_norm.ilog2(),
+            MOD_Q
+        );
+
+        let recomposed_witness_bound = recommited_ell_2_norm
+            * (config
+                .witness_decomposition_base_log
+                .pow((config.witness_decomposition_chunks - 1) as u32)) as f64;
+
+        println!("Folded witness norm: {}", recomposed_witness_bound);
+
+        let projection_l2_norm = norms::l2_norm_coeffs(&projection_image_ct.data);
+
+        let extracted_witness_bound = recomposed_witness_bound * DEGREE as f64 * 8.0; // factor 4 for difference in numerator and denominator in extraction and 2 for ISIS to SIS
+
+        // assert_eq(argued_witness_bound * argued_witness_bound
+
+        let argued_witness_bound = projection_l2_norm / 5.477f64; // sqrt(30) as in the paper
+
+        assert!(
+            argued_witness_bound * argued_witness_bound < (MOD_Q as f64 / 2f64),
+            "Projection-argued witness bound too large for inner-product norm extraction!"
+        );
+
+        let worse_bound = if extracted_witness_bound > argued_witness_bound {
+            println!(
+                "Using extracted witness bound {} for security estimation.",
+                extracted_witness_bound
+            );
+            extracted_witness_bound
+        } else {
+            println!(
+                "Using projection-argued witness bound {} for security estimation.",
+                argued_witness_bound
+            );
+            argued_witness_bound
+        };
+
+        let basic_commitment_security = estimate_rsis_security(&RSISParameters {
+            m: config.witness_height as u64,
+            n: config.basic_commitment_rank as u64,
+            length_bound: worse_bound.ceil() as u64,
+        });
+        println!(
+            "Basic commitment estimated security for extraction: {:?} with rank {}",
+            basic_commitment_security, config.basic_commitment_rank
+        );
+    }
+
     let next_level_proof = match &config.next {
         None => {
             unreachable!("Intermediate round proof should always have a next round config, as it is not the last round.")
@@ -986,6 +1058,7 @@ pub fn prover_round_simple(
 
     #[cfg(feature = "debug-hardness")]
     {
+        println!("=== Debug Hardness Check for Simple Round ===");
         use crate::common::{
             config::{DEGREE, MOD_Q},
             estimator::{estimate_rsis_security, RSISParameters},

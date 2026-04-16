@@ -20,7 +20,6 @@ pub struct Type5IntermediateSumcheckContext {
     pub output: ElephantCell<ProductSumcheck<RingElement>>,
 }
 
-
 pub struct Type3_1IntermediateSumcheckContext {
     pub output: ElephantCell<ProductSumcheck<RingElement>>,
     pub c_0_sumcheck: ElephantCell<LinearSumcheck<RingElement>>, // across blocks
@@ -57,7 +56,10 @@ impl IntermediateSumcheckContext {
         }
         for type3_1_sc in self.type3_1sumcheck.iter() {
             type3_1_sc.c_0_sumcheck.borrow_mut().partial_evaluate(r);
-            type3_1_sc.j_batched_sumcheck.borrow_mut().partial_evaluate(r);
+            type3_1_sc
+                .j_batched_sumcheck
+                .borrow_mut()
+                .partial_evaluate(r);
         }
         self.type5sumcheck
             .conjugated_witness_sumcheck

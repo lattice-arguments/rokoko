@@ -1,5 +1,8 @@
 use crate::{
-    common::{config::{DEGREE, NOF_BATCHES}, ring_arithmetic::RingElement},
+    common::{
+        config::{DEGREE, NOF_BATCHES},
+        ring_arithmetic::RingElement,
+    },
     protocol::{
         config::{Config, IntermediateConfig},
         crs::CRS,

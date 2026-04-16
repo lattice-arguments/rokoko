@@ -46,13 +46,16 @@ pub fn load_intermediate_verifier_sumcheck_data(
         .iter()
         .zip(challenges_batching_projection_1.iter())
     {
-        type3_1_eval.c_0_evaluation.borrow_mut().load_from(StructuredRow {
-            tensor_layers: challenge
-                .c_0_layers
-                .iter()
-                .map(|&val| RingElement::constant(val, Representation::IncompleteNTT))
-                .collect(),
-        });
+        type3_1_eval
+            .c_0_evaluation
+            .borrow_mut()
+            .load_from(StructuredRow {
+                tensor_layers: challenge
+                    .c_0_layers
+                    .iter()
+                    .map(|&val| RingElement::constant(val, Representation::IncompleteNTT))
+                    .collect(),
+            });
         type3_1_eval
             .j_batched_evaluation
             .borrow_mut()
