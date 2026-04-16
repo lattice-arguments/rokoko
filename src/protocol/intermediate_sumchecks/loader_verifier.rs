@@ -8,6 +8,7 @@ use super::context_verifier::IntermediateVerifierSumcheckContext;
 pub fn load_intermediate_verifier_sumcheck_data(
     verifier_sumcheck_context: &mut IntermediateVerifierSumcheckContext,
     claim_over_witness: &RingElement,
+    claim_over_witness_conjugate: &RingElement,
     combination: &[RingElement],
     qe: &[QuadraticExtension; HALF_DEGREE],
 ) {
@@ -15,6 +16,15 @@ pub fn load_intermediate_verifier_sumcheck_data(
         .witness_evaluation
         .borrow_mut()
         .set_result(claim_over_witness.clone());
+    verifier_sumcheck_context
+        .conjugated_witness_evaluation
+        .borrow_mut()
+        .set_result(claim_over_witness_conjugate.clone());
+    verifier_sumcheck_context
+        .type5evaluation
+        .conjugated_witness_evaluation
+        .borrow_mut()
+        .set_result(claim_over_witness_conjugate.clone());
 
     verifier_sumcheck_context
         .combiner_evaluation

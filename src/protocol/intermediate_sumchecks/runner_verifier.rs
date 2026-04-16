@@ -34,6 +34,11 @@ pub fn intermediate_sumcheck_verifier(
         .sumchecks_count();
     let mut combination = new_vec_zero_preallocated(num_sumchecks);
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
+    assert_eq!(
+        num_sumchecks,
+        config.basic_commitment_rank + 1,
+        "Intermediate verifier expected type0 + type5 outputs"
+    );
 
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
@@ -42,11 +47,16 @@ pub fn intermediate_sumcheck_verifier(
         combination_to_field.split_into_quadratic_extensions();
 
     let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
-    for (claim, challenge) in proof.type0_claims.iter().zip(combination.iter()) {
+    let mut idx = 0usize;
+    for claim in proof.type0_claims.iter() {
         let mut weighted = claim.clone();
-        weighted *= challenge;
+        weighted *= &combination[idx];
         batched_claim += &weighted;
+        idx += 1;
     }
+    let mut weighted_norm = proof.norm_claim.clone();
+    weighted_norm *= &combination[idx];
+    batched_claim += &weighted_norm;
 
     let mut batched_claim_over_field = {
         let mut temp = batched_claim.clone();
@@ -82,6 +92,7 @@ pub fn intermediate_sumcheck_verifier(
     load_intermediate_verifier_sumcheck_data(
         verifier_sumcheck_context,
         &proof.claim_over_witness,
+        &proof.claim_over_witness_conjugate,
         &combination,
         &qe,
     );

@@ -16,12 +16,19 @@ pub struct Type0IntermediateVerifierContext {
     pub output: ElephantCell<ProductSumcheckEvaluation>,
 }
 
+pub struct Type5IntermediateVerifierContext {
+    pub conjugated_witness_evaluation: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
+    pub output: ElephantCell<ProductSumcheckEvaluation>,
+}
+
 pub struct IntermediateVerifierSumcheckContext {
     pub witness_evaluation: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
+    pub conjugated_witness_evaluation: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
     pub witness_combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub commitment_key_rows_evaluation:
         Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
     pub type0evaluations: Vec<Type0IntermediateVerifierContext>,
+    pub type5evaluation: Type5IntermediateVerifierContext,
     pub combiner_evaluation: ElephantCell<CombinerEvaluation<RingElement>>,
     pub field_combiner_evaluation: ElephantCell<RingToFieldCombinerEvaluation>,
     pub next: Option<Box<IntermediateVerifierSumcheckContext>>,

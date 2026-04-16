@@ -12,6 +12,7 @@ pub fn load_intermediate_sumcheck_data(
     sumcheck_context: &mut IntermediateSumcheckContext,
     config: &IntermediateConfig,
     combined_witness: &[RingElement],
+    conjugated_combined_witness: &[RingElement],
     combination: &[RingElement],
     qe: &[QuadraticExtension; HALF_DEGREE],
 ) {
@@ -23,11 +24,23 @@ pub fn load_intermediate_sumcheck_data(
         expected_witness_len,
         combined_witness.len()
     );
+    assert_eq!(
+        conjugated_combined_witness.len(),
+        expected_witness_len,
+        "Intermediate conjugated witness length mismatch, expected {}, got {}",
+        expected_witness_len,
+        conjugated_combined_witness.len()
+    );
 
     sumcheck_context
         .witness_sumcheck
         .borrow_mut()
         .load_from(combined_witness);
+    sumcheck_context
+        .type5sumcheck
+        .conjugated_witness_sumcheck
+        .borrow_mut()
+        .load_from(conjugated_combined_witness);
 
     sumcheck_context
         .combiner

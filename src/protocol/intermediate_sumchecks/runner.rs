@@ -21,6 +21,8 @@ use super::{context::IntermediateSumcheckContext, loader::load_intermediate_sumc
 #[derive(Clone)]
 pub struct IntermediateType0SumcheckProof {
     pub claim_over_witness: RingElement,
+    pub claim_over_witness_conjugate: RingElement,
+    pub norm_claim: RingElement,
     pub type0_claims: Vec<RingElement>,
     pub polys: Vec<Polynomial<QuadraticExtension>>,
 }
@@ -31,6 +33,20 @@ pub fn run_intermediate_sumcheck(
     sumcheck_context: &mut IntermediateSumcheckContext,
     hash_wrapper: &mut HashWrapper,
 ) -> (IntermediateType0SumcheckProof, Vec<RingElement>) {
+    let mut conjugated_combined_witness = new_vec_zero_preallocated(combined_witness.len());
+    combined_witness
+        .iter()
+        .zip(conjugated_combined_witness.iter_mut())
+        .for_each(|(orig, conj)| {
+            orig.conjugate_into(conj);
+        });
+    let mut norm_claim = RingElement::zero(Representation::IncompleteNTT);
+    let mut temp = RingElement::zero(Representation::IncompleteNTT);
+    for (w, wc) in combined_witness.iter().zip(conjugated_combined_witness.iter()) {
+        temp *= (w, wc);
+        norm_claim += &temp;
+    }
+
     let num_sumchecks = sumcheck_context.combiner.borrow().sumchecks_count();
     let mut combination = new_vec_zero_preallocated(num_sumchecks);
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
@@ -45,6 +61,7 @@ pub fn run_intermediate_sumcheck(
         sumcheck_context,
         config,
         combined_witness,
+        &conjugated_combined_witness,
         &combination,
         &qe,
     );
@@ -54,6 +71,11 @@ pub fn run_intermediate_sumcheck(
         .iter()
         .map(|type0_sc| type0_sc.output.borrow_mut().claim())
         .collect::<Vec<_>>();
+    let type5_claim = sumcheck_context.type5sumcheck.output.borrow_mut().claim();
+    assert_eq!(
+        type5_claim, norm_claim,
+        "Type5 intermediate claim mismatch: expected <w, conj(w)>"
+    );
 
     let mut num_vars = sumcheck_context.combiner.borrow().variable_count();
     let mut polys: Vec<Polynomial<QuadraticExtension>> = Vec::with_capacity(num_vars);
@@ -88,12 +110,20 @@ pub fn run_intermediate_sumcheck(
         .borrow()
         .final_evaluations()
         .clone();
+    let claim_over_witness_conjugate = sumcheck_context
+        .type5sumcheck
+        .conjugated_witness_sumcheck
+        .borrow()
+        .final_evaluations()
+        .clone();
 
     evaluation_points.reverse();
 
     (
         IntermediateType0SumcheckProof {
             claim_over_witness,
+            claim_over_witness_conjugate,
+            norm_claim,
             type0_claims,
             polys,
         },

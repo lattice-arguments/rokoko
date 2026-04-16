@@ -12,7 +12,9 @@ use crate::{
     },
 };
 
-use super::context::{IntermediateSumcheckContext, Type0IntermediateSumcheckContext};
+use super::context::{
+    IntermediateSumcheckContext, Type0IntermediateSumcheckContext, Type5IntermediateSumcheckContext,
+};
 
 pub fn init_intermediate_sumcheck(
     crs: &CRS,
@@ -57,11 +59,23 @@ pub fn init_intermediate_sumcheck(
         })
         .collect::<Vec<Type0IntermediateSumcheckContext>>();
 
+    let conjugated_witness_sumcheck = ElephantCell::new(LinearSumcheck::<RingElement>::new(
+        decomposed_witness_height,
+    ));
+    let type5sumcheck = Type5IntermediateSumcheckContext {
+        conjugated_witness_sumcheck: conjugated_witness_sumcheck.clone(),
+        output: ElephantCell::new(ProductSumcheck::new(
+            witness_sumcheck.clone(),
+            conjugated_witness_sumcheck,
+        )),
+    };
+
     let mut all_outputs: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>> =
-        Vec::with_capacity(type0sumchecks.len());
+        Vec::with_capacity(type0sumchecks.len() + 1);
     for type0 in &type0sumchecks {
         all_outputs.push(type0.output.clone());
     }
+    all_outputs.push(type5sumcheck.output.clone());
 
     let combiner = ElephantCell::new(Combiner::new(all_outputs));
     let field_combiner = ElephantCell::new(RingToFieldCombiner::new(combiner.clone()));
@@ -70,6 +84,7 @@ pub fn init_intermediate_sumcheck(
         witness_sumcheck,
         commitment_key_rows_sumcheck,
         type0sumchecks,
+        type5sumcheck,
         combiner,
         field_combiner,
         next: match config.next.as_deref() {

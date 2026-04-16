@@ -1,24 +1,22 @@
 use crate::{
-    common::ring_arithmetic::{Representation, RingElement},
+    common::ring_arithmetic::RingElement,
     protocol::{
         config::{Config, IntermediateConfig},
         crs::CRS,
         intermediate_sumchecks::context_verifier::{
             IntermediateVerifierSumcheckContext, Type0IntermediateVerifierContext,
+            Type5IntermediateVerifierContext,
         },
         sumcheck_utils::{
             combiner::CombinerEvaluation,
             common::EvaluationSumcheckData,
             elephant_cell::ElephantCell,
-            linear::{
-                BasicEvaluationLinearSumcheck, FakeEvaluationLinearSumcheck,
-                StructuredRowEvaluationLinearSumcheck,
-            },
+            linear::FakeEvaluationLinearSumcheck,
             product::ProductSumcheckEvaluation,
             ring_to_field_combiner::RingToFieldCombinerEvaluation,
         },
         sumchecks::builder_verifier::{
-            basic_evaluation_linear, load_combiner_evaluation_data, structured_row_ck_evaluation,
+            load_combiner_evaluation_data, structured_row_ck_evaluation,
         },
     },
 };
@@ -33,6 +31,8 @@ pub fn init_intermediate_verifier(
     let total_vars = decomposed_witness_height.ilog2() as usize;
 
     let witness_evaluation = ElephantCell::new(FakeEvaluationLinearSumcheck::<RingElement>::new());
+    let conjugated_witness_evaluation =
+        ElephantCell::new(FakeEvaluationLinearSumcheck::<RingElement>::new());
 
     let witness_combiner_evaluation = load_combiner_evaluation_data(
         config.witness_decomposition_base_log as u64,
@@ -66,10 +66,20 @@ pub fn init_intermediate_verifier(
         })
         .collect::<Vec<_>>();
 
-    let mut all_outputs: Vec<ElephantCell<EvalData>> = Vec::with_capacity(type0evaluations.len());
+    let type5evaluation = Type5IntermediateVerifierContext {
+        conjugated_witness_evaluation: conjugated_witness_evaluation.clone(),
+        output: ElephantCell::new(ProductSumcheckEvaluation::new(
+            witness_evaluation.clone(),
+            conjugated_witness_evaluation.clone(),
+        )),
+    };
+
+    let mut all_outputs: Vec<ElephantCell<EvalData>> =
+        Vec::with_capacity(type0evaluations.len() + 1);
     for type0 in &type0evaluations {
         all_outputs.push(type0.output.clone());
     }
+    all_outputs.push(type5evaluation.output.clone());
 
     let combiner_evaluation = ElephantCell::new(CombinerEvaluation::new(all_outputs));
     let field_combiner_evaluation = ElephantCell::new(RingToFieldCombinerEvaluation::new(
@@ -78,9 +88,11 @@ pub fn init_intermediate_verifier(
 
     IntermediateVerifierSumcheckContext {
         witness_evaluation,
+        conjugated_witness_evaluation,
         witness_combiner_evaluation,
         commitment_key_rows_evaluation,
         type0evaluations,
+        type5evaluation,
         combiner_evaluation,
         field_combiner_evaluation,
         next: match config.next.as_deref() {
