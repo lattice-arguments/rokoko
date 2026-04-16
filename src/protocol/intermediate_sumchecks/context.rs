@@ -1,5 +1,5 @@
 use crate::{
-    common::ring_arithmetic::RingElement,
+    common::{config::NOF_BATCHES, ring_arithmetic::RingElement},
     protocol::sumcheck_utils::{
         combiner::Combiner, common::SumcheckBaseData, elephant_cell::ElephantCell,
         linear::LinearSumcheck, product::ProductSumcheck,
@@ -20,12 +20,20 @@ pub struct Type5IntermediateSumcheckContext {
     pub output: ElephantCell<ProductSumcheck<RingElement>>,
 }
 
+
+pub struct Type3_1IntermediateSumcheckContext {
+    pub output: ElephantCell<ProductSumcheck<RingElement>>,
+    pub c_0_sumcheck: ElephantCell<LinearSumcheck<RingElement>>, // across blocks
+    pub j_batched_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+}
+
 pub struct IntermediateSumcheckContext {
     pub witness_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub witness_combiner_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub commitment_key_rows_sumcheck: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
     pub type0sumchecks: Vec<Type0IntermediateSumcheckContext>,
     pub type1sumchecks: Vec<Type1IntermediateSumcheckContext>,
+    // pub type3_1sumcheck: [Type3_1IntermediateSumcheckContext; NOF_BATCHES],
     pub type5sumcheck: Type5IntermediateSumcheckContext,
     pub combiner: ElephantCell<Combiner<RingElement>>,
     pub field_combiner: ElephantCell<RingToFieldCombiner>,

@@ -8,11 +8,10 @@ use crate::{
             Type1IntermediateVerifierContext, Type5IntermediateVerifierContext,
         },
         sumcheck_utils::{
-            combiner::CombinerEvaluation, common::EvaluationSumcheckData,
+            combiner::CombinerEvaluation,
+            common::EvaluationSumcheckData,
             elephant_cell::ElephantCell,
-            linear::{
-                FakeEvaluationLinearSumcheck, StructuredRowEvaluationLinearSumcheck,
-            },
+            linear::{FakeEvaluationLinearSumcheck, StructuredRowEvaluationLinearSumcheck},
             product::ProductSumcheckEvaluation,
             ring_to_field_combiner::RingToFieldCombinerEvaluation,
         },

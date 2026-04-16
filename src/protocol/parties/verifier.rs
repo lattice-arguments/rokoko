@@ -6,7 +6,7 @@ use crate::{
         arithmetic::precompute_structured_values_fast,
         config::{DEGREE, MOD_Q, NOF_BATCHES},
         hash::HashWrapper,
-        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
+        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         norms::l2_norm_coeffs,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
@@ -14,17 +14,28 @@ use crate::{
     },
     hexl::bindings::{add_mod, eltwise_mult_mod, multiply_mod},
     protocol::{
-        commitment::{BasicCommitment, commit_basic}, config::{
+        commitment::{commit_basic, BasicCommitment},
+        config::{
             Config, IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, RoundProof,
             SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof,
-        }, crs::{self, CRS}, fold, intermediate_sumchecks::{
-            builder_verifier::init_intermediate_verifier, context_verifier::IntermediateVerifierSumcheckContext, runner::IntermediateSumcheckProof, runner_verifier::{ intermediate_sumcheck_verifier}
-        }, open::{
+        },
+        crs::{self, CRS},
+        fold,
+        intermediate_sumchecks::{
+            builder_verifier::init_intermediate_verifier,
+            context_verifier::IntermediateVerifierSumcheckContext,
+            runner::IntermediateSumcheckProof, runner_verifier::intermediate_sumcheck_verifier,
+        },
+        open::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
             open_at,
-        }, project_2::{BatchedProjectionChallengesSuccinct, verifier_sample_projection_challenges}, sumcheck_utils::sum, sumchecks::{
-            context_verifier::{NextVerifierSumcheckContext, VerifierSumcheckContext}, runner_verifier::sumcheck_verifier,
-        }
+        },
+        project_2::{verifier_sample_projection_challenges, BatchedProjectionChallengesSuccinct},
+        sumcheck_utils::sum,
+        sumchecks::{
+            context_verifier::{NextVerifierSumcheckContext, VerifierSumcheckContext},
+            runner_verifier::sumcheck_verifier,
+        },
     },
 };
 
@@ -211,7 +222,6 @@ pub fn verifier_round(
         None => {}
     }
 }
-
 
 pub(crate) fn fold_matrix_claims(
     matrix: &HorizontallyAlignedMatrix<RingElement>,

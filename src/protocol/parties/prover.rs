@@ -4,20 +4,23 @@ use crate::{
     common::{
         decomposition::decompose,
         hash::HashWrapper,
-        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
+        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
-        commitment::{BasicCommitment, CommitmentWithAux, commit_basic, recursive_commit},
+        commitment::{commit_basic, recursive_commit, BasicCommitment, CommitmentWithAux},
         config::{
-            Config, ConfigBase, IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, Projection, RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof, paste_by_prefix, paste_recursive_commitment
+            paste_by_prefix, paste_recursive_commitment, Config, ConfigBase, IntermediateConfig,
+            IntermediateRoundProof, NextRoundCommitment, Projection, RoundProof, SimpleConfig,
+            SimpleRoundProof, SumcheckConfig, SumcheckRoundProof,
         },
         crs::CRS,
         fold::fold,
         intermediate_sumchecks::{
-            builder::init_intermediate_sumcheck, context::IntermediateSumcheckContext, runner::run_intermediate_sumcheck
+            builder::init_intermediate_sumcheck, context::IntermediateSumcheckContext,
+            runner::run_intermediate_sumcheck,
         },
         open::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
@@ -25,7 +28,7 @@ use crate::{
         },
         project::{prepare_i16_witness, project},
         project_2::{batch_projection_n_times, project_coefficients},
-        sumcheck::{SumcheckContext, sumcheck},
+        sumcheck::{sumcheck, SumcheckContext},
         sumchecks::context::NextSumcheckContext,
     },
 };

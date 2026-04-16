@@ -58,7 +58,6 @@ pub fn run_intermediate_sumcheck(
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
     // hash_wrapper.sample_ring_element_into(&mut combination[num_sumchecks - 1]);
 
-
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();

@@ -1,9 +1,11 @@
 use crate::{
-    common::ring_arithmetic::RingElement,
+    common::{config::{DEGREE, NOF_BATCHES}, ring_arithmetic::RingElement},
     protocol::{
         config::{Config, IntermediateConfig},
         crs::CRS,
-        intermediate_sumchecks::context::Type1IntermediateSumcheckContext,
+        intermediate_sumchecks::context::{
+            Type1IntermediateSumcheckContext, Type3_1IntermediateSumcheckContext,
+        },
         sumcheck_utils::{
             combiner::Combiner, common::HighOrderSumcheckData, elephant_cell::ElephantCell,
             linear::LinearSumcheck, product::ProductSumcheck,
@@ -80,6 +82,45 @@ pub fn init_intermediate_sumcheck(
         })
         .collect::<Vec<Type1IntermediateSumcheckContext>>();
 
+    let height = config.projection_height;
+    let inner_width = config.projection_ratio * height / DEGREE;
+    let blocks = config.witness_height / inner_width;
+    let type3_1sumcheck: [Type3_1IntermediateSumcheckContext; NOF_BATCHES] = std::array::from_fn(|_| {
+            let c_0_sumcheck = ElephantCell::new(
+                LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                    blocks,
+                    total_vars
+                        - blocks.ilog2() as usize
+                        - inner_width.ilog2() as usize
+                        - config.witness_decomposition_chunks.ilog2() as usize,
+                    inner_width.ilog2() as usize
+                        + config.witness_decomposition_chunks.ilog2() as usize,
+                ),
+            );
+            let j_batched_sumcheck = ElephantCell::new(
+                LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                    inner_width,
+                    total_vars
+                        - inner_width.ilog2() as usize
+                        - config.witness_decomposition_chunks.ilog2() as usize,
+                    config.witness_decomposition_chunks.ilog2() as usize,
+                ),
+            );
+
+            let output = ElephantCell::new(ProductSumcheck::new(
+                recomposed_witness.clone(),
+                ElephantCell::new(ProductSumcheck::new(
+                    c_0_sumcheck.clone(),
+                    j_batched_sumcheck.clone(),
+                )),
+            ));
+            Type3_1IntermediateSumcheckContext {
+                output,
+                c_0_sumcheck,
+                j_batched_sumcheck,
+            }
+        });
+
     let conjugated_witness_sumcheck = ElephantCell::new(LinearSumcheck::<RingElement>::new(
         decomposed_witness_height,
     ));
@@ -97,6 +138,9 @@ pub fn init_intermediate_sumcheck(
     for type0 in &type0sumchecks {
         all_outputs.push(type0.output.clone());
     }
+    for type1 in &type1sumchecks {
+        all_outputs.push(type1.output.clone());
+    }
     all_outputs.push(type5sumcheck.output.clone());
 
     let combiner = ElephantCell::new(Combiner::new(all_outputs));
@@ -108,6 +152,7 @@ pub fn init_intermediate_sumcheck(
         commitment_key_rows_sumcheck,
         type0sumchecks,
         type1sumchecks,
+        // type3_1sumcheck,
         type5sumcheck,
         combiner,
         field_combiner,

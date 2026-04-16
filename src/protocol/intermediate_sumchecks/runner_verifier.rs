@@ -75,8 +75,7 @@ pub fn intermediate_sumcheck_verifier(
         combination_to_field.split_into_quadratic_extensions();
 
     let (mut batched_claim, idx) = batch_claims_linear(folded_commitment, &combination, 0);
-    let (batched_type1_claims, idx) =
-        batch_claims_linear(folded_opening_claims, &combination, idx);
+    let (batched_type1_claims, idx) = batch_claims_linear(folded_opening_claims, &combination, idx);
     batched_claim += &batched_type1_claims;
     let mut weighted_norm = proof.norm_claim.clone();
     weighted_norm *= &combination[idx];
