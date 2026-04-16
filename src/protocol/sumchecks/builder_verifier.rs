@@ -8,6 +8,7 @@ use crate::{
         commitment::{self, Prefix},
         config::{Config, Projection, SumcheckConfig},
         crs::CRS,
+        intermediate_sumchecks::builder_verifier::init_intermediate_verifier,
         sumcheck_utils::{
             combiner::CombinerEvaluation,
             common::EvaluationSumcheckData,
@@ -23,8 +24,9 @@ use crate::{
             sum::SumSumcheckEvaluation,
         },
         sumchecks::context_verifier::{
-            Type0VerifierContext, Type1VerifierContext, Type2VerifierContext, Type3VerifierContext,
-            Type3_1VerifierContext, Type3_1VerifierContextWrapper, Type4LayerVerifierContext,
+            NextVerifierSumcheckContext, Type0VerifierContext, Type1VerifierContext,
+            Type2VerifierContext, Type3VerifierContext, Type3_1VerifierContext,
+            Type3_1VerifierContextWrapper, Type4LayerVerifierContext,
             Type4OutputLayerVerifierContext, Type4VerifierContext, Type5VerifierContext,
             VerifierSumcheckContext,
         },
@@ -44,7 +46,7 @@ fn selector_evaluation_from_prefix(
     ))
 }
 
-fn basic_evaluation_linear(
+pub fn basic_evaluation_linear(
     count: usize,
     prefix_size: usize,
     suffix_size: usize,
@@ -58,7 +60,7 @@ fn basic_evaluation_linear(
     )
 }
 
-fn load_combiner_evaluation_data(
+pub fn load_combiner_evaluation_data(
     base_log: u64,
     chunks: usize,
     total_vars: usize,
@@ -78,7 +80,7 @@ fn load_combiner_evaluation_data(
     combiner_evaluation
 }
 
-fn structured_row_ck_evaluation(
+pub fn structured_row_ck_evaluation(
     crs: &CRS,
     total_vars: usize,
     wit_dim: usize,
@@ -943,8 +945,13 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
         field_combiner_evaluation,
         next: match &config.next {
             Some(next_config) => match next_config.as_ref() {
-                Config::Sumcheck(next_sumcheck_config) => {
-                    Some(Box::new(init_verifier(crs, next_sumcheck_config)))
+                Config::Sumcheck(next_sumcheck_config) => Some(Box::new(
+                    NextVerifierSumcheckContext::Simple(init_verifier(crs, next_sumcheck_config)),
+                )),
+                Config::Intermediate(next_intermediate_config) => {
+                    Some(Box::new(NextVerifierSumcheckContext::Intermediate(
+                        init_intermediate_verifier(crs, next_intermediate_config),
+                    )))
                 }
                 _ => None,
             },

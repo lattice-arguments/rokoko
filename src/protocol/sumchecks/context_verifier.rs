@@ -3,17 +3,20 @@ use crate::{
         config::NOF_BATCHES,
         ring_arithmetic::{QuadraticExtension, RingElement},
     },
-    protocol::sumcheck_utils::{
-        combiner::CombinerEvaluation,
-        diff::DiffSumcheckEvaluation,
-        elephant_cell::ElephantCell,
-        linear::{
-            BasicEvaluationLinearSumcheck, FakeEvaluationLinearSumcheck,
-            RingToFieldWrapperEvaluation, StructuredRowEvaluationLinearSumcheck,
+    protocol::{
+        intermediate_sumchecks::context_verifier::IntermediateVerifierSumcheckContext,
+        sumcheck_utils::{
+            combiner::CombinerEvaluation,
+            diff::DiffSumcheckEvaluation,
+            elephant_cell::ElephantCell,
+            linear::{
+                BasicEvaluationLinearSumcheck, FakeEvaluationLinearSumcheck,
+                RingToFieldWrapperEvaluation, StructuredRowEvaluationLinearSumcheck,
+            },
+            product::ProductSumcheckEvaluation,
+            ring_to_field_combiner::RingToFieldCombinerEvaluation,
+            selector_eq::SelectorEqEvaluation,
         },
-        product::ProductSumcheckEvaluation,
-        ring_to_field_combiner::RingToFieldCombinerEvaluation,
-        selector_eq::SelectorEqEvaluation,
     },
 };
 
@@ -44,7 +47,12 @@ pub struct VerifierSumcheckContext {
     // Top-level combiners
     pub combiner_evaluation: ElephantCell<CombinerEvaluation<RingElement>>,
     pub field_combiner_evaluation: ElephantCell<RingToFieldCombinerEvaluation>,
-    pub next: Option<Box<VerifierSumcheckContext>>,
+    pub next: Option<Box<NextVerifierSumcheckContext>>,
+}
+
+pub enum NextVerifierSumcheckContext {
+    Simple(VerifierSumcheckContext),
+    Intermediate(IntermediateVerifierSumcheckContext),
 }
 
 impl VerifierSumcheckContext {
