@@ -1,7 +1,5 @@
 use std::array;
 
-use num::traits::ops::inv;
-
 use crate::{
     common::{
         arithmetic::precompute_structured_values_fast,
