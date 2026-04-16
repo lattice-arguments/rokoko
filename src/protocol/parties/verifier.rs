@@ -182,7 +182,9 @@ pub fn verifier_round(
 
                     let commitment = match &next_round_commitment {
                         NextRoundCommitment::Simple(basic_commitment) => basic_commitment,
-                        _ => panic!("Expected NextRoundCommitment::Simple for intermediate next round."),
+                        _ => panic!(
+                            "Expected NextRoundCommitment::Simple for intermediate next round."
+                        ),
                     };
 
                     let inner_rows = [

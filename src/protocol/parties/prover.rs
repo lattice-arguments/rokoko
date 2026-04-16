@@ -797,8 +797,7 @@ pub fn prover_round_intermediate(
     let projection_image_ct = project_coefficients(witness, &projection_matrix);
     hash_wrapper.update_with_ring_element_slice(&projection_image_ct.data);
     assert_eq!(
-        config.projection_nof_batches,
-        NOF_BATCHES,
+        config.projection_nof_batches, NOF_BATCHES,
         "projection_nof_batches must equal NOF_BATCHES"
     );
     let (batched_projection_image, challenges_batching_projection_1) = batch_projection_n_times(
