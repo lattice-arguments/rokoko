@@ -800,7 +800,6 @@ pub fn prover_round_intermediate(
 
     hash_wrapper.update_with_ring_element_slice(&batched_projection_image.data);
 
-    // println!("Intermediate round proof is not implemented yet in prover.");
     let mut folding_challenge =
         vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
     hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut folding_challenge);
