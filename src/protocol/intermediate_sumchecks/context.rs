@@ -33,7 +33,7 @@ pub struct IntermediateSumcheckContext {
     pub commitment_key_rows_sumcheck: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
     pub type0sumchecks: Vec<Type0IntermediateSumcheckContext>,
     pub type1sumchecks: Vec<Type1IntermediateSumcheckContext>,
-    // pub type3_1sumcheck: [Type3_1IntermediateSumcheckContext; NOF_BATCHES],
+    pub type3_1sumcheck: [Type3_1IntermediateSumcheckContext; NOF_BATCHES],
     pub type5sumcheck: Type5IntermediateSumcheckContext,
     pub combiner: ElephantCell<Combiner<RingElement>>,
     pub field_combiner: ElephantCell<RingToFieldCombiner>,
@@ -54,6 +54,10 @@ impl IntermediateSumcheckContext {
                 .inner_evaluation_sumcheck
                 .borrow_mut()
                 .partial_evaluate(r);
+        }
+        for type3_1_sc in self.type3_1sumcheck.iter() {
+            type3_1_sc.c_0_sumcheck.borrow_mut().partial_evaluate(r);
+            type3_1_sc.j_batched_sumcheck.borrow_mut().partial_evaluate(r);
         }
         self.type5sumcheck
             .conjugated_witness_sumcheck

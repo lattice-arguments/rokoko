@@ -556,6 +556,56 @@ pub struct IntermediateRoundProof {
 
 impl SizeableProof for IntermediateRoundProof {
     fn size_in_bits(&self) -> usize {
+        let mut size = 0;
+
+        let mut polys_size = 0;
+        for poly in &self.polys {
+            for coeff in &poly.coefficients[0..poly.num_coefficients] {
+                polys_size += coeff.size_in_bits();
+            }
+        }
+        size += polys_size;
+        println!("Polys size: {} KB, ", to_kb(polys_size));
+
+        let mut claims_size = 0;
+        let claims = vec![
+            &self.claim_over_witness,
+            &self.claim_over_witness_conjugate,
+            &self.norm_claim,
+        ];
+        for claim in claims {
+            claims_size += claim.size_in_bits();
+        }
+        size += claims_size;
+        println!("Claims size: {} KB, ", to_kb(claims_size));
+
+        let mut projection_image_ct_size = 0;
+        for el in &self.projection_image_ct.data {
+            projection_image_ct_size += el.size_in_bits();
+        }
+        size += projection_image_ct_size;
+        println!(
+            "Projection image ct size: {} KB, ",
+            to_kb(projection_image_ct_size)
+        );
+
+        let mut batched_projection_image_size = 0;
+        for el in &self.batched_projection_image.data {
+            batched_projection_image_size += el.size_in_bits();
+        }
+        size += batched_projection_image_size;
+        println!(
+            "Batched projection image size: {} KB, ",
+            to_kb(batched_projection_image_size)
+        );
+
+        let mut opening_rhs_size = 0;
+        for el in &self.opening_rhs.data {
+            opening_rhs_size += el.size_in_bits();
+        }
+        size += opening_rhs_size;
+        println!("Opening RHS size: {} KB, ", to_kb(opening_rhs_size));
+
         let next_round_size = if let Some(next_round_commitment) = &self.next_round_commitment {
             match next_round_commitment {
                 NextRoundCommitment::Recursive(rc) => {
@@ -574,13 +624,18 @@ impl SizeableProof for IntermediateRoundProof {
         } else {
             0
         };
+        size += next_round_size;
         println!(
             "Next round commitment size in intermediate round proof: {} KB, ",
             to_kb(next_round_size)
         );
 
-        next_round_size
-            + if let Some(next) = &self.next {
+        println!(
+            "Total intermediate round proof size: {} KB \n\n\n",
+            to_kb(size)
+        );
+
+        size + if let Some(next) = &self.next {
                 match &**next {
                     RoundProof::Sumcheck(sc_next) => sc_next.size_in_bits(),
                     RoundProof::Simple(s_next) => s_next.size_in_bits(),

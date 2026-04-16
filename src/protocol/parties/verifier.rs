@@ -358,6 +358,8 @@ pub fn verifier_round_intermediate(
     }
 
     let folded_opening_claims = fold_matrix_claims(&round_proof.opening_rhs, &folding_challenges);
+    let folded_batched_projection_claims =
+        fold_matrix_claims(&round_proof.batched_projection_image, &folding_challenges);
 
     // let mut intermediate_sumcheck_context_verifier = init_intermediate_verifier(crs, config);
     // let intermediate_sumcheck_proof = IntermediateSumcheckProof {
@@ -366,13 +368,24 @@ pub fn verifier_round_intermediate(
     //     norm_claim: round_proof.norm_claim.clone(),
     //     polys: round_proof.polys.clone(),
     // };
+
+    let l2_norm_proj = l2_norm_coeffs(&round_proof.projection_image_ct.data);
+
+    println!(
+        "L2 norm of projection image in intermediate verifier: {}",
+        l2_norm_proj
+    );
+
+ 
     let intermediate_evaluation_points = intermediate_sumcheck_verifier(
         config,
         sumcheck_context_verifier,
         &round_proof,
         &folded_commitment,
         &folded_opening_claims,
+        &folded_batched_projection_claims,
         evaluation_points_inner,
+        &challenges,
         &mut hash_wrapper,
     );
 
@@ -405,6 +418,7 @@ pub fn verifier_round_intermediate(
         round_proof.claim_over_witness.clone(),
         round_proof.claim_over_witness_conjugate.conjugate(),
     ];
+
 
     match (next_round_proof.as_ref(), next_round_config.as_ref()) {
         (RoundProof::Simple(simple_round_proof), Config::Simple(simple_config)) => {
@@ -594,10 +608,6 @@ pub fn verifier_round_simple(
 
     let mut evaluation = new_vec_zero_preallocated(round_proof.opening_rhs.height);
 
-    println!(
-        "round_proof.opening_rhs.height: {}",
-        round_proof.opening_rhs.height
-    );
     for i in 0..round_proof.opening_rhs.height {
         let preprocessed_row = PreprocessedRow::from_structured_row(&evaluation_points_outer[i]);
         for col in 0..round_proof.opening_rhs.width {

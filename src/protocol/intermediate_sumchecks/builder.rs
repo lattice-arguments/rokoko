@@ -141,6 +141,9 @@ pub fn init_intermediate_sumcheck(
     for type1 in &type1sumchecks {
         all_outputs.push(type1.output.clone());
     }
+    for type3_1 in &type3_1sumcheck {
+        all_outputs.push(type3_1.output.clone());
+    }
     all_outputs.push(type5sumcheck.output.clone());
 
     let combiner = ElephantCell::new(Combiner::new(all_outputs));
@@ -152,7 +155,7 @@ pub fn init_intermediate_sumcheck(
         commitment_key_rows_sumcheck,
         type0sumchecks,
         type1sumchecks,
-        // type3_1sumcheck,
+        type3_1sumcheck,
         type5sumcheck,
         combiner,
         field_combiner,

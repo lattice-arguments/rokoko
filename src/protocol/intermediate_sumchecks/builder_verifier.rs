@@ -1,11 +1,12 @@
 use crate::{
-    common::ring_arithmetic::RingElement,
+    common::{config::{DEGREE, NOF_BATCHES}, ring_arithmetic::RingElement},
     protocol::{
         config::{Config, IntermediateConfig},
         crs::CRS,
         intermediate_sumchecks::context_verifier::{
             IntermediateVerifierSumcheckContext, Type0IntermediateVerifierContext,
-            Type1IntermediateVerifierContext, Type5IntermediateVerifierContext,
+            Type1IntermediateVerifierContext, Type3_1IntermediateVerifierContext,
+            Type5IntermediateVerifierContext,
         },
         sumcheck_utils::{
             combiner::CombinerEvaluation,
@@ -16,7 +17,7 @@ use crate::{
             ring_to_field_combiner::RingToFieldCombinerEvaluation,
         },
         sumchecks::builder_verifier::{
-            load_combiner_evaluation_data, structured_row_ck_evaluation,
+            basic_evaluation_linear, load_combiner_evaluation_data, structured_row_ck_evaluation,
         },
     },
 };
@@ -88,6 +89,45 @@ pub fn init_intermediate_verifier(
         })
         .collect::<Vec<_>>();
 
+    let height = config.projection_height;
+    let inner_width = config.projection_ratio * height / DEGREE;
+    let blocks = config.witness_height / inner_width;
+    let type3_1evaluations: [Type3_1IntermediateVerifierContext; NOF_BATCHES] =
+        std::array::from_fn(|_| {
+            let c_0_evaluation = ElephantCell::new(
+                StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
+                    blocks,
+                    total_vars
+                        - blocks.ilog2() as usize
+                        - inner_width.ilog2() as usize
+                        - config.witness_decomposition_chunks.ilog2() as usize,
+                    inner_width.ilog2() as usize
+                        + config.witness_decomposition_chunks.ilog2() as usize,
+                ),
+            );
+            let j_batched_evaluation = basic_evaluation_linear(
+                inner_width,
+                total_vars
+                    - inner_width.ilog2() as usize
+                    - config.witness_decomposition_chunks.ilog2() as usize,
+                config.witness_decomposition_chunks.ilog2() as usize,
+            );
+
+            let output = ElephantCell::new(ProductSumcheckEvaluation::new(
+                recomposed_witness.clone(),
+                ElephantCell::new(ProductSumcheckEvaluation::new(
+                    c_0_evaluation.clone(),
+                    j_batched_evaluation.clone(),
+                )),
+            ));
+
+            Type3_1IntermediateVerifierContext {
+                c_0_evaluation,
+                j_batched_evaluation,
+                output,
+            }
+        });
+
     let type5evaluation = Type5IntermediateVerifierContext {
         conjugated_witness_evaluation: conjugated_witness_evaluation.clone(),
         output: ElephantCell::new(ProductSumcheckEvaluation::new(
@@ -103,6 +143,9 @@ pub fn init_intermediate_verifier(
     for type1 in &type1evaluations {
         all_outputs.push(type1.output.clone());
     }
+    for type3_1 in &type3_1evaluations {
+        all_outputs.push(type3_1.output.clone());
+    }
     all_outputs.push(type5evaluation.output.clone());
 
     let combiner_evaluation = ElephantCell::new(CombinerEvaluation::new(all_outputs));
@@ -117,6 +160,7 @@ pub fn init_intermediate_verifier(
         commitment_key_rows_evaluation,
         type0evaluations,
         type1evaluations,
+        type3_1evaluations,
         type5evaluation,
         combiner_evaluation,
         field_combiner_evaluation,

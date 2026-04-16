@@ -799,7 +799,7 @@ pub fn prover_round_intermediate(
     projection_matrix.sample(&mut hash_wrapper);
     let projection_image_ct = project_coefficients(witness, &projection_matrix);
     hash_wrapper.update_with_ring_element_slice(&projection_image_ct.data);
-    let (batched_projection_image, _challenges) = batch_projection_n_times(
+    let (batched_projection_image, challenges_batching_projection_1) = batch_projection_n_times(
         witness,
         &projection_matrix,
         &mut hash_wrapper,
@@ -859,6 +859,7 @@ pub fn prover_round_intermediate(
         config,
         &next_round_witness.data,
         evaluation_points_inner,
+        &challenges_batching_projection_1,
         sumcheck_context,
         &mut hash_wrapper,
     );

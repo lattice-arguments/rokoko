@@ -1,5 +1,5 @@
 use crate::{
-    common::ring_arithmetic::{QuadraticExtension, RingElement},
+    common::{config::NOF_BATCHES, ring_arithmetic::{QuadraticExtension, RingElement}},
     protocol::sumcheck_utils::{
         combiner::CombinerEvaluation,
         elephant_cell::ElephantCell,
@@ -21,6 +21,12 @@ pub struct Type1IntermediateVerifierContext {
     pub output: ElephantCell<ProductSumcheckEvaluation>,
 }
 
+pub struct Type3_1IntermediateVerifierContext {
+    pub c_0_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
+    pub j_batched_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
+    pub output: ElephantCell<ProductSumcheckEvaluation>,
+}
+
 pub struct Type5IntermediateVerifierContext {
     pub conjugated_witness_evaluation: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
     pub output: ElephantCell<ProductSumcheckEvaluation>,
@@ -34,6 +40,7 @@ pub struct IntermediateVerifierSumcheckContext {
         Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
     pub type0evaluations: Vec<Type0IntermediateVerifierContext>,
     pub type1evaluations: Vec<Type1IntermediateVerifierContext>,
+    pub type3_1evaluations: [Type3_1IntermediateVerifierContext; NOF_BATCHES],
     pub type5evaluation: Type5IntermediateVerifierContext,
     pub combiner_evaluation: ElephantCell<CombinerEvaluation<RingElement>>,
     pub field_combiner_evaluation: ElephantCell<RingToFieldCombinerEvaluation>,

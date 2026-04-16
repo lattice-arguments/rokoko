@@ -10,6 +10,7 @@ use crate::{
     },
     protocol::{
         config::{IntermediateConfig, IntermediateRoundProof},
+        project_2::BatchedProjectionChallengesSuccinct,
         sumcheck_utils::common::EvaluationSumcheckData,
     },
 };
@@ -46,7 +47,9 @@ pub fn intermediate_sumcheck_verifier(
     proof: &IntermediateRoundProof,
     folded_commitment: &[RingElement],
     folded_opening_claims: &[RingElement],
+    folded_batched_projection_claims: &[RingElement],
     evaluation_points_inner: &[StructuredRow],
+    challenges_batching_projection_1: &[BatchedProjectionChallengesSuccinct; 2],
     hash_wrapper: &mut HashWrapper,
 ) -> Vec<RingElement> {
     assert_eq!(
@@ -68,6 +71,9 @@ pub fn intermediate_sumcheck_verifier(
     //     "Intermediate verifier expected folded commitment plus one type5 claim"
     // );
 
+    let norm_ct = proof.norm_claim.constant_term_from_incomplete_ntt();
+    println!("Norm claim via inner-product: {}", (norm_ct as f64).sqrt());
+
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
@@ -75,8 +81,12 @@ pub fn intermediate_sumcheck_verifier(
         combination_to_field.split_into_quadratic_extensions();
 
     let (mut batched_claim, idx) = batch_claims_linear(folded_commitment, &combination, 0);
-    let (batched_type1_claims, idx) = batch_claims_linear(folded_opening_claims, &combination, idx);
+    let (batched_type1_claims, idx) =
+        batch_claims_linear(folded_opening_claims, &combination, idx);
     batched_claim += &batched_type1_claims;
+    let (batched_type3_1_claims, idx) =
+        batch_claims_linear(folded_batched_projection_claims, &combination, idx);
+    batched_claim += &batched_type3_1_claims;
     let mut weighted_norm = proof.norm_claim.clone();
     weighted_norm *= &combination[idx];
     batched_claim += &weighted_norm;
@@ -118,6 +128,7 @@ pub fn intermediate_sumcheck_verifier(
         &proof.claim_over_witness_conjugate,
         evaluation_points_inner,
         &combination,
+        challenges_batching_projection_1,
         &qe,
     );
 

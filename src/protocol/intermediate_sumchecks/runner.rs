@@ -10,6 +10,7 @@ use crate::{
     },
     protocol::{
         config::IntermediateConfig,
+        project_2::BatchedProjectionChallenges,
         sumcheck_utils::{
             common::{HighOrderSumcheckData, SumcheckBaseData},
             polynomial::Polynomial,
@@ -31,6 +32,7 @@ pub fn run_intermediate_sumcheck(
     config: &IntermediateConfig,
     combined_witness: &[RingElement],
     evaluation_points_inner: &[StructuredRow],
+    challenges_batching_projection_1: &[BatchedProjectionChallenges; 2],
     sumcheck_context: &mut IntermediateSumcheckContext,
     hash_wrapper: &mut HashWrapper,
 ) -> (IntermediateSumcheckProof, Vec<RingElement>) {
@@ -71,6 +73,7 @@ pub fn run_intermediate_sumcheck(
         &conjugated_combined_witness,
         evaluation_points_inner,
         &combination,
+        challenges_batching_projection_1,
         &qe,
     );
 

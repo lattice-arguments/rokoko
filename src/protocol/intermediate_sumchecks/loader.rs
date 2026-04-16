@@ -1,10 +1,10 @@
 use crate::{
     common::{
-        config::HALF_DEGREE,
-        ring_arithmetic::{QuadraticExtension, RingElement},
+        config::{HALF_DEGREE, NOF_BATCHES},
+        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
-    protocol::config::IntermediateConfig,
+    protocol::{config::IntermediateConfig, project_2::BatchedProjectionChallenges},
 };
 
 use super::context::IntermediateSumcheckContext;
@@ -16,6 +16,7 @@ pub fn load_intermediate_sumcheck_data(
     conjugated_combined_witness: &[RingElement],
     evaluation_points_inner: &[StructuredRow],
     combination: &[RingElement],
+    challenges_batching_projection_1: &[BatchedProjectionChallenges; NOF_BATCHES],
     qe: &[QuadraticExtension; HALF_DEGREE],
 ) {
     let expected_witness_len = config.witness_height * config.witness_decomposition_chunks;
@@ -53,6 +54,27 @@ pub fn load_intermediate_sumcheck_data(
             .inner_evaluation_sumcheck
             .borrow_mut()
             .load_from(&PreprocessedRow::from_structured_row(eval_point).preprocessed_row);
+    }
+
+    for (challenge, type3_1_sc) in challenges_batching_projection_1
+        .iter()
+        .zip(sumcheck_context.type3_1sumcheck.iter())
+    {
+        let c_0_ring: Vec<RingElement> = challenge
+                    .c_0_values
+                    .iter()
+                    .map(|&val| RingElement::constant(val, Representation::IncompleteNTT))
+                    .collect();
+
+        type3_1_sc
+            .c_0_sumcheck
+            .borrow_mut()
+            .load_from(&c_0_ring);
+        
+        type3_1_sc
+            .j_batched_sumcheck
+            .borrow_mut()
+            .load_from(&challenge.j_batched);
     }
 
     sumcheck_context
