@@ -2,6 +2,7 @@ use crate::{
     common::{
         config::HALF_DEGREE,
         ring_arithmetic::{QuadraticExtension, RingElement},
+        structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::config::IntermediateConfig,
 };
@@ -13,6 +14,7 @@ pub fn load_intermediate_sumcheck_data(
     config: &IntermediateConfig,
     combined_witness: &[RingElement],
     conjugated_combined_witness: &[RingElement],
+    evaluation_points_inner: &[StructuredRow],
     combination: &[RingElement],
     qe: &[QuadraticExtension; HALF_DEGREE],
 ) {
@@ -41,6 +43,17 @@ pub fn load_intermediate_sumcheck_data(
         .conjugated_witness_sumcheck
         .borrow_mut()
         .load_from(conjugated_combined_witness);
+
+    for (type1_sc, eval_point) in sumcheck_context
+        .type1sumchecks
+        .iter()
+        .zip(evaluation_points_inner.iter())
+    {
+        type1_sc
+            .inner_evaluation_sumcheck
+            .borrow_mut()
+            .load_from(&PreprocessedRow::from_structured_row(eval_point).preprocessed_row);
+    }
 
     sumcheck_context
         .combiner

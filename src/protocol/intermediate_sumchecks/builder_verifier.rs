@@ -5,11 +5,14 @@ use crate::{
         crs::CRS,
         intermediate_sumchecks::context_verifier::{
             IntermediateVerifierSumcheckContext, Type0IntermediateVerifierContext,
-            Type5IntermediateVerifierContext,
+            Type1IntermediateVerifierContext, Type5IntermediateVerifierContext,
         },
         sumcheck_utils::{
             combiner::CombinerEvaluation, common::EvaluationSumcheckData,
-            elephant_cell::ElephantCell, linear::FakeEvaluationLinearSumcheck,
+            elephant_cell::ElephantCell,
+            linear::{
+                FakeEvaluationLinearSumcheck, StructuredRowEvaluationLinearSumcheck,
+            },
             product::ProductSumcheckEvaluation,
             ring_to_field_combiner::RingToFieldCombinerEvaluation,
         },
@@ -55,11 +58,33 @@ pub fn init_intermediate_verifier(
         witness_combiner_evaluation.clone(),
     ));
 
+    let inner_evaluation_structured = (0..config.nof_openings)
+        .map(|_| {
+            ElephantCell::new(
+                StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
+                    config.witness_height,
+                    0,
+                    config.witness_decomposition_chunks.ilog2() as usize,
+                ),
+            )
+        })
+        .collect::<Vec<_>>();
+
     let type0evaluations = (0..config.basic_commitment_rank)
         .map(|i| Type0IntermediateVerifierContext {
             output: ElephantCell::new(ProductSumcheckEvaluation::new(
                 recomposed_witness.clone(),
                 commitment_key_rows_evaluation[i].clone(),
+            )),
+        })
+        .collect::<Vec<_>>();
+
+    let type1evaluations = (0..config.nof_openings)
+        .map(|i| Type1IntermediateVerifierContext {
+            inner_evaluation: inner_evaluation_structured[i].clone(),
+            output: ElephantCell::new(ProductSumcheckEvaluation::new(
+                recomposed_witness.clone(),
+                inner_evaluation_structured[i].clone(),
             )),
         })
         .collect::<Vec<_>>();
@@ -76,6 +101,9 @@ pub fn init_intermediate_verifier(
     for type0 in &type0evaluations {
         all_outputs.push(type0.output.clone());
     }
+    for type1 in &type1evaluations {
+        all_outputs.push(type1.output.clone());
+    }
     all_outputs.push(type5evaluation.output.clone());
 
     let combiner_evaluation = ElephantCell::new(CombinerEvaluation::new(all_outputs));
@@ -89,6 +117,7 @@ pub fn init_intermediate_verifier(
         witness_combiner_evaluation,
         commitment_key_rows_evaluation,
         type0evaluations,
+        type1evaluations,
         type5evaluation,
         combiner_evaluation,
         field_combiner_evaluation,

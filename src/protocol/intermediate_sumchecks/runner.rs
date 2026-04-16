@@ -5,6 +5,7 @@ use crate::{
         hash::HashWrapper,
         matrix::new_vec_zero_preallocated,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        structured_row::StructuredRow,
         sumcheck_element::SumcheckElement,
     },
     protocol::{
@@ -29,6 +30,7 @@ pub struct IntermediateSumcheckProof {
 pub fn run_intermediate_sumcheck(
     config: &IntermediateConfig,
     combined_witness: &[RingElement],
+    evaluation_points_inner: &[StructuredRow],
     sumcheck_context: &mut IntermediateSumcheckContext,
     hash_wrapper: &mut HashWrapper,
 ) -> (IntermediateSumcheckProof, Vec<RingElement>) {
@@ -68,6 +70,7 @@ pub fn run_intermediate_sumcheck(
         config,
         combined_witness,
         &conjugated_combined_witness,
+        evaluation_points_inner,
         &combination,
         &qe,
     );

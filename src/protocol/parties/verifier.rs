@@ -18,7 +18,7 @@ use crate::{
             Config, IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, RoundProof,
             SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof,
         }, crs::{self, CRS}, fold, intermediate_sumchecks::{
-            builder_verifier::init_intermediate_verifier, context_verifier::IntermediateVerifierSumcheckContext, runner::IntermediateSumcheckProof, runner_verifier::intermediate_sumcheck_verifier
+            builder_verifier::init_intermediate_verifier, context_verifier::IntermediateVerifierSumcheckContext, runner::IntermediateSumcheckProof, runner_verifier::{ intermediate_sumcheck_verifier}
         }, open::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
             open_at,
@@ -212,6 +212,24 @@ pub fn verifier_round(
     }
 }
 
+
+pub(crate) fn fold_matrix_claims(
+    matrix: &HorizontallyAlignedMatrix<RingElement>,
+    folding_challenges: &[RingElement],
+) -> Vec<RingElement> {
+    let mut folded_claims = new_vec_zero_preallocated(matrix.height);
+    let mut temp = RingElement::zero(Representation::IncompleteNTT);
+
+    for row in 0..matrix.height {
+        for col in 0..matrix.width {
+            temp *= (&matrix[(row, col)], &folding_challenges[col]);
+            folded_claims[row] += &temp;
+        }
+    }
+
+    folded_claims
+}
+
 pub fn verifier_round_intermediate(
     crs: &CRS,
     config: &IntermediateConfig,
@@ -329,6 +347,8 @@ pub fn verifier_round_intermediate(
         }
     }
 
+    let folded_opening_claims = fold_matrix_claims(&round_proof.opening_rhs, &folding_challenges);
+
     // let mut intermediate_sumcheck_context_verifier = init_intermediate_verifier(crs, config);
     // let intermediate_sumcheck_proof = IntermediateSumcheckProof {
     //     claim_over_witness: round_proof.claim_over_witness.clone(),
@@ -341,6 +361,8 @@ pub fn verifier_round_intermediate(
         sumcheck_context_verifier,
         &round_proof,
         &folded_commitment,
+        &folded_opening_claims,
+        evaluation_points_inner,
         &mut hash_wrapper,
     );
 

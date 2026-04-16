@@ -3,7 +3,7 @@ use crate::{
         arithmetic::field_to_ring_element,
         config::{HALF_DEGREE, NOF_BATCHES},
         hash::HashWrapper,
-        matrix::new_vec_zero_preallocated,
+        matrix::{HorizontallyAlignedMatrix, new_vec_zero_preallocated},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         structured_row::StructuredRow,
@@ -19,27 +19,6 @@ use crate::{
         },
     },
 };
-
-pub(crate) fn batch_claims_linear(
-    claims: &[RingElement],
-    combination: &[RingElement],
-    start_idx: usize,
-) -> (RingElement, usize) {
-    assert!(
-        start_idx + claims.len() <= combination.len(),
-        "Not enough combination challenges for linear claim batching"
-    );
-
-    let mut batched = RingElement::zero(Representation::IncompleteNTT);
-    let mut idx = start_idx;
-    for claim in claims {
-        let mut weighted = claim.clone();
-        weighted *= &combination[idx];
-        batched += &weighted;
-        idx += 1;
-    }
-    (batched, idx)
-}
 
 fn batch_claims(
     config: &SumcheckConfig,

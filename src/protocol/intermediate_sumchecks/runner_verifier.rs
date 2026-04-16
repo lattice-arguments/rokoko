@@ -5,14 +5,18 @@ use crate::{
         hash::HashWrapper,
         matrix::new_vec_zero_preallocated,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        structured_row::StructuredRow,
         sumcheck_element::SumcheckElement,
     },
-    protocol::{config::{IntermediateConfig, IntermediateRoundProof}, sumcheck_utils::common::EvaluationSumcheckData},
+    protocol::{
+        config::{IntermediateConfig, IntermediateRoundProof},
+        sumcheck_utils::common::EvaluationSumcheckData,
+    },
 };
 
 use super::{
     context_verifier::IntermediateVerifierSumcheckContext,
-    loader_verifier::load_intermediate_verifier_sumcheck_data, runner::IntermediateSumcheckProof,
+    loader_verifier::load_intermediate_verifier_sumcheck_data,
 };
 
 pub fn batch_claims_linear(
@@ -41,6 +45,8 @@ pub fn intermediate_sumcheck_verifier(
     verifier_sumcheck_context: &mut IntermediateVerifierSumcheckContext,
     proof: &IntermediateRoundProof,
     folded_commitment: &[RingElement],
+    folded_opening_claims: &[RingElement],
+    evaluation_points_inner: &[StructuredRow],
     hash_wrapper: &mut HashWrapper,
 ) -> Vec<RingElement> {
     assert_eq!(
@@ -48,8 +54,6 @@ pub fn intermediate_sumcheck_verifier(
         config.basic_commitment_rank,
         "Folded commitment length mismatch for intermediate batcher"
     );
-
-    println!("folded commitment at 0: {:?}", folded_commitment[1]);
 
     let num_sumchecks = verifier_sumcheck_context
         .combiner_evaluation
@@ -70,12 +74,12 @@ pub fn intermediate_sumcheck_verifier(
     let qe: [QuadraticExtension; HALF_DEGREE] =
         combination_to_field.split_into_quadratic_extensions();
 
-    // let (mut batched_claim, idx) = batch_claims_linear(&vec![], &combination, 0);
     let (mut batched_claim, idx) = batch_claims_linear(folded_commitment, &combination, 0);
-    println!("num_sumchecks: {}", num_sumchecks);
-    // let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
+    let (batched_type1_claims, idx) =
+        batch_claims_linear(folded_opening_claims, &combination, idx);
+    batched_claim += &batched_type1_claims;
     let mut weighted_norm = proof.norm_claim.clone();
-    weighted_norm *= &combination[num_sumchecks - 1];
+    weighted_norm *= &combination[idx];
     batched_claim += &weighted_norm;
 
     let mut batched_claim_over_field = {
@@ -95,7 +99,6 @@ pub fn intermediate_sumcheck_verifier(
         Vec::with_capacity(proof.polys.len());
 
     for poly_over_field in proof.polys.iter() {
-        println!("XXX");
         hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
 
         assert_eq!(
@@ -114,6 +117,7 @@ pub fn intermediate_sumcheck_verifier(
         verifier_sumcheck_context,
         &proof.claim_over_witness,
         &proof.claim_over_witness_conjugate,
+        evaluation_points_inner,
         &combination,
         &qe,
     );

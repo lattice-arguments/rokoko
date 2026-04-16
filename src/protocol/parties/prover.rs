@@ -855,6 +855,7 @@ pub fn prover_round_intermediate(
     let (intermediate_sumcheck_proof, evaluation_points) = run_intermediate_sumcheck(
         config,
         &next_round_witness.data,
+        evaluation_points_inner,
         sumcheck_context,
         &mut hash_wrapper,
     );
