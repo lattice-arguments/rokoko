@@ -91,7 +91,12 @@ pub fn prover_round(
     hash_wrapper.update_with_ring_element_slice(&rc_commitment.most_inner_commitment());
 
     let t0 = std::time::Instant::now();
-    let opening = open_at(&witness, &evaluation_points_inner, &evaluation_points_outer);
+    let opening = open_at(
+        &witness,
+        &evaluation_points_inner,
+        &evaluation_points_outer,
+        false,
+    );
 
     let claims = if with_claims {
         Some(claims(&opening.rhs, evaluation_points_outer))
@@ -778,7 +783,12 @@ pub fn prover_round_intermediate(
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
 
-    let opening = open_at(&witness, &evaluation_points_inner, &evaluation_points_outer);
+    let opening = open_at(
+        &witness,
+        &evaluation_points_inner,
+        &evaluation_points_outer,
+        true,
+    );
     println!(
         "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
         evaluation_points_inner.len(),
@@ -1029,7 +1039,12 @@ pub fn prover_round_simple(
 
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
 
-    let opening = open_at(&witness, &evaluation_points_inner, &evaluation_points_outer);
+    let opening = open_at(
+        &witness,
+        &evaluation_points_inner,
+        &evaluation_points_outer,
+        true,
+    );
     println!(
         "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
         evaluation_points_inner.len(),

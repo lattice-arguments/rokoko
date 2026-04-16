@@ -1,5 +1,7 @@
 use std::array;
 
+use num::traits::ops::inv;
+
 use crate::{
     common::{
         arithmetic::precompute_structured_values_fast,
@@ -259,20 +261,28 @@ pub fn verifier_round_intermediate(
 
     hash_wrapper.update_with_ring_element_slice(&round_proof.opening_rhs.data);
 
-    let mut evaluation = new_vec_zero_preallocated(round_proof.opening_rhs.height);
-    // verify claims
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
+
+    let mut last_col_opening_rhs = new_vec_zero_preallocated(round_proof.opening_rhs.height);
+    // instead of checking if claims are consistent with opening_rhs,
+    // we assume they are and recompute the last column of opening_rhs to save on communication
     for i in 0..round_proof.opening_rhs.height {
         let preprocessed_row = PreprocessedRow::from_structured_row(&evaluation_points_outer[i]);
-        for col in 0..round_proof.opening_rhs.width {
+
+        last_col_opening_rhs[i].set_from(&claims[i]);
+        for col in 0..round_proof.opening_rhs.width - 1 {
             temp *= (
                 &round_proof.opening_rhs[(i, col)],
                 &preprocessed_row.preprocessed_row[col],
             );
-            evaluation[i] += &temp;
+            last_col_opening_rhs[i] -= &temp;
         }
+        temp.set_from(&preprocessed_row.preprocessed_row[round_proof.opening_rhs.width - 1]);
+        temp.from_incomplete_ntt_to_homogenized_field_extensions();
+        let mut inv_remaining_challenge = temp.inverse();
+        inv_remaining_challenge.from_homogenized_field_extensions_to_incomplete_ntt();
+        last_col_opening_rhs[i] *= &inv_remaining_challenge;
     }
-    assert_eq!(claims, &evaluation);
 
     let mut projection_matrix =
         ProjectionMatrix::new(config.projection_ratio, config.projection_height);
@@ -360,7 +370,22 @@ pub fn verifier_round_intermediate(
         }
     }
 
-    let folded_opening_claims = fold_matrix_claims(&round_proof.opening_rhs, &folding_challenges);
+    let mut folded_opening_claims = new_vec_zero_preallocated(round_proof.opening_rhs.height);
+    for row in 0..round_proof.opening_rhs.height {
+        for col in 0..round_proof.opening_rhs.width - 1 {
+            temp *= (
+                &round_proof.opening_rhs[(row, col)],
+                &folding_challenges[col],
+            );
+            folded_opening_claims[row] += &temp;
+        }
+        temp *= (
+            &last_col_opening_rhs[row],
+            &folding_challenges[round_proof.opening_rhs.width - 1],
+        );
+        folded_opening_claims[row] += &temp;
+    }
+
     let folded_batched_projection_claims =
         fold_matrix_claims(&round_proof.batched_projection_image, &folding_challenges);
 
@@ -524,16 +549,43 @@ pub fn verifier_round_simple(
         &round_proof.folded_witness,
         evaluation_points_inner,
         evaluation_points_outer,
+        false,
     );
 
     let mut folded_opening =
         HorizontallyAlignedMatrix::new_zero_preallocated(round_proof.opening_rhs.height, 1);
 
+    let mut last_col_opening_rhs = new_vec_zero_preallocated(round_proof.opening_rhs.height);
+    // instead of checking if claims are consistent with opening_rhs,
+    // we assume they are and recompute the last column of opening_rhs to save on communication
     for i in 0..round_proof.opening_rhs.height {
-        for col in 0..commitment.width {
+        let preprocessed_row = PreprocessedRow::from_structured_row(&evaluation_points_outer[i]);
+
+        last_col_opening_rhs[i].set_from(&claims[i]);
+        for col in 0..round_proof.opening_rhs.width - 1 {
+            temp *= (
+                &round_proof.opening_rhs[(i, col)],
+                &preprocessed_row.preprocessed_row[col],
+            );
+            last_col_opening_rhs[i] -= &temp;
+        }
+        temp.set_from(&preprocessed_row.preprocessed_row[round_proof.opening_rhs.width - 1]);
+        temp.from_incomplete_ntt_to_homogenized_field_extensions();
+        let mut inv_remaining_challenge = temp.inverse();
+        inv_remaining_challenge.from_homogenized_field_extensions_to_incomplete_ntt();
+        last_col_opening_rhs[i] *= &inv_remaining_challenge;
+    }
+
+    for i in 0..round_proof.opening_rhs.height {
+        for col in 0..commitment.width - 1 {
             temp *= (&round_proof.opening_rhs[(i, col)], &folding_challenges[col]);
             folded_opening[(i, 0)] += &temp;
         }
+        temp *= (
+            &last_col_opening_rhs[i],
+            &folding_challenges[commitment.width - 1],
+        );
+        folded_opening[(i, 0)] += &temp;
     }
 
     assert_eq!(opening_to_folded_witness.rhs, folded_opening);
@@ -607,19 +659,6 @@ pub fn verifier_round_simple(
         }
     }
 
-    let mut evaluation = new_vec_zero_preallocated(round_proof.opening_rhs.height);
-
-    for i in 0..round_proof.opening_rhs.height {
-        let preprocessed_row = PreprocessedRow::from_structured_row(&evaluation_points_outer[i]);
-        for col in 0..round_proof.opening_rhs.width {
-            temp *= (
-                &round_proof.opening_rhs[(i, col)],
-                &preprocessed_row.preprocessed_row[col],
-            );
-            evaluation[i] += &temp;
-        }
-    }
-
     let mut witness_even_odd = new_vec_zero_preallocated(round_proof.folded_witness.height);
     witness_even_odd.clone_from_slice(&round_proof.folded_witness.data);
 
@@ -641,6 +680,4 @@ pub fn verifier_round_simple(
 
     let elapsed = start.elapsed().as_nanos();
     println!("Simple verifier: {} ns", elapsed);
-
-    assert_eq!(claims, &evaluation);
 }

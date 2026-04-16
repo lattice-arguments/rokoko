@@ -31,6 +31,7 @@ pub fn open_at(
     witness: &VerticallyAlignedMatrix<RingElement>,
     structured_points_inner: &[StructuredRow],
     structured_points_outer: &[StructuredRow],
+    skip_last_col: bool,
 ) -> Opening {
     debug_assert_eq!(
         structured_points_inner[0].tensor_layers.len(),
@@ -50,7 +51,13 @@ pub fn open_at(
         .collect::<Vec<PreprocessedRow>>();
 
     // it's not a commitment, but we can reuse the same structure
-    let rhs = commit_basic_internal(&preprocessed_points_inner, witness, nof_evaluation_points);
+    let mut rhs = commit_basic_internal(&preprocessed_points_inner, witness, nof_evaluation_points);
+
+    if skip_last_col {
+        for i in 0..structured_points_outer.len() {
+            rhs[(i, witness.width - 1)].set_zero();
+        }
+    }
 
     Opening {
         rhs,                                                // Y
@@ -141,7 +148,12 @@ mod tests {
             ]),
         ];
 
-        let opening = open_at(&witness, &inner_evaluation_points, &outer_evaluation_points);
+        let opening = open_at(
+            &witness,
+            &inner_evaluation_points,
+            &outer_evaluation_points,
+            false,
+        );
 
         // debug_assert_eq!(opening.evaluations.len(), 2);
 
