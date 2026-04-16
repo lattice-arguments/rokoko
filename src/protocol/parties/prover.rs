@@ -18,6 +18,9 @@ use crate::{
         },
         crs::CRS,
         fold::fold,
+        intermediate_sumchecks::{
+            builder::init_intermediate_sumcheck, runner::run_intermediate_sumcheck,
+        },
         open::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
             open_at,
@@ -772,12 +775,12 @@ pub fn prover_round_intermediate(
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
 
-
     let opening = open_at(&witness, &evaluation_points_inner, &evaluation_points_outer);
     println!(
         "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
         evaluation_points_inner.len(),
-        evaluation_points_outer.len()    );
+        evaluation_points_outer.len()
+    );
     println!(
         "int opening height: {}, width: {}",
         opening.rhs.height, opening.rhs.width
@@ -790,7 +793,7 @@ pub fn prover_round_intermediate(
     projection_matrix.sample(&mut hash_wrapper);
     let projection_image_ct = project_coefficients(witness, &projection_matrix);
     hash_wrapper.update_with_ring_element_slice(&projection_image_ct.data);
-    let (batched_projection_image, challenges) = batch_projection_n_times(
+    let (batched_projection_image, _challenges) = batch_projection_n_times(
         witness,
         &projection_matrix,
         &mut hash_wrapper,
@@ -839,10 +842,19 @@ pub fn prover_round_intermediate(
             .map(|c| c.basic_commitment_rank())
             .unwrap(),
     );
+    hash_wrapper.update_with_ring_element_slice(&next_round_commitment.data);
 
     println!(
         "Next round commitment created of length {}.",
         next_round_commitment.data.len()
+    );
+
+    let mut intermediate_sumcheck_context = init_intermediate_sumcheck(crs, config);
+    let (intermediate_sumcheck_proof, evaluation_points) = run_intermediate_sumcheck(
+        config,
+        &next_round_witness.data,
+        &mut intermediate_sumcheck_context,
+        &mut hash_wrapper,
     );
 
     let next_level_proof = match &config.next {
@@ -854,24 +866,40 @@ pub fn prover_round_intermediate(
                 unreachable!("Next round after intermediate round should be simple or intermediate, not sumcheck.")
             }
             Config::Intermediate(next_intermediate_config) => {
+                let (new_evaluation_points_outer, new_evaluation_points_inner) = evaluation_points
+                    .split_at(next_intermediate_config.witness_width.ilog2() as usize);
                 let proof = prover_round_intermediate(
                     crs,
                     next_intermediate_config,
                     &next_round_commitment,
                     &next_round_witness,
-                    &vec![],
-                    &vec![],
+                    &vec![
+                        evaluation_point_to_structured_row(new_evaluation_points_inner),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_inner),
+                    ],
+                    &vec![
+                        evaluation_point_to_structured_row(new_evaluation_points_outer),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
+                    ],
                     Some(hash_wrapper),
                 );
                 RoundProof::Intermediate(proof)
             }
             Config::Simple(next_simple_config) => {
+                let (new_evaluation_points_outer, new_evaluation_points_inner) =
+                    evaluation_points.split_at(next_simple_config.witness_width.ilog2() as usize);
                 let proof = prover_round_simple(
                     next_simple_config,
                     &next_round_commitment,
                     &next_round_witness,
-                    &vec![],
-                    &vec![],
+                    &vec![
+                        evaluation_point_to_structured_row(new_evaluation_points_inner),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_inner),
+                    ],
+                    &vec![
+                        evaluation_point_to_structured_row(new_evaluation_points_outer),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
+                    ],
                     Some(hash_wrapper),
                 );
                 RoundProof::Simple(proof)
@@ -881,6 +909,10 @@ pub fn prover_round_intermediate(
 
     IntermediateRoundProof {
         opening_rhs: opening.rhs,
+        polys: intermediate_sumcheck_proof.polys,
+        claim_over_witness: intermediate_sumcheck_proof.claim_over_witness,
+        claim_over_witness_conjugate: intermediate_sumcheck_proof.claim_over_witness_conjugate,
+        norm_claim: intermediate_sumcheck_proof.norm_claim,
         next_round_commitment: Some(NextRoundCommitment::Simple(next_round_commitment)),
         projection_image_ct,
         batched_projection_image,

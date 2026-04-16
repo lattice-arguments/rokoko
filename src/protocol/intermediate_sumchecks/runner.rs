@@ -19,11 +19,10 @@ use crate::{
 use super::{context::IntermediateSumcheckContext, loader::load_intermediate_sumcheck_data};
 
 #[derive(Clone)]
-pub struct IntermediateType0SumcheckProof {
+pub struct IntermediateSumcheckProof {
     pub claim_over_witness: RingElement,
     pub claim_over_witness_conjugate: RingElement,
     pub norm_claim: RingElement,
-    pub type0_claims: Vec<RingElement>,
     pub polys: Vec<Polynomial<QuadraticExtension>>,
 }
 
@@ -32,7 +31,7 @@ pub fn run_intermediate_sumcheck(
     combined_witness: &[RingElement],
     sumcheck_context: &mut IntermediateSumcheckContext,
     hash_wrapper: &mut HashWrapper,
-) -> (IntermediateType0SumcheckProof, Vec<RingElement>) {
+) -> (IntermediateSumcheckProof, Vec<RingElement>) {
     let mut conjugated_combined_witness = new_vec_zero_preallocated(combined_witness.len());
     combined_witness
         .iter()
@@ -42,7 +41,10 @@ pub fn run_intermediate_sumcheck(
         });
     let mut norm_claim = RingElement::zero(Representation::IncompleteNTT);
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
-    for (w, wc) in combined_witness.iter().zip(conjugated_combined_witness.iter()) {
+    for (w, wc) in combined_witness
+        .iter()
+        .zip(conjugated_combined_witness.iter())
+    {
         temp *= (w, wc);
         norm_claim += &temp;
     }
@@ -66,11 +68,6 @@ pub fn run_intermediate_sumcheck(
         &qe,
     );
 
-    let type0_claims = sumcheck_context
-        .type0sumchecks
-        .iter()
-        .map(|type0_sc| type0_sc.output.borrow_mut().claim())
-        .collect::<Vec<_>>();
     let type5_claim = sumcheck_context.type5sumcheck.output.borrow_mut().claim();
     assert_eq!(
         type5_claim, norm_claim,
@@ -120,11 +117,10 @@ pub fn run_intermediate_sumcheck(
     evaluation_points.reverse();
 
     (
-        IntermediateType0SumcheckProof {
+        IntermediateSumcheckProof {
             claim_over_witness,
             claim_over_witness_conjugate,
             norm_claim,
-            type0_claims,
             polys,
         },
         evaluation_points,

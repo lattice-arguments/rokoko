@@ -544,6 +544,10 @@ impl SizeableProof for SimpleRoundProof {
 
 pub struct IntermediateRoundProof {
     pub opening_rhs: HorizontallyAlignedMatrix<RingElement>,
+    pub polys: Vec<Polynomial<QuadraticExtension>>,
+    pub claim_over_witness: RingElement,
+    pub claim_over_witness_conjugate: RingElement,
+    pub norm_claim: RingElement,
     pub next_round_commitment: Option<NextRoundCommitment>,
     pub projection_image_ct: VerticallyAlignedMatrix<RingElement>,
     pub batched_projection_image: HorizontallyAlignedMatrix<RingElement>,

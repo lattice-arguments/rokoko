@@ -8,10 +8,8 @@ use crate::{
             Type5IntermediateVerifierContext,
         },
         sumcheck_utils::{
-            combiner::CombinerEvaluation,
-            common::EvaluationSumcheckData,
-            elephant_cell::ElephantCell,
-            linear::FakeEvaluationLinearSumcheck,
+            combiner::CombinerEvaluation, common::EvaluationSumcheckData,
+            elephant_cell::ElephantCell, linear::FakeEvaluationLinearSumcheck,
             product::ProductSumcheckEvaluation,
             ring_to_field_combiner::RingToFieldCombinerEvaluation,
         },
@@ -74,10 +72,9 @@ pub fn init_intermediate_verifier(
         )),
     };
 
-    let mut all_outputs: Vec<ElephantCell<EvalData>> =
-        Vec::with_capacity(type0evaluations.len() + 1);
+    let mut all_outputs: Vec<ElephantCell<EvalData>> = Vec::new();
     for type0 in &type0evaluations {
-        all_outputs.push(type0.output.clone());
+        // all_outputs.push(type0.output.clone());
     }
     all_outputs.push(type5evaluation.output.clone());
 

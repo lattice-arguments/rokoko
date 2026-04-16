@@ -3,6 +3,7 @@ use crate::{
     protocol::{
         config::{Config, IntermediateConfig},
         crs::CRS,
+        intermediate_sumchecks::context::Type1IntermediateSumcheckContext,
         sumcheck_utils::{
             combiner::Combiner, common::HighOrderSumcheckData, elephant_cell::ElephantCell,
             linear::LinearSumcheck, product::ProductSumcheck,
@@ -53,11 +54,31 @@ pub fn init_intermediate_sumcheck(
     let type0sumchecks = (0..config.basic_commitment_rank)
         .map(|i| Type0IntermediateSumcheckContext {
             output: ElephantCell::new(ProductSumcheck::new(
-                recomposed_witness.clone(),
                 commitment_key_rows_sumcheck[i].clone(),
+                recomposed_witness.clone(),
             )),
         })
         .collect::<Vec<Type0IntermediateSumcheckContext>>();
+
+    let type1sumchecks = (0..config.nof_openings)
+        .map(|_| {
+            let inner_evaluation_sumcheck = ElephantCell::new(
+                LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                    config.witness_height,
+                    0,
+                    config.witness_decomposition_chunks.ilog2() as usize,
+                ),
+            );
+
+            Type1IntermediateSumcheckContext {
+                inner_evaluation_sumcheck: inner_evaluation_sumcheck.clone(),
+                output: ElephantCell::new(ProductSumcheck::new(
+                    recomposed_witness.clone(),
+                    inner_evaluation_sumcheck.clone(),
+                )),
+            }
+        })
+        .collect::<Vec<Type1IntermediateSumcheckContext>>();
 
     let conjugated_witness_sumcheck = ElephantCell::new(LinearSumcheck::<RingElement>::new(
         decomposed_witness_height,
@@ -71,9 +92,10 @@ pub fn init_intermediate_sumcheck(
     };
 
     let mut all_outputs: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>> =
-        Vec::with_capacity(type0sumchecks.len() + 1);
+        Vec::new();
+
     for type0 in &type0sumchecks {
-        all_outputs.push(type0.output.clone());
+        // all_outputs.push(type0.output.clone());
     }
     all_outputs.push(type5sumcheck.output.clone());
 
@@ -84,6 +106,7 @@ pub fn init_intermediate_sumcheck(
         witness_sumcheck,
         commitment_key_rows_sumcheck,
         type0sumchecks,
+        type1sumchecks,
         type5sumcheck,
         combiner,
         field_combiner,

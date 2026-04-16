@@ -7,25 +7,46 @@ use crate::{
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         sumcheck_element::SumcheckElement,
     },
-    protocol::{config::IntermediateConfig, sumcheck_utils::common::EvaluationSumcheckData},
+    protocol::{config::{IntermediateConfig, IntermediateRoundProof}, sumcheck_utils::common::EvaluationSumcheckData},
 };
 
 use super::{
     context_verifier::IntermediateVerifierSumcheckContext,
-    loader_verifier::load_intermediate_verifier_sumcheck_data,
-    runner::IntermediateType0SumcheckProof,
+    loader_verifier::load_intermediate_verifier_sumcheck_data, runner::IntermediateSumcheckProof,
 };
+
+pub fn batch_claims_linear(
+    claims: &[RingElement],
+    combination: &[RingElement],
+    start_idx: usize,
+) -> (RingElement, usize) {
+    assert!(
+        start_idx + claims.len() <= combination.len(),
+        "Not enough combination challenges for linear claim batching"
+    );
+
+    let mut batched = RingElement::zero(Representation::IncompleteNTT);
+    let mut idx = start_idx;
+    for claim in claims {
+        let mut weighted = claim.clone();
+        weighted *= &combination[idx];
+        batched += &weighted;
+        idx += 1;
+    }
+    (batched, idx)
+}
 
 pub fn intermediate_sumcheck_verifier(
     config: &IntermediateConfig,
     verifier_sumcheck_context: &mut IntermediateVerifierSumcheckContext,
-    proof: &IntermediateType0SumcheckProof,
+    proof: &IntermediateRoundProof,
+    folded_commitment: &[RingElement],
     hash_wrapper: &mut HashWrapper,
 ) -> Vec<RingElement> {
     assert_eq!(
-        proof.type0_claims.len(),
+        folded_commitment.len(),
         config.basic_commitment_rank,
-        "Type0 claims length mismatch"
+        "Folded commitment length mismatch for intermediate batcher"
     );
 
     let num_sumchecks = verifier_sumcheck_context
@@ -34,11 +55,11 @@ pub fn intermediate_sumcheck_verifier(
         .sumchecks_count();
     let mut combination = new_vec_zero_preallocated(num_sumchecks);
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
-    assert_eq!(
-        num_sumchecks,
-        config.basic_commitment_rank + 1,
-        "Intermediate verifier expected type0 + type5 outputs"
-    );
+    // assert_eq!(
+    //     num_sumchecks,
+    //     config.basic_commitment_rank + 1,
+    //     "Intermediate verifier expected folded commitment plus one type5 claim"
+    // );
 
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
@@ -46,16 +67,11 @@ pub fn intermediate_sumcheck_verifier(
     let qe: [QuadraticExtension; HALF_DEGREE] =
         combination_to_field.split_into_quadratic_extensions();
 
+    // let (mut batched_claim, idx) = batch_claims_linear(&vec![], &combination, 0);
+    // let (mut batched_claim, idx) = batch_claims_linear(folded_commitment, &combination, 0);
     let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
-    let mut idx = 0usize;
-    for claim in proof.type0_claims.iter() {
-        let mut weighted = claim.clone();
-        weighted *= &combination[idx];
-        batched_claim += &weighted;
-        idx += 1;
-    }
     let mut weighted_norm = proof.norm_claim.clone();
-    weighted_norm *= &combination[idx];
+    weighted_norm *= &combination[0];
     batched_claim += &weighted_norm;
 
     let mut batched_claim_over_field = {

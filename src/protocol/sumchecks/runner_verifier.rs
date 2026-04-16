@@ -20,6 +20,27 @@ use crate::{
     },
 };
 
+pub(crate) fn batch_claims_linear(
+    claims: &[RingElement],
+    combination: &[RingElement],
+    start_idx: usize,
+) -> (RingElement, usize) {
+    assert!(
+        start_idx + claims.len() <= combination.len(),
+        "Not enough combination challenges for linear claim batching"
+    );
+
+    let mut batched = RingElement::zero(Representation::IncompleteNTT);
+    let mut idx = start_idx;
+    for claim in claims {
+        let mut weighted = claim.clone();
+        weighted *= &combination[idx];
+        batched += &weighted;
+        idx += 1;
+    }
+    (batched, idx)
+}
+
 fn batch_claims(
     config: &SumcheckConfig,
     claims: &[RingElement],

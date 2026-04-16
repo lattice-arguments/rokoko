@@ -10,6 +10,10 @@ use crate::{
 pub struct Type0IntermediateSumcheckContext {
     pub output: ElephantCell<ProductSumcheck<RingElement>>,
 }
+pub struct Type1IntermediateSumcheckContext {
+    pub inner_evaluation_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub output: ElephantCell<ProductSumcheck<RingElement>>,
+}
 
 pub struct Type5IntermediateSumcheckContext {
     pub conjugated_witness_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
@@ -20,6 +24,7 @@ pub struct IntermediateSumcheckContext {
     pub witness_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub commitment_key_rows_sumcheck: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
     pub type0sumchecks: Vec<Type0IntermediateSumcheckContext>,
+    pub type1sumchecks: Vec<Type1IntermediateSumcheckContext>,
     pub type5sumcheck: Type5IntermediateSumcheckContext,
     pub combiner: ElephantCell<Combiner<RingElement>>,
     pub field_combiner: ElephantCell<RingToFieldCombiner>,

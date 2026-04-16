@@ -6,7 +6,7 @@ use crate::{
         arithmetic::precompute_structured_values_fast,
         config::{DEGREE, MOD_Q, NOF_BATCHES},
         hash::HashWrapper,
-        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
+        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
         norms::l2_norm_coeffs,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
@@ -14,21 +14,17 @@ use crate::{
     },
     hexl::bindings::{add_mod, eltwise_mult_mod, multiply_mod},
     protocol::{
-        commitment::{commit_basic, BasicCommitment},
-        config::{
+        commitment::{BasicCommitment, commit_basic}, config::{
             Config, IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, RoundProof,
             SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof,
-        },
-        crs::{self, CRS},
-        fold,
-        open::{
+        }, crs::{self, CRS}, fold, intermediate_sumchecks::{
+            builder_verifier::init_intermediate_verifier, context_verifier::IntermediateVerifierSumcheckContext, runner::IntermediateSumcheckProof, runner_verifier::intermediate_sumcheck_verifier
+        }, open::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
             open_at,
-        },
-        project_2::{verifier_sample_projection_challenges, BatchedProjectionChallengesSuccinct},
-        sumchecks::{
-            context_verifier::VerifierSumcheckContext, runner_verifier::sumcheck_verifier,
-        },
+        }, project_2::{BatchedProjectionChallengesSuccinct, verifier_sample_projection_challenges}, sumcheck_utils::sum, sumchecks::{
+            context_verifier::{NextVerifierSumcheckContext, VerifierSumcheckContext}, runner_verifier::sumcheck_verifier,
+        }
     },
 };
 
@@ -112,7 +108,10 @@ pub fn verifier_round(
                         &inner_rows,
                         &outer_rows,
                         &new_claims,
-                        sumcheck_context_verifier.next.as_mut().unwrap(),
+                        match sumcheck_context_verifier.next.as_deref_mut() {
+                            Some(NextVerifierSumcheckContext::Simple(ctx)) => ctx,
+                            _ => panic!("Expected Simple context for next round."),
+                        },
                         Some(hash_wrapper_verifier),
                     );
                 }
@@ -200,6 +199,10 @@ pub fn verifier_round(
                         &inner_rows,
                         &outer_rows,
                         &new_claims,
+                        match sumcheck_context_verifier.next.as_deref_mut() {
+                            Some(NextVerifierSumcheckContext::Intermediate(ctx)) => ctx,
+                            _ => panic!("Expected Intermediate context for next round."),
+                        },
                         Some(hash_wrapper_verifier),
                     );
                 }
@@ -217,6 +220,7 @@ pub fn verifier_round_intermediate(
     evaluation_points_inner: &[StructuredRow],
     evaluation_points_outer: &[StructuredRow],
     claims: &[RingElement],
+    sumcheck_context_verifier: &mut IntermediateVerifierSumcheckContext,
     hash_wrapper: Option<HashWrapper>,
 ) {
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
@@ -224,7 +228,7 @@ pub fn verifier_round_intermediate(
 
     hash_wrapper.update_with_ring_element_slice(&round_proof.opening_rhs.data);
 
-     let mut evaluation = new_vec_zero_preallocated(round_proof.opening_rhs.height);
+    let mut evaluation = new_vec_zero_preallocated(round_proof.opening_rhs.height);
     // verify claims
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
     for i in 0..round_proof.opening_rhs.height {
@@ -238,7 +242,6 @@ pub fn verifier_round_intermediate(
         }
     }
     assert_eq!(claims, &evaluation);
-
 
     let mut projection_matrix =
         ProjectionMatrix::new(config.projection_ratio, config.projection_height);
@@ -316,6 +319,30 @@ pub fn verifier_round_intermediate(
             NextRoundCommitment::Simple(basic_commitment) => basic_commitment,
             _ => panic!("Expected simple commitment for intermediate round."),
         };
+    hash_wrapper.update_with_ring_element_slice(&next_round_commitment.data);
+
+    let mut folded_commitment = new_vec_zero_preallocated(config.basic_commitment_rank);
+    for row in 0..config.basic_commitment_rank {
+        for col in 0..commitment.width {
+            temp *= (&commitment[(row, col)], &folding_challenges[col]);
+            folded_commitment[row] += &temp;
+        }
+    }
+
+    // let mut intermediate_sumcheck_context_verifier = init_intermediate_verifier(crs, config);
+    // let intermediate_sumcheck_proof = IntermediateSumcheckProof {
+    //     claim_over_witness: round_proof.claim_over_witness.clone(),
+    //     claim_over_witness_conjugate: round_proof.claim_over_witness_conjugate.clone(),
+    //     norm_claim: round_proof.norm_claim.clone(),
+    //     polys: round_proof.polys.clone(),
+    // };
+    let intermediate_evaluation_points = intermediate_sumcheck_verifier(
+        config,
+        sumcheck_context_verifier,
+        &round_proof,
+        &folded_commitment,
+        &mut hash_wrapper,
+    );
 
     let next_round_proof = round_proof.next.as_ref().unwrap_or_else(|| {
         panic!("Next round proof must be present for intermediate round proof.")
@@ -325,6 +352,28 @@ pub fn verifier_round_intermediate(
         panic!("Next round config must be present for intermediate round proof.")
     });
 
+    let next_witness_width = match next_round_config.as_ref() {
+        Config::Simple(simple_config) => simple_config.witness_width,
+        Config::Intermediate(intermediate_config) => intermediate_config.witness_width,
+        Config::Sumcheck(_) => {
+            unreachable!("Intermediate round must be followed by simple or intermediate round.")
+        }
+    };
+    let (new_evaluation_points_outer, new_evaluation_points_inner) =
+        intermediate_evaluation_points.split_at(next_witness_width.ilog2() as usize);
+    let inner_rows = [
+        evaluation_point_to_structured_row(new_evaluation_points_inner),
+        evaluation_point_to_structured_row_conjugate(new_evaluation_points_inner),
+    ];
+    let outer_rows = [
+        evaluation_point_to_structured_row(new_evaluation_points_outer),
+        evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
+    ];
+    let new_claims = [
+        round_proof.claim_over_witness.clone(),
+        round_proof.claim_over_witness_conjugate.conjugate(),
+    ];
+
     match (next_round_proof.as_ref(), next_round_config.as_ref()) {
         (RoundProof::Simple(simple_round_proof), Config::Simple(simple_config)) => {
             verifier_round_simple(
@@ -332,9 +381,9 @@ pub fn verifier_round_intermediate(
                 simple_config,
                 next_round_commitment,
                 simple_round_proof,
-                &vec![],
-                &vec![],
-                &vec![],
+                &inner_rows,
+                &outer_rows,
+                &new_claims,
                 Some(hash_wrapper),
             );
         }
@@ -347,9 +396,10 @@ pub fn verifier_round_intermediate(
                 intermediate_config,
                 next_round_commitment,
                 intermediate_round_proof,
-                &vec![],
-                &vec![],
-                &vec![],
+                &inner_rows,
+                &outer_rows,
+                &new_claims,
+                sumcheck_context_verifier.next.as_deref_mut().unwrap(),
                 Some(hash_wrapper),
             );
         }
