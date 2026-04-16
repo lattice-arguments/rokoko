@@ -344,7 +344,7 @@ pub static P_INTERMEDIATE: LazyLock<IntermediateConfig> = LazyLock::new(|| Inter
     basic_commitment_rank: 5,
     nof_openings: 2,
     projection_nof_batches: 2,
-    witness_decomposition_base_log: 8,
+    witness_decomposition_base_log: 10,
     witness_decomposition_chunks: 2,
     next: Some(Box::new(Config::Simple(P_LAST.clone()))),
 });

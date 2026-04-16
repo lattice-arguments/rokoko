@@ -49,11 +49,14 @@ pub fn intermediate_sumcheck_verifier(
         "Folded commitment length mismatch for intermediate batcher"
     );
 
+    println!("folded commitment at 0: {:?}", folded_commitment[1]);
+
     let num_sumchecks = verifier_sumcheck_context
         .combiner_evaluation
         .borrow()
         .sumchecks_count();
     let mut combination = new_vec_zero_preallocated(num_sumchecks);
+    // hash_wrapper.sample_ring_element_into(&mut combination[num_sumchecks - 1]);
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
     // assert_eq!(
     //     num_sumchecks,
@@ -68,10 +71,11 @@ pub fn intermediate_sumcheck_verifier(
         combination_to_field.split_into_quadratic_extensions();
 
     // let (mut batched_claim, idx) = batch_claims_linear(&vec![], &combination, 0);
-    // let (mut batched_claim, idx) = batch_claims_linear(folded_commitment, &combination, 0);
-    let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
+    let (mut batched_claim, idx) = batch_claims_linear(folded_commitment, &combination, 0);
+    println!("num_sumchecks: {}", num_sumchecks);
+    // let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
     let mut weighted_norm = proof.norm_claim.clone();
-    weighted_norm *= &combination[0];
+    weighted_norm *= &combination[num_sumchecks - 1];
     batched_claim += &weighted_norm;
 
     let mut batched_claim_over_field = {
@@ -91,6 +95,7 @@ pub fn intermediate_sumcheck_verifier(
         Vec::with_capacity(proof.polys.len());
 
     for poly_over_field in proof.polys.iter() {
+        println!("XXX");
         hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
 
         assert_eq!(

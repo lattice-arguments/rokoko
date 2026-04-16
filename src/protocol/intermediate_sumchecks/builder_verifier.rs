@@ -74,7 +74,7 @@ pub fn init_intermediate_verifier(
 
     let mut all_outputs: Vec<ElephantCell<EvalData>> = Vec::new();
     for type0 in &type0evaluations {
-        // all_outputs.push(type0.output.clone());
+        all_outputs.push(type0.output.clone());
     }
     all_outputs.push(type5evaluation.output.clone());
 

@@ -4,22 +4,20 @@ use crate::{
     common::{
         decomposition::decompose,
         hash::HashWrapper,
-        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
+        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
-        commitment::{commit_basic, recursive_commit, BasicCommitment, CommitmentWithAux},
+        commitment::{BasicCommitment, CommitmentWithAux, commit_basic, recursive_commit},
         config::{
-            paste_by_prefix, paste_recursive_commitment, Config, ConfigBase, IntermediateConfig,
-            IntermediateRoundProof, NextRoundCommitment, Projection, RoundProof, SimpleConfig,
-            SimpleRoundProof, SumcheckConfig, SumcheckRoundProof,
+            Config, ConfigBase, IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, Projection, RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof, paste_by_prefix, paste_recursive_commitment
         },
         crs::CRS,
         fold::fold,
         intermediate_sumchecks::{
-            builder::init_intermediate_sumcheck, runner::run_intermediate_sumcheck,
+            builder::init_intermediate_sumcheck, context::IntermediateSumcheckContext, runner::run_intermediate_sumcheck
         },
         open::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
@@ -27,7 +25,7 @@ use crate::{
         },
         project::{prepare_i16_witness, project},
         project_2::{batch_projection_n_times, project_coefficients},
-        sumcheck::{sumcheck, SumcheckContext},
+        sumcheck::{SumcheckContext, sumcheck},
         sumchecks::context::NextSumcheckContext,
     },
 };
@@ -714,6 +712,10 @@ pub fn prover_round(
                                     new_evaluation_points_outer,
                                 ),
                             ],
+                            match sumcheck_context.next.as_deref_mut() {
+                                Some(NextSumcheckContext::Intermediate(ref mut next_ctx)) => next_ctx,
+                                _ => panic!("Expected NextSumcheckContext::Intermediate in sumcheck_context.next"),
+                            },
                             Some(hash_wrapper),
                         ))),
                         sumcheck_output,
@@ -769,6 +771,7 @@ pub fn prover_round_intermediate(
     witness: &VerticallyAlignedMatrix<RingElement>,
     evaluation_points_inner: &Vec<StructuredRow>,
     evaluation_points_outer: &Vec<StructuredRow>,
+    sumcheck_context: &mut IntermediateSumcheckContext,
     hash_wrapper: Option<HashWrapper>,
 ) -> IntermediateRoundProof {
     println!("Prover intermediate round started.");
@@ -849,11 +852,10 @@ pub fn prover_round_intermediate(
         next_round_commitment.data.len()
     );
 
-    let mut intermediate_sumcheck_context = init_intermediate_sumcheck(crs, config);
     let (intermediate_sumcheck_proof, evaluation_points) = run_intermediate_sumcheck(
         config,
         &next_round_witness.data,
-        &mut intermediate_sumcheck_context,
+        sumcheck_context,
         &mut hash_wrapper,
     );
 
@@ -881,6 +883,7 @@ pub fn prover_round_intermediate(
                         evaluation_point_to_structured_row(new_evaluation_points_outer),
                         evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
                     ],
+                    sumcheck_context.next.as_deref_mut().unwrap(),
                     Some(hash_wrapper),
                 );
                 RoundProof::Intermediate(proof)

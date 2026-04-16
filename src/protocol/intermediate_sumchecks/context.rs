@@ -22,6 +22,7 @@ pub struct Type5IntermediateSumcheckContext {
 
 pub struct IntermediateSumcheckContext {
     pub witness_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub witness_combiner_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub commitment_key_rows_sumcheck: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
     pub type0sumchecks: Vec<Type0IntermediateSumcheckContext>,
     pub type1sumchecks: Vec<Type1IntermediateSumcheckContext>,
@@ -34,8 +35,17 @@ pub struct IntermediateSumcheckContext {
 impl IntermediateSumcheckContext {
     pub fn partial_evaluate_all(&mut self, r: &RingElement) {
         self.witness_sumcheck.borrow_mut().partial_evaluate(r);
+        self.witness_combiner_sumcheck
+            .borrow_mut()
+            .partial_evaluate(r);
         for ck_row_sc in self.commitment_key_rows_sumcheck.iter() {
             ck_row_sc.borrow_mut().partial_evaluate(r);
+        }
+        for type1_sc in self.type1sumchecks.iter() {
+            type1_sc
+                .inner_evaluation_sumcheck
+                .borrow_mut()
+                .partial_evaluate(r);
         }
         self.type5sumcheck
             .conjugated_witness_sumcheck

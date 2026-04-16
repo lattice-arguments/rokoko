@@ -50,8 +50,12 @@ pub fn run_intermediate_sumcheck(
     }
 
     let num_sumchecks = sumcheck_context.combiner.borrow().sumchecks_count();
+    println!("num_sumchecks: {}", num_sumchecks);
+
     let mut combination = new_vec_zero_preallocated(num_sumchecks);
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
+    // hash_wrapper.sample_ring_element_into(&mut combination[num_sumchecks - 1]);
+
 
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);

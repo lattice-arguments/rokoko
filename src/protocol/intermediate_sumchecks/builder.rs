@@ -48,7 +48,7 @@ pub fn init_intermediate_sumcheck(
 
     let recomposed_witness = ElephantCell::new(ProductSumcheck::new(
         witness_sumcheck.clone(),
-        witness_combiner_sumcheck,
+        witness_combiner_sumcheck.clone(),
     ));
 
     let type0sumchecks = (0..config.basic_commitment_rank)
@@ -95,7 +95,7 @@ pub fn init_intermediate_sumcheck(
         Vec::new();
 
     for type0 in &type0sumchecks {
-        // all_outputs.push(type0.output.clone());
+        all_outputs.push(type0.output.clone());
     }
     all_outputs.push(type5sumcheck.output.clone());
 
@@ -104,6 +104,7 @@ pub fn init_intermediate_sumcheck(
 
     IntermediateSumcheckContext {
         witness_sumcheck,
+        witness_combiner_sumcheck,
         commitment_key_rows_sumcheck,
         type0sumchecks,
         type1sumchecks,
