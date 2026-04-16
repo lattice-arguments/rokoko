@@ -1,6 +1,6 @@
 use crate::protocol::commitment::{Prefix, RecursionConfig};
 use crate::protocol::config::{
-    Config, IntermediateConfig, Projection, SimpleConfig, SumcheckConfig, Type1ProjectionConfig
+    Config, IntermediateConfig, Projection, SimpleConfig, SumcheckConfig, Type1ProjectionConfig,
 };
 
 #[derive(Clone)]

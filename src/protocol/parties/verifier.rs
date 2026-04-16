@@ -6,22 +6,29 @@ use crate::{
         arithmetic::precompute_structured_values_fast,
         config::{DEGREE, MOD_Q, NOF_BATCHES},
         hash::HashWrapper,
-        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
+        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         norms::l2_norm_coeffs,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
-    hexl::bindings::eltwise_mult_mod,
+    hexl::bindings::{add_mod, eltwise_mult_mod, multiply_mod},
     protocol::{
-        commitment::{BasicCommitment, commit_basic}, config::{
-            Config, IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof
-        }, crs::{self, CRS}, fold, open::{
+        commitment::{commit_basic, BasicCommitment},
+        config::{
+            Config, IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, RoundProof,
+            SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof,
+        },
+        crs::{self, CRS},
+        fold,
+        open::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
             open_at,
-        }, project_2::{BatchedProjectionChallengesSuccinct, verifier_sample_projection_challenges}, sumchecks::{
+        },
+        project_2::{verifier_sample_projection_challenges, BatchedProjectionChallengesSuccinct},
+        sumchecks::{
             context_verifier::VerifierSumcheckContext, runner_verifier::sumcheck_verifier,
-        }
+        },
     },
 };
 
@@ -155,7 +162,9 @@ pub fn verifier_round(
                 RoundProof::Intermediate(next_intermediate_round_proof) => {
                     let next_intermediate_config = match &config.next {
                         Some(next_config) => match next_config.as_ref() {
-                            Config::Intermediate(next_intermediate_config) => next_intermediate_config,
+                            Config::Intermediate(next_intermediate_config) => {
+                                next_intermediate_config
+                            }
                             _ => panic!("Expected intermediate config for next round."),
                         },
                         None => panic!("Next intermediate config must be present."),
@@ -210,35 +219,91 @@ pub fn verifier_round_intermediate(
     claims: &[RingElement],
     hash_wrapper: Option<HashWrapper>,
 ) {
-
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
+
+    let mut projection_matrix =
+        ProjectionMatrix::new(config.projection_ratio, config.projection_height);
+
+    projection_matrix.sample(&mut hash_wrapper);
+    hash_wrapper.update_with_ring_element_slice(&round_proof.projection_image_ct.data);
+    let challenges: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] = array::from_fn(|_| {
+        verifier_sample_projection_challenges(&projection_matrix, config, &mut hash_wrapper)
+    });
+
+    let rows_per_chunk = config.projection_height / DEGREE;
+    let mut temp = RingElement::zero(Representation::IncompleteNTT);
+
+    for i in 0..NOF_BATCHES {
+        let c_0_values = precompute_structured_values_fast(&challenges[i].c_0_layers);
+        let c_1_values = precompute_structured_values_fast(&challenges[i].c_1_layers);
+
+        debug_assert_eq!(
+            c_1_values.len(),
+            config.projection_height,
+            "c_1_values length mismatch."
+        );
+
+        for col in 0..config.witness_width {
+            let mut expected_ct = 0u64;
+
+            for row in 0..round_proof.projection_image_ct.height {
+                let chunk_idx = row / rows_per_chunk;
+                let c_0_coeff = c_0_values[chunk_idx];
+                let c_1_offset = (row % rows_per_chunk) * DEGREE;
+
+                unsafe {
+                    eltwise_mult_mod(
+                        temp.v.as_mut_ptr(),
+                        c_1_values.as_ptr().add(c_1_offset),
+                        round_proof.projection_image_ct[(row, col)].v.as_ptr(),
+                        DEGREE as u64,
+                        MOD_Q,
+                    );
+                }
+
+                let mut row_sum = 0u64;
+                for l in 0..DEGREE {
+                    unsafe {
+                        row_sum = add_mod(row_sum, temp.v[l], MOD_Q);
+                    }
+                }
+
+                unsafe {
+                    let weighted = multiply_mod(row_sum, c_0_coeff, MOD_Q);
+                    expected_ct = add_mod(expected_ct, weighted, MOD_Q);
+                }
+            }
+
+            let ct =
+                round_proof.batched_projection_image[(i, col)].constant_term_from_incomplete_ntt();
+            assert_eq!(ct, expected_ct);
+        }
+    }
+
+    hash_wrapper.update_with_ring_element_slice(&round_proof.batched_projection_image.data);
 
     let mut folding_challenges =
         vec![RingElement::zero(Representation::IncompleteNTT); config.witness_width];
     hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut folding_challenges);
-   
-        
-    let next_round_commitment = match round_proof.next_round_commitment.as_ref().unwrap_or_else(|| {
-        panic!(
-            "Next round commitment must be present for intermediate round proof."
-        )
-    }) {
-        NextRoundCommitment::Simple(basic_commitment) => basic_commitment,
-        _ => panic!("Expected simple commitment for intermediate round."),
-    };
 
+    let next_round_commitment =
+        match round_proof
+            .next_round_commitment
+            .as_ref()
+            .unwrap_or_else(|| {
+                panic!("Next round commitment must be present for intermediate round proof.")
+            }) {
+            NextRoundCommitment::Simple(basic_commitment) => basic_commitment,
+            _ => panic!("Expected simple commitment for intermediate round."),
+        };
 
     let next_round_proof = round_proof.next.as_ref().unwrap_or_else(|| {
-        panic!(
-            "Next round proof must be present for intermediate round proof."
-        )
+        panic!("Next round proof must be present for intermediate round proof.")
     });
 
     let next_round_config = config.next.as_ref().unwrap_or_else(|| {
-        panic!(
-            "Next round config must be present for intermediate round proof."
-        )
+        panic!("Next round config must be present for intermediate round proof.")
     });
 
     match (next_round_proof.as_ref(), next_round_config.as_ref()) {
@@ -254,7 +319,10 @@ pub fn verifier_round_intermediate(
                 Some(hash_wrapper),
             );
         }
-        (RoundProof::Intermediate(intermediate_round_proof), Config::Intermediate(intermediate_config)) => {
+        (
+            RoundProof::Intermediate(intermediate_round_proof),
+            Config::Intermediate(intermediate_config),
+        ) => {
             verifier_round_intermediate(
                 crs,
                 intermediate_config,
@@ -268,7 +336,6 @@ pub fn verifier_round_intermediate(
         }
         _ => panic!("Next round proof and config type mismatch."),
     }
-
 }
 
 pub fn verifier_round_simple(
@@ -426,7 +493,10 @@ pub fn verifier_round_simple(
 
     let mut evaluation = new_vec_zero_preallocated(round_proof.opening_rhs.height);
 
-    println!("round_proof.opening_rhs.height: {}", round_proof.opening_rhs.height);
+    println!(
+        "round_proof.opening_rhs.height: {}",
+        round_proof.opening_rhs.height
+    );
     for i in 0..round_proof.opening_rhs.height {
         let preprocessed_row = PreprocessedRow::from_structured_row(&evaluation_points_outer[i]);
         for col in 0..round_proof.opening_rhs.width {

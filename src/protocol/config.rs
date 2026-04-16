@@ -258,7 +258,6 @@ pub struct SumcheckConfig {
     pub next: Option<Box<Config>>, // for multiple rounds
 }
 
-
 impl ConfigBase for SumcheckConfig {
     fn witness_height(&self) -> usize {
         self.witness_height
@@ -284,8 +283,8 @@ impl ConfigBase for SumcheckConfig {
 pub struct IntermediateConfig {
     pub witness_height: usize,
     pub witness_width: usize,
-    pub projection_ratio: usize,  
-    pub projection_height: usize, 
+    pub projection_ratio: usize,
+    pub projection_height: usize,
     pub nof_openings: usize,
     pub projection_nof_batches: usize,
     pub basic_commitment_rank: usize,
@@ -543,9 +542,10 @@ impl SizeableProof for SimpleRoundProof {
     }
 }
 
-
 pub struct IntermediateRoundProof {
     pub next_round_commitment: Option<NextRoundCommitment>,
+    pub projection_image_ct: VerticallyAlignedMatrix<RingElement>,
+    pub batched_projection_image: HorizontallyAlignedMatrix<RingElement>,
     pub next: Option<Box<RoundProof>>,
 }
 
@@ -554,7 +554,9 @@ impl SizeableProof for IntermediateRoundProof {
         let next_round_size = if let Some(next_round_commitment) = &self.next_round_commitment {
             match next_round_commitment {
                 NextRoundCommitment::Recursive(rc) => {
-                    unreachable!("Intermediate round should not have recursive commitment for next round.")
+                    unreachable!(
+                        "Intermediate round should not have recursive commitment for next round."
+                    )
                 }
                 NextRoundCommitment::Simple(mat) => {
                     let mut mat_size = 0;
@@ -572,16 +574,16 @@ impl SizeableProof for IntermediateRoundProof {
             to_kb(next_round_size)
         );
 
-        
-        next_round_size + if let Some(next) = &self.next {
-            match &**next {
-                RoundProof::Sumcheck(sc_next) => sc_next.size_in_bits(),
-                RoundProof::Simple(s_next) => s_next.size_in_bits(),
-                RoundProof::Intermediate(i_next) => i_next.size_in_bits(),
+        next_round_size
+            + if let Some(next) = &self.next {
+                match &**next {
+                    RoundProof::Sumcheck(sc_next) => sc_next.size_in_bits(),
+                    RoundProof::Simple(s_next) => s_next.size_in_bits(),
+                    RoundProof::Intermediate(i_next) => i_next.size_in_bits(),
+                }
+            } else {
+                0
             }
-        } else {
-            0
-        }
     }
 }
 

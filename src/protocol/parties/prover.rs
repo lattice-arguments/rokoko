@@ -22,7 +22,7 @@ use crate::{
         },
         project::{prepare_i16_witness, project},
         project_2::{batch_projection_n_times, project_coefficients},
-        sumcheck::{SumcheckContext, sumcheck},
+        sumcheck::{SumcheckContext, sumcheck}, sumchecks::context::NextSumcheckContext,
     },
 };
 
@@ -586,7 +586,15 @@ pub fn prover_round(
                                         new_evaluation_points_outer,
                                     ),
                                 ],
-                                sumcheck_context.next.as_mut().unwrap(),
+                                if let Some(boxed) = &mut sumcheck_context.next {
+                                    if let NextSumcheckContext::Simple(ref mut next_ctx) = &mut **boxed {
+                                        next_ctx
+                                    } else {
+                                        panic!("Expected NextSumcheckContext::Simple in sumcheck_context.next");
+                                    }
+                                } else {
+                                    panic!("Expected Some in sumcheck_context.next");
+                                },
                                 false,
                                 Some(hash_wrapper),
                             )
@@ -653,7 +661,8 @@ pub fn prover_round(
                 Config::Intermediate(next_intermediate_config) => {
                     debug_assert_eq!(
                         next_round_witness.data.len(),
-                        next_intermediate_config.witness_height * next_intermediate_config.witness_width
+                        next_intermediate_config.witness_height
+                            * next_intermediate_config.witness_width
                     );
                     let basic_commitment = commit_basic(
                         &crs,
@@ -678,7 +687,7 @@ pub fn prover_round(
 
                     let evaluation_points = &sumcheck_output.5;
 
-                     let (new_evaluation_points_outer, new_evaluation_points_inner) =
+                    let (new_evaluation_points_outer, new_evaluation_points_inner) =
                         evaluation_points
                             .split_at(next_intermediate_config.witness_width.ilog2() as usize);
                     (
@@ -705,7 +714,6 @@ pub fn prover_round(
                         Some(NextRoundCommitment::Simple(basic_commitment)),
                     )
                 }
-                    
             }
         }
     };
@@ -759,10 +767,26 @@ pub fn prover_round_intermediate(
 ) -> IntermediateRoundProof {
     println!("Prover intermediate round started.");
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
+    hash_wrapper.update_with_ring_element_slice(&commitment.data);
+
+    let mut projection_matrix =
+        ProjectionMatrix::new(config.projection_ratio, config.projection_height);
+    projection_matrix.sample(&mut hash_wrapper);
+    let projection_image_ct = project_coefficients(witness, &projection_matrix);
+    hash_wrapper.update_with_ring_element_slice(&projection_image_ct.data);
+    let (batched_projection_image, challenges) = batch_projection_n_times(
+        witness,
+        &projection_matrix,
+        &mut hash_wrapper,
+        config.projection_nof_batches,
+        false,
+    );
+
+    hash_wrapper.update_with_ring_element_slice(&batched_projection_image.data);
 
     // println!("Intermediate round proof is not implemented yet in prover.");
-    let mut folding_challenge = vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
-    hash_wrapper.update_with_ring_element_slice(&commitment.data);
+    let mut folding_challenge =
+        vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
     hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut folding_challenge);
 
     let folded_witness = fold(&witness, &folding_challenge);
@@ -778,21 +802,18 @@ pub fn prover_round_intermediate(
     println!("Creating next round commitment.");
 
     let next_round_witness = VerticallyAlignedMatrix {
-        height: if let Some(next_config) = &base_next_round_config {
-            next_config.witness_height()
-        } else {
-            1 // TODO: what to do?
-        },
-        width: if let Some(next_config) = &base_next_round_config {
-            next_config.witness_width()
-        } else {
-            1 // TODO: what to do?
-        },
-        used_cols: if let Some(next_config) = &base_next_round_config {
-            next_config.witness_width()
-        } else {
-            1 // TODO: what to do?
-        },
+        height: base_next_round_config
+            .as_ref()
+            .expect("Intermediate round must have a next round config")
+            .witness_height(),
+        width: base_next_round_config
+            .as_ref()
+            .expect("Intermediate round must have a next round config")
+            .witness_width(),
+        used_cols: base_next_round_config
+            .as_ref()
+            .expect("Intermediate round must have a next round config")
+            .witness_width(),
         data: folded_witness_decomposed,
     };
 
@@ -801,50 +822,53 @@ pub fn prover_round_intermediate(
         &next_round_witness,
         base_next_round_config
             .map(|c| c.basic_commitment_rank())
-            .unwrap()
+            .unwrap(),
     );
 
-    println!("Next round commitment created of length {}.", next_round_commitment.data.len());
+    println!(
+        "Next round commitment created of length {}.",
+        next_round_commitment.data.len()
+    );
 
     let next_level_proof = match &config.next {
         None => {
             unreachable!("Intermediate round proof should always have a next round config, as it is not the last round.")
         }
-        Some(next_config) => {
-            match &next_config.as_ref() {
-                Config::Sumcheck(_) => {
-                    unreachable!("Next round after intermediate round should be simple or intermediate, not sumcheck.")
-                }
-                Config::Intermediate(next_intermediate_config) => {
-                    let proof = prover_round_intermediate(
-                        crs,
-                        next_intermediate_config,
-                        &next_round_commitment,
-                        &next_round_witness,
-                        &vec![],
-                        &vec![],
-                        Some(hash_wrapper),
-                    );
-                    RoundProof::Intermediate(proof)
-                }
-                Config::Simple(next_simple_config) => {
-                    let proof = prover_round_simple(
-                        next_simple_config,
-                        &next_round_commitment,
-                        &next_round_witness,
-                        &vec![],
-                        &vec![],
-                        Some(hash_wrapper),
-                    );
-                    RoundProof::Simple(proof)
-                }
+        Some(next_config) => match &next_config.as_ref() {
+            Config::Sumcheck(_) => {
+                unreachable!("Next round after intermediate round should be simple or intermediate, not sumcheck.")
             }
-        }
+            Config::Intermediate(next_intermediate_config) => {
+                let proof = prover_round_intermediate(
+                    crs,
+                    next_intermediate_config,
+                    &next_round_commitment,
+                    &next_round_witness,
+                    &vec![],
+                    &vec![],
+                    Some(hash_wrapper),
+                );
+                RoundProof::Intermediate(proof)
+            }
+            Config::Simple(next_simple_config) => {
+                let proof = prover_round_simple(
+                    next_simple_config,
+                    &next_round_commitment,
+                    &next_round_witness,
+                    &vec![],
+                    &vec![],
+                    Some(hash_wrapper),
+                );
+                RoundProof::Simple(proof)
+            }
+        },
     };
 
     IntermediateRoundProof {
         next_round_commitment: Some(NextRoundCommitment::Simple(next_round_commitment)),
-        next: Some(Box::new(next_level_proof))
+        projection_image_ct,
+        batched_projection_image,
+        next: Some(Box::new(next_level_proof)),
     }
 }
 
@@ -863,8 +887,15 @@ pub fn prover_round_simple(
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
 
     let opening = open_at(&witness, &evaluation_points_inner, &evaluation_points_outer);
-    println!("evaluation_points_inner length: {}, evaluation_points_outer length: {}", evaluation_points_inner.len(), evaluation_points_outer.len());
-    println!("opening height: {}, width: {}", opening.rhs.height, opening.rhs.width);
+    println!(
+        "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
+        evaluation_points_inner.len(),
+        evaluation_points_outer.len()
+    );
+    println!(
+        "opening height: {}, width: {}",
+        opening.rhs.height, opening.rhs.width
+    );
 
     hash_wrapper.update_with_ring_element_slice(&opening.rhs.data);
 

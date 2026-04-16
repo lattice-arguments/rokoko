@@ -349,7 +349,6 @@ pub static P_INTERMEDIATE: LazyLock<IntermediateConfig> = LazyLock::new(|| Inter
     next: Some(Box::new(Config::Simple(P_LAST.clone()))),
 });
 
-
 pub static P_LAST: LazyLock<SimpleConfig> = LazyLock::new(|| SimpleConfig {
     witness_height: 2usize.pow(6),
     witness_width: 2usize.pow(3),
