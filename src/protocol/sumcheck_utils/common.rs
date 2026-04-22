@@ -6,10 +6,24 @@ use crate::protocol::sumcheck_utils::{
     polynomial::{add_poly_in_place, Polynomial},
 };
 
+/// Marker trait inserted as a supertrait of `HighOrderSumcheckData`:
+/// expands to `Send` when the `parallel` feature is enabled (so sumcheck
+/// sub-trees can cross rayon thread boundaries) and to an empty bound
+/// otherwise (preserving exact original API in single-threaded builds).
+#[cfg(feature = "parallel")]
+pub trait MaybeSend: Send {}
+#[cfg(feature = "parallel")]
+impl<T: ?Sized + Send> MaybeSend for T {}
+
+#[cfg(not(feature = "parallel"))]
+pub trait MaybeSend {}
+#[cfg(not(feature = "parallel"))]
+impl<T: ?Sized> MaybeSend for T {}
+
 /// Marker trait for data that can be consumed by the sumcheck protocol.
 /// Implementors must also provide the higher-order hooks so they can be
 /// composed with other sumchecks (products, differences, etc.).
-pub trait HighOrderSumcheckData {
+pub trait HighOrderSumcheckData: MaybeSend {
     type Element: SumcheckElement;
     /// Degree + 1 of the univariate polynomial produced at each round.
     fn max_num_polynomial_coefficients(&self) -> usize;

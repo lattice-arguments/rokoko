@@ -22,12 +22,21 @@ pub struct SumSumcheck<E: SumcheckElement = RingElement> {
     pub lhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
     pub rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
 
+    // These per-instance scratches are only read on the serial path; under
+    // the `parallel` feature the hot methods use stack-local buffers to
+    // avoid the `RefCell<…>` race they would otherwise cause.
+    #[cfg_attr(feature = "parallel", allow(dead_code))]
     lhs_eval_poly: RefCell<Polynomial<E>>,
+    #[cfg_attr(feature = "parallel", allow(dead_code))]
     rhs_eval_poly: RefCell<Polynomial<E>>,
     scratch_poly: RefCell<Polynomial<E>>,
 
+    #[cfg_attr(feature = "parallel", allow(dead_code))]
     const_cache: RefCell<E>,
 }
+
+#[cfg(feature = "parallel")]
+unsafe impl<E: SumcheckElement> Sync for SumSumcheck<E> {}
 
 impl<E: SumcheckElement> SumSumcheck<E> {
     pub fn new(
@@ -87,35 +96,47 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SumSumcheck<E> {
         &self,
         point: HypercubePoint,
     ) -> Option<&Self::Element> {
-        let lhs_ref = self.lhs_sumcheck.get_ref();
-        let lhs_const = lhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
-        let rhs_ref = self.rhs_sumcheck.get_ref();
-        let rhs_const = rhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
-
-        // Both constant and both non-zero → sum
-        if let (Some(lc), Some(rc)) = (lhs_const, rhs_const) {
-            let cache = unsafe { &mut *self.const_cache.as_ptr() };
-            cache.set_from(lc);
-            *cache += rc;
-            return Some(cache);
+        // See `product.rs` for the same reasoning: under `parallel` the
+        // `const_cache` cannot be shared across rayon workers.
+        #[cfg(feature = "parallel")]
+        {
+            let _ = point;
+            return None;
         }
+        #[cfg(not(feature = "parallel"))]
+        {
+            let lhs_ref = self.lhs_sumcheck.get_ref();
+            let lhs_const =
+                lhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
+            let rhs_ref = self.rhs_sumcheck.get_ref();
+            let rhs_const =
+                rhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
 
-        // One constant and other is zero → copy into cache and return
-        if let Some(lc) = lhs_const {
-            if rhs_ref.is_univariate_polynomial_zero_at_point(point) {
+            // Both constant and both non-zero → sum
+            if let (Some(lc), Some(rc)) = (lhs_const, rhs_const) {
                 let cache = unsafe { &mut *self.const_cache.as_ptr() };
                 cache.set_from(lc);
+                *cache += rc;
                 return Some(cache);
             }
-        }
-        if let Some(rc) = rhs_const {
-            if lhs_ref.is_univariate_polynomial_zero_at_point(point) {
-                let cache = unsafe { &mut *self.const_cache.as_ptr() };
-                cache.set_from(rc);
-                return Some(cache);
+
+            // One constant and other is zero → copy into cache and return
+            if let Some(lc) = lhs_const {
+                if rhs_ref.is_univariate_polynomial_zero_at_point(point) {
+                    let cache = unsafe { &mut *self.const_cache.as_ptr() };
+                    cache.set_from(lc);
+                    return Some(cache);
+                }
             }
+            if let Some(rc) = rhs_const {
+                if lhs_ref.is_univariate_polynomial_zero_at_point(point) {
+                    let cache = unsafe { &mut *self.const_cache.as_ptr() };
+                    cache.set_from(rc);
+                    return Some(cache);
+                }
+            }
+            None
         }
-        None
     }
 
     #[inline]
@@ -144,28 +165,60 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SumSumcheck<E> {
         // Compute the per-round polynomial as the sum of the two inputs.
         polynomial.set_zero();
 
-        let mut lhs_eval_poly = self.lhs_eval_poly.borrow_mut();
-        let lhs_sumcheck = &self.lhs_sumcheck;
-        if !lhs_sumcheck
-            .get_ref()
-            .is_univariate_polynomial_zero_at_point(point)
+        #[cfg(feature = "parallel")]
         {
-            lhs_sumcheck
+            let lhs_sumcheck = &self.lhs_sumcheck;
+            if !lhs_sumcheck
                 .get_ref()
-                .univariate_polynomial_at_point_into(point, &mut lhs_eval_poly);
-            add_poly_in_place(polynomial, &lhs_eval_poly);
+                .is_univariate_polynomial_zero_at_point(point)
+            {
+                let cap = lhs_sumcheck.get_ref().max_num_polynomial_coefficients();
+                let mut lhs_eval_poly = Polynomial::<E>::new(cap);
+                lhs_sumcheck
+                    .get_ref()
+                    .univariate_polynomial_at_point_into(point, &mut lhs_eval_poly);
+                add_poly_in_place(polynomial, &lhs_eval_poly);
+            }
+            let rhs_sumcheck = &self.rhs_sumcheck;
+            if !rhs_sumcheck
+                .get_ref()
+                .is_univariate_polynomial_zero_at_point(point)
+            {
+                let cap = rhs_sumcheck.get_ref().max_num_polynomial_coefficients();
+                let mut rhs_eval_poly = Polynomial::<E>::new(cap);
+                rhs_sumcheck
+                    .get_ref()
+                    .univariate_polynomial_at_point_into(point, &mut rhs_eval_poly);
+                add_poly_in_place(polynomial, &rhs_eval_poly);
+            }
+            return;
         }
 
-        let mut rhs_eval_poly = self.rhs_eval_poly.borrow_mut();
-        let rhs_sumcheck = &self.rhs_sumcheck;
-        if !rhs_sumcheck
-            .get_ref()
-            .is_univariate_polynomial_zero_at_point(point)
+        #[cfg(not(feature = "parallel"))]
         {
-            rhs_sumcheck
+            let mut lhs_eval_poly = self.lhs_eval_poly.borrow_mut();
+            let lhs_sumcheck = &self.lhs_sumcheck;
+            if !lhs_sumcheck
                 .get_ref()
-                .univariate_polynomial_at_point_into(point, &mut rhs_eval_poly);
-            add_poly_in_place(polynomial, &rhs_eval_poly);
+                .is_univariate_polynomial_zero_at_point(point)
+            {
+                lhs_sumcheck
+                    .get_ref()
+                    .univariate_polynomial_at_point_into(point, &mut lhs_eval_poly);
+                add_poly_in_place(polynomial, &lhs_eval_poly);
+            }
+
+            let mut rhs_eval_poly = self.rhs_eval_poly.borrow_mut();
+            let rhs_sumcheck = &self.rhs_sumcheck;
+            if !rhs_sumcheck
+                .get_ref()
+                .is_univariate_polynomial_zero_at_point(point)
+            {
+                rhs_sumcheck
+                    .get_ref()
+                    .univariate_polynomial_at_point_into(point, &mut rhs_eval_poly);
+                add_poly_in_place(polynomial, &rhs_eval_poly);
+            }
         }
     }
 

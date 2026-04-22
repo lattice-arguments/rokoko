@@ -640,20 +640,65 @@ pub struct ConjugationTransform {
     pub odd_factors: [u64; HALF_DEGREE],
 }
 
+// Per-thread scratch buffer for NTT helpers. When running single-threaded
+// (no `parallel` feature), one shared buffer is fine and avoids any TLS
+// dispatch. When the prover is multi-threaded, we need one buffer per
+// worker thread, otherwise concurrent calls into e.g. `conjugate_in_place`
+// or the homogenized NTT multiplication path would race on this buffer.
+#[cfg(not(feature = "parallel"))]
 pub static mut TEMP_BUFFER: LazyLock<[u64; DEGREE]> = LazyLock::new(|| [0u64; DEGREE]);
 
+#[cfg(not(feature = "parallel"))]
 #[inline(always)]
 fn get_temp_buffer() -> &'static mut [u64; DEGREE] {
     unsafe { &mut TEMP_BUFFER }
 }
 
+#[cfg(feature = "parallel")]
+thread_local! {
+    static TEMP_BUFFER_TLS: std::cell::UnsafeCell<[u64; DEGREE]> =
+        const { std::cell::UnsafeCell::new([0u64; DEGREE]) };
+    static AUX_TLS: std::cell::UnsafeCell<RingElement> =
+        std::cell::UnsafeCell::new(RingElement::new(Representation::IncompleteNTT));
+}
+
+// `TEMP_BUFFER` is kept as a symbol in parallel mode so `init_common` still
+// type-checks without branching. It is never actually read in parallel mode.
+#[cfg(feature = "parallel")]
+pub static mut TEMP_BUFFER: LazyLock<[u64; DEGREE]> = LazyLock::new(|| [0u64; DEGREE]);
+
+#[cfg(feature = "parallel")]
+#[inline(always)]
+fn get_temp_buffer() -> &'static mut [u64; DEGREE] {
+    // Safety: `TEMP_BUFFER_TLS` is a per-thread `UnsafeCell<[u64; DEGREE]>`.
+    // Each thread sees its own instance, so returning a mutable reference
+    // preserves the same "single-mutator" invariant the static-mut version
+    // relied on, but now scoped per thread.
+    let ptr: *mut [u64; DEGREE] = TEMP_BUFFER_TLS.with(|cell| cell.get());
+    unsafe { &mut *ptr }
+}
+
+#[cfg(not(feature = "parallel"))]
 pub static mut AUX: LazyLock<RingElement> =
     LazyLock::new(|| RingElement::new(Representation::IncompleteNTT));
 
+#[cfg(not(feature = "parallel"))]
 #[allow(dead_code)]
 #[inline(always)]
 fn get_aux() -> &'static mut RingElement {
     unsafe { &mut AUX }
+}
+
+#[cfg(feature = "parallel")]
+pub static mut AUX: LazyLock<RingElement> =
+    LazyLock::new(|| RingElement::new(Representation::IncompleteNTT));
+
+#[cfg(feature = "parallel")]
+#[allow(dead_code)]
+#[inline(always)]
+fn get_aux() -> &'static mut RingElement {
+    let ptr: *mut RingElement = AUX_TLS.with(|cell| cell.get());
+    unsafe { &mut *ptr }
 }
 
 /// Empirically derive the conjugation transformation in NTT domain

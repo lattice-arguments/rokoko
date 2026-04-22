@@ -7,6 +7,7 @@ pub mod estimator;
 pub mod hash;
 pub mod matrix;
 pub mod norms;
+pub mod parallel;
 pub mod pool;
 pub mod projection_matrix;
 pub mod ring_arithmetic;

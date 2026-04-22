@@ -23,8 +23,12 @@ pub struct DiffSumcheck<E: SumcheckElement = RingElement> {
     scratch_poly: RefCell<Polynomial<E>>,
 
     // Cached constant difference when both children are constant at a point.
+    #[cfg_attr(feature = "parallel", allow(dead_code))]
     const_cache: RefCell<E>,
 }
+
+#[cfg(feature = "parallel")]
+unsafe impl<E: SumcheckElement> Sync for DiffSumcheck<E> {}
 
 impl<E: SumcheckElement> DiffSumcheck<E> {
     pub fn new(
@@ -83,34 +87,46 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
         &self,
         point: HypercubePoint,
     ) -> Option<&Self::Element> {
-        let lhs_ref = self.lhs_sumcheck.get_ref();
-        let lhs_const = lhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
-        let rhs_ref = self.rhs_sumcheck.get_ref();
-        let rhs_const = rhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
-        match (lhs_const, rhs_const) {
-            (Some(lc), Some(rc)) => {
-                let cache = unsafe { &mut *self.const_cache.as_ptr() };
-                cache.set_from(lc);
-                *cache -= rc;
-                Some(cache)
-            }
-            // If only one side is constant and the other is zero, we can still
-            // propagate constants.
-            (Some(lc), None) => {
-                if rhs_ref.is_univariate_polynomial_zero_at_point(point) {
+        // See `product.rs` for the reasoning — `const_cache` is per-instance
+        // and cannot be shared across rayon workers without data races.
+        #[cfg(feature = "parallel")]
+        {
+            let _ = point;
+            return None;
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            let lhs_ref = self.lhs_sumcheck.get_ref();
+            let lhs_const =
+                lhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
+            let rhs_ref = self.rhs_sumcheck.get_ref();
+            let rhs_const =
+                rhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
+            match (lhs_const, rhs_const) {
+                (Some(lc), Some(rc)) => {
                     let cache = unsafe { &mut *self.const_cache.as_ptr() };
                     cache.set_from(lc);
+                    *cache -= rc;
                     Some(cache)
-                } else {
+                }
+                // If only one side is constant and the other is zero, we can still
+                // propagate constants.
+                (Some(lc), None) => {
+                    if rhs_ref.is_univariate_polynomial_zero_at_point(point) {
+                        let cache = unsafe { &mut *self.const_cache.as_ptr() };
+                        cache.set_from(lc);
+                        Some(cache)
+                    } else {
+                        None
+                    }
+                }
+                (None, Some(_rc)) => {
+                    // LHS is not constant; if it's zero, result is -rc, but we'd need
+                    // to negate, which requires cache storage. Skip for now.
                     None
                 }
+                (None, None) => None,
             }
-            (None, Some(_rc)) => {
-                // LHS is not constant; if it's zero, result is -rc, but we'd need
-                // to negate, which requires cache storage. Skip for now.
-                None
-            }
-            (None, None) => None,
         }
     }
 
@@ -153,12 +169,26 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
             polynomial.set_zero();
         }
 
-        let mut rhs_eval_poly = self.rhs_eval_poly.borrow_mut();
         let rhs_sumcheck = &self.rhs_sumcheck;
-        if !rhs_sumcheck
+        if rhs_sumcheck
             .get_ref()
             .is_univariate_polynomial_zero_at_point(point)
         {
+            return;
+        }
+
+        #[cfg(feature = "parallel")]
+        {
+            let cap = rhs_sumcheck.get_ref().max_num_polynomial_coefficients();
+            let mut rhs_eval_poly = Polynomial::<E>::new(cap);
+            rhs_sumcheck
+                .get_ref()
+                .univariate_polynomial_at_point_into(point, &mut rhs_eval_poly);
+            sub_poly_in_place(polynomial, &rhs_eval_poly);
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            let mut rhs_eval_poly = self.rhs_eval_poly.borrow_mut();
             rhs_sumcheck
                 .get_ref()
                 .univariate_polynomial_at_point_into(point, &mut rhs_eval_poly);

@@ -9,8 +9,15 @@ use crate::common::{
 
 /// Minimal operations Sumcheck and Polynomial need from a field-like element.
 /// Designed to be implementable by `RingElement` now and other element types (e.g. `QuadraticExtension`) later.
+///
+/// `Send + Sync` are inherited auto-traits for all current implementors
+/// (`RingElement` = plain `[u64; DEGREE]`, `QuadraticExtension` = `[u64; 2]`);
+/// requiring them lets the parallel sumcheck path cross rayon thread
+/// boundaries.
 pub trait SumcheckElement:
     Clone
+    + Send
+    + Sync
     + for<'a> AddAssign<&'a Self>
     + for<'a> SubAssign<&'a Self>
     + for<'a> MulAssign<&'a Self>
