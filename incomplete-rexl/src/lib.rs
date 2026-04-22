@@ -204,14 +204,22 @@ pub fn fused_incomplete_ntt_mult(
     n: usize,
     modulus: u64,
 ) {
-    let ntt = get_ntt(n, modulus);
-    fused_incomplete_ntt_mult_inner(
-        result,
-        operand1,
-        operand2,
-        ntt.shift_factors(),
-        ntt.shift_factors_f64(),
-        n,
-        modulus,
-    );
+    // Use the borrow-based `with_ntt` fast path instead of `get_ntt`, which
+    // would `Arc::clone()` (atomic RMW) the cached NTT on every call. This
+    // function is the single hottest symbol in the prover profile (~45%),
+    // and the per-call lookup+clone overhead is visible as ~3% of total
+    // runtime in `perf` samples under `get_ntt`. Callers hand the shift
+    // factors straight from the borrowed `Ntt`; their lifetime is the
+    // closure, which is exactly what the inner AVX-512 kernel needs.
+    with_ntt(n, modulus, |ntt| {
+        fused_incomplete_ntt_mult_inner(
+            result,
+            operand1,
+            operand2,
+            ntt.shift_factors(),
+            ntt.shift_factors_f64(),
+            n,
+            modulus,
+        );
+    });
 }
