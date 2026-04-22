@@ -46,14 +46,6 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
         temp.to_representation(Representation::EvenOddCoefficients);
         temp += &big_shift;
         for i in 0..radix {
-            // `bits_into` unconditionally overwrites every `v[..]` entry of
-            // the target, so the usual `to_representation(EvenOdd)` NTT
-            // inverse on the freshly-pooled (potentially stale) buffer is
-            // pure waste: any data the inverse would produce is thrown away
-            // on the very next line. Skipping that `HALF_DEGREE`-point NTT
-            // twice per output chunk removes `radix` NTT inversions per
-            // input element across `decompose`, which is one of the top
-            // `ntt_inverse_in_place` callers in `perf`.
             let slot = &mut decomposed[index * radix + i];
             slot.representation = Representation::EvenOddCoefficients;
             temp.bits_into(slot, i as u64 * base_log, (i as u64 + 1) * base_log);
