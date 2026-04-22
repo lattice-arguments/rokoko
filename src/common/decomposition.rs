@@ -46,14 +46,11 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
         temp.to_representation(Representation::EvenOddCoefficients);
         temp += &big_shift;
         for i in 0..radix {
-            decomposed[index * radix + i].to_representation(Representation::EvenOddCoefficients);
-            temp.bits_into(
-                &mut decomposed[index * radix + i],
-                i as u64 * base_log,
-                (i as u64 + 1) * base_log,
-            );
-            decomposed[index * radix + i] -= &small_shift;
-            decomposed[index * radix + i].to_representation(Representation::IncompleteNTT);
+            let slot = &mut decomposed[index * radix + i];
+            slot.representation = Representation::EvenOddCoefficients;
+            temp.bits_into(slot, i as u64 * base_log, (i as u64 + 1) * base_log);
+            *slot -= &small_shift;
+            slot.to_representation(Representation::IncompleteNTT);
         }
         #[cfg(feature = "debug-decomp")]
         {
