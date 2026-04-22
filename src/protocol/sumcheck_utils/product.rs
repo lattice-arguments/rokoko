@@ -13,6 +13,9 @@ use crate::{
     },
 };
 
+#[cfg(feature = "parallel")]
+use crate::common::parallel::*;
+
 #[cfg(test)]
 use crate::{
     common::config::MOD_Q,
@@ -26,7 +29,12 @@ pub struct ProductSumcheck<E: SumcheckElement = RingElement> {
     pub lhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
     pub rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
 
+    // These per-instance scratches are only read on the serial path; under
+    // the `parallel` feature the hot methods use stack-local buffers to
+    // avoid the `RefCell<…>` race they would otherwise cause.
+    #[cfg_attr(feature = "parallel", allow(dead_code))]
     lhs_eval_poly: RefCell<Polynomial<E>>,
+    #[cfg_attr(feature = "parallel", allow(dead_code))]
     rhs_eval_poly: RefCell<Polynomial<E>>,
     scratch_poly: RefCell<Polynomial<E>>,
 
@@ -39,6 +47,7 @@ pub struct ProductSumcheck<E: SumcheckElement = RingElement> {
     cache_vc: Cell<usize>,
 
     // Cached constant product when both children are constant at a point.
+    #[cfg_attr(feature = "parallel", allow(dead_code))]
     const_cache: RefCell<E>,
 
     // Per-round cached flags: whether each child is "constant" (degree-0
@@ -51,6 +60,16 @@ pub struct ProductSumcheck<E: SumcheckElement = RingElement> {
     // sweeps where each point is visited exactly once and the cache is never hit).
     sweeping: Cell<bool>,
 }
+
+// Under `parallel`, we allow `&ProductSumcheck` to cross rayon thread
+// boundaries. The sumcheck code upholds the invariant that the interior
+// cells (`Cell<bool>`, `Cell<usize>`, `RefCell<...>`) are either only
+// mutated from one thread at a time (the scratches — now replaced by
+// thread-local allocations on the hot path) or are idempotent
+// per-round state (the const-flag cache). See `univariate_polynomial_into`
+// for the specific safety argument used by the Case-2 sweep.
+#[cfg(feature = "parallel")]
+unsafe impl<E: SumcheckElement> Sync for ProductSumcheck<E> {}
 
 impl<E: SumcheckElement> ProductSumcheck<E> {
     pub fn new(
@@ -162,21 +181,39 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
         &self,
         point: HypercubePoint,
     ) -> Option<&Self::Element> {
-        let lhs_ref = self.lhs_sumcheck.get_ref();
-        let lhs_const = lhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
-        let rhs_ref = self.rhs_sumcheck.get_ref();
-        let rhs_const = rhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
-        match (lhs_const, rhs_const) {
-            (Some(lc), Some(rc)) => {
-                // Both children return constants – compute the product and cache it.
-                // SAFETY: single-threaded access; the returned reference is consumed
-                // before the next call to this method overwrites the cache.
-                let cache = unsafe { &mut *self.const_cache.as_ptr() };
-                cache.set_from(lc);
-                *cache *= rc;
-                Some(cache)
+        // Under the `parallel` feature, a given ProductSumcheck in the sumcheck
+        // DAG can be concurrently entered from multiple rayon workers. The
+        // existing "cache the product `lc * rc` and return a ref to the cache"
+        // trick relies on exclusive single-threaded access to `const_cache`.
+        // With multiple threads it would produce torn reads (and is UB). We
+        // conservatively report "no constant available" so callers fall back
+        // to the general (false, *) polynomial-multiplication paths, which
+        // use the per-thread scratch pool instead.
+        #[cfg(feature = "parallel")]
+        {
+            let _ = point;
+            return None;
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            let lhs_ref = self.lhs_sumcheck.get_ref();
+            let lhs_const =
+                lhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
+            let rhs_ref = self.rhs_sumcheck.get_ref();
+            let rhs_const =
+                rhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
+            match (lhs_const, rhs_const) {
+                (Some(lc), Some(rc)) => {
+                    // Both children return constants – compute the product and cache it.
+                    // SAFETY: single-threaded access; the returned reference is consumed
+                    // before the next call to this method overwrites the cache.
+                    let cache = unsafe { &mut *self.const_cache.as_ptr() };
+                    cache.set_from(lc);
+                    *cache *= rc;
+                    Some(cache)
+                }
+                _ => None,
             }
-            _ => None,
         }
     }
 
@@ -288,45 +325,118 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
             polynomial.set_zero();
             polynomial.num_coefficients = 3;
 
-            let mut temp = Self::Element::zero();
-            let mut temp_a = Self::Element::zero();
-            let mut temp_b = Self::Element::zero();
-
             // Number of possibly non-zero pairs. If the slice has odd length,
             // the last pair has an implicit odd entry equal to zero.
             let a_pairs = (a_data.len() + 1) / 2;
             let b_pairs = (b_data.len() + 1) / 2;
             let dense_end = a_pairs.min(b_pairs);
-            let zero = Self::Element::zero();
+            let a_len = a_data.len();
+            let b_len = b_data.len();
 
-            // Region 1: [0, dense_end) — both sides have data, full Karatsuba
-            for p in 0..dense_end {
-                let idx0 = 2 * p;
-                let a0 = &a_data[idx0];
-                let a1 = if idx0 + 1 < a_data.len() {
-                    &a_data[idx0 + 1]
-                } else {
-                    &zero
-                };
-                let b0 = &b_data[idx0];
-                let b1 = if idx0 + 1 < b_data.len() {
-                    &b_data[idx0 + 1]
-                } else {
-                    &zero
-                };
+            // Region 1: [0, dense_end) — both sides have data, full Karatsuba.
+            // This is the dominant cost in early sumcheck rounds. Fold over
+            // chunks with per-chunk (C0, C_mid, C2) partial sums, then reduce.
+            // In serial mode we produce a single chunk so the emitted code
+            // is equivalent to the original loop (no extra allocations and
+            // the same access pattern).
+            #[cfg(feature = "parallel")]
+            {
+                let chunk_size = chunk_size_for_par(dense_end, 4);
+                let (c0, c_mid, c2) = (0..dense_end)
+                    .into_par_iter()
+                    .chunks(chunk_size.max(1))
+                    .map(|chunk| {
+                        let mut c0 = Self::Element::zero();
+                        let mut c_mid = Self::Element::zero();
+                        let mut c2 = Self::Element::zero();
+                        let mut temp = Self::Element::zero();
+                        let mut temp_a = Self::Element::zero();
+                        let mut temp_b = Self::Element::zero();
+                        let zero_local = Self::Element::zero();
+                        for p in chunk {
+                            let idx0 = 2 * p;
+                            let a0 = &a_data[idx0];
+                            let a1 = if idx0 + 1 < a_len {
+                                &a_data[idx0 + 1]
+                            } else {
+                                &zero_local
+                            };
+                            let b0 = &b_data[idx0];
+                            let b1 = if idx0 + 1 < b_len {
+                                &b_data[idx0 + 1]
+                            } else {
+                                &zero_local
+                            };
 
-                temp *= (a0, b0);
-                polynomial.coefficients[0] += &temp; // C0
+                            temp *= (a0, b0);
+                            c0 += &temp;
 
-                temp *= (a1, b1);
-                polynomial.coefficients[1] += &temp; // C_mid
+                            temp *= (a1, b1);
+                            c_mid += &temp;
 
-                temp_a.set_from(a1);
-                temp_a -= a0;
-                temp_b.set_from(b1);
-                temp_b -= b0;
-                temp *= (&temp_a, &temp_b);
-                polynomial.coefficients[2] += &temp; // C2
+                            temp_a.set_from(a1);
+                            temp_a -= a0;
+                            temp_b.set_from(b1);
+                            temp_b -= b0;
+                            temp *= (&temp_a, &temp_b);
+                            c2 += &temp;
+                        }
+                        (c0, c_mid, c2)
+                    })
+                    .reduce(
+                        || {
+                            (
+                                Self::Element::zero(),
+                                Self::Element::zero(),
+                                Self::Element::zero(),
+                            )
+                        },
+                        |mut a, b| {
+                            a.0 += &b.0;
+                            a.1 += &b.1;
+                            a.2 += &b.2;
+                            a
+                        },
+                    );
+                polynomial.coefficients[0] += &c0;
+                polynomial.coefficients[1] += &c_mid;
+                polynomial.coefficients[2] += &c2;
+            }
+
+            #[cfg(not(feature = "parallel"))]
+            {
+                let mut temp = Self::Element::zero();
+                let mut temp_a = Self::Element::zero();
+                let mut temp_b = Self::Element::zero();
+                let zero = Self::Element::zero();
+                for p in 0..dense_end {
+                    let idx0 = 2 * p;
+                    let a0 = &a_data[idx0];
+                    let a1 = if idx0 + 1 < a_len {
+                        &a_data[idx0 + 1]
+                    } else {
+                        &zero
+                    };
+                    let b0 = &b_data[idx0];
+                    let b1 = if idx0 + 1 < b_len {
+                        &b_data[idx0 + 1]
+                    } else {
+                        &zero
+                    };
+
+                    temp *= (a0, b0);
+                    polynomial.coefficients[0] += &temp; // C0
+
+                    temp *= (a1, b1);
+                    polynomial.coefficients[1] += &temp; // C_mid
+
+                    temp_a.set_from(a1);
+                    temp_a -= a0;
+                    temp_b.set_from(b1);
+                    temp_b -= b0;
+                    temp *= (&temp_a, &temp_b);
+                    polynomial.coefficients[2] += &temp; // C2
+                }
             }
 
             // Region 2: one side has data, other is zero — contributes nothing.
@@ -354,14 +464,54 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
         // visited exactly once, so the cache is never hit and the stores
         // are pure overhead (~50ns per store × 3 levels × thousands of points).
         self.set_cache_bypass(true);
-        let mut scratch = self.get_scratch_poly().borrow_mut();
-        for i in range_start..range_end {
-            let point = HypercubePoint::new(i);
-            if self.is_univariate_polynomial_zero_at_point(point) {
-                continue;
+
+        #[cfg(feature = "parallel")]
+        {
+            // Pre-compute the round-level const flags once so that rayon
+            // workers only read them (no races on the cache update). Point
+            // visits below this line go through `univariate_polynomial_at_point_into`
+            // which, under `parallel`, uses the per-thread scratch pool
+            // instead of `self.lhs_eval_poly` / `self.rhs_eval_poly`, so
+            // multiple workers can sweep this ProductSumcheck concurrently
+            // without racing on those RefCells.
+            self.ensure_const_flags();
+            let max_coeffs = self.max_num_polynomial_coefficients();
+            let span = range_end - range_start;
+            let chunk_size = crate::common::parallel::chunk_size_for_par(span, 4).max(1);
+            let partials: Vec<Polynomial<E>> = (range_start..range_end)
+                .into_par_iter()
+                .chunks(chunk_size)
+                .map(|chunk| {
+                    let mut local_poly = Polynomial::new(max_coeffs);
+                    local_poly.set_zero();
+                    local_poly.num_coefficients = 1;
+                    let mut local_scratch = Polynomial::new(max_coeffs);
+                    for i in chunk {
+                        let point = HypercubePoint::new(i);
+                        if self.is_univariate_polynomial_zero_at_point(point) {
+                            continue;
+                        }
+                        self.univariate_polynomial_at_point_into(point, &mut local_scratch);
+                        add_poly_in_place(&mut local_poly, &local_scratch);
+                    }
+                    local_poly
+                })
+                .collect();
+            for p in partials {
+                add_poly_in_place(polynomial, &p);
             }
-            self.univariate_polynomial_at_point_into(point, &mut scratch);
-            add_poly_in_place(polynomial, &scratch);
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            let mut scratch = self.get_scratch_poly().borrow_mut();
+            for i in range_start..range_end {
+                let point = HypercubePoint::new(i);
+                if self.is_univariate_polynomial_zero_at_point(point) {
+                    continue;
+                }
+                self.univariate_polynomial_at_point_into(point, &mut scratch);
+                add_poly_in_place(polynomial, &scratch);
+            }
         }
         self.set_cache_bypass(false);
     }
@@ -428,19 +578,44 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
                 }
             }
             (false, false) => {
-                // General case: full polynomial multiplication
-                let mut lhs_eval_poly = self.lhs_eval_poly.borrow_mut();
-                let mut rhs_eval_poly = self.rhs_eval_poly.borrow_mut();
+                // General case: full polynomial multiplication.
+                //
+                // Under the `parallel` feature a given ProductSumcheck may be
+                // entered concurrently by multiple rayon workers (when the
+                // outer Case-2 sweep is parallelized). Its own `lhs_eval_poly`
+                // / `rhs_eval_poly` scratches are `RefCell<Polynomial>` which
+                // would race. We instead allocate two stack-local buffers for
+                // the duration of this call. The allocation cost is negligible
+                // compared to the ring-element multiplications that follow.
+                #[cfg(feature = "parallel")]
+                {
+                    let lhs_cap = self.lhs_sumcheck.get_ref().max_num_polynomial_coefficients();
+                    let rhs_cap = self.rhs_sumcheck.get_ref().max_num_polynomial_coefficients();
+                    let mut lhs_eval_poly = Polynomial::<E>::new(lhs_cap);
+                    let mut rhs_eval_poly = Polynomial::<E>::new(rhs_cap);
+                    self.lhs_sumcheck
+                        .get_ref()
+                        .univariate_polynomial_at_point_into(point, &mut lhs_eval_poly);
+                    self.rhs_sumcheck
+                        .get_ref()
+                        .univariate_polynomial_at_point_into(point, &mut rhs_eval_poly);
+                    mul_poly_into(polynomial, &lhs_eval_poly, &rhs_eval_poly);
+                }
+                #[cfg(not(feature = "parallel"))]
+                {
+                    let mut lhs_eval_poly = self.lhs_eval_poly.borrow_mut();
+                    let mut rhs_eval_poly = self.rhs_eval_poly.borrow_mut();
 
-                self.lhs_sumcheck
-                    .get_ref()
-                    .univariate_polynomial_at_point_into(point, &mut lhs_eval_poly);
+                    self.lhs_sumcheck
+                        .get_ref()
+                        .univariate_polynomial_at_point_into(point, &mut lhs_eval_poly);
 
-                self.rhs_sumcheck
-                    .get_ref()
-                    .univariate_polynomial_at_point_into(point, &mut rhs_eval_poly);
+                    self.rhs_sumcheck
+                        .get_ref()
+                        .univariate_polynomial_at_point_into(point, &mut rhs_eval_poly);
 
-                mul_poly_into(polynomial, &lhs_eval_poly, &rhs_eval_poly);
+                    mul_poly_into(polynomial, &lhs_eval_poly, &rhs_eval_poly);
+                }
             }
         }
 

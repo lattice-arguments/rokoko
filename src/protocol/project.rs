@@ -7,6 +7,10 @@ use crate::common::{
     projection_matrix::ProjectionMatrix,
     ring_arithmetic::{Representation, RingElement},
 };
+use crate::{par_chunks_mut, par_iter_mut};
+
+#[cfg(feature = "parallel")]
+use crate::common::parallel::*;
 
 #[derive(Clone, Copy)]
 #[repr(align(64))]
@@ -18,14 +22,18 @@ pub fn prepare_i16_witness(
     let mut witness_i16: Vec<Signed16RingElement> =
         vec![Signed16RingElement([0i16; DEGREE]); witness.data.len()];
 
-    let mut ring_el = [0 as i64; DEGREE];
-    let mut temp = RingElement::zero(Representation::IncompleteNTT);
-    for (i, cr) in witness.data.iter().enumerate() {
-        temp.set_from(cr);
-        temp.from_incomplete_ntt_to_even_odd_coefficients();
-        centered_coeffs_u64_to_i64_inplace(&mut ring_el, &temp.v);
-        pack_i64_to_i16_deg16(&mut witness_i16[i].0, &mut ring_el);
-    }
+    // Element-wise independent conversion; parallelize over indices and
+    // keep `ring_el` / `temp` thread-local.
+    par_iter_mut!(witness_i16.as_mut_slice())
+        .zip(crate::par_iter!(witness.data.as_slice()))
+        .for_each(|(out, cr)| {
+            let mut ring_el = [0 as i64; DEGREE];
+            let mut temp = RingElement::zero(Representation::IncompleteNTT);
+            temp.set_from(cr);
+            temp.from_incomplete_ntt_to_even_odd_coefficients();
+            centered_coeffs_u64_to_i64_inplace(&mut ring_el, &temp.v);
+            pack_i64_to_i16_deg16(&mut out.0, &mut ring_el);
+        });
 
     VerticallyAlignedMatrix::<Signed16RingElement> {
         width: witness.width,
@@ -50,9 +58,9 @@ pub fn project(
         witness_16.height
     );
 
-    for i in projection_image.data.iter_mut() {
+    par_iter_mut!(projection_image.data.as_mut_slice()).for_each(|i| {
         i.from_incomplete_ntt_to_even_odd_coefficients();
-    }
+    });
 
     let row_len = projection_matrix.projection_ratio * projection_matrix.projection_height;
 
@@ -77,38 +85,41 @@ pub fn project(
         }
     }
 
-    for col in 0..witness_16.width {
-        for rows_chunk in 0..projection_image.height / projection_matrix.projection_height {
-            let subwitness_i16 = witness_16.col_slice(
-                col,
-                rows_chunk
-                    * projection_matrix.projection_ratio
-                    * projection_matrix.projection_height,
-                (rows_chunk + 1)
-                    * projection_matrix.projection_ratio
-                    * projection_matrix.projection_height,
-            );
+    let out_height = projection_image.height;
+    let proj_height = projection_matrix.projection_height;
+    let proj_ratio = projection_matrix.projection_ratio;
 
-            let projection_subimage = projection_image.col_slice_mut(
-                col,
-                rows_chunk * projection_matrix.projection_height,
-                (rows_chunk + 1) * projection_matrix.projection_height,
-            );
-
-            for inner_row in 0..projection_matrix.projection_height {
-                project_one_row_i16_to_u64::<DEGREE>(
-                    subwitness_i16,
-                    &pos_by_row[inner_row],
-                    &neg_by_row[inner_row],
-                    &mut projection_subimage[inner_row].v,
+    // Output is column-major, so one column of output = one chunk of size
+    // `out_height` in `projection_image.data`. Parallelize across columns
+    // — different columns share the read-only `witness_16` and the
+    // per-row positive/negative index lists, but each writes to its own
+    // output slice.
+    par_chunks_mut!(projection_image.data.as_mut_slice(), out_height)
+        .enumerate()
+        .for_each(|(col, out_col)| {
+            for rows_chunk in 0..out_height / proj_height {
+                let subwitness_i16 = witness_16.col_slice(
+                    col,
+                    rows_chunk * proj_ratio * proj_height,
+                    (rows_chunk + 1) * proj_ratio * proj_height,
                 );
+                let start = rows_chunk * proj_height;
+                let end = start + proj_height;
+                let projection_subimage = &mut out_col[start..end];
+                for inner_row in 0..proj_height {
+                    project_one_row_i16_to_u64::<DEGREE>(
+                        subwitness_i16,
+                        &pos_by_row[inner_row],
+                        &neg_by_row[inner_row],
+                        &mut projection_subimage[inner_row].v,
+                    );
+                }
             }
-        }
-    }
+        });
 
-    for i in projection_image.data.iter_mut() {
+    par_iter_mut!(projection_image.data.as_mut_slice()).for_each(|i| {
         i.from_even_odd_coefficients_to_incomplete_ntt_representation();
-    }
+    });
 
     projection_image
 }

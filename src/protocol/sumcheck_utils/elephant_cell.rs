@@ -4,11 +4,20 @@ use std::ops::CoerceUnsized;
 ///
 /// - Safe mode (default): Uses Rc<RefCell<T>> with runtime borrow checking
 /// - Unsafe mode (feature="unsafe-sumcheck"): Uses Rc<UnsafeCell<T>> with zero-cost access
+/// - Unsafe + parallel: Uses Arc<UnsafeCell<T>> + unsafe Send/Sync so the sumcheck
+///   tree can cross rayon thread boundaries. Safety invariant: within one
+///   sumcheck sweep, any given ElephantCell is touched from at most one
+///   thread at a time. Parallelism happens only across disjoint sub-trees
+///   (e.g. lhs vs rhs of a DiffSumcheck).
 ///
 /// Safety invariant for unsafe mode: During polynomial generation (read operations),
 /// no mutations occur. Mutations only happen during partial_evaluate, which is never
 /// concurrent with polynomial generation.
+#[cfg(not(feature = "parallel"))]
 use std::rc::Rc;
+
+#[cfg(feature = "parallel")]
+use std::sync::Arc as Rc;
 
 #[cfg(not(feature = "unsafe-sumcheck"))]
 use std::cell::{Ref, RefCell, RefMut};
@@ -103,3 +112,20 @@ impl<T: ?Sized> Clone for ElephantCell<T> {
 
 #[cfg(feature = "unsafe-sumcheck")]
 impl<T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<ElephantCell<U>> for ElephantCell<T> {}
+
+// Under `parallel + unsafe-sumcheck`, the sumcheck tree must cross thread
+// boundaries for rayon parallelism. UnsafeCell is not Sync by default; we
+// uphold the same "no concurrent mutation" invariant as the single-threaded
+// path, just scoped to "at most one thread mutates a given cell at a time"
+// instead of "at most one caller mutates at a time". Leaves that would race
+// on shared scratch are either read-only or are duplicated per sub-tree by
+// the builder.
+#[cfg(all(feature = "unsafe-sumcheck", feature = "parallel"))]
+unsafe impl<T: ?Sized + Send> Send for ElephantCell<T> {}
+// We only require `T: Send` (not `Sync`): the inner `UnsafeCell<T>` guarantees
+// no aliasing when the callers uphold the invariant that no two threads
+// mutate the same cell concurrently. The sumcheck tree's own scratch cells
+// are per-node, and parallel call sites are structured so distinct threads
+// only traverse disjoint sub-trees, so the invariant holds.
+#[cfg(all(feature = "unsafe-sumcheck", feature = "parallel"))]
+unsafe impl<T: ?Sized + Send> Sync for ElephantCell<T> {}

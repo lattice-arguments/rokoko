@@ -10,8 +10,12 @@ use crate::{
         ring_arithmetic::{Representation, RingElement},
     },
     hexl::bindings::{add_mod, eltwise_reduce_mod, multiply_mod},
+    par_chunks_mut, par_iter_mut,
     protocol::config::{ConfigBase, SimpleConfig},
 };
+
+#[cfg(feature = "parallel")]
+use crate::common::parallel::*;
 
 /// Computes J_batched = c'_1^T * J_embedded
 ///
@@ -41,9 +45,9 @@ pub fn compute_j_batched(
     // Initialise every coefficient to a large multiple of Q (a "halfway" value) so
     // that intermediate subtractions never underflow in unsigned arithmetic.
     // The final eltwise_reduce_mod at the bottom will fold this away.
-    for el in j_batched.iter_mut() {
+    par_iter_mut!(j_batched.as_mut_slice()).for_each(|el| {
         el.set_from(&HALF_WAY_MOD_Q_RING_CF);
-    }
+    });
 
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     {
@@ -53,12 +57,14 @@ pub fn compute_j_batched(
         // so we need `degree_blocks` iterations to cover a full ring element.
         let degree_blocks = DEGREE / 8;
 
-        // Outer loop: iterate over the output ring elements.
-        for i in 0..inner_width_ring {
+        // Outer loop: iterate over the output ring elements. Each `i`
+        // writes to its own `j_batched[i]` and only reads shared data,
+        // so parallelization across `i` is race-free.
+        par_iter_mut!(j_batched.as_mut_slice()).enumerate().for_each(|(i, j_batched_i)| {
             // `base_index` is the flat column offset into the projection matrix
             // that corresponds to the start of ring element `i`.
             let base_index = i * DEGREE;
-            let row_ptr = j_batched[i].v.as_mut_ptr() as *mut i64;
+            let row_ptr = j_batched_i.v.as_mut_ptr() as *mut i64;
 
             // Inner loop: for every row `k` of the projection matrix, scatter
             // c_1[k] (the batching weight for that row) into the ring element
@@ -143,7 +149,7 @@ pub fn compute_j_batched(
                     }
                 }
             }
-        }
+        });
     }
 
     // --- Scalar fallback (non-AVX-512 platforms) -----------------------------------
@@ -152,8 +158,8 @@ pub fn compute_j_batched(
     #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
     {
         println!("Using scalar code for compute_j_batched");
-        for i in 0..inner_width_ring {
-            let row = &mut j_batched[i].v;
+        par_iter_mut!(j_batched.as_mut_slice()).enumerate().for_each(|(i, j_batched_i)| {
+            let row = &mut j_batched_i.v;
             let base_index = i * DEGREE;
             for k in 0..projection_matrix.projection_height {
                 let coeff = c_1_values[k];
@@ -217,13 +223,13 @@ pub fn compute_j_batched(
                     j += 1;
                 }
             }
-        }
+        });
     }
 
     // Post-processing: reduce mod Q, convert to incomplete-NTT representation,
     // and conjugate so that j_batched is ready for inner-product multiplication
     // against the witness (which is also in incomplete-NTT form).
-    for bp in j_batched.iter_mut() {
+    par_iter_mut!(j_batched.as_mut_slice()).for_each(|bp| {
         unsafe {
             // Fold the HALF_WAY_MOD_Q bias back into [0, Q).
             eltwise_reduce_mod(bp.v.as_mut_ptr(), bp.v.as_mut_ptr(), DEGREE as u64, MOD_Q);
@@ -232,7 +238,7 @@ pub fn compute_j_batched(
         bp.to_representation(Representation::IncompleteNTT);
         // Conjugation accounts for the dual embedding sign flip on non-constant terms.
         bp.conjugate_in_place();
-    }
+    });
 
     j_batched
 }
@@ -276,11 +282,12 @@ pub fn project_coefficients(
 
     witness_coeff.data.clone_from_slice(&witness.data);
 
-    for i in 0..witness_coeff.data.len() {
-        witness_coeff.data[i].from_incomplete_ntt_to_even_odd_coefficients();
+    // Element-wise independent conversions.
+    par_iter_mut!(witness_coeff.data.as_mut_slice()).for_each(|el| {
+        el.from_incomplete_ntt_to_even_odd_coefficients();
         // this is possible to operate on even-odd representation directly, but coeeficent rep is better for locality.
-        witness_coeff.data[i].from_even_odd_coefficients_to_coefficients();
-    }
+        el.from_even_odd_coefficients_to_coefficients();
+    });
 
     #[cfg(feature = "debug-hardness")]
     {
@@ -298,9 +305,9 @@ pub fn project_coefficients(
         witness.width,
     );
 
-    for el in image_ct.data.iter_mut() {
+    par_iter_mut!(image_ct.data.as_mut_slice()).for_each(|el| {
         el.set_from(&HALF_WAY_MOD_Q_RING_CF);
-    }
+    });
 
     // Verify dimensions: each ring element in image corresponds to projection_ratio
     // ring elements in the witness (after applying the projection matrix J)
@@ -310,30 +317,28 @@ pub fn project_coefficients(
         witness.height
     );
 
-    // Process each column independently (no interaction between columns)
-    for col in 0..witness.used_cols {
-        // Process the projection in chunks
-        // Each chunk processes (PROJECTION_HEIGHT / DEGREE) ring elements of the output
-        // which corresponds to PROJECTION_HEIGHT coefficients in the result
-        for rows_chunk in 0..image_ct.height / (projection_matrix.projection_height / DEGREE) {
-            // Extract the corresponding slice of witness coefficients for this chunk
-            // This is the input to one application of the projection matrix J
-            let subwitness = witness_coeff.col_slice(
-                col,
-                rows_chunk
-                    * projection_matrix.projection_ratio
-                    * (projection_matrix.projection_height / DEGREE),
-                (rows_chunk + 1)
-                    * projection_matrix.projection_ratio
-                    * (projection_matrix.projection_height / DEGREE),
-            );
+    // Output is column-major; one output column is one chunk of size
+    // `image_ct.height` in the flat buffer. Columns are independent.
+    let out_height = image_ct.height;
+    let used_cols = witness.used_cols;
+    let in_height = witness_coeff.height;
+    let ring_per_chunk = projection_matrix.projection_height / DEGREE;
+    let in_per_chunk = projection_matrix.projection_ratio * ring_per_chunk;
+    let num_row_chunks = out_height / ring_per_chunk;
+
+    par_chunks_mut!(image_ct.data.as_mut_slice(), out_height)
+        .enumerate()
+        .take(used_cols)
+        .for_each(|(col, out_col)| {
+            let col_start = col * in_height;
+            let witness_col = &witness_coeff.data[col_start..col_start + in_height];
+
+        for rows_chunk in 0..num_row_chunks {
+            let subwitness = &witness_col[rows_chunk * in_per_chunk..(rows_chunk + 1) * in_per_chunk];
 
             // Get mutable slice of the output for this chunk
-            let projection_subimage = image_ct.col_slice_mut(
-                col,
-                rows_chunk * (projection_matrix.projection_height / DEGREE),
-                (rows_chunk + 1) * (projection_matrix.projection_height / DEGREE),
-            );
+            let projection_subimage =
+                &mut out_col[rows_chunk * ring_per_chunk..(rows_chunk + 1) * ring_per_chunk];
 
             // Apply projection matrix J to this chunk
             // J has PROJECTION_HEIGHT rows (output coefficients)
@@ -455,12 +460,12 @@ pub fn project_coefficients(
                 }
             }
         }
-    }
-    for el in image_ct.data.iter_mut() {
+        });
+    par_iter_mut!(image_ct.data.as_mut_slice()).for_each(|el| {
         unsafe {
             eltwise_reduce_mod(el.v.as_mut_ptr(), el.v.as_mut_ptr(), DEGREE as u64, MOD_Q);
         }
-    }
+    });
 
     #[cfg(feature = "debug-hardness")]
     {
@@ -579,32 +584,37 @@ fn batch_projection_into(
     // corresponds to one application of the projection matrix.
     // We compute for each column: result[col] = Σ_chunk c'_0[chunk] * <J_batched, W[chunk, col]>
     let num_chunks = witness.height / inner_width_ring;
+    let used_cols = witness.used_cols;
 
-    for col in 0..witness.used_cols {
-        let mut col_result = RingElement::zero(Representation::IncompleteNTT);
+    // `result[col]` is computed independently across columns; parallelize.
+    par_iter_mut!(result)
+        .enumerate()
+        .take(used_cols)
+        .for_each(|(col, result_col)| {
+            let mut col_result = RingElement::zero(Representation::IncompleteNTT);
 
-        for chunk in 0..num_chunks {
-            let c_0_coeff = c_0_values[chunk];
-            let mut chunk_result = RingElement::zero(Representation::IncompleteNTT);
+            for chunk in 0..num_chunks {
+                let c_0_coeff = c_0_values[chunk];
+                let mut chunk_result = RingElement::zero(Representation::IncompleteNTT);
 
-            // Inner product of j_batched with the corresponding chunk of witness column
-            for i in 0..inner_width_ring {
-                let mut temp = RingElement::zero(Representation::IncompleteNTT);
-                temp *= (&witness[(chunk * inner_width_ring + i, col)], &j_batched[i]);
-                chunk_result += &temp;
-            }
+                // Inner product of j_batched with the corresponding chunk of witness column
+                for i in 0..inner_width_ring {
+                    let mut temp = RingElement::zero(Representation::IncompleteNTT);
+                    temp *= (&witness[(chunk * inner_width_ring + i, col)], &j_batched[i]);
+                    chunk_result += &temp;
+                }
 
-            // Multiply by c_0 coefficient and accumulate
-            for deg in 0..DEGREE {
-                unsafe {
-                    let temp = multiply_mod(chunk_result.v[deg], c_0_coeff, MOD_Q);
-                    col_result.v[deg] = add_mod(col_result.v[deg], temp, MOD_Q);
+                // Multiply by c_0 coefficient and accumulate
+                for deg in 0..DEGREE {
+                    unsafe {
+                        let temp = multiply_mod(chunk_result.v[deg], c_0_coeff, MOD_Q);
+                        col_result.v[deg] = add_mod(col_result.v[deg], temp, MOD_Q);
+                    }
                 }
             }
-        }
 
-        result[col] = col_result;
-    }
+            *result_col = col_result;
+        });
 
     //////
 

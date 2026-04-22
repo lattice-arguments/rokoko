@@ -1,5 +1,3 @@
-use std::ops::IndexMut;
-
 use crate::{
     common::{
         decomposition::decompose,
@@ -11,6 +9,11 @@ use crate::{
         project::Signed16RingElement,
     },
 };
+
+#[cfg(feature = "parallel")]
+use crate::common::parallel::{chunk_size_for_par, IntoParallelIterator, ParallelIterator};
+#[cfg(not(feature = "parallel"))]
+use std::ops::IndexMut;
 
 pub type BasicCommitment = HorizontallyAlignedMatrix<RingElement>;
 
@@ -40,15 +43,68 @@ pub fn commit_basic_internal(
     let mut commitment =
         HorizontallyAlignedMatrix::new_zero_preallocated(rank.next_power_of_two(), witness.width);
 
-    let mut temp = RingElement::zero(Representation::IncompleteNTT);
-    for (i, row) in ck.iter().take(rank).enumerate() {
-        for col in 0..witness.used_cols {
-            for (elem, w_elem) in row.preprocessed_row.iter().zip(witness.col(col).iter()) {
-                temp *= (elem, w_elem);
-                *commitment.index_mut((i, col)) += &temp;
+    #[cfg(feature = "parallel")]
+    let width = commitment.width;
+    let used_cols = witness.used_cols;
+    #[cfg(feature = "parallel")]
+    let height = witness.height;
+
+    // For small rank, per-row parallelism under-utilizes cores. Instead we
+    // split the long inner-product dimension (`height`) into chunks: each
+    // worker computes partial dot products for every (i, col) over its row
+    // range, and we sum the partials at the end. This gives parallelism
+    // proportional to the number of chunks rather than `rank`.
+    #[cfg(feature = "parallel")]
+    {
+        let chunk_size = chunk_size_for_par(height, 4);
+        let num_chunks = height.div_ceil(chunk_size);
+
+        let partial_vecs: Vec<Vec<RingElement>> = (0..num_chunks)
+            .into_par_iter()
+            .map(|chunk_idx| {
+                let start = chunk_idx * chunk_size;
+                let end = (start + chunk_size).min(height);
+                let mut local =
+                    vec![RingElement::zero(Representation::IncompleteNTT); rank * used_cols];
+                let mut temp = RingElement::zero(Representation::IncompleteNTT);
+                for i in 0..rank {
+                    let ck_row = &ck[i].preprocessed_row[start..end];
+                    for col in 0..used_cols {
+                        let w_col = &witness.col(col)[start..end];
+                        for (elem, w_elem) in ck_row.iter().zip(w_col.iter()) {
+                            temp *= (elem, w_elem);
+                            local[i * used_cols + col] += &temp;
+                        }
+                    }
+                }
+                local
+            })
+            .collect();
+
+        // Sequential reduction is negligible: `num_chunks * rank * used_cols`
+        // additions dominate only at trivial sizes.
+        for local in partial_vecs {
+            for i in 0..rank {
+                for col in 0..used_cols {
+                    commitment.data[i * width + col] += &local[i * used_cols + col];
+                }
             }
         }
     }
+
+    #[cfg(not(feature = "parallel"))]
+    {
+        let mut temp = RingElement::zero(Representation::IncompleteNTT);
+        for (i, row) in ck.iter().take(rank).enumerate() {
+            for col in 0..used_cols {
+                for (elem, w_elem) in row.preprocessed_row.iter().zip(witness.col(col).iter()) {
+                    temp *= (elem, w_elem);
+                    *commitment.index_mut((i, col)) += &temp;
+                }
+            }
+        }
+    }
+
     commitment
 }
 
@@ -130,11 +186,52 @@ pub fn recursive_commit(
 
     let mut commitment = new_vec_zero_preallocated(config.rank);
 
-    let mut temp = RingElement::zero(Representation::IncompleteNTT);
-    for r in 0..config.rank {
-        for (elem, data_elem) in ck[r].preprocessed_row.iter().zip(committed_data.iter()) {
-            temp *= (elem, data_elem);
-            commitment[r] += &temp;
+    // Each rank row is a dot product of length `committed_data.len()`.
+    // Parallelizing only across rows gives at most `rank` workers, which is
+    // typically 1–4. Instead, split the dot-product dimension into chunks so
+    // that each worker computes partial sums across all `rank` outputs and
+    // we reduce at the end.
+    #[cfg(feature = "parallel")]
+    {
+        let rank = config.rank;
+        let total = committed_data.len();
+        let chunk_size = chunk_size_for_par(total, 4);
+        let num_chunks = total.div_ceil(chunk_size);
+
+        let partial_vecs: Vec<Vec<RingElement>> = (0..num_chunks)
+            .into_par_iter()
+            .map(|chunk_idx| {
+                let start = chunk_idx * chunk_size;
+                let end = (start + chunk_size).min(total);
+                let data_slice = &committed_data[start..end];
+                let mut local =
+                    vec![RingElement::zero(Representation::IncompleteNTT); rank];
+                let mut temp = RingElement::zero(Representation::IncompleteNTT);
+                for r in 0..rank {
+                    let ck_slice = &ck[r].preprocessed_row[start..end];
+                    for (elem, data_elem) in ck_slice.iter().zip(data_slice.iter()) {
+                        temp *= (elem, data_elem);
+                        local[r] += &temp;
+                    }
+                }
+                local
+            })
+            .collect();
+
+        for local in partial_vecs {
+            for r in 0..rank {
+                commitment[r] += &local[r];
+            }
+        }
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let mut temp = RingElement::zero(Representation::IncompleteNTT);
+        for r in 0..config.rank {
+            for (elem, data_elem) in ck[r].preprocessed_row.iter().zip(committed_data.iter()) {
+                temp *= (elem, data_elem);
+                commitment[r] += &temp;
+            }
         }
     }
 

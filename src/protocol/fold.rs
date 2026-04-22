@@ -1,7 +1,12 @@
 use crate::common::{
     matrix::VerticallyAlignedMatrix,
+    parallel::chunk_size_for_par,
     ring_arithmetic::{Representation, RingElement},
 };
+use crate::par_chunks_mut;
+
+#[cfg(feature = "parallel")]
+use crate::common::parallel::*;
 
 pub fn fold(
     witness: &VerticallyAlignedMatrix<RingElement>,
@@ -11,15 +16,32 @@ pub fn fold(
 
     debug_assert_eq!(witness.width, fold_challenge.len());
 
-    let mut temp = RingElement::zero(Representation::IncompleteNTT);
-    for col in 0..witness.used_cols {
-        for row in 0..folded_witness.height {
-            let w_el = &witness[(row, col)];
-            let challenge = &fold_challenge[col];
-            temp *= (challenge, w_el);
-            folded_witness[(row, 0)] += &temp;
-        }
-    }
+    let used_cols = witness.used_cols;
+    let height = folded_witness.height;
+
+    // Split the output row range into chunks. Each chunk is handled by one
+    // worker with its own scratch `temp`. Within a chunk we keep the
+    // original col-outer/row-inner order so each column read is a
+    // contiguous stride (column-major witness storage). In serial mode the
+    // chunk size equals `height`, recovering the original single-loop
+    // behavior exactly.
+    let chunk_size = chunk_size_for_par(height, 4);
+    par_chunks_mut!(folded_witness.data.as_mut_slice(), chunk_size)
+        .enumerate()
+        .for_each(|(chunk_idx, chunk_out)| {
+            let row_start = chunk_idx * chunk_size;
+            let mut temp = RingElement::zero(Representation::IncompleteNTT);
+            for col in 0..used_cols {
+                let challenge = &fold_challenge[col];
+                let w_col = witness.col(col);
+                for (local_row, out) in chunk_out.iter_mut().enumerate() {
+                    let w_el = &w_col[row_start + local_row];
+                    temp *= (challenge, w_el);
+                    *out += &temp;
+                }
+            }
+        });
+
     folded_witness
 }
 

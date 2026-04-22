@@ -2,6 +2,10 @@ use crate::common::{
     matrix::new_vec_zero_preallocated,
     ring_arithmetic::{Representation, RingElement},
 };
+use crate::par_chunks_mut;
+
+#[cfg(feature = "parallel")]
+use crate::common::parallel::*;
 
 #[cfg(test)]
 use crate::common::config::MOD_Q;
@@ -39,43 +43,47 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
 
     let small_shift = RingElement::all(1u64 << (base_log - 1), Representation::EvenOddCoefficients);
 
-    let mut temp = RingElement::all(0, Representation::EvenOddCoefficients);
-
-    for (index, el) in input.iter().enumerate() {
-        temp.set_from(el);
-        temp.to_representation(Representation::EvenOddCoefficients);
-        temp += &big_shift;
-        for i in 0..radix {
-            decomposed[index * radix + i].to_representation(Representation::EvenOddCoefficients);
-            temp.bits_into(
-                &mut decomposed[index * radix + i],
-                i as u64 * base_log,
-                (i as u64 + 1) * base_log,
-            );
-            decomposed[index * radix + i] -= &small_shift;
-            decomposed[index * radix + i].to_representation(Representation::IncompleteNTT);
-        }
-        #[cfg(feature = "debug-decomp")]
-        {
-            // check that recomposition works
-            let mut recomposed = RingElement::all(0, Representation::IncompleteNTT);
-            for j in 0..radix {
-                let mut term = decomposed[index * radix + j].clone();
-                let shift = RingElement::constant(
-                    1u64 << (j as u64 * base_log),
-                    Representation::IncompleteNTT,
+    // Each input element contributes `radix` consecutive slots in `decomposed`.
+    // Those slots form disjoint chunks, so `par_chunks_mut(radix)` lets every
+    // thread work on one input with its own scratch `temp`.
+    par_chunks_mut!(decomposed.as_mut_slice(), radix)
+        .zip(crate::par_iter!(input))
+        .for_each(|(chunk_out, el)| {
+            let mut temp = RingElement::all(0, Representation::EvenOddCoefficients);
+            temp.set_from(el);
+            temp.to_representation(Representation::EvenOddCoefficients);
+            temp += &big_shift;
+            for i in 0..radix {
+                chunk_out[i].to_representation(Representation::EvenOddCoefficients);
+                temp.bits_into(
+                    &mut chunk_out[i],
+                    i as u64 * base_log,
+                    (i as u64 + 1) * base_log,
                 );
-                term *= &shift;
-                recomposed += &term;
+                chunk_out[i] -= &small_shift;
+                chunk_out[i].to_representation(Representation::IncompleteNTT);
             }
-            let el_incomplete_ntt = {
-                let mut temp_el = el.clone();
-                temp_el.to_representation(Representation::IncompleteNTT);
-                temp_el
-            };
-            assert_eq!(&recomposed, &el_incomplete_ntt, "Recomposition failed in decomposition. Perhaps base_log and radix are not chosen properly?");
-        }
-    }
+            #[cfg(feature = "debug-decomp")]
+            {
+                // check that recomposition works
+                let mut recomposed = RingElement::all(0, Representation::IncompleteNTT);
+                for j in 0..radix {
+                    let mut term = chunk_out[j].clone();
+                    let shift = RingElement::constant(
+                        1u64 << (j as u64 * base_log),
+                        Representation::IncompleteNTT,
+                    );
+                    term *= &shift;
+                    recomposed += &term;
+                }
+                let el_incomplete_ntt = {
+                    let mut temp_el = el.clone();
+                    temp_el.to_representation(Representation::IncompleteNTT);
+                    temp_el
+                };
+                assert_eq!(&recomposed, &el_incomplete_ntt, "Recomposition failed in decomposition. Perhaps base_log and radix are not chosen properly?");
+            }
+        });
 
     decomposed
 }
