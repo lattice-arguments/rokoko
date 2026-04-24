@@ -54,7 +54,10 @@ impl GadgetKind {
     /// separately; their own recorded time overlaps the leaves' total.
     #[inline]
     pub fn is_container(self) -> bool {
-        matches!(self, GadgetKind::Combiner | GadgetKind::RingToField)
+        matches!(
+            self,
+            GadgetKind::Combiner | GadgetKind::RingToField | GadgetKind::Diff
+        )
     }
 }
 
