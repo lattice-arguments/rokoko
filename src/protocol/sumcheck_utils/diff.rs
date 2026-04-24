@@ -50,6 +50,10 @@ impl<E: SumcheckElement> DiffSumcheck<E> {
 impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
     type Element = E;
 
+    fn gadget_kind(&self) -> super::profile::GadgetKind {
+        super::profile::GadgetKind::Diff
+    }
+
     fn get_scratch_poly(&self) -> &RefCell<Polynomial<E>> {
         &self.scratch_poly
     }

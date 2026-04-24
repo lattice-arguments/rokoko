@@ -104,6 +104,13 @@ pub trait HighOrderSumcheckData {
     fn set_cache_bypass(&self, _bypass: bool) {}
 
     fn final_evaluations_test_only(&self) -> Self::Element;
+
+    /// Identifies the concrete gadget type for the `profile-sumcheck` feature
+    /// to attribute time inside `Combiner::univariate_polynomial_into`.
+    /// Override with the matching [`super::profile::GadgetKind`] variant.
+    fn gadget_kind(&self) -> super::profile::GadgetKind {
+        super::profile::GadgetKind::Unknown
+    }
 }
 
 pub trait SumcheckBaseData: HighOrderSumcheckData {

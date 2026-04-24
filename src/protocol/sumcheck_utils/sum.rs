@@ -54,6 +54,10 @@ impl<E: SumcheckElement> SumSumcheck<E> {
 impl<E: SumcheckElement> HighOrderSumcheckData for SumSumcheck<E> {
     type Element = E;
 
+    fn gadget_kind(&self) -> super::profile::GadgetKind {
+        super::profile::GadgetKind::Sum
+    }
+
     fn get_scratch_poly(&self) -> &RefCell<Polynomial<E>> {
         &self.scratch_poly
     }

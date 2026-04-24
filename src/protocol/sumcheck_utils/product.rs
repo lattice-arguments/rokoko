@@ -109,6 +109,10 @@ impl<E: SumcheckElement> ProductSumcheck<E> {
 impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
     type Element = E;
 
+    fn gadget_kind(&self) -> super::profile::GadgetKind {
+        super::profile::GadgetKind::Product
+    }
+
     fn get_scratch_poly(&self) -> &RefCell<Polynomial<E>> {
         &self.scratch_poly
     }

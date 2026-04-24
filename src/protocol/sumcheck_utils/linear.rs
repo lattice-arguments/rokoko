@@ -133,6 +133,10 @@ impl<E: SumcheckElement> Index<HypercubePoint> for LinearSumcheck<E> {
 impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
     type Element = E;
 
+    fn gadget_kind(&self) -> super::profile::GadgetKind {
+        super::profile::GadgetKind::Linear
+    }
+
     fn get_scratch_poly(&self) -> &RefCell<Polynomial<E>> {
         &self.poly_scratch
     }
