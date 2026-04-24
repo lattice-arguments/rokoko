@@ -246,6 +246,7 @@ pub static CONFIG: LazyLock<Config> = LazyLock::new(|| P.clone());
 #[derive(Clone)]
 pub enum Config {
     Sumcheck(SumcheckConfig),
+    Intermediate(IntermediateConfig),
     Simple(SimpleConfig),
 }
 
@@ -302,6 +303,43 @@ impl ConfigBase for SumcheckConfig {
 }
 
 #[derive(Clone)]
+pub struct IntermediateConfig {
+    pub witness_height: usize,
+    pub witness_width: usize,
+    pub projection_ratio: usize,
+    pub projection_height: usize,
+    pub nof_openings: usize,
+    pub projection_nof_batches: usize,
+    pub basic_commitment_rank: usize,
+
+    pub witness_decomposition_base_log: usize,
+    pub witness_decomposition_chunks: usize,
+
+    pub next: Option<Box<Config>>,
+}
+
+impl ConfigBase for IntermediateConfig {
+    fn witness_height(&self) -> usize {
+        self.witness_height
+    }
+
+    fn witness_width(&self) -> usize {
+        self.witness_width
+    }
+
+    fn projection_ratio(&self) -> usize {
+        self.projection_ratio
+    }
+
+    fn projection_height(&self) -> usize {
+        self.projection_height
+    }
+    fn basic_commitment_rank(&self) -> usize {
+        self.basic_commitment_rank
+    }
+}
+
+#[derive(Clone)]
 pub struct SimpleConfig {
     pub witness_height: usize,
     pub witness_width: usize,
@@ -337,11 +375,12 @@ impl ConfigBase for SimpleConfig {
 pub enum RoundProof {
     Sumcheck(SumcheckRoundProof),
     Simple(SimpleRoundProof),
+    Intermediate(IntermediateRoundProof),
 }
 
 pub enum NextRoundCommitment {
     Recursive(RecursiveCommitment), // if the next round is sumcheck
-    Simple(HorizontallyAlignedMatrix<RingElement>), // if the next round is simple
+    Simple(HorizontallyAlignedMatrix<RingElement>), // if the next round is simple or intermediate
 }
 
 pub trait SizeableProof {
@@ -472,6 +511,7 @@ impl SizeableProof for SumcheckRoundProof {
             match &**next {
                 RoundProof::Sumcheck(sc_next) => sc_next.size_in_bits(),
                 RoundProof::Simple(s_next) => s_next.size_in_bits(),
+                RoundProof::Intermediate(i_next) => i_next.size_in_bits(),
             }
         } else {
             0
@@ -523,6 +563,111 @@ impl SizeableProof for SimpleRoundProof {
 
         println!("Total simple round proof size: {} KB \n\n\n", to_kb(size));
         size
+    }
+}
+
+pub struct IntermediateRoundProof {
+    pub opening_rhs: HorizontallyAlignedMatrix<RingElement>,
+    pub polys: Vec<Polynomial<QuadraticExtension>>,
+    pub claim_over_witness: RingElement,
+    pub claim_over_witness_conjugate: RingElement,
+    pub norm_claim: RingElement,
+    pub next_round_commitment: Option<NextRoundCommitment>,
+    pub projection_image_ct: VerticallyAlignedMatrix<RingElement>,
+    pub batched_projection_image: HorizontallyAlignedMatrix<RingElement>,
+    pub next: Option<Box<RoundProof>>,
+}
+
+impl SizeableProof for IntermediateRoundProof {
+    fn size_in_bits(&self) -> usize {
+        let mut size = 0;
+
+        let mut polys_size = 0;
+        for poly in &self.polys {
+            for coeff in &poly.coefficients[0..poly.num_coefficients] {
+                polys_size += coeff.size_in_bits();
+            }
+        }
+        size += polys_size;
+        println!("Polys size: {} KB, ", to_kb(polys_size));
+
+        let mut claims_size = 0;
+        let claims = vec![
+            &self.claim_over_witness,
+            &self.claim_over_witness_conjugate,
+            &self.norm_claim,
+        ];
+        for claim in claims {
+            claims_size += claim.size_in_bits();
+        }
+        size += claims_size;
+        println!("Claims size: {} KB, ", to_kb(claims_size));
+
+        let mut projection_image_ct_size = 0;
+        for el in &self.projection_image_ct.data {
+            projection_image_ct_size += el.size_in_bits();
+        }
+        size += projection_image_ct_size;
+        println!(
+            "Projection image ct size: {} KB, ",
+            to_kb(projection_image_ct_size)
+        );
+
+        let mut batched_projection_image_size = 0;
+        for el in &self.batched_projection_image.data {
+            batched_projection_image_size += el.size_in_bits();
+        }
+        size += batched_projection_image_size;
+        println!(
+            "Batched projection image size: {} KB, ",
+            to_kb(batched_projection_image_size)
+        );
+
+        let mut opening_rhs_size = 0;
+        for el in &self.opening_rhs.data {
+            opening_rhs_size += el.size_in_bits();
+        }
+        size += opening_rhs_size;
+        println!("Opening RHS size: {} KB, ", to_kb(opening_rhs_size));
+
+        let next_round_size = if let Some(next_round_commitment) = &self.next_round_commitment {
+            match next_round_commitment {
+                NextRoundCommitment::Recursive(_) => {
+                    unreachable!(
+                        "Intermediate round should not have recursive commitment for next round."
+                    )
+                }
+                NextRoundCommitment::Simple(mat) => {
+                    let mut mat_size = 0;
+                    for el in &mat.data {
+                        mat_size += el.size_in_bits();
+                    }
+                    mat_size
+                }
+            }
+        } else {
+            0
+        };
+        size += next_round_size;
+        println!(
+            "Next round commitment size in intermediate round proof: {} KB, ",
+            to_kb(next_round_size)
+        );
+
+        println!(
+            "Total intermediate round proof size: {} KB \n\n\n",
+            to_kb(size)
+        );
+
+        size + if let Some(next) = &self.next {
+            match &**next {
+                RoundProof::Sumcheck(sc_next) => sc_next.size_in_bits(),
+                RoundProof::Simple(s_next) => s_next.size_in_bits(),
+                RoundProof::Intermediate(i_next) => i_next.size_in_bits(),
+            }
+        } else {
+            0
+        }
     }
 }
 

@@ -204,14 +204,15 @@ pub fn fused_incomplete_ntt_mult(
     n: usize,
     modulus: u64,
 ) {
-    let ntt = get_ntt(n, modulus);
-    fused_incomplete_ntt_mult_inner(
-        result,
-        operand1,
-        operand2,
-        ntt.shift_factors(),
-        ntt.shift_factors_f64(),
-        n,
-        modulus,
-    );
+    with_ntt(n, modulus, |ntt| {
+        fused_incomplete_ntt_mult_inner(
+            result,
+            operand1,
+            operand2,
+            ntt.shift_factors(),
+            ntt.shift_factors_f64(),
+            n,
+            modulus,
+        );
+    });
 }

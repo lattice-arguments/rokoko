@@ -1,5 +1,6 @@
 use crate::{
     common::{
+        config::NOF_BATCHES,
         decomposition::decompose,
         hash::HashWrapper,
         matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
@@ -12,12 +13,15 @@ use crate::{
             commit_basic, commit_basic_diag, recursive_commit, BasicCommitment, CommitmentWithAux,
         },
         config::{
-            paste_by_prefix, paste_recursive_commitment, Config, ConfigBase, NextRoundCommitment,
-            Projection, RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig,
-            SumcheckRoundProof,
+            paste_by_prefix, paste_recursive_commitment, Config, ConfigBase, IntermediateConfig,
+            IntermediateRoundProof, NextRoundCommitment, Projection, RoundProof, SimpleConfig,
+            SimpleRoundProof, SumcheckConfig, SumcheckRoundProof,
         },
         crs::CRS,
         fold::fold,
+        intermediate_sumchecks::{
+            context::IntermediateSumcheckContext, runner::run_intermediate_sumcheck,
+        },
         open::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
             open_at,
@@ -25,6 +29,7 @@ use crate::{
         project::{prepare_i16_witness, project},
         project_2::{batch_projection_n_times, project_coefficients},
         sumcheck::{sumcheck, SumcheckContext},
+        sumchecks::context::NextSumcheckContext,
     },
 };
 
@@ -52,6 +57,7 @@ fn config_base_from_config(config: &Config) -> &dyn ConfigBase {
     match config {
         Config::Sumcheck(sumcheck_config) => sumcheck_config,
         Config::Simple(simple_config) => simple_config,
+        Config::Intermediate(intermediate_config) => intermediate_config,
     }
 }
 
@@ -67,7 +73,7 @@ fn get_and_increment_round_id() -> usize {
 }
 
 #[allow(dead_code)]
-static DEBUG_HARDNESS_FROM_ROUND: usize = 0;
+static DEBUG_HARDNESS_FROM_ROUND: usize = 5;
 
 pub fn prover_round(
     crs: &CRS,
@@ -87,7 +93,12 @@ pub fn prover_round(
     hash_wrapper.update_with_ring_element_slice(&rc_commitment.most_inner_commitment());
 
     let t0 = std::time::Instant::now();
-    let opening = open_at(&witness, &evaluation_points_inner, &evaluation_points_outer);
+    let opening = open_at(
+        &witness,
+        &evaluation_points_inner,
+        &evaluation_points_outer,
+        false,
+    );
 
     let claims = if with_claims {
         Some(claims(&opening.rhs, evaluation_points_outer))
@@ -406,7 +417,6 @@ pub fn prover_round(
         };
 
         let recomposed_witness_bound = recommited_ell_2_norm_rest
-            // * (next_level_width as f64).sqrt() // norm conversion as we get argument about columsn separately in extraction, TODO: I think it is not necessary
             * (config
                 .witness_decomposition_base_log
                 .pow((config.witness_decomposition_chunks - 1) as u32)) as f64;
@@ -588,7 +598,15 @@ pub fn prover_round(
                                         new_evaluation_points_outer,
                                     ),
                                 ],
-                                sumcheck_context.next.as_mut().unwrap(),
+                                if let Some(boxed) = &mut sumcheck_context.next {
+                                    if let NextSumcheckContext::Simple(ref mut next_ctx) = &mut **boxed {
+                                        next_ctx
+                                    } else {
+                                        panic!("Expected NextSumcheckContext::Simple in sumcheck_context.next");
+                                    }
+                                } else {
+                                    panic!("Expected Some in sumcheck_context.next");
+                                },
                                 false,
                                 Some(hash_wrapper),
                             )
@@ -652,6 +670,66 @@ pub fn prover_round(
                         Some(NextRoundCommitment::Simple(basic_commitment)),
                     )
                 }
+                Config::Intermediate(next_intermediate_config) => {
+                    debug_assert_eq!(
+                        next_round_witness.data.len(),
+                        next_intermediate_config.witness_height
+                            * next_intermediate_config.witness_width
+                    );
+                    let basic_commitment = commit_basic(
+                        &crs,
+                        &next_round_witness,
+                        next_intermediate_config.basic_commitment_rank,
+                    );
+
+                    hash_wrapper.update_with_ring_element_slice(&basic_commitment.data);
+
+                    let sumcheck_output = sumcheck(
+                        &config,
+                        &next_round_witness.data,
+                        &projection_matrix,
+                        &fold_challenge,
+                        &rcs_projection_1
+                            .as_ref()
+                            .map(|(_, _, challenges)| challenges),
+                        &opening,
+                        sumcheck_context,
+                        &mut hash_wrapper,
+                    );
+
+                    let evaluation_points = &sumcheck_output.5;
+
+                    let (new_evaluation_points_outer, new_evaluation_points_inner) =
+                        evaluation_points
+                            .split_at(next_intermediate_config.witness_width.ilog2() as usize);
+                    (
+                        Some(RoundProof::Intermediate(prover_round_intermediate(
+                            crs,
+                            next_intermediate_config,
+                            &basic_commitment,
+                            &next_round_witness,
+                            &vec![
+                                evaluation_point_to_structured_row(new_evaluation_points_inner),
+                                evaluation_point_to_structured_row_conjugate(
+                                    new_evaluation_points_inner,
+                                ),
+                            ],
+                            &vec![
+                                evaluation_point_to_structured_row(new_evaluation_points_outer),
+                                evaluation_point_to_structured_row_conjugate(
+                                    new_evaluation_points_outer,
+                                ),
+                            ],
+                            match sumcheck_context.next.as_deref_mut() {
+                                Some(NextSumcheckContext::Intermediate(ref mut next_ctx)) => next_ctx,
+                                _ => panic!("Expected NextSumcheckContext::Intermediate in sumcheck_context.next"),
+                            },
+                            Some(hash_wrapper),
+                        ))),
+                        sumcheck_output,
+                        Some(NextRoundCommitment::Simple(basic_commitment)),
+                    )
+                }
             }
         }
     };
@@ -694,6 +772,262 @@ pub fn prover_round(
     (rp, claims)
 }
 
+pub fn prover_round_intermediate(
+    crs: &CRS,
+    config: &IntermediateConfig,
+    commitment: &BasicCommitment,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    evaluation_points_inner: &Vec<StructuredRow>,
+    evaluation_points_outer: &Vec<StructuredRow>,
+    sumcheck_context: &mut IntermediateSumcheckContext,
+    hash_wrapper: Option<HashWrapper>,
+) -> IntermediateRoundProof {
+    println!("Prover intermediate round started.");
+    let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
+    hash_wrapper.update_with_ring_element_slice(&commitment.data);
+
+    let opening = open_at(
+        &witness,
+        &evaluation_points_inner,
+        &evaluation_points_outer,
+        true,
+    );
+    println!(
+        "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
+        evaluation_points_inner.len(),
+        evaluation_points_outer.len()
+    );
+    println!(
+        "int opening height: {}, width: {}",
+        opening.rhs.height, opening.rhs.width
+    );
+
+    hash_wrapper.update_with_ring_element_slice(&opening.rhs.data);
+
+    let mut projection_matrix =
+        ProjectionMatrix::new(config.projection_ratio, config.projection_height);
+    projection_matrix.sample(&mut hash_wrapper);
+    let projection_image_ct = project_coefficients(witness, &projection_matrix);
+    hash_wrapper.update_with_ring_element_slice(&projection_image_ct.data);
+    assert_eq!(
+        config.projection_nof_batches, NOF_BATCHES,
+        "projection_nof_batches must equal NOF_BATCHES"
+    );
+    let (batched_projection_image, challenges_batching_projection_1) = batch_projection_n_times(
+        witness,
+        &projection_matrix,
+        &mut hash_wrapper,
+        config.projection_nof_batches,
+        false,
+    );
+
+    hash_wrapper.update_with_ring_element_slice(&batched_projection_image.data);
+
+    let mut folding_challenge =
+        vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
+    hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut folding_challenge);
+
+    let folded_witness = fold(&witness, &folding_challenge);
+
+    let folded_witness_decomposed = decompose(
+        &folded_witness.data,
+        config.witness_decomposition_base_log as u64,
+        config.witness_decomposition_chunks,
+    );
+
+    let base_next_round_config = config.next.as_ref().map(|c| config_base_from_config(c));
+
+    println!("Creating next round commitment.");
+
+    let next_round_config = base_next_round_config
+        .as_ref()
+        .expect("Intermediate round must have a next round config");
+    let height = next_round_config.witness_height();
+    let width = next_round_config.witness_width();
+    let used_cols = next_round_config.witness_width();
+    assert!(
+        used_cols <= width,
+        "next_round_witness used_cols ({}) exceeds width ({})",
+        used_cols,
+        width
+    );
+    assert_eq!(
+        folded_witness_decomposed.len(),
+        height * width,
+        "next_round_witness data length ({}) does not match expected {}x{} ({})",
+        folded_witness_decomposed.len(),
+        height,
+        width,
+        height * width
+    );
+    let next_round_witness = VerticallyAlignedMatrix {
+        height,
+        width,
+        used_cols,
+        data: folded_witness_decomposed,
+    };
+
+    let next_round_commitment: HorizontallyAlignedMatrix<RingElement> = commit_basic(
+        &crs,
+        &next_round_witness,
+        base_next_round_config
+            .map(|c| c.basic_commitment_rank())
+            .unwrap(),
+    );
+    hash_wrapper.update_with_ring_element_slice(&next_round_commitment.data);
+
+    println!(
+        "Next round commitment created of length {}.",
+        next_round_commitment.data.len()
+    );
+
+    let (intermediate_sumcheck_proof, evaluation_points) = run_intermediate_sumcheck(
+        config,
+        &next_round_witness.data,
+        evaluation_points_inner,
+        &challenges_batching_projection_1,
+        sumcheck_context,
+        &mut hash_wrapper,
+    );
+
+    #[cfg(feature = "debug-hardness")]
+    {
+        println!("=== Debug Hardness Check for Intermediate Round ===");
+        use crate::common::{
+            config::{DEGREE, MOD_Q},
+            estimator::{estimate_rsis_security, RSISParameters},
+            norms,
+        };
+
+        let recommited_ell_2_norm = norms::l2_norm(&next_round_witness.data);
+        let recommited_ell_inf_norm = norms::inf_norm(&next_round_witness.data);
+        println!(
+            "Next round witness norms: L_2 = {}, L_inf = {}, bit_len = {}, MOD_Q = {}",
+            recommited_ell_2_norm,
+            recommited_ell_inf_norm,
+            recommited_ell_inf_norm.ilog2(),
+            MOD_Q
+        );
+
+        let folded_witness_ell_2_norm = norms::l2_norm(&folded_witness.data);
+        let folded_witness_inf_norm = norms::inf_norm(&folded_witness.data);
+        println!(
+            "Folded witness norms: L_2 = {}, L_inf = {}, bit_len = {}, MOD_Q = {}",
+            folded_witness_ell_2_norm,
+            folded_witness_inf_norm,
+            folded_witness_inf_norm.ilog2(),
+            MOD_Q
+        );
+
+        let recomposed_witness_bound = recommited_ell_2_norm
+            * (config
+                .witness_decomposition_base_log
+                .pow((config.witness_decomposition_chunks - 1) as u32)) as f64;
+
+        println!("Folded witness norm: {}", recomposed_witness_bound);
+
+        let projection_l2_norm = norms::l2_norm_coeffs(&projection_image_ct.data);
+
+        let extracted_witness_bound = recomposed_witness_bound * DEGREE as f64 * 8.0; // factor 4 for difference in numerator and denominator in extraction and 2 for ISIS to SIS
+
+        // assert_eq(argued_witness_bound * argued_witness_bound
+
+        let argued_witness_bound = projection_l2_norm / 5.477f64; // sqrt(30) as in the paper
+
+        assert!(
+            argued_witness_bound * argued_witness_bound < (MOD_Q as f64 / 2f64),
+            "Projection-argued witness bound too large for inner-product norm extraction!"
+        );
+
+        let worse_bound = if extracted_witness_bound > argued_witness_bound {
+            println!(
+                "Using extracted witness bound {} for security estimation.",
+                extracted_witness_bound
+            );
+            extracted_witness_bound
+        } else {
+            println!(
+                "Using projection-argued witness bound {} for security estimation.",
+                argued_witness_bound
+            );
+            argued_witness_bound
+        };
+
+        let basic_commitment_security = estimate_rsis_security(&RSISParameters {
+            m: config.witness_height as u64,
+            n: config.basic_commitment_rank as u64,
+            length_bound: worse_bound.ceil() as u64,
+        });
+        println!(
+            "Basic commitment estimated security for extraction: {:?} with rank {}",
+            basic_commitment_security, config.basic_commitment_rank
+        );
+    }
+
+    let next_level_proof = match &config.next {
+        None => {
+            unreachable!("Intermediate round proof should always have a next round config, as it is not the last round.")
+        }
+        Some(next_config) => match &next_config.as_ref() {
+            Config::Sumcheck(_) => {
+                unreachable!("Next round after intermediate round should be simple or intermediate, not sumcheck.")
+            }
+            Config::Intermediate(next_intermediate_config) => {
+                let (new_evaluation_points_outer, new_evaluation_points_inner) = evaluation_points
+                    .split_at(next_intermediate_config.witness_width.ilog2() as usize);
+                let proof = prover_round_intermediate(
+                    crs,
+                    next_intermediate_config,
+                    &next_round_commitment,
+                    &next_round_witness,
+                    &vec![
+                        evaluation_point_to_structured_row(new_evaluation_points_inner),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_inner),
+                    ],
+                    &vec![
+                        evaluation_point_to_structured_row(new_evaluation_points_outer),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
+                    ],
+                    sumcheck_context.next.as_deref_mut().unwrap(),
+                    Some(hash_wrapper),
+                );
+                RoundProof::Intermediate(proof)
+            }
+            Config::Simple(next_simple_config) => {
+                let (new_evaluation_points_outer, new_evaluation_points_inner) =
+                    evaluation_points.split_at(next_simple_config.witness_width.ilog2() as usize);
+                let proof = prover_round_simple(
+                    next_simple_config,
+                    &next_round_commitment,
+                    &next_round_witness,
+                    &vec![
+                        evaluation_point_to_structured_row(new_evaluation_points_inner),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_inner),
+                    ],
+                    &vec![
+                        evaluation_point_to_structured_row(new_evaluation_points_outer),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
+                    ],
+                    Some(hash_wrapper),
+                );
+                RoundProof::Simple(proof)
+            }
+        },
+    };
+
+    IntermediateRoundProof {
+        opening_rhs: opening.rhs,
+        polys: intermediate_sumcheck_proof.polys,
+        claim_over_witness: intermediate_sumcheck_proof.claim_over_witness,
+        claim_over_witness_conjugate: intermediate_sumcheck_proof.claim_over_witness_conjugate,
+        norm_claim: intermediate_sumcheck_proof.norm_claim,
+        next_round_commitment: Some(NextRoundCommitment::Simple(next_round_commitment)),
+        projection_image_ct,
+        batched_projection_image,
+        next: Some(Box::new(next_level_proof)),
+    }
+}
+
 // this is only for the last round
 pub fn prover_round_simple(
     config: &SimpleConfig,
@@ -703,11 +1037,26 @@ pub fn prover_round_simple(
     evaluation_points_outer: &Vec<StructuredRow>,
     hash_wrapper: Option<HashWrapper>,
 ) -> SimpleRoundProof {
+    println!("Prover simple round started.");
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
 
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
 
-    let opening = open_at(&witness, &evaluation_points_inner, &evaluation_points_outer);
+    let opening = open_at(
+        &witness,
+        &evaluation_points_inner,
+        &evaluation_points_outer,
+        true,
+    );
+    println!(
+        "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
+        evaluation_points_inner.len(),
+        evaluation_points_outer.len()
+    );
+    println!(
+        "opening height: {}, width: {}",
+        opening.rhs.height, opening.rhs.width
+    );
 
     hash_wrapper.update_with_ring_element_slice(&opening.rhs.data);
 
@@ -742,6 +1091,7 @@ pub fn prover_round_simple(
 
     #[cfg(feature = "debug-hardness")]
     {
+        println!("=== Debug Hardness Check for Simple Round ===");
         use crate::common::{
             config::{DEGREE, MOD_Q},
             estimator::{estimate_rsis_security, RSISParameters},

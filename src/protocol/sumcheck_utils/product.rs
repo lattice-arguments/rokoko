@@ -162,14 +162,10 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
         &self,
         point: HypercubePoint,
     ) -> Option<&Self::Element> {
-        let lhs_const = self
-            .lhs_sumcheck
-            .get_ref()
-            .constant_univariate_polynomial_at_point_available_by_ref(point);
-        let rhs_const = self
-            .rhs_sumcheck
-            .get_ref()
-            .constant_univariate_polynomial_at_point_available_by_ref(point);
+        let lhs_ref = self.lhs_sumcheck.get_ref();
+        let lhs_const = lhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
+        let rhs_ref = self.rhs_sumcheck.get_ref();
+        let rhs_const = rhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
         match (lhs_const, rhs_const) {
             (Some(lc), Some(rc)) => {
                 // Both children return constants – compute the product and cache it.
@@ -191,8 +187,10 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
     /// vtable dispatch.
     fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
         // Case 1: both children expose raw data → batched Karatsuba inner product
-        let lhs_data = self.lhs_sumcheck.get_ref().as_data_slices();
-        let rhs_data = self.rhs_sumcheck.get_ref().as_data_slices();
+        let lhs_ref = self.lhs_sumcheck.get_ref();
+        let rhs_ref = self.rhs_sumcheck.get_ref();
+        let lhs_data = lhs_ref.as_data_slices();
+        let rhs_data = rhs_ref.as_data_slices();
 
         if let (Some((a_lo, a_hi)), Some((b_lo, b_hi))) = (lhs_data, rhs_data) {
             // Σ_p poly_a(p) * poly_b(p)  where poly_x(p) = [x_lo[p], x_hi[p]-x_lo[p]]
@@ -281,8 +279,10 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
         // Case 1b: both children expose interleaved data (LS-first layout).
         // data[2i] = val@0, data[2i+1] = val@1.
         // Karatsuba with stride-2 access.
-        let lhs_interleaved = self.lhs_sumcheck.get_ref().as_interleaved_data();
-        let rhs_interleaved = self.rhs_sumcheck.get_ref().as_interleaved_data();
+        let lhs_ref2 = self.lhs_sumcheck.get_ref();
+        let rhs_ref2 = self.rhs_sumcheck.get_ref();
+        let lhs_interleaved = lhs_ref2.as_interleaved_data();
+        let rhs_interleaved = rhs_ref2.as_interleaved_data();
 
         if let (Some(a_data), Some(b_data)) = (lhs_interleaved, rhs_interleaved) {
             polynomial.set_zero();
@@ -389,14 +389,12 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
         match (lhs_is_const, rhs_is_const) {
             (true, true) => {
                 // Both children constant at every point this round.
-                let lc = self
-                    .lhs_sumcheck
-                    .get_ref()
+                let lhs_ref = self.lhs_sumcheck.get_ref();
+                let lc = lhs_ref
                     .constant_univariate_polynomial_at_point_available_by_ref(point)
                     .unwrap();
-                let rc = self
-                    .rhs_sumcheck
-                    .get_ref()
+                let rhs_ref = self.rhs_sumcheck.get_ref();
+                let rc = rhs_ref
                     .constant_univariate_polynomial_at_point_available_by_ref(point)
                     .unwrap();
                 polynomial.coefficients[0].set_from(lc);
@@ -405,9 +403,8 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
             }
             (true, false) => {
                 // LHS constant → scale RHS polynomial
-                let lc = self
-                    .lhs_sumcheck
-                    .get_ref()
+                let lhs_ref = self.lhs_sumcheck.get_ref();
+                let lc = lhs_ref
                     .constant_univariate_polynomial_at_point_available_by_ref(point)
                     .unwrap();
                 self.rhs_sumcheck
@@ -419,9 +416,8 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
             }
             (false, true) => {
                 // RHS constant → scale LHS polynomial
-                let rc = self
-                    .rhs_sumcheck
-                    .get_ref()
+                let rhs_ref = self.rhs_sumcheck.get_ref();
+                let rc = rhs_ref
                     .constant_univariate_polynomial_at_point_available_by_ref(point)
                     .unwrap();
                 self.lhs_sumcheck
@@ -598,17 +594,19 @@ mod tests {
         );
 
         // Explicit multilinear evaluations of each folded claim for documentation.
+        // Variable binding is LS-first: r0=524 binds to the LSB of data's index,
+        // r1=1337 to the middle bit, r2=42 to the MSB.
         debug_assert_eq!(
             sumcheck_0.get_ref().final_evaluations(),
             &RingElement::constant(
                 (MOD_Q as i64
                     + (1 - 524) * (1 - 1337) * (1 - 42) * 1
-                    + (1 - 524) * (1 - 1337) * (42) * 2
+                    + (524) * (1 - 1337) * (1 - 42) * 2
                     + (1 - 524) * (1337) * (1 - 42) * 3
-                    + (1 - 524) * (1337) * (42) * 4
-                    + (524) * (1 - 1337) * (1 - 42) * 5
+                    + (524) * (1337) * (1 - 42) * 4
+                    + (1 - 524) * (1 - 1337) * (42) * 5
                     + (524) * (1 - 1337) * (42) * 6
-                    + (524) * (1337) * (1 - 42) * 7
+                    + (1 - 524) * (1337) * (42) * 7
                     + (524) * (1337) * (42) * 8) as u64,
                 Representation::IncompleteNTT,
             )
@@ -619,12 +617,12 @@ mod tests {
             &RingElement::constant(
                 (MOD_Q as i64
                     + (1 - 524) * (1 - 1337) * (1 - 42) * 9
-                    + (1 - 524) * (1 - 1337) * (42) * 10
+                    + (524) * (1 - 1337) * (1 - 42) * 10
                     + (1 - 524) * (1337) * (1 - 42) * 11
-                    + (1 - 524) * (1337) * (42) * 12
-                    + (524) * (1 - 1337) * (1 - 42) * 13
+                    + (524) * (1337) * (1 - 42) * 12
+                    + (1 - 524) * (1 - 1337) * (42) * 13
                     + (524) * (1 - 1337) * (42) * 14
-                    + (524) * (1337) * (1 - 42) * 15
+                    + (1 - 524) * (1337) * (42) * 15
                     + (524) * (1337) * (42) * 16) as u64,
                 Representation::IncompleteNTT,
             )
@@ -636,20 +634,20 @@ mod tests {
             RingElement::constant(
                 (MOD_Q as i64
                     + ((1 - 524) * (1 - 1337) * (1 - 42) * 1
-                        + (1 - 524) * (1 - 1337) * (42) * 2
+                        + (524) * (1 - 1337) * (1 - 42) * 2
                         + (1 - 524) * (1337) * (1 - 42) * 3
-                        + (1 - 524) * (1337) * (42) * 4
-                        + (524) * (1 - 1337) * (1 - 42) * 5
+                        + (524) * (1337) * (1 - 42) * 4
+                        + (1 - 524) * (1 - 1337) * (42) * 5
                         + (524) * (1 - 1337) * (42) * 6
-                        + (524) * (1337) * (1 - 42) * 7
+                        + (1 - 524) * (1337) * (42) * 7
                         + (524) * (1337) * (42) * 8)
                         * ((1 - 524) * (1 - 1337) * (1 - 42) * 9
-                            + (1 - 524) * (1 - 1337) * (42) * 10
+                            + (524) * (1 - 1337) * (1 - 42) * 10
                             + (1 - 524) * (1337) * (1 - 42) * 11
-                            + (1 - 524) * (1337) * (42) * 12
-                            + (524) * (1 - 1337) * (1 - 42) * 13
+                            + (524) * (1337) * (1 - 42) * 12
+                            + (1 - 524) * (1 - 1337) * (42) * 13
                             + (524) * (1 - 1337) * (42) * 14
-                            + (524) * (1337) * (1 - 42) * 15
+                            + (1 - 524) * (1337) * (42) * 15
                             + (524) * (1337) * (42) * 16)) as u64,
                 Representation::IncompleteNTT,
             )

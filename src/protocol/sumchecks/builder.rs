@@ -1,8 +1,9 @@
 use crate::common::arithmetic::ONE;
 use crate::common::config::DEGREE;
 use crate::protocol::config::{Projection, SumcheckConfig};
+use crate::protocol::intermediate_sumchecks::builder::init_intermediate_sumcheck;
 use crate::protocol::sumcheck_utils::sum::SumSumcheck;
-use crate::protocol::sumchecks::context::Type3_1SumcheckContextWrapper;
+use crate::protocol::sumchecks::context::{NextSumcheckContext, Type3_1SumcheckContextWrapper};
 use crate::{
     common::{config::NOF_BATCHES, ring_arithmetic::RingElement},
     protocol::{
@@ -969,10 +970,15 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         field_combiner,
         next: match &config.next {
             Some(next_config) => match next_config.as_ref() {
-                Config::Sumcheck(next_simple_config) => {
-                    Some(Box::new(init_sumcheck(crs, next_simple_config)))
-                }
+                Config::Sumcheck(next_simple_config) => Some(Box::new(
+                    NextSumcheckContext::Simple(init_sumcheck(crs, next_simple_config)),
+                )),
                 Config::Simple(_) => None,
+                Config::Intermediate(next_intermediate_config) => {
+                    Some(Box::new(NextSumcheckContext::Intermediate(
+                        init_intermediate_sumcheck(crs, next_intermediate_config),
+                    )))
+                }
             },
             None => None,
         },

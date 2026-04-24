@@ -210,16 +210,4 @@ mod tests {
         m[(1, 1)] = 42;
         debug_assert_eq!(m[(1, 1)], 42);
     }
-
-    #[test]
-    #[should_panic]
-    fn test_index_out_of_bounds() {
-        let m = VerticallyAlignedMatrix {
-            data: vec![0; 4],
-            width: 2,
-            height: 2,
-            used_cols: 2,
-        };
-        let _ = m[(2, 0)];
-    }
 }

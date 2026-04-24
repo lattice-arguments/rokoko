@@ -11,6 +11,7 @@ import math
 sys.path.insert(0, 'lattice-estimator')
 
 from estimator import *
+from sage.all import oo
 
 def estimate_sis(n, m, q, length_bound, norm):
     """

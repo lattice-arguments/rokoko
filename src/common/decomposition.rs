@@ -22,7 +22,7 @@ impl RingElement {
 // then decomposed into radix base-b digits, and each digit is shifted back by subtracting b/2.
 // This ensures each decomposed part lies in the range [-2^{base_log - 1}, 2^{base_log - 1}).
 // Since k = (b/2) * Σ b^i, the recomposition is exact: Σ d_i * b^i = (x + k) - k = x, with zero offset.
-pub fn decompose(input: &Vec<RingElement>, base_log: u64, radix: usize) -> Vec<RingElement> {
+pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<RingElement> {
     let mut decomposed = new_vec_zero_preallocated(input.len() * radix);
 
     if base_log == 1 {
@@ -43,18 +43,14 @@ pub fn decompose(input: &Vec<RingElement>, base_log: u64, radix: usize) -> Vec<R
 
     for (index, el) in input.iter().enumerate() {
         temp.set_from(el);
-        // TODO: mainly clone??
         temp.to_representation(Representation::EvenOddCoefficients);
         temp += &big_shift;
         for i in 0..radix {
-            decomposed[index * radix + i].to_representation(Representation::EvenOddCoefficients);
-            temp.bits_into(
-                &mut decomposed[index * radix + i],
-                i as u64 * base_log,
-                (i as u64 + 1) * base_log,
-            );
-            decomposed[index * radix + i] -= &small_shift;
-            decomposed[index * radix + i].to_representation(Representation::IncompleteNTT);
+            let slot = &mut decomposed[index * radix + i];
+            slot.representation = Representation::EvenOddCoefficients;
+            temp.bits_into(slot, i as u64 * base_log, (i as u64 + 1) * base_log);
+            *slot -= &small_shift;
+            slot.to_representation(Representation::IncompleteNTT);
         }
         #[cfg(feature = "debug-decomp")]
         {
@@ -81,6 +77,24 @@ pub fn decompose(input: &Vec<RingElement>, base_log: u64, radix: usize) -> Vec<R
     decomposed
 }
 
+// Like decompose, but interleaves by digit index rather than by element.
+// decompose([a, b], radix=2)        -> [a0, a1, b0, b1]
+// decompose_chunks([a, b], radix=2) -> [a0, b0, a1, b1]
+pub fn decompose_chunks_into(
+    output: &mut [RingElement],
+    input: &[RingElement],
+    base_log: u64,
+    radix: usize,
+) {
+    let mut flat = decompose(input, base_log, radix);
+    let n = input.len();
+    for index in 0..n {
+        for i in 0..radix {
+            std::mem::swap(&mut output[i * n + index], &mut flat[index * radix + i]);
+        }
+    }
+}
+
 // With the balanced decomposition using k = (b/2) * Σ b^i, the recomposition offset is zero.
 // Kept for API compatibility.
 pub fn get_composer_offset(_base_log: u64, _radix: usize) -> u64 {
@@ -94,7 +108,7 @@ pub fn get_decomposed_offset_scaled(_base_log: u64, _radix: usize) -> u64 {
 }
 
 pub fn compose_from_decomposed(
-    decomposed: &Vec<RingElement>,
+    decomposed: &[RingElement],
     base_log: u64,
     radix: usize,
 ) -> Vec<RingElement> {

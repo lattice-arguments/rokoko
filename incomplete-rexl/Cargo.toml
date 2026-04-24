@@ -5,6 +5,7 @@ edition = "2021"
 # Requires Rust nightly (uses #![feature(target_feature_inline_always)])
 description = "Pure-Rust modular arithmetic and NTT library with AVX-512 acceleration"
 readme = "README.md"
+repository = "https://github.com/lattice-arguments/rokoko"
 license = "Apache-2.0"
 keywords = ["ntt", "modular-arithmetic", "avx512", "fhe", "polynomial"]
 categories = ["cryptography", "mathematics"]

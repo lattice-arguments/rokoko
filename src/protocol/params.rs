@@ -8,7 +8,7 @@ use crate::{
         sampling::sample_random_short_vector,
     },
     protocol::{
-        config::{Config, SimpleConfig},
+        config::{Config, IntermediateConfig, SimpleConfig},
         config_generator::{AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig},
     },
 };
@@ -88,8 +88,8 @@ pub static P: LazyLock<Config> = LazyLock::new(|| {
         commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
-            rank: per_config(16, 64, 1024),
-            diag_blocks: per_config(8, 32, 512),
+            rank: per_config(32, 64, 1024),
+            diag_blocks: per_config(16, 32, 512),
             next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
         },
         opening_recursion: AuxRecursionConfig {
@@ -125,8 +125,8 @@ pub static P_1: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| {
         commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
-            rank: per_config(2, 8, 64),
-            diag_blocks: per_config(1, 4, 16),
+            rank: per_config(4, 8, 64),
+            diag_blocks: per_config(2, 4, 16),
             next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
         },
         opening_recursion: AuxRecursionConfig {
@@ -139,8 +139,8 @@ pub static P_1: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| {
         projection_recursion: AuxProjection::Type0(AuxRecursionConfig {
             decomposition_base_log: 10,
             decomposition_chunks: 2,
-            rank: per_config(4, 8, 128),
-            diag_blocks: per_config(2, 4, 32),
+            rank: per_config(8, 8, 128),
+            diag_blocks: per_config(4, 4, 32),
             next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
         }),
 
@@ -340,52 +340,11 @@ pub static P_4: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
     next: Some(Box::new(AuxConfig::Sumcheck(P_5.clone()))),
 });
 
-// pub static P_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig{
-//     witness_height: 2usize.pow(9),
-//     witness_width: 2usize.pow(3),
-//     projection_ratio: 2usize.pow(6),
-//     projection_height: 2usize.pow(8),
-//     basic_commitment_rank: 6,
-//     nof_openings: 2,
-//     commitment_recursion: AuxRecursionConfig {
-//         decomposition_base_log: 7,
-//         decomposition_chunks: 5,
-//         rank: 2, diag_blocks: 1,
-//         next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
-//     },
-//     opening_recursion: AuxRecursionConfig {
-//         decomposition_base_log: 7,
-//         decomposition_chunks: 8,
-//         rank: 2, diag_blocks: 1,
-//         next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
-//     },
-//     projection_recursion: AuxProjection::Type1 {
-//         nof_batches: 2,
-//         recursion_constant_term: AuxRecursionConfig {
-//             decomposition_base_log: 10,
-//             decomposition_chunks: 2,
-//             rank: 2, diag_blocks: 1,
-//             next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
-//         },
-//         recursion_batched_projection: AuxRecursionConfig {
-//             decomposition_base_log: 7,
-//             decomposition_chunks: 8,
-//             rank: 2, diag_blocks: 1,
-//             next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
-//         },
-//     },
-
-//     witness_decomposition_chunks: 2,
-//     witness_decomposition_base_log: 8,
-
-//     // next: Some(Box::new(AuxConfig::Simple(P_5.clone()))),
-//     next: None,
-// });
 
 pub static P_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
     witness_height: 2usize.pow(8),
     witness_width: 2usize.pow(3),
-    projection_ratio: 2usize.pow(7),
+    projection_ratio: 2usize.pow(5),
     projection_height: 2usize.pow(8),
     basic_commitment_rank: 5,
     basic_commitment_diag_blocks: 1,
@@ -425,15 +384,28 @@ pub static P_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
     witness_decomposition_chunks: 2,
     witness_decomposition_base_log: 8,
 
-    next: Some(Box::new(AuxConfig::Simple(P_LAST.clone()))),
+    next: Some(Box::new(AuxConfig::Intermediate(P_INTERMEDIATE.clone()))),
+});
+
+pub static P_INTERMEDIATE: LazyLock<IntermediateConfig> = LazyLock::new(|| IntermediateConfig {
+    witness_height: 2usize.pow(8),
+    witness_width: 2usize.pow(2),
+    projection_ratio: 2usize.pow(5),
+    projection_height: 2usize.pow(8),
+    basic_commitment_rank: 5,
+    nof_openings: 2,
+    projection_nof_batches: 2,
+    witness_decomposition_base_log: 9,
+    witness_decomposition_chunks: 2,
+    next: Some(Box::new(Config::Simple(P_LAST.clone()))),
 });
 
 pub static P_LAST: LazyLock<SimpleConfig> = LazyLock::new(|| SimpleConfig {
-    witness_height: 2usize.pow(7),
+    witness_height: 2usize.pow(6),
     witness_width: 2usize.pow(3),
-    projection_ratio: 2usize.pow(6),
+    projection_ratio: 2usize.pow(5),
     projection_height: 2usize.pow(8),
-    basic_commitment_rank: 7,
+    basic_commitment_rank: 5,
     projection_nof_batches: 2,
 });
 

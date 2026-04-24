@@ -87,14 +87,10 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SumSumcheck<E> {
         &self,
         point: HypercubePoint,
     ) -> Option<&Self::Element> {
-        let lhs_const = self
-            .lhs_sumcheck
-            .get_ref()
-            .constant_univariate_polynomial_at_point_available_by_ref(point);
-        let rhs_const = self
-            .rhs_sumcheck
-            .get_ref()
-            .constant_univariate_polynomial_at_point_available_by_ref(point);
+        let lhs_ref = self.lhs_sumcheck.get_ref();
+        let lhs_const = lhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
+        let rhs_ref = self.rhs_sumcheck.get_ref();
+        let rhs_const = rhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
 
         // Both constant and both non-zero → sum
         if let (Some(lc), Some(rc)) = (lhs_const, rhs_const) {
@@ -104,23 +100,19 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SumSumcheck<E> {
             return Some(cache);
         }
 
-        // One constant and other is zero → propagate the constant
+        // One constant and other is zero → copy into cache and return
         if let Some(lc) = lhs_const {
-            if self
-                .rhs_sumcheck
-                .get_ref()
-                .is_univariate_polynomial_zero_at_point(point)
-            {
-                return Some(lc);
+            if rhs_ref.is_univariate_polynomial_zero_at_point(point) {
+                let cache = unsafe { &mut *self.const_cache.as_ptr() };
+                cache.set_from(lc);
+                return Some(cache);
             }
         }
         if let Some(rc) = rhs_const {
-            if self
-                .lhs_sumcheck
-                .get_ref()
-                .is_univariate_polynomial_zero_at_point(point)
-            {
-                return Some(rc);
+            if lhs_ref.is_univariate_polynomial_zero_at_point(point) {
+                let cache = unsafe { &mut *self.const_cache.as_ptr() };
+                cache.set_from(rc);
+                return Some(cache);
             }
         }
         None

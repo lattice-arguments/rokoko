@@ -34,6 +34,9 @@ pub fn commit_basic_internal(
     witness: &VerticallyAlignedMatrix<RingElement>,
     rank: usize,
 ) -> BasicCommitment {
+    if rank == 0 {
+        return HorizontallyAlignedMatrix::new_zero_preallocated(0, witness.width);
+    }
     let mut commitment =
         HorizontallyAlignedMatrix::new_zero_preallocated(rank.next_power_of_two(), witness.width);
 

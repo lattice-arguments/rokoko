@@ -1,9 +1,12 @@
 use crate::{
     common::{config::NOF_BATCHES, ring_arithmetic::RingElement},
-    protocol::sumcheck_utils::{
-        combiner::Combiner, common::SumcheckBaseData, diff::DiffSumcheck,
-        elephant_cell::ElephantCell, linear::LinearSumcheck, product::ProductSumcheck,
-        ring_to_field_combiner::RingToFieldCombiner, selector_eq::SelectorEq,
+    protocol::{
+        intermediate_sumchecks::context::IntermediateSumcheckContext,
+        sumcheck_utils::{
+            combiner::Combiner, common::SumcheckBaseData, diff::DiffSumcheck,
+            elephant_cell::ElephantCell, linear::LinearSumcheck, product::ProductSumcheck,
+            ring_to_field_combiner::RingToFieldCombiner, selector_eq::SelectorEq,
+        },
     },
 };
 
@@ -30,7 +33,12 @@ pub struct SumcheckContext {
     pub type3_1_sumchecks: Option<Type3_1SumcheckContextWrapper>, // it should never go together with type3sumcheck, left as option for easier handling
     pub combiner: ElephantCell<Combiner<RingElement>>,
     pub field_combiner: ElephantCell<RingToFieldCombiner>,
-    pub next: Option<Box<SumcheckContext>>,
+    pub next: Option<Box<NextSumcheckContext>>,
+}
+
+pub enum NextSumcheckContext {
+    Simple(SumcheckContext),
+    Intermediate(IntermediateSumcheckContext),
 }
 
 impl SumcheckContext {

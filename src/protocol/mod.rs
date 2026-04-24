@@ -4,6 +4,7 @@ pub mod crs;
 pub mod config;
 pub mod config_generator;
 pub mod fold;
+pub mod intermediate_sumchecks;
 pub mod open;
 pub mod params;
 pub mod parties;

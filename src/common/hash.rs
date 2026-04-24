@@ -185,6 +185,13 @@ impl HashWrapper {
         }
     }
 
+    pub fn sample_ring_element_ntt_slots_into(&mut self, output: &mut RingElement) {
+        let mut f = QuadraticExtension::zero();
+        self.sample_field_element_into(&mut f);
+        field_to_ring_element_into(output, &f);
+        output.from_homogenized_field_extensions_to_incomplete_ntt();
+    }
+
     pub fn sample_biased_ternary_ring_element_vec_into(&mut self, output: &mut [RingElement]) {
         for element in output.iter_mut() {
             self.sample_biased_ternary_ring_element_into(element);

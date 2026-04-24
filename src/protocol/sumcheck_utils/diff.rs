@@ -83,14 +83,10 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
         &self,
         point: HypercubePoint,
     ) -> Option<&Self::Element> {
-        let lhs_const = self
-            .lhs_sumcheck
-            .get_ref()
-            .constant_univariate_polynomial_at_point_available_by_ref(point);
-        let rhs_const = self
-            .rhs_sumcheck
-            .get_ref()
-            .constant_univariate_polynomial_at_point_available_by_ref(point);
+        let lhs_ref = self.lhs_sumcheck.get_ref();
+        let lhs_const = lhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
+        let rhs_ref = self.rhs_sumcheck.get_ref();
+        let rhs_const = rhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
         match (lhs_const, rhs_const) {
             (Some(lc), Some(rc)) => {
                 let cache = unsafe { &mut *self.const_cache.as_ptr() };
@@ -101,12 +97,10 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
             // If only one side is constant and the other is zero, we can still
             // propagate constants.
             (Some(lc), None) => {
-                if self
-                    .rhs_sumcheck
-                    .get_ref()
-                    .is_univariate_polynomial_zero_at_point(point)
-                {
-                    Some(lc)
+                if rhs_ref.is_univariate_polynomial_zero_at_point(point) {
+                    let cache = unsafe { &mut *self.const_cache.as_ptr() };
+                    cache.set_from(lc);
+                    Some(cache)
                 } else {
                     None
                 }
@@ -146,6 +140,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
         point: HypercubePoint,
         polynomial: &mut Polynomial<E>,
     ) {
+        polynomial.set_zero();
         let lhs_sumcheck = &self.lhs_sumcheck;
         if !lhs_sumcheck
             .get_ref()
