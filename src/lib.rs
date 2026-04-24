@@ -1,4 +1,4 @@
-#![feature(coerce_unsized, unsize, stmt_expr_attributes)]
+#![feature(coerce_unsized, unsize)]
 #![allow(static_mut_refs)] // keep to suppress warning
 pub mod common;
 pub mod hexl;

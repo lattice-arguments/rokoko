@@ -1,4 +1,3 @@
-#![feature(target_feature_inline_always)]
 #![allow(dead_code)]
 
 use std::collections::HashMap;
