@@ -20,7 +20,8 @@ use crate::{
             ring_to_field_combiner::RingToFieldCombinerEvaluation,
         },
         sumchecks::builder_verifier::{
-            basic_evaluation_linear, load_combiner_evaluation_data, structured_row_ck_evaluation,
+            basic_evaluation_linear, load_combiner_evaluation_data,
+            pseudo_structured_row_ck_evaluation,
         },
     },
 };
@@ -46,7 +47,7 @@ pub fn init_intermediate_verifier(
 
     let commitment_key_rows_evaluation = (0..config.basic_commitment_rank)
         .map(|i| {
-            structured_row_ck_evaluation(
+            pseudo_structured_row_ck_evaluation(
                 crs,
                 total_vars,
                 config.witness_height,
@@ -151,7 +152,7 @@ pub fn init_intermediate_verifier(
     }
     all_outputs.push(type5evaluation.output.clone());
 
-    let combiner_evaluation = ElephantCell::new(CombinerEvaluation::new(all_outputs));
+    let combiner_evaluation = ElephantCell::new(CombinerEvaluation::new(all_outputs, None));
     let field_combiner_evaluation = ElephantCell::new(RingToFieldCombinerEvaluation::new(
         combiner_evaluation.clone(),
     ));

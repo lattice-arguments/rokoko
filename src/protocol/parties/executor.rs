@@ -21,7 +21,6 @@ pub fn execute() {
         Config::Sumcheck(config) => config,
         _ => panic!("Expected sumcheck config at the top level."),
     };
-    
 
     let crs = CRS::gen_crs(
         config.composed_witness_length,
