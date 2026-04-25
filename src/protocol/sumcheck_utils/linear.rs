@@ -133,6 +133,7 @@ impl<E: SumcheckElement> Index<HypercubePoint> for LinearSumcheck<E> {
 impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
     type Element = E;
 
+    #[cfg(feature = "profile-sumcheck")]
     fn gadget_kind(&self) -> super::profile::GadgetKind {
         super::profile::GadgetKind::Linear
     }

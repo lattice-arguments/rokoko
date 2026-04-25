@@ -110,6 +110,7 @@ pub fn run_intermediate_sumcheck(
         evaluation_points.push(challenge_ring);
         polys.push(poly_over_field);
     }
+    #[cfg(feature = "profile-sumcheck")]
     crate::protocol::sumcheck_utils::profile::print_and_reset("intermediate-sumcheck");
 
     let claim_over_witness = sumcheck_context

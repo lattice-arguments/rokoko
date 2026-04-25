@@ -54,6 +54,7 @@ impl<E: SumcheckElement> SumSumcheck<E> {
 impl<E: SumcheckElement> HighOrderSumcheckData for SumSumcheck<E> {
     type Element = E;
 
+    #[cfg(feature = "profile-sumcheck")]
     fn gadget_kind(&self) -> super::profile::GadgetKind {
         super::profile::GadgetKind::Sum
     }

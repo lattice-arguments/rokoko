@@ -50,6 +50,7 @@ impl<E: SumcheckElement> DiffSumcheck<E> {
 impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
     type Element = E;
 
+    #[cfg(feature = "profile-sumcheck")]
     fn gadget_kind(&self) -> super::profile::GadgetKind {
         super::profile::GadgetKind::Diff
     }
@@ -128,6 +129,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
     fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
         let lhs_ref = self.lhs_sumcheck.get_ref();
         {
+            #[cfg(feature = "profile-sumcheck")]
             let _timer = super::profile::timer(lhs_ref.gadget_kind());
             lhs_ref.univariate_polynomial_into(polynomial);
         }
@@ -136,6 +138,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
         rhs_poly.set_zero();
         let rhs_ref = self.rhs_sumcheck.get_ref();
         {
+            #[cfg(feature = "profile-sumcheck")]
             let _timer = super::profile::timer(rhs_ref.gadget_kind());
             rhs_ref.univariate_polynomial_into(&mut rhs_poly);
         }

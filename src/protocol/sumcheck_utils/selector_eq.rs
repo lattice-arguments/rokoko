@@ -61,6 +61,7 @@ impl<E: SumcheckElement> SelectorEq<E> {
 impl<E: SumcheckElement> HighOrderSumcheckData for SelectorEq<E> {
     type Element = E;
 
+    #[cfg(feature = "profile-sumcheck")]
     fn gadget_kind(&self) -> super::profile::GadgetKind {
         super::profile::GadgetKind::Selector
     }

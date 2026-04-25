@@ -200,6 +200,7 @@ pub fn sumcheck(
         time_poly,
         time_eval
     );
+    #[cfg(feature = "profile-sumcheck")]
     crate::protocol::sumcheck_utils::profile::print_and_reset("sumcheck");
 
     // final round

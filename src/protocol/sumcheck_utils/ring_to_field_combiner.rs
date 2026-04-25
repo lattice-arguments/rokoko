@@ -41,6 +41,7 @@ impl RingToFieldCombiner {
 impl HighOrderSumcheckData for RingToFieldCombiner {
     type Element = QuadraticExtension;
 
+    #[cfg(feature = "profile-sumcheck")]
     fn gadget_kind(&self) -> super::profile::GadgetKind {
         super::profile::GadgetKind::RingToField
     }

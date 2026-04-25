@@ -108,6 +108,7 @@ pub trait HighOrderSumcheckData {
     /// Identifies the concrete gadget type for the `profile-sumcheck` feature
     /// to attribute time inside `Combiner::univariate_polynomial_into`.
     /// Override with the matching [`super::profile::GadgetKind`] variant.
+    #[cfg(feature = "profile-sumcheck")]
     fn gadget_kind(&self) -> super::profile::GadgetKind {
         super::profile::GadgetKind::Unknown
     }
