@@ -6,11 +6,15 @@ pub mod hypercube_point;
 pub mod linear;
 pub mod polynomial;
 pub mod product;
-#[cfg(feature = "profile-sumcheck")]
-pub mod profile;
 pub mod ring_to_field_combiner;
 pub mod selector_eq;
 pub mod sum;
+
+// some basic instrumentation, to be deprecated on 
+// arrival of complete profiling infrastructure
+#[cfg(feature = "profile-sumcheck")]
+pub mod profile;
+
 
 #[cfg(test)]
 mod tests {
