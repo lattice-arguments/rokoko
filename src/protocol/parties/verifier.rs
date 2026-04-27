@@ -276,8 +276,9 @@ pub fn verifier_round_intermediate(
             last_col_opening_rhs[i] -= &temp;
         }
         temp.set_from(&preprocessed_row.preprocessed_row[round_proof.opening_rhs.width - 1]);
-        temp.from_incomplete_ntt_to_homogenized_field_extensions();
-        let mut inv_remaining_challenge = temp.inverse();
+        let mut remaining_challenge = temp.clone();
+        remaining_challenge.from_incomplete_ntt_to_homogenized_field_extensions();
+        let mut inv_remaining_challenge = remaining_challenge.inverse();
         inv_remaining_challenge.from_homogenized_field_extensions_to_incomplete_ntt();
         last_col_opening_rhs[i] *= &inv_remaining_challenge;
     }
@@ -568,8 +569,9 @@ pub fn verifier_round_simple(
             last_col_opening_rhs[i] -= &temp;
         }
         temp.set_from(&preprocessed_row.preprocessed_row[round_proof.opening_rhs.width - 1]);
-        temp.from_incomplete_ntt_to_homogenized_field_extensions();
-        let mut inv_remaining_challenge = temp.inverse();
+        let mut remaining_challenge = temp.clone();
+        remaining_challenge.from_incomplete_ntt_to_homogenized_field_extensions();
+        let mut inv_remaining_challenge = remaining_challenge.inverse();
         inv_remaining_challenge.from_homogenized_field_extensions_to_incomplete_ntt();
         last_col_opening_rhs[i] *= &inv_remaining_challenge;
     }
