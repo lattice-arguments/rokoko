@@ -293,7 +293,6 @@ pub fn verifier_round_intermediate(
     });
 
     let rows_per_chunk = config.projection_height / DEGREE;
-    let mut temp = RingElement::zero(Representation::IncompleteNTT);
 
     // constant term consistency
     for i in 0..NOF_BATCHES {
