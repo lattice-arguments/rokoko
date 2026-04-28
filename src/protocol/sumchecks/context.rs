@@ -66,6 +66,10 @@ impl SumcheckContext {
                 .basic_commitment_row_sumcheck
                 .borrow_mut()
                 .partial_evaluate(r);
+            type0_sc
+                .folded_witness_block_selector_sumcheck
+                .borrow_mut()
+                .partial_evaluate(r);
         }
         self.opening_combiner_sumcheck
             .borrow_mut()
@@ -186,6 +190,7 @@ impl SumcheckContext {
 ///   LHS: selector · (recomposed_folded_witness · CK_row)
 ///   RHS: commitment_selector · (recomposed_commitment · fold_challenge)
 pub struct Type0SumcheckContext {
+    pub folded_witness_block_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
     pub basic_commitment_row_sumcheck: ElephantCell<SelectorEq<RingElement>>,
     pub output: ElephantCell<DiffSumcheck<RingElement>>,
 }
@@ -249,6 +254,7 @@ pub struct Type3SumcheckContext {
 pub struct Type4LayerSumcheckContext {
     pub selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
     pub child_selector_sumcheck: Option<Vec<ElephantCell<SelectorEq<RingElement>>>>,
+    pub block_selector_sumchecks: Option<Vec<ElephantCell<SelectorEq<RingElement>>>>,
     pub combiner_sumcheck: Option<ElephantCell<LinearSumcheck<RingElement>>>,
     pub data_selected_sumcheck: ElephantCell<ProductSumcheck<RingElement>>,
     // pub rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
@@ -327,6 +333,11 @@ fn partial_evaluate_type4(ctx: &mut Type4SumcheckContext, r: &RingElement) {
         layer.selector_sumcheck.borrow_mut().partial_evaluate(r);
         if let Some(child_sel) = &layer.child_selector_sumcheck {
             for sel in child_sel.iter() {
+                sel.borrow_mut().partial_evaluate(r);
+            }
+        }
+        if let Some(block_sels) = &layer.block_selector_sumchecks {
+            for sel in block_sels.iter() {
                 sel.borrow_mut().partial_evaluate(r);
             }
         }

@@ -64,6 +64,13 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
     /// Populate the internal buffer with the provided values.
     /// Marks the whole buffer as potentially non-zero.
     pub fn load_from(&mut self, src: &[E]) {
+        assert_eq!(
+            src.len(),
+            self.data.len(),
+            "Source data length must match the sumcheck data length, expected {}, got {}",
+            self.data.len(),
+            src.len()
+        );
         self.data.clone_from_slice(src);
         self.non_zero_end = self.data.len();
     }

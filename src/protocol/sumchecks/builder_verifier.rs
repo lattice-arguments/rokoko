@@ -80,23 +80,20 @@ pub fn load_combiner_evaluation_data(
     combiner_evaluation
 }
 
-pub fn structured_row_ck_evaluation(
+pub fn pseudo_structured_row_ck_evaluation(
     crs: &CRS,
     total_vars: usize,
     wit_dim: usize,
     i: usize,
     suffix: usize,
-) -> ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>> {
+) -> ElephantCell<BasicEvaluationLinearSumcheck<RingElement>> {
     let prefix_size = total_vars - wit_dim.ilog2() as usize - suffix;
     let eval = ElephantCell::new(
-        StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
-            wit_dim,
-            prefix_size,
-            suffix,
-        ),
+        BasicEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(wit_dim, prefix_size, suffix),
     );
-    let structured_row = crs.structured_ck_for_wit_dim(wit_dim)[i].clone();
-    eval.borrow_mut().load_from(structured_row);
+    let unstructured_row = crs.ck_for_wit_dim(wit_dim)[i].clone();
+    eval.borrow_mut()
+        .load_from(&unstructured_row.preprocessed_row);
     eval
 }
 
@@ -133,8 +130,33 @@ fn build_type4_verifier_context(
         );
 
         let data_len = 1 << (total_vars - current.prefix.length);
-        let ck_evals = (0..current.rank)
-            .map(|i| structured_row_ck_evaluation(crs, total_vars, data_len, i, 0))
+
+        let blockwise_rank = current.rank / current.diag_blocks;
+        let block_data_len = data_len / current.diag_blocks;
+
+        let block_selector_evaluations = if current.diag_blocks > 1 {
+            Some(
+                (0..current.diag_blocks)
+                    .map(|b| {
+                        selector_evaluation_from_prefix(
+                            &Prefix {
+                                prefix: current.prefix.prefix
+                                    * current.diag_blocks.next_power_of_two()
+                                    + b,
+                                length: current.prefix.length
+                                    + current.diag_blocks.next_power_of_two().ilog2() as usize,
+                            },
+                            total_vars,
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        };
+
+        let ck_evals = (0..blockwise_rank)
+            .map(|i| pseudo_structured_row_ck_evaluation(crs, total_vars, block_data_len, i, 0))
             .collect::<Vec<_>>();
 
         let data_selected_eval = ElephantCell::new(ProductSumcheckEvaluation::new(
@@ -165,34 +187,36 @@ fn build_type4_verifier_context(
 
         let outputs = (0..current.rank)
             .map(|i| {
-                let ck_with_data = ElephantCell::new(ProductSumcheckEvaluation::new(
-                    ck_evals[i].clone(),
-                    data_selected_eval.clone(),
-                ));
+                let i_in_block = i % blockwise_rank;
+                let block_i = i / blockwise_rank;
+
+                let lhs = if let Some(ref block_sels) = block_selector_evaluations {
+                    let block_data_selected = ElephantCell::new(ProductSumcheckEvaluation::new(
+                        block_sels[block_i].clone(),
+                        combined_witness_eval.clone(),
+                    ));
+                    ElephantCell::new(ProductSumcheckEvaluation::new(
+                        ck_evals[i_in_block].clone(),
+                        block_data_selected,
+                    ))
+                } else {
+                    ElephantCell::new(ProductSumcheckEvaluation::new(
+                        ck_evals[i_in_block].clone(),
+                        data_selected_eval.clone(),
+                    ))
+                };
+
                 ElephantCell::new(DiffSumcheckEvaluation::new(
-                    ck_with_data,
+                    lhs,
                     recomposed_child_evals[i].clone(),
                 ))
             })
             .collect::<Vec<_>>();
 
-        // ck_evals
-        //     .iter()
-        //     .map(|ck_eval| {
-        //         let ck_with_data = ElephantCell::new(ProductSumcheckEvaluation::new(
-        //             ck_eval.clone(),
-        //             data_selected_eval.clone(),
-        //         ));
-        //         ElephantCell::new(DiffSumcheckEvaluation::new(
-        //             ck_with_data,
-        //             recomposed_child_evals[i].clone(),
-        //         ))
-        //     })
-        //     .collect::<Vec<_>>();
-
         layers.push(Type4LayerVerifierContext {
             selector_evaluation: selector_eval,
             child_selector_evaluations: child_selectors_evals,
+            block_selector_evaluations,
             combiner_evaluation: combiner_eval,
             ck_evaluations: ck_evals,
             outputs,
@@ -204,7 +228,7 @@ fn build_type4_verifier_context(
     let selector_eval = selector_evaluation_from_prefix(&current.prefix, total_vars);
     let data_len = 1 << (total_vars - current.prefix.length);
     let ck_evals = (0..current.rank)
-        .map(|i| structured_row_ck_evaluation(crs, total_vars, data_len, i, 0))
+        .map(|i| pseudo_structured_row_ck_evaluation(crs, total_vars, data_len, i, 0))
         .collect::<Vec<_>>();
 
     let outputs = ck_evals
@@ -266,12 +290,14 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
         config.commitment_recursion.decomposition_chunks.ilog2() as usize,
     );
 
-    let commitment_key_rows_evaluation = (0..config.basic_commitment_rank)
+    let blockwise_rank = config.basic_commitment_rank / config.basic_commitment_diag_blocks;
+
+    let commitment_key_rows_evaluation = (0..blockwise_rank)
         .map(|i| {
-            structured_row_ck_evaluation(
+            pseudo_structured_row_ck_evaluation(
                 crs,
                 total_vars,
-                config.witness_height,
+                config.witness_height / config.basic_commitment_diag_blocks,
                 i,
                 config.witness_decomposition_chunks.ilog2() as usize,
             )
@@ -350,12 +376,29 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                 total_vars,
             );
 
+            let i_in_block = i % blockwise_rank;
+            let block_i = i / blockwise_rank;
+
+            let folded_witness_block_selector_evaluation = selector_evaluation_from_prefix(
+                &Prefix {
+                    prefix: config.folded_witness_prefix.prefix
+                        * config.basic_commitment_diag_blocks.next_power_of_two()
+                        + block_i,
+                    length: config.folded_witness_prefix.length
+                        + config
+                            .basic_commitment_diag_blocks
+                            .next_power_of_two()
+                            .ilog2() as usize,
+                },
+                total_vars,
+            );
+
             let ck_with_folded = ElephantCell::new(ProductSumcheckEvaluation::new(
-                commitment_key_rows_evaluation[i].clone(),
+                commitment_key_rows_evaluation[i_in_block].clone(),
                 recomposed_folded_witness.clone(),
             ));
             let lhs = ElephantCell::new(ProductSumcheckEvaluation::new(
-                folded_witness_selector_evaluation.clone(),
+                folded_witness_block_selector_evaluation.clone(),
                 ck_with_folded.clone(),
             ));
 
@@ -889,39 +932,51 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
     };
 
     let mut all_outputs: Vec<ElephantCell<EvalData>> = vec![];
-    for type0 in &type0evaluations {
+    let mut all_output_names: Vec<String> = vec![];
+    for (i, type0) in type0evaluations.iter().enumerate() {
         all_outputs.push(type0.output.clone());
+        all_output_names.push(format!("Type0_{}", i));
     }
-    for type1 in &type1evaluations {
+    for (i, type1) in type1evaluations.iter().enumerate() {
         all_outputs.push(type1.output.clone());
+        all_output_names.push(format!("Type1_{}", i));
     }
-    for type2 in &type2evaluations {
+    for (i, type2) in type2evaluations.iter().enumerate() {
         all_outputs.push(type2.output.clone());
+        all_output_names.push(format!("Type2_{}", i));
     }
     if let Some(type3evaluation) = &type3evaluation {
         all_outputs.push(type3evaluation.output.clone());
+        all_output_names.push("Type3".to_string());
     }
     if let Some(type3_1_evaluations) = &type3_1_evaluations {
-        for type3_1 in &type3_1_evaluations.sumchecks {
+        for (i, type3_1) in type3_1_evaluations.sumchecks.iter().enumerate() {
             all_outputs.push(type3_1.output.clone());
+            all_output_names.push(format!("Type3_1_{}", i));
             all_outputs.push(type3_1.output_2.clone());
+            all_output_names.push(format!("Type3_1_{}_2", i));
         }
     }
 
-    for type4 in &type4evaluations {
-        for layer in &type4.layers {
-            for output in &layer.outputs {
+    for (i, type4) in type4evaluations.iter().enumerate() {
+        for (j, layer) in type4.layers.iter().enumerate() {
+            for (k, output) in layer.outputs.iter().enumerate() {
                 all_outputs.push(output.clone());
+                all_output_names.push(format!("Type4_{}_{}_{}", i, j, k));
             }
         }
-        for output in &type4.output_layer.outputs {
+        for (j, output) in type4.output_layer.outputs.iter().enumerate() {
             all_outputs.push(output.clone());
+            all_output_names.push(format!("Type4_{}_output_{}", i, j));
         }
     }
     all_outputs.push(type5evaluation.output.clone());
+    all_output_names.push("Type5".to_string());
     all_outputs.push(type5evaluation.output_2.clone());
+    all_output_names.push("Type5_output_2".to_string());
 
-    let combiner_evaluation = ElephantCell::new(CombinerEvaluation::new(all_outputs));
+    let combiner_evaluation =
+        ElephantCell::new(CombinerEvaluation::new(all_outputs, Some(all_output_names)));
     let field_combiner_evaluation = ElephantCell::new(RingToFieldCombinerEvaluation::new(
         combiner_evaluation.clone(),
     ));

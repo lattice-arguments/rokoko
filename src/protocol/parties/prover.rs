@@ -9,7 +9,9 @@ use crate::{
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
-        commitment::{commit_basic, recursive_commit, BasicCommitment, CommitmentWithAux},
+        commitment::{
+            commit_basic, commit_basic_diag, recursive_commit, BasicCommitment, CommitmentWithAux,
+        },
         config::{
             paste_by_prefix, paste_recursive_commitment, Config, ConfigBase, IntermediateConfig,
             IntermediateRoundProof, NextRoundCommitment, Projection, RoundProof, SimpleConfig,
@@ -322,8 +324,8 @@ pub fn prover_round(
             };
 
             let hardness = estimate_rsis_security(&RSISParameters {
-                m: rc.committed_data.len() as u64,
-                n: config.rank as u64,
+                m: (rc.committed_data.len() / config.diag_blocks) as u64,
+                n: (config.rank / config.diag_blocks) as u64,
                 length_bound: current_extracted_norm.ceil() as u64,
             });
             let indent = "  ".repeat(depth);
@@ -470,8 +472,8 @@ pub fn prover_round(
         }
 
         let basic_commitment_security = estimate_rsis_security(&RSISParameters {
-            m: config.witness_height as u64,
-            n: config.basic_commitment_rank as u64,
+            m: (config.witness_height / config.basic_commitment_diag_blocks) as u64,
+            n: (config.basic_commitment_rank / config.basic_commitment_diag_blocks) as u64,
             length_bound: worse_bound.ceil() as u64,
         });
         println!(
@@ -528,10 +530,11 @@ pub fn prover_round(
                         next_round_witness.data.len(),
                         next_sumcheck_config.witness_height * next_sumcheck_config.witness_width
                     );
-                    let basic_commitment = commit_basic(
+                    let basic_commitment = commit_basic_diag(
                         &crs,
                         &next_round_witness,
                         next_sumcheck_config.basic_commitment_rank,
+                        next_sumcheck_config.basic_commitment_diag_blocks,
                     );
 
                     let next_round_rc_commitment_with_aux = recursive_commit(

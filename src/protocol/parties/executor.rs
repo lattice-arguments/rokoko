@@ -24,7 +24,7 @@ pub fn execute() {
 
     let crs = CRS::gen_crs(
         config.composed_witness_length,
-        config.basic_commitment_rank + 2,
+        config.basic_commitment_rank / config.basic_commitment_diag_blocks + 2,
     );
 
     let mut sumcheck_context = init_sumcheck(&crs, &config);

@@ -1,7 +1,7 @@
 use crate::{
     common::{matrix::VerticallyAlignedMatrix, ring_arithmetic::RingElement},
     protocol::{
-        commitment::{commit_basic, recursive_commit, CommitmentWithAux},
+        commitment::{commit_basic_diag, recursive_commit, CommitmentWithAux},
         config::SumcheckConfig,
         crs::CRS,
     },
@@ -12,7 +12,12 @@ pub fn commit(
     config: &SumcheckConfig,
     witness: &VerticallyAlignedMatrix<RingElement>,
 ) -> (CommitmentWithAux, Vec<RingElement>) {
-    let basic_commitment = commit_basic(&crs, &witness, config.basic_commitment_rank);
+    let basic_commitment = commit_basic_diag(
+        &crs,
+        &witness,
+        config.basic_commitment_rank,
+        config.basic_commitment_diag_blocks,
+    );
 
     let rc_commitment_with_aux =
         recursive_commit(&crs, &config.commitment_recursion, &basic_commitment.data);

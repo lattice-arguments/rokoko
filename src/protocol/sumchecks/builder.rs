@@ -99,17 +99,55 @@ fn build_type4_sumcheck_context(
             })
             .collect::<Vec<_>>();
 
-        let mut ck_sumchecks = Vec::with_capacity(current.rank);
-        for i in 0..current.rank {
-            ck_sumchecks.push(ck_sumcheck(crs, total_vars, data_len, i, 0));
+        let blockwise_rank = current.rank / current.diag_blocks;
+        let block_data_len = data_len / current.diag_blocks;
+
+        let block_selector_sumchecks = if current.diag_blocks > 1 {
+            Some(
+                (0..current.diag_blocks)
+                    .map(|b| {
+                        sumcheck_from_prefix(
+                            &Prefix {
+                                prefix: current.prefix.prefix
+                                    * current.diag_blocks.next_power_of_two()
+                                    + b,
+                                length: current.prefix.length
+                                    + current.diag_blocks.next_power_of_two().ilog2() as usize,
+                            },
+                            total_vars,
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            None
+        };
+
+        let mut ck_sumchecks = Vec::with_capacity(blockwise_rank);
+        for i in 0..blockwise_rank {
+            ck_sumchecks.push(ck_sumcheck(crs, total_vars, block_data_len, i, 0));
         }
 
         let outputs = (0..current.rank)
             .map(|i| {
-                let lhs = ElephantCell::new(ProductSumcheck::new(
-                    ck_sumchecks[i].clone(),
-                    data_selected_sumcheck.clone(),
-                ));
+                let i_in_block = i % blockwise_rank;
+                let block_i = i / blockwise_rank;
+
+                let lhs = if let Some(ref block_sels) = block_selector_sumchecks {
+                    let block_data_selected = ElephantCell::new(ProductSumcheck::new(
+                        block_sels[block_i].clone(),
+                        combined_witness_sumcheck.clone(),
+                    ));
+                    ElephantCell::new(ProductSumcheck::new(
+                        ck_sumchecks[i_in_block].clone(),
+                        block_data_selected,
+                    ))
+                } else {
+                    ElephantCell::new(ProductSumcheck::new(
+                        ck_sumchecks[i_in_block].clone(),
+                        data_selected_sumcheck.clone(),
+                    ))
+                };
 
                 let rhs = recomposed_child_sumchecks[i].clone();
                 ElephantCell::new(DiffSumcheck::new(lhs, rhs))
@@ -119,6 +157,7 @@ fn build_type4_sumcheck_context(
         layers.push(Type4LayerSumcheckContext {
             selector_sumcheck,
             child_selector_sumcheck: Some(child_selector_sumchecks),
+            block_selector_sumchecks,
             combiner_sumcheck: Some(combiner_sumcheck),
             data_selected_sumcheck,
             // rhs_sumcheck: recomposed_child_sumcheck,
@@ -129,7 +168,10 @@ fn build_type4_sumcheck_context(
 
         current = next;
     }
-
+    assert_eq!(
+        current.diag_blocks, 1,
+        "Type4 Sumcheck: Your type0 recursion configuration is invalid. diag_blocks > 1 is currently not supported for type4 sumcheck output layers. Please set diag_blocks to 1 in your configuration."
+    );
     // Build the output (leaf) layer
     // This is the base case that checks against the public commitment value
     let selector_sumcheck = sumcheck_from_prefix(&current.prefix, total_vars);
@@ -191,12 +233,13 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     let folded_witness_selector_sumcheck =
         sumcheck_from_prefix(&config.folded_witness_prefix, total_vars);
 
-    let commitment_key_rows_sumcheck = (0..config.basic_commitment_rank)
+    let blockwise_rank = config.basic_commitment_rank / config.basic_commitment_diag_blocks;
+    let commitment_key_rows_sumcheck = (0..blockwise_rank)
         .map(|i| {
             ck_sumcheck(
                 crs,
                 total_vars,
-                config.witness_height,
+                config.witness_height / config.basic_commitment_diag_blocks,
                 i,
                 config.witness_decomposition_chunks.ilog2() as usize,
             )
@@ -233,6 +276,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
 
     // Type0 sumchecks
     // CK \cdot folded_witness - commitment \cdot fold_challenge = 0
+    // We have CK = I_b \otimes CK_i, folded_witness - commitment \cdot fold_challenge = 0
     let type0sumchecks = (0..config.basic_commitment_rank)
         .map(|i| {
             let basic_commitment_row_sumcheck = sumcheck_from_prefix(
@@ -246,17 +290,37 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                 total_vars,
             );
 
+            let i_in_block = i % blockwise_rank; // e.g. for rank 8 with 2 diag blocks, the pattern of i_in_block is [0,1, 0,1, 0,1, 0,1]
+            let block_i = i / blockwise_rank; // e.g. for rank 8 with 2 diag blocks, the pattern of block_i is [0,0, 1,1, 2,2, 3,3]
+
+            // TODO: maybe better to split into two selectors, one to be reused across blocks?
+            let folded_witness_block_selector_sumcheck = sumcheck_from_prefix(
+                &Prefix {
+                    prefix: config.folded_witness_prefix.prefix
+                        * config.basic_commitment_diag_blocks.next_power_of_two()
+                        + block_i,
+                    length: config.folded_witness_prefix.length
+                        + config
+                            .basic_commitment_diag_blocks
+                            .next_power_of_two()
+                            .ilog2() as usize,
+                },
+                total_vars,
+            );
+
             let ctxt = Type0SumcheckContext {
+                folded_witness_block_selector_sumcheck: folded_witness_block_selector_sumcheck
+                    .clone(),
                 basic_commitment_row_sumcheck: basic_commitment_row_sumcheck.clone(),
                 output: ElephantCell::new(DiffSumcheck::new(
                     ElephantCell::new(ProductSumcheck::new(
-                        folded_witness_selector_sumcheck.clone(),
+                        folded_witness_block_selector_sumcheck.clone(),
                         ElephantCell::new(ProductSumcheck::new(
                             ElephantCell::new(ProductSumcheck::new(
                                 combined_witness_sumcheck.clone(),
                                 folded_witness_combiner_sumcheck.clone(),
                             )),
-                            commitment_key_rows_sumcheck[i].clone(),
+                            commitment_key_rows_sumcheck[i_in_block].clone(),
                         )),
                     )),
                     ElephantCell::new(ProductSumcheck::new(

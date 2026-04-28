@@ -180,16 +180,21 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
 /// Evaluation-only version of Combiner that evaluates a linear combination of sumchecks at a point.
 pub struct CombinerEvaluation<E: SumcheckElement = RingElement> {
     evaluations: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = E>>>,
+    names: Option<Vec<String>>,
     challenges: Vec<E>,
     result: E,
     scratch: E,
 }
 
 impl<E: SumcheckElement> CombinerEvaluation<E> {
-    pub fn new(evaluations: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = E>>>) -> Self {
+    pub fn new(
+        evaluations: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = E>>>,
+        names: Option<Vec<String>>,
+    ) -> Self {
         let evaluations_len = evaluations.len();
         CombinerEvaluation {
             evaluations,
+            names,
             challenges: E::allocate_zero_vec(evaluations_len),
             result: E::zero(),
             scratch: E::zero(),
@@ -218,11 +223,26 @@ impl<E: SumcheckElement> EvaluationSumcheckData for CombinerEvaluation<E> {
         self.result.set_zero();
 
         for i in 0..self.evaluations.len() {
+            let start = std::time::Instant::now();
             self.scratch *= (
                 self.evaluations[i].borrow_mut().evaluate(&point),
                 &self.challenges[i],
             );
             self.result += &self.scratch;
+            let elapsed = start.elapsed();
+            if elapsed.as_micros() > 400 {
+                if let Some(names) = &self.names {
+                    println!(
+                        "CombinerEvaluation: Evaluated {} in {:?}",
+                        names[i], elapsed
+                    );
+                } else {
+                    println!(
+                        "CombinerEvaluation: Evaluated sumcheck {} in {:?}",
+                        i, elapsed
+                    );
+                }
+            }
         }
 
         &self.result
@@ -391,7 +411,7 @@ mod tests {
             RingElement::constant(5, Representation::IncompleteNTT),
         ];
 
-        let mut combiner_eval = CombinerEvaluation::new(vec![eval0, eval1]);
+        let mut combiner_eval = CombinerEvaluation::new(vec![eval0, eval1], None);
         combiner_eval.load_challenges_from(&challenges);
 
         let point = vec![

@@ -40,7 +40,7 @@ pub struct IntermediateVerifierSumcheckContext {
     pub conjugated_witness_evaluation: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
     pub witness_combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub commitment_key_rows_evaluation:
-        Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
+        Vec<ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>>,
     pub type0evaluations: Vec<Type0IntermediateVerifierContext>,
     pub type1evaluations: Vec<Type1IntermediateVerifierContext>,
     pub type3_1evaluations: [Type3_1IntermediateVerifierContext; NOF_BATCHES],

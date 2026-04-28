@@ -32,7 +32,7 @@ pub struct VerifierSumcheckContext {
     pub basic_commitment_combiner_evaluation:
         ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub commitment_key_rows_evaluation:
-        Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
+        Vec<ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>>,
     pub opening_combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
 
     // Type-specific contexts
@@ -132,14 +132,15 @@ pub struct Type4VerifierContext {
 pub struct Type4LayerVerifierContext {
     pub selector_evaluation: ElephantCell<SelectorEqEvaluation>,
     pub child_selector_evaluations: Vec<ElephantCell<SelectorEqEvaluation>>,
+    pub block_selector_evaluations: Option<Vec<ElephantCell<SelectorEqEvaluation>>>,
     pub combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-    pub ck_evaluations: Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
+    pub ck_evaluations: Vec<ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>>,
     pub outputs: Vec<ElephantCell<DiffSumcheckEvaluation>>,
 }
 
 pub struct Type4OutputLayerVerifierContext {
     pub selector_evaluation: ElephantCell<SelectorEqEvaluation>,
-    pub ck_evaluations: Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
+    pub ck_evaluations: Vec<ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>>,
     pub outputs: Vec<ElephantCell<ProductSumcheckEvaluation>>,
 }
 
