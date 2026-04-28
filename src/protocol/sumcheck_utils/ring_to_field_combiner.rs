@@ -41,6 +41,11 @@ impl RingToFieldCombiner {
 impl HighOrderSumcheckData for RingToFieldCombiner {
     type Element = QuadraticExtension;
 
+    #[cfg(feature = "profile-sumcheck")]
+    fn gadget_kind(&self) -> super::profile::GadgetKind {
+        super::profile::GadgetKind::RingToField
+    }
+
     fn max_num_polynomial_coefficients(&self) -> usize {
         self.sumcheck.get_ref().max_num_polynomial_coefficients()
     }
