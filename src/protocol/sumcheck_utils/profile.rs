@@ -5,22 +5,15 @@
 //! each child call in a [`Guard`] that records its elapsed time on drop; the
 //! sumcheck runner calls [`print_and_reset`] at the end of a round to emit the
 //! breakdown and clear the accumulator.
-//!
-//! # Container vs. leaf
-//!
 //! Some gadgets (`Combiner`, `RingToFieldCombiner`) are themselves containers
-//! that delegate to children; their recorded time overlaps their children's.
-//! The printout separates containers from leaves so the overlap is visible
+//! that delegate to children; their recorded time overlaps with their children's.
+//! The printout separates containers from leaves, so the overlap is visible
 //! rather than double-counted in the leaf total.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-/// Identifies the concrete gadget type that implements
-/// [`super::common::HighOrderSumcheckData`]. Used as a hash key in the profile
-/// accumulator — strongly-typed so adding a new gadget requires an explicit
-/// variant rather than an ad-hoc string.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum GadgetKind {
     Linear,
