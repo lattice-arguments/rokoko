@@ -280,6 +280,7 @@ pub fn verifier_round_intermediate(
         let mut inv_remaining_challenge = temp.inverse();
         inv_remaining_challenge.from_homogenized_field_extensions_to_incomplete_ntt();
         last_col_opening_rhs[i] *= &inv_remaining_challenge;
+        temp.representation = Representation::IncompleteNTT;
     }
 
     let mut projection_matrix =
@@ -572,6 +573,7 @@ pub fn verifier_round_simple(
         let mut inv_remaining_challenge = temp.inverse();
         inv_remaining_challenge.from_homogenized_field_extensions_to_incomplete_ntt();
         last_col_opening_rhs[i] *= &inv_remaining_challenge;
+        temp.representation = Representation::IncompleteNTT;
     }
 
     for i in 0..round_proof.opening_rhs.height {
