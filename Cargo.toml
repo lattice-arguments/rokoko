@@ -24,6 +24,7 @@ criterion = "0.7.0"
 num = "0.4.3"
 rand = "0.9.2"
 blake3 = "1.5.1"
+sha3 = "0.10"
 incomplete-rexl = { path = "incomplete-rexl", optional = true }
 libloading = "0.8.6"
 libm = "0.2"

@@ -1,7 +1,7 @@
 use crate::common::{
     matrix::HorizontallyAlignedMatrix,
     ring_arithmetic::{Representation, RingElement},
-    sampling::sample_random_vector,
+    sampling::{sample_public_vector_from_seed, PUBLIC_CRS_SEED},
     structured_row::{PreprocessedRow, StructuredRow},
 };
 pub type CK = Vec<PreprocessedRow>;
@@ -32,8 +32,13 @@ impl CRS {
     pub fn gen_crs(max_wit_dim: usize, max_module_size: usize) -> CRS {
         debug_assert!(max_wit_dim.is_power_of_two());
 
+        // CRS public-key entries are derived deterministically from a public
+        // SHAKE128 seed rather than from the global RNG. This makes CRS
+        // generation reproducible from `PUBLIC_CRS_SEED` alone and removes
+        // any dependency on private randomness.
         let shared_v_module = HorizontallyAlignedMatrix::<RingElement> {
-            data: sample_random_vector(
+            data: sample_public_vector_from_seed(
+                PUBLIC_CRS_SEED,
                 max_wit_dim.ilog2() as usize * max_module_size,
                 Representation::IncompleteNTT,
             ),
