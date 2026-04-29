@@ -40,9 +40,6 @@ pub fn init_common() {
     LazyLock::force(&HALF_WAY_MOD_Q_RING_CF);
     LazyLock::force(&CONSTANT_TERM_FACTORS);
 
-    unsafe { LazyLock::force_mut(&mut TEMP_BUFFER) };
-    unsafe { LazyLock::force_mut(&mut AUX) };
-
     // init some caches of HEXL
     let mut a = RingElement::new(Representation::EvenOddCoefficients);
     let mut b = RingElement::new(Representation::IncompleteNTT);
