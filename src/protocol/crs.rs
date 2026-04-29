@@ -32,10 +32,6 @@ impl CRS {
     pub fn gen_crs(max_wit_dim: usize, max_module_size: usize) -> CRS {
         debug_assert!(max_wit_dim.is_power_of_two());
 
-        // CRS public-key entries are derived deterministically from a public
-        // SHAKE128 seed rather than from the global RNG. This makes CRS
-        // generation reproducible from `PUBLIC_CRS_SEED` alone and removes
-        // any dependency on private randomness.
         let shared_v_module = HorizontallyAlignedMatrix::<RingElement> {
             data: sample_public_vector_from_seed(
                 PUBLIC_CRS_SEED,
