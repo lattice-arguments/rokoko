@@ -1,7 +1,4 @@
-use sha3::{
-    digest::{ExtendableOutput, Update, XofReader},
-    Shake128,
-};
+use aes::cipher::{KeyIvInit, StreamCipher};
 
 use super::ring_arithmetic::Representation;
 use crate::common::config::{DEGREE, MOD_Q};
@@ -28,30 +25,56 @@ pub fn sample_random_short_vector(
     vec
 }
 
-pub const PUBLIC_CRS_SEED: &[u8] = b"rokoko-CRS-v1/SHAKE128 public seed";
+pub const PUBLIC_CRS_SEED: &[u8] = b"rokoko-CRS-v1/AES-256-CTR public seed";
 
-pub struct ShakePublicSampler {
-    reader: sha3::Shake128Reader,
+type Aes256Ctr = ctr::Ctr64BE<aes::Aes256>;
+
+const AES_BUF_U64: usize = 1024;
+
+pub struct AesCtrPublicSampler {
+    cipher: Aes256Ctr,
+    buf: Box<[u64; AES_BUF_U64]>,
+    pos: usize,
     threshold: u64,
 }
 
-impl ShakePublicSampler {
+impl AesCtrPublicSampler {
     pub fn from_seed(seed: &[u8]) -> Self {
-        let mut hasher = Shake128::default();
-        hasher.update(seed);
-        let threshold = u64::MAX - (u64::MAX % MOD_Q);
-        Self {
-            reader: hasher.finalize_xof(),
-            threshold,
-        }
+        let key: [u8; 32] = *blake3::hash(seed).as_bytes();
+        let iv = [0u8; 16];
+        let cipher = Aes256Ctr::new(&key.into(), &iv.into());
+        let mut s = Self {
+            cipher,
+            buf: Box::new([0u64; AES_BUF_U64]),
+            pos: AES_BUF_U64,
+            threshold: u64::MAX - (u64::MAX % MOD_Q),
+        };
+        s.refill();
+        s
     }
 
-    #[inline]
+    fn refill(&mut self) {
+        for w in self.buf.iter_mut() {
+            *w = 0;
+        }
+        let bytes = unsafe {
+            std::slice::from_raw_parts_mut(
+                self.buf.as_mut_ptr() as *mut u8,
+                AES_BUF_U64 * 8,
+            )
+        };
+        self.cipher.apply_keystream(bytes);
+        self.pos = 0;
+    }
+
+    #[inline(always)]
     fn next_u64_mod_q(&mut self) -> u64 {
-        let mut buf = [0u8; 8];
         loop {
-            self.reader.read(&mut buf);
-            let x = u64::from_le_bytes(buf);
+            if self.pos >= AES_BUF_U64 {
+                self.refill();
+            }
+            let x = unsafe { *self.buf.get_unchecked(self.pos) };
+            self.pos += 1;
             if x < self.threshold {
                 return x % MOD_Q;
             }
@@ -72,7 +95,7 @@ pub fn sample_public_vector_from_seed(
     size: usize,
     representation: Representation,
 ) -> Vec<RingElement> {
-    let mut sampler = ShakePublicSampler::from_seed(seed);
+    let mut sampler = AesCtrPublicSampler::from_seed(seed);
     let mut vec = Vec::with_capacity(size);
     for _ in 0..size {
         let mut element = RingElement::new(representation);
@@ -87,21 +110,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shake_sampler_is_deterministic() {
+    fn sampler_is_deterministic() {
         let v1 = sample_public_vector_from_seed(b"seed", 3, Representation::IncompleteNTT);
         let v2 = sample_public_vector_from_seed(b"seed", 3, Representation::IncompleteNTT);
         assert_eq!(v1, v2);
     }
 
     #[test]
-    fn shake_sampler_changes_with_seed() {
+    fn sampler_changes_with_seed() {
         let v1 = sample_public_vector_from_seed(b"seed-a", 3, Representation::IncompleteNTT);
         let v2 = sample_public_vector_from_seed(b"seed-b", 3, Representation::IncompleteNTT);
         assert_ne!(v1, v2);
     }
 
     #[test]
-    fn shake_sampler_outputs_in_range() {
+    fn sampler_outputs_in_range() {
         let v =
             sample_public_vector_from_seed(PUBLIC_CRS_SEED, 4, Representation::IncompleteNTT);
         for el in &v {

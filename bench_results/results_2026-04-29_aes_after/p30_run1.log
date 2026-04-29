@@ -1,0 +1,384 @@
+   Compiling rokoko v0.1.0 (/home/standalone-osadnik/projects/cowboys-and-aliens)
+    Finished `release` profile [optimized] target(s) in 7.61s
+     Running `target/release/rokoko`
+Using p30...
+Sumcheck unsafe...
+✓ AVX-512F is enabled in runtime detection and available on this CPU
+✓✓ AVX-512F is enabled at compile time
+✓ AVX-512DQ is enabled in runtime detection and available on this CPU
+✓✓ AVX-512DQ is enabled at compile time
+✓ AVX-512VBMI2 is enabled in runtime detection and available on this CPU
+✓✓ AVX-512VBMI2 is enabled at compile time
+CPU features for incomplete-rexl:
+  AVX-512DQ: ✓
+  AVX-512IFMA: ✓
+  AVX-512VBMI2: ✓
+Running executor...
+Generating CRS...
+
+=== Prefix Assignment level 0 ===
+Total size needed: 167968 -> Composed witness length: 262144 (compresion ratio 1.56%)
+
+Components sorted by size:
+  folded_witness (size=131072): prefix=0b0 (len=1) -> indices [0, 131071]
+  commitment (size=32768): prefix=0b100 (len=3) -> indices [131072, 163839]
+  opening (size=4096): prefix=0b101000 (len=6) -> indices [163840, 167935]
+    commitment_level_1 (size=16): prefix=0b10100100000000 (len=14) -> indices [167936, 167951]
+    opening_level_1 (size=16): prefix=0b10100100000001 (len=14) -> indices [167952, 167967]
+
+=== Memory Usage level 0 ===
+Used: 167968 / 262144
+Usage ratio: 64.07%
+
+
+=== Prefix Assignment level 1 ===
+Total size needed: 50528 -> Composed witness length: 65536 (compresion ratio 25.00%)
+
+Components sorted by size:
+  folded_witness (size=32768): prefix=0b0 (len=1) -> indices [0, 32767]
+  projection (size=16384): prefix=0b10 (len=2) -> indices [32768, 49151]
+  commitment (size=1024): prefix=0b110000 (len=6) -> indices [49152, 50175]
+  opening (size=256): prefix=0b11000100 (len=8) -> indices [50176, 50431]
+    commitment_level_1 (size=32): prefix=0b11000101000 (len=11) -> indices [50432, 50463]
+    opening_level_1 (size=32): prefix=0b11000101001 (len=11) -> indices [50464, 50495]
+    projection_level_1 (size=32): prefix=0b11000101010 (len=11) -> indices [50496, 50527]
+
+=== Memory Usage level 1 ===
+Used: 50528 / 65536
+Usage ratio: 77.10%
+
+
+=== Prefix Assignment level 2 ===
+Total size needed: 7744 -> Composed witness length: 8192 (compresion ratio 12.50%)
+
+Components sorted by size:
+  folded_witness (size=4096): prefix=0b0 (len=1) -> indices [0, 4095]
+  commitment (size=2048): prefix=0b10 (len=2) -> indices [4096, 6143]
+  opening (size=512): prefix=0b1100 (len=4) -> indices [6144, 6655]
+  projection_constant_term (size=512): prefix=0b1101 (len=4) -> indices [6656, 7167]
+  projection_batched (size=512): prefix=0b1110 (len=4) -> indices [7168, 7679]
+    commitment_level_1 (size=16): prefix=0b111100000 (len=9) -> indices [7680, 7695]
+    opening_level_1 (size=16): prefix=0b111100001 (len=9) -> indices [7696, 7711]
+    projection_constant_term_level_1 (size=16): prefix=0b111100010 (len=9) -> indices [7712, 7727]
+    projection_batched_level_1 (size=16): prefix=0b111100011 (len=9) -> indices [7728, 7743]
+
+=== Memory Usage level 2 ===
+Used: 7744 / 8192
+Usage ratio: 94.53%
+
+
+=== Prefix Assignment level 3 ===
+Total size needed: 3904 -> Composed witness length: 4096 (compresion ratio 50.00%)
+
+Components sorted by size:
+  commitment (size=2048): prefix=0b0 (len=1) -> indices [0, 2047]
+  folded_witness (size=512): prefix=0b100 (len=3) -> indices [2048, 2559]
+  opening (size=512): prefix=0b101 (len=3) -> indices [2560, 3071]
+  projection_batched (size=512): prefix=0b110 (len=3) -> indices [3072, 3583]
+  projection_constant_term (size=256): prefix=0b1110 (len=4) -> indices [3584, 3839]
+    commitment_level_1 (size=16): prefix=0b11110000 (len=8) -> indices [3840, 3855]
+    opening_level_1 (size=16): prefix=0b11110001 (len=8) -> indices [3856, 3871]
+    projection_constant_term_level_1 (size=16): prefix=0b11110010 (len=8) -> indices [3872, 3887]
+    projection_batched_level_1 (size=16): prefix=0b11110011 (len=8) -> indices [3888, 3903]
+
+=== Memory Usage level 3 ===
+Used: 3904 / 4096
+Usage ratio: 95.31%
+
+
+=== Prefix Assignment level 4 ===
+Total size needed: 1984 -> Composed witness length: 2048 (compresion ratio 50.00%)
+
+Components sorted by size:
+  folded_witness (size=1024): prefix=0b0 (len=1) -> indices [0, 1023]
+  commitment (size=512): prefix=0b10 (len=2) -> indices [1024, 1535]
+  opening (size=128): prefix=0b1100 (len=4) -> indices [1536, 1663]
+  projection_constant_term (size=128): prefix=0b1101 (len=4) -> indices [1664, 1791]
+  projection_batched (size=128): prefix=0b1110 (len=4) -> indices [1792, 1919]
+    commitment_level_1 (size=16): prefix=0b1111000 (len=7) -> indices [1920, 1935]
+    opening_level_1 (size=16): prefix=0b1111001 (len=7) -> indices [1936, 1951]
+    projection_constant_term_level_1 (size=16): prefix=0b1111010 (len=7) -> indices [1952, 1967]
+    projection_batched_level_1 (size=16): prefix=0b1111011 (len=7) -> indices [1968, 1983]
+
+=== Memory Usage level 4 ===
+Used: 1984 / 2048
+Usage ratio: 96.88%
+
+
+=== Prefix Assignment level 5 ===
+Total size needed: 1024 -> Composed witness length: 1024 (compresion ratio 50.00%)
+
+Components sorted by size:
+  folded_witness (size=512): prefix=0b0 (len=1) -> indices [0, 511]
+  commitment (size=256): prefix=0b10 (len=2) -> indices [512, 767]
+  projection_constant_term (size=128): prefix=0b110 (len=3) -> indices [768, 895]
+  opening (size=64): prefix=0b1110 (len=4) -> indices [896, 959]
+  projection_batched (size=64): prefix=0b1111 (len=4) -> indices [960, 1023]
+
+=== Memory Usage level 5 ===
+Used: 1024 / 1024
+Usage ratio: 100.00%
+
+TOTAL CRS gen time: 3715721086 ns
+Preallocated RingElement pool miss for size 262144, allocating new
+Preallocated RingElement pool miss for size 32768, allocating new
+Preallocated RingElement pool miss for size 32768, allocating new
+Preallocated RingElement pool miss for size 32768, allocating new
+Preallocated RingElement pool miss for size 32768, allocating new
+Preallocated RingElement pool miss for size 262144, allocating new
+Preallocated RingElement pool miss for size 32768, allocating new
+Preallocated RingElement pool miss for size 32768, allocating new
+Preallocated RingElement pool miss for size 65536, allocating new
+Preallocated RingElement pool miss for size 29, allocating new
+Preallocated RingElement pool miss for size 29, allocating new
+Preallocated RingElement pool miss for size 4, allocating new
+Preallocated RingElement pool miss for size 4, allocating new
+Sumcheck contexts initialized.
+===== COMMITTING WITNESS =====
+Preallocated RingElement pool miss for size 16777216, allocating new
+Witness decomposed. Preallocated RingElement pool miss for size 32768, allocating new
+TOTAL Commit time: 26411888036 ns
+===== COMMITTING WITNESS DONE =====
+==== PROVER STARTING ===
+  open_at: 2295 ms
+  rc_opening: 1 ms
+  Skipping projection recursion as per configuration. Likely the first round
+
+Preallocated RingElement pool miss for size 32768, allocating new
+  fold: 2460 ms
+Preallocated RingElement pool miss for size 262144, allocating new
+  decompose: 25 ms
+Preallocated RingElement pool miss for size 4, allocating new
+Preallocated RingElement pool miss for size 32, allocating new
+Next round commitment created of length 1024.
+Preallocated RingElement pool miss for size 262144, allocating new
+    load_sumcheck_data: 33 ms
+    sumcheck num_vars: 18, hypercube_size: 131072
+    sumcheck loop: 1652 ms (poly: 1478 ms, eval: 165 ms)
+Next round prover done.
+Preallocated RingElement pool miss for size 32, allocating new
+  open_at: 69 ms
+Preallocated RingElement pool miss for size 4, allocating new
+Preallocated RingElement pool miss for size 32, allocating new
+  rc_opening: 0 ms
+  project: 253 ms
+Preallocated RingElement pool miss for size 4, allocating new
+Preallocated RingElement pool miss for size 32, allocating new
+  rc_projection: 12 ms
+Preallocated RingElement pool miss for size 16384, allocating new
+  fold: 27 ms
+Preallocated RingElement pool miss for size 65536, allocating new
+Preallocated RingElement pool miss for size 32768, allocating new
+  decompose: 14 ms
+Next round commitment created of length 2048.
+Preallocated RingElement pool miss for size 9, allocating new
+Preallocated RingElement pool miss for size 65536, allocating new
+Preallocated RingElement pool miss for size 29, allocating new
+    load_sumcheck_data: 13 ms
+    sumcheck num_vars: 16, hypercube_size: 32768
+    sumcheck loop: 538 ms (poly: 458 ms, eval: 69 ms)
+Next round prover done.
+  open_at: 16 ms
+Preallocated RingElement pool miss for size 512, allocating new
+  rc_opening: 0 ms
+Preallocated RingElement pool miss for size 65536, allocating new
+  project_cf: 225 ms
+Preallocated RingElement pool miss for size 512, allocating new
+  rc_projection_ct: 0 ms
+Preallocated RingElement pool miss for size 512, allocating new
+Preallocated RingElement pool miss for size 512, allocating new
+  batch_projection_n_times: 18 ms
+Preallocated RingElement pool miss for size 512, allocating new
+  rc_projection_batched: 0 ms
+  fold: 7 ms
+Preallocated RingElement pool miss for size 4096, allocating new
+  decompose: 1 ms
+Next round commitment created of length 2048.
+    load_sumcheck_data: 1 ms
+    sumcheck num_vars: 13, hypercube_size: 4096
+    sumcheck loop: 67 ms (poly: 54 ms, eval: 5 ms)
+Next round prover done.
+  open_at: 2 ms
+Preallocated RingElement pool miss for size 512, allocating new
+  rc_opening: 0 ms
+  project_cf: 32 ms
+  rc_projection_ct: 0 ms
+  batch_projection_n_times: 2 ms
+Preallocated RingElement pool miss for size 512, allocating new
+  rc_projection_batched: 0 ms
+  fold: 0 ms
+Preallocated RingElement pool miss for size 4096, allocating new
+Preallocated RingElement pool miss for size 512, allocating new
+  decompose: 0 ms
+Preallocated RingElement pool miss for size 512, allocating new
+Next round commitment created of length 512.
+Preallocated RingElement pool miss for size 4096, allocating new
+    load_sumcheck_data: 0 ms
+    sumcheck num_vars: 12, hypercube_size: 2048
+    sumcheck loop: 19 ms (poly: 13 ms, eval: 1 ms)
+Next round prover done.
+  open_at: 1 ms
+  rc_opening: 0 ms
+Preallocated RingElement pool miss for size 4096, allocating new
+  project_cf: 16 ms
+  rc_projection_ct: 0 ms
+  batch_projection_n_times: 1 ms
+  rc_projection_batched: 0 ms
+Preallocated RingElement pool miss for size 512, allocating new
+  fold: 0 ms
+  decompose: 0 ms
+Next round commitment created of length 256.
+    load_sumcheck_data: 0 ms
+    sumcheck num_vars: 11, hypercube_size: 1024
+    sumcheck loop: 15 ms (poly: 10 ms, eval: 0 ms)
+Next round prover done.
+  open_at: 0 ms
+  rc_opening: 0 ms
+Preallocated RingElement pool miss for size 2048, allocating new
+  project_cf: 8 ms
+  rc_projection_ct: 0 ms
+  batch_projection_n_times: 0 ms
+  rc_projection_batched: 0 ms
+  fold: 0 ms
+Preallocated RingElement pool miss for size 512, allocating new
+  decompose: 0 ms
+Preallocated RingElement pool miss for size 32, allocating new
+    load_sumcheck_data: 0 ms
+    sumcheck num_vars: 10, hypercube_size: 512
+    sumcheck loop: 8 ms (poly: 4 ms, eval: 0 ms)
+Prover intermediate round started.
+evaluation_points_inner length: 2, evaluation_points_outer length: 2
+int opening height: 2, width: 4
+Preallocated RingElement pool miss for size 32, allocating new
+Preallocated RingElement pool miss for size 512, allocating new
+Creating next round commitment.
+Next round commitment created of length 64.
+Preallocated RingElement pool miss for size 512, allocating new
+num_sumchecks: 10
+Prover simple round started.
+evaluation_points_inner length: 2, evaluation_points_outer length: 2
+opening height: 2, width: 8
+Preallocated RingElement pool miss for size 512, allocating new
+  sumcheck: 24 ms
+Prover: 34718648 ns
+  sumcheck: 52 ms
+Prover: 73716265 ns
+  sumcheck: 99 ms
+Prover: 140494431 ns
+  sumcheck: 217 ms
+Prover: 489003797 ns
+  sumcheck: 1119 ms
+Prover: 1517828751 ns
+  sumcheck: 3520 ms
+Prover: 8376730408 ns
+==== PROVER DONE ===
+TOTAL Prover time: 8389837020 ns
+==== PROOF SIZE ====
+Polys size: 0.786865234375 KB, 
+Claims size: 2.9971923828125 KB, 
+RC opening inner size: 0.7491455078125 KB, 
+Next round commitment size: 0.7479248046875 KB, 
+Total sumcheck round proof size: 5.2811279296875 KB 
+
+
+
+Polys size: 0.6898193359375 KB, 
+Claims size: 2.9935302734375 KB, 
+RC opening inner size: 0.750244140625 KB, 
+RC projection 0 inner size: 0.74951171875 KB, 
+Next round commitment size: 0.7496337890625 KB, 
+Total sumcheck round proof size: 5.9327392578125 KB 
+
+
+
+Polys size: 0.5419921875 KB, 
+Claims size: 3.0013427734375 KB, 
+RC opening inner size: 0.7508544921875 KB, 
+RCs projection 1 inner size: 1.503662109375 KB, 
+Constant term claims size: 1.4989013671875 KB, 
+Next round commitment size: 0.75 KB, 
+Total sumcheck round proof size: 8.0467529296875 KB 
+
+
+
+Polys size: 0.488525390625 KB, 
+Claims size: 2.9949951171875 KB, 
+RC opening inner size: 0.7476806640625 KB, 
+RCs projection 1 inner size: 1.5001220703125 KB, 
+Constant term claims size: 1.5001220703125 KB, 
+Next round commitment size: 0.7509765625 KB, 
+Total sumcheck round proof size: 7.982421875 KB 
+
+
+
+Polys size: 0.444580078125 KB, 
+Claims size: 2.99609375 KB, 
+RC opening inner size: 0.7525634765625 KB, 
+RCs projection 1 inner size: 1.5015869140625 KB, 
+Constant term claims size: 1.4990234375 KB, 
+Next round commitment size: 2.24951171875 KB, 
+Total sumcheck round proof size: 9.443359375 KB 
+
+
+
+Polys size: 0.3648681640625 KB, 
+Claims size: 3.00244140625 KB, 
+RC opening inner size: 2.251953125 KB, 
+RCs projection 1 inner size: 4.4984130859375 KB, 
+Constant term claims size: 1.496337890625 KB, 
+Next round commitment size: 15.002685546875 KB, 
+Total sumcheck round proof size: 26.61669921875 KB 
+
+
+
+Polys size: 0.3173828125 KB, 
+Claims size: 2.2501220703125 KB, 
+Projection image ct size: 6.7462158203125 KB, 
+Batched projection image size: 6.0013427734375 KB, 
+Opening RHS size: 4.49658203125 KB, 
+Next round commitment size in intermediate round proof: 30.033447265625 KB, 
+Total intermediate round proof size: 49.8450927734375 KB 
+
+
+
+Folded witness size: 47.999267578125 KB, 
+Projection image ct size: 3.0830078125 KB, 
+Batched projection image size: 11.996826171875 KB, 
+Opening RHS size: 10.4927978515625 KB, 
+Total simple round proof size: 73.5718994140625 KB 
+
+
+
+Total proof size: 186.7200927734375 KB
+====================
+
+==== VERIFIER STARTING ===
+Norm claim via inner-product: 151113.57559795876
+Most inner norm claim via inner-product: 2214.6789835097998
+Verifier: 480930 ns
+Preallocated RingElement pool miss for size 9, allocating new
+Preallocated RingElement pool miss for size 29, allocating new
+Norm claim via inner-product: 265619.73674973776
+Most inner norm claim via inner-product: 3824.828231437328
+Verifier: 1099011 ns
+Preallocated RingElement pool miss for size 512, allocating new
+Preallocated RingElement pool miss for size 512, allocating new
+Norm claim via inner-product: 83479.10475681923
+Most inner norm claim via inner-product: 3118.1053542175255
+Verifier: 4878969 ns
+Norm claim via inner-product: 43501.549179310845
+Most inner norm claim via inner-product: 3116.6273437804525
+Verifier: 1303904 ns
+Norm claim via inner-product: 33241.93941393913
+Most inner norm claim via inner-product: 3106.164354956125
+Verifier: 1297253 ns
+Norm claim via inner-product: 449610.4726037862
+Most inner norm claim via inner-product: 449428.0266516542
+Verifier: 723869 ns
+L2 norm of projection image in intermediate verifier: 5279498.306282993
+Norm claim via inner-product: 27735.47106144044
+L2 norm of folded witness in simple verifier: 211510.10627154438
+L2 norm of projection image in simple verifier: 310769.0901215885
+Simple verifier: 802426 ns
+==== VERIFIER DONE ===
+TOTAL Verifier time: 11499804 ns
