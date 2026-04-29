@@ -129,7 +129,7 @@ mod tests {
             sample_public_vector_from_seed(PUBLIC_CRS_SEED, 4, Representation::IncompleteNTT);
         for el in &v {
             for &c in &el.v {
-                assert!(c < MOD_Q, "coefficient {} not reduced mod q", c);
+                assert!(c < MOD_Q);
             }
         }
     }
