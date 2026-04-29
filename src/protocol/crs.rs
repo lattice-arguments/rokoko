@@ -1,7 +1,7 @@
 use crate::common::{
     matrix::HorizontallyAlignedMatrix,
     ring_arithmetic::{Representation, RingElement},
-    sampling::sample_random_vector,
+    sampling::{sample_public_vector_from_seed, PUBLIC_CRS_SEED},
     structured_row::{PreprocessedRow, StructuredRow},
 };
 pub type CK = Vec<PreprocessedRow>;
@@ -33,7 +33,8 @@ impl CRS {
         debug_assert!(max_wit_dim.is_power_of_two());
 
         let shared_v_module = HorizontallyAlignedMatrix::<RingElement> {
-            data: sample_random_vector(
+            data: sample_public_vector_from_seed(
+                PUBLIC_CRS_SEED,
                 max_wit_dim.ilog2() as usize * max_module_size,
                 Representation::IncompleteNTT,
             ),

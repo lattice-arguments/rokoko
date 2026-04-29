@@ -22,10 +22,13 @@ pub fn execute() {
         _ => panic!("Expected sumcheck config at the top level."),
     };
 
+    let crs_start = std::time::Instant::now();
     let crs = CRS::gen_crs(
         config.composed_witness_length,
         config.basic_commitment_rank + 2,
     );
+    let crs_duration = crs_start.elapsed().as_nanos();
+    println!("TOTAL CRS gen time: {:?} ns", crs_duration);
 
     let mut sumcheck_context = init_sumcheck(&crs, &config);
     let mut sumcheck_context_verifier = init_verifier(&crs, &config);

@@ -1,0 +1,327 @@
+   Compiling rokoko v0.1.0 (/home/standalone-osadnik/projects/cowboys-and-aliens)
+    Finished `release` profile [optimized] target(s) in 7.41s
+     Running `target/release/rokoko`
+Using p30...
+Sumcheck unsafe...
+✓ AVX-512F is enabled in runtime detection and available on this CPU
+✓✓ AVX-512F is enabled at compile time
+✓ AVX-512DQ is enabled in runtime detection and available on this CPU
+✓✓ AVX-512DQ is enabled at compile time
+✓ AVX-512VBMI2 is enabled in runtime detection and available on this CPU
+✓✓ AVX-512VBMI2 is enabled at compile time
+CPU features for incomplete-rexl:
+  AVX-512DQ: ✓
+  AVX-512IFMA: ✓
+  AVX-512VBMI2: ✓
+Running executor...
+Generating CRS...
+
+=== Prefix Assignment level 0 ===
+Total size needed: 167968 -> Composed witness length: 262144 (compresion ratio 1.56%)
+
+Components sorted by size:
+  folded_witness (size=131072): prefix=0b0 (len=1) -> indices [0, 131071]
+  commitment (size=32768): prefix=0b100 (len=3) -> indices [131072, 163839]
+  opening (size=4096): prefix=0b101000 (len=6) -> indices [163840, 167935]
+    commitment_level_1 (size=16): prefix=0b10100100000000 (len=14) -> indices [167936, 167951]
+    opening_level_1 (size=16): prefix=0b10100100000001 (len=14) -> indices [167952, 167967]
+
+=== Memory Usage level 0 ===
+Used: 167968 / 262144
+Usage ratio: 64.07%
+
+
+=== Prefix Assignment level 1 ===
+Total size needed: 50528 -> Composed witness length: 65536 (compresion ratio 25.00%)
+
+Components sorted by size:
+  folded_witness (size=32768): prefix=0b0 (len=1) -> indices [0, 32767]
+  projection (size=16384): prefix=0b10 (len=2) -> indices [32768, 49151]
+  commitment (size=1024): prefix=0b110000 (len=6) -> indices [49152, 50175]
+  opening (size=256): prefix=0b11000100 (len=8) -> indices [50176, 50431]
+    commitment_level_1 (size=32): prefix=0b11000101000 (len=11) -> indices [50432, 50463]
+    opening_level_1 (size=32): prefix=0b11000101001 (len=11) -> indices [50464, 50495]
+    projection_level_1 (size=32): prefix=0b11000101010 (len=11) -> indices [50496, 50527]
+
+=== Memory Usage level 1 ===
+Used: 50528 / 65536
+Usage ratio: 77.10%
+
+
+=== Prefix Assignment level 2 ===
+Total size needed: 7744 -> Composed witness length: 8192 (compresion ratio 12.50%)
+
+Components sorted by size:
+  folded_witness (size=4096): prefix=0b0 (len=1) -> indices [0, 4095]
+  commitment (size=2048): prefix=0b10 (len=2) -> indices [4096, 6143]
+  opening (size=512): prefix=0b1100 (len=4) -> indices [6144, 6655]
+  projection_constant_term (size=512): prefix=0b1101 (len=4) -> indices [6656, 7167]
+  projection_batched (size=512): prefix=0b1110 (len=4) -> indices [7168, 7679]
+    commitment_level_1 (size=16): prefix=0b111100000 (len=9) -> indices [7680, 7695]
+    opening_level_1 (size=16): prefix=0b111100001 (len=9) -> indices [7696, 7711]
+    projection_constant_term_level_1 (size=16): prefix=0b111100010 (len=9) -> indices [7712, 7727]
+    projection_batched_level_1 (size=16): prefix=0b111100011 (len=9) -> indices [7728, 7743]
+
+=== Memory Usage level 2 ===
+Used: 7744 / 8192
+Usage ratio: 94.53%
+
+
+=== Prefix Assignment level 3 ===
+Total size needed: 3904 -> Composed witness length: 4096 (compresion ratio 50.00%)
+
+Components sorted by size:
+  commitment (size=2048): prefix=0b0 (len=1) -> indices [0, 2047]
+  folded_witness (size=512): prefix=0b100 (len=3) -> indices [2048, 2559]
+  opening (size=512): prefix=0b101 (len=3) -> indices [2560, 3071]
+  projection_batched (size=512): prefix=0b110 (len=3) -> indices [3072, 3583]
+  projection_constant_term (size=256): prefix=0b1110 (len=4) -> indices [3584, 3839]
+    commitment_level_1 (size=16): prefix=0b11110000 (len=8) -> indices [3840, 3855]
+    opening_level_1 (size=16): prefix=0b11110001 (len=8) -> indices [3856, 3871]
+    projection_constant_term_level_1 (size=16): prefix=0b11110010 (len=8) -> indices [3872, 3887]
+    projection_batched_level_1 (size=16): prefix=0b11110011 (len=8) -> indices [3888, 3903]
+
+=== Memory Usage level 3 ===
+Used: 3904 / 4096
+Usage ratio: 95.31%
+
+
+=== Prefix Assignment level 4 ===
+Total size needed: 1984 -> Composed witness length: 2048 (compresion ratio 50.00%)
+
+Components sorted by size:
+  folded_witness (size=1024): prefix=0b0 (len=1) -> indices [0, 1023]
+  commitment (size=512): prefix=0b10 (len=2) -> indices [1024, 1535]
+  opening (size=128): prefix=0b1100 (len=4) -> indices [1536, 1663]
+  projection_constant_term (size=128): prefix=0b1101 (len=4) -> indices [1664, 1791]
+  projection_batched (size=128): prefix=0b1110 (len=4) -> indices [1792, 1919]
+    commitment_level_1 (size=16): prefix=0b1111000 (len=7) -> indices [1920, 1935]
+    opening_level_1 (size=16): prefix=0b1111001 (len=7) -> indices [1936, 1951]
+    projection_constant_term_level_1 (size=16): prefix=0b1111010 (len=7) -> indices [1952, 1967]
+    projection_batched_level_1 (size=16): prefix=0b1111011 (len=7) -> indices [1968, 1983]
+
+=== Memory Usage level 4 ===
+Used: 1984 / 2048
+Usage ratio: 96.88%
+
+
+=== Prefix Assignment level 5 ===
+Total size needed: 1024 -> Composed witness length: 1024 (compresion ratio 50.00%)
+
+Components sorted by size:
+  folded_witness (size=512): prefix=0b0 (len=1) -> indices [0, 511]
+  commitment (size=256): prefix=0b10 (len=2) -> indices [512, 767]
+  projection_constant_term (size=128): prefix=0b110 (len=3) -> indices [768, 895]
+  opening (size=64): prefix=0b1110 (len=4) -> indices [896, 959]
+  projection_batched (size=64): prefix=0b1111 (len=4) -> indices [960, 1023]
+
+=== Memory Usage level 5 ===
+Used: 1024 / 1024
+Usage ratio: 100.00%
+
+TOTAL CRS gen time: 3681328986 ns
+Sumcheck contexts initialized.
+===== COMMITTING WITNESS =====
+Witness decomposed. TOTAL Commit time: 22488488301 ns
+===== COMMITTING WITNESS DONE =====
+==== PROVER STARTING ===
+  open_at: 2285 ms
+  rc_opening: 1 ms
+  Skipping projection recursion as per configuration. Likely the first round
+
+  fold: 2436 ms
+  decompose: 25 ms
+Next round commitment created of length 1024.
+    load_sumcheck_data: 33 ms
+    sumcheck num_vars: 18, hypercube_size: 131072
+    sumcheck loop: 1669 ms (poly: 1492 ms, eval: 166 ms)
+Next round prover done.
+  open_at: 68 ms
+  rc_opening: 0 ms
+  project: 257 ms
+  rc_projection: 12 ms
+  fold: 25 ms
+  decompose: 8 ms
+Next round commitment created of length 2048.
+    load_sumcheck_data: 12 ms
+    sumcheck num_vars: 16, hypercube_size: 32768
+    sumcheck loop: 537 ms (poly: 459 ms, eval: 68 ms)
+Next round prover done.
+  open_at: 15 ms
+  rc_opening: 0 ms
+  project_cf: 212 ms
+  rc_projection_ct: 0 ms
+  batch_projection_n_times: 18 ms
+  rc_projection_batched: 0 ms
+  fold: 7 ms
+  decompose: 0 ms
+Next round commitment created of length 2048.
+    load_sumcheck_data: 1 ms
+    sumcheck num_vars: 13, hypercube_size: 4096
+    sumcheck loop: 67 ms (poly: 55 ms, eval: 5 ms)
+Next round prover done.
+  open_at: 2 ms
+  rc_opening: 0 ms
+  project_cf: 32 ms
+  rc_projection_ct: 0 ms
+  batch_projection_n_times: 2 ms
+  rc_projection_batched: 0 ms
+  fold: 0 ms
+  decompose: 0 ms
+Next round commitment created of length 512.
+    load_sumcheck_data: 0 ms
+    sumcheck num_vars: 12, hypercube_size: 2048
+    sumcheck loop: 19 ms (poly: 14 ms, eval: 1 ms)
+Next round prover done.
+  open_at: 1 ms
+  rc_opening: 0 ms
+  project_cf: 16 ms
+  rc_projection_ct: 0 ms
+  batch_projection_n_times: 1 ms
+  rc_projection_batched: 0 ms
+  fold: 0 ms
+  decompose: 0 ms
+Next round commitment created of length 256.
+    load_sumcheck_data: 0 ms
+    sumcheck num_vars: 11, hypercube_size: 1024
+    sumcheck loop: 15 ms (poly: 11 ms, eval: 0 ms)
+Next round prover done.
+  open_at: 0 ms
+  rc_opening: 0 ms
+  project_cf: 8 ms
+  rc_projection_ct: 0 ms
+  batch_projection_n_times: 0 ms
+  rc_projection_batched: 0 ms
+  fold: 0 ms
+  decompose: 0 ms
+    load_sumcheck_data: 0 ms
+    sumcheck num_vars: 10, hypercube_size: 512
+    sumcheck loop: 8 ms (poly: 4 ms, eval: 0 ms)
+Prover intermediate round started.
+evaluation_points_inner length: 2, evaluation_points_outer length: 2
+int opening height: 2, width: 4
+Creating next round commitment.
+Next round commitment created of length 64.
+num_sumchecks: 10
+Prover simple round started.
+evaluation_points_inner length: 2, evaluation_points_outer length: 2
+opening height: 2, width: 8
+  sumcheck: 24 ms
+Prover: 35494547 ns
+  sumcheck: 53 ms
+Prover: 75087285 ns
+  sumcheck: 100 ms
+Prover: 140004297 ns
+  sumcheck: 218 ms
+Prover: 473994181 ns
+  sumcheck: 1089 ms
+Prover: 1467345094 ns
+  sumcheck: 3433 ms
+Prover: 8195166151 ns
+==== PROVER DONE ===
+TOTAL Prover time: 8209131656 ns
+==== PROOF SIZE ====
+Polys size: 0.7818603515625 KB, 
+Claims size: 3 KB, 
+RC opening inner size: 0.7462158203125 KB, 
+Next round commitment size: 0.7542724609375 KB, 
+Total sumcheck round proof size: 5.2823486328125 KB 
+
+
+
+Polys size: 0.6925048828125 KB, 
+Claims size: 2.9993896484375 KB, 
+RC opening inner size: 0.7529296875 KB, 
+RC projection 0 inner size: 0.7513427734375 KB, 
+Next round commitment size: 0.7513427734375 KB, 
+Total sumcheck round proof size: 5.947509765625 KB 
+
+
+
+Polys size: 0.5380859375 KB, 
+Claims size: 3.0010986328125 KB, 
+RC opening inner size: 0.74951171875 KB, 
+RCs projection 1 inner size: 1.5 KB, 
+Constant term claims size: 1.495361328125 KB, 
+Next round commitment size: 0.7469482421875 KB, 
+Total sumcheck round proof size: 8.031005859375 KB 
+
+
+
+Polys size: 0.490478515625 KB, 
+Claims size: 2.992919921875 KB, 
+RC opening inner size: 0.7503662109375 KB, 
+RCs projection 1 inner size: 1.500244140625 KB, 
+Constant term claims size: 1.49951171875 KB, 
+Next round commitment size: 0.7493896484375 KB, 
+Total sumcheck round proof size: 7.98291015625 KB 
+
+
+
+Polys size: 0.4464111328125 KB, 
+Claims size: 3.003173828125 KB, 
+RC opening inner size: 0.749755859375 KB, 
+RCs projection 1 inner size: 1.498779296875 KB, 
+Constant term claims size: 1.50048828125 KB, 
+Next round commitment size: 2.241943359375 KB, 
+Total sumcheck round proof size: 9.4405517578125 KB 
+
+
+
+Polys size: 0.3623046875 KB, 
+Claims size: 2.9984130859375 KB, 
+RC opening inner size: 2.2508544921875 KB, 
+RCs projection 1 inner size: 4.502197265625 KB, 
+Constant term claims size: 1.50048828125 KB, 
+Next round commitment size: 14.9935302734375 KB, 
+Total sumcheck round proof size: 26.6077880859375 KB 
+
+
+
+Polys size: 0.3182373046875 KB, 
+Claims size: 2.247802734375 KB, 
+Projection image ct size: 6.7532958984375 KB, 
+Batched projection image size: 6.0025634765625 KB, 
+Opening RHS size: 4.4940185546875 KB, 
+Next round commitment size in intermediate round proof: 29.990234375 KB, 
+Total intermediate round proof size: 49.80615234375 KB 
+
+
+
+Folded witness size: 47.9942626953125 KB, 
+Projection image ct size: 3.0731201171875 KB, 
+Batched projection image size: 12.01318359375 KB, 
+Opening RHS size: 10.515380859375 KB, 
+Total simple round proof size: 73.595947265625 KB 
+
+
+
+Total proof size: 186.6942138671875 KB
+====================
+
+==== VERIFIER STARTING ===
+Norm claim via inner-product: 151112.80207513855
+Most inner norm claim via inner-product: 2214.4586245852506
+Verifier: 472172 ns
+Norm claim via inner-product: 265176.17209885205
+Most inner norm claim via inner-product: 3855.4728633463365
+Verifier: 1117825 ns
+Norm claim via inner-product: 83782.74589675371
+Most inner norm claim via inner-product: 3135.977678491988
+Verifier: 4977029 ns
+Norm claim via inner-product: 43687.981058867896
+Most inner norm claim via inner-product: 3121.381264760843
+Verifier: 1361305 ns
+Norm claim via inner-product: 33477.326969159294
+Most inner norm claim via inner-product: 3144.379748058431
+Verifier: 1314060 ns
+Norm claim via inner-product: 451475.626445105
+Most inner norm claim via inner-product: 451291.23235555994
+Verifier: 716335 ns
+L2 norm of projection image in intermediate verifier: 5208093.517613523
+Norm claim via inner-product: 27595.66511247736
+L2 norm of folded witness in simple verifier: 224027.36429284705
+L2 norm of projection image in simple verifier: 308544.19546476647
+Simple verifier: 789135 ns
+==== VERIFIER DONE ===
+TOTAL Verifier time: 11545126 ns
