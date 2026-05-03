@@ -78,9 +78,30 @@ fn main() {
         println!("✗ AVX-512 is only available on x86_64 architecture");
     }
 
+    #[cfg(feature = "profile")]
+    let _tracing_guards = rokoko_profiling::setup_tracing(
+        &[
+            rokoko_profiling::TracingFormat::Default,
+            rokoko_profiling::TracingFormat::Chrome,
+            rokoko_profiling::TracingFormat::Snapshot,
+        ],
+        trace_name(),
+    );
+
     load_and_preallocate("pool_stats.txt").expect("Failed to load stats");
     init_common();
     println!("Running executor...");
     execute();
     save_access_stats("pool_stats.txt").expect("Failed to save stats");
+}
+
+#[cfg(feature = "profile")]
+fn trace_name() -> &'static str {
+    if cfg!(feature = "p-26") {
+        "p26"
+    } else if cfg!(feature = "p-30") {
+        "p30"
+    } else {
+        "p28"
+    }
 }
