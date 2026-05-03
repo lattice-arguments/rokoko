@@ -4,11 +4,12 @@
 //! formats. Hold the returned [`TracingGuards`] alive for the duration of the
 //! program; dropping them flushes pending trace data.
 //!
-//! Modeled on `jolt-profiling`. Output layers (`ConsoleLayer`, Chrome JSON,
-//! `SnapshotLayer`) are added in subsequent checkpoints; this initial version
-//! installs only a `RUST_LOG`-driven log layer so that `tracing` events from
-//! library code surface during profile-enabled runs.
+//! Modeled on `jolt-profiling`. Output layers are added incrementally:
+//! [`TracingFormat::Default`] now selects an indented hierarchical
+//! [`ConsoleLayer`]; Chrome JSON and snapshot layers land in checkpoint 3.
 
+mod console;
 mod setup;
 
+pub use console::ConsoleLayer;
 pub use setup::{setup_tracing, TracingFormat, TracingGuards};

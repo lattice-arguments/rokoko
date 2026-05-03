@@ -38,12 +38,14 @@ pub fn execute() {
 
     println!("===== COMMITTING WITNESS =====");
     let start = std::time::Instant::now();
+    let _commit_span = tracing::info_span!("commit").entered();
 
     let witness_decomposed = decompose_witness(&witness);
     print!("Witness decomposed. ");
 
     let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness_decomposed);
 
+    drop(_commit_span);
     let commit_duration = start.elapsed().as_nanos();
     println!("TOTAL Commit time: {:?} ns", commit_duration);
 
