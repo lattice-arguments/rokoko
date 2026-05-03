@@ -42,6 +42,7 @@ use super::loader::load_sumcheck_data;
 ///   - Internal layers: `CK_i · selected_witness_i = compose(child_commitment_{i+1})`
 ///   - Output layer: `selector · (CK_leaf · witness) = public_commitment`
 /// - **Type5**: `<combined_witness, conjugated_combined_witness> = norm_claim`
+#[tracing::instrument(skip_all, name = "sumcheck")]
 pub fn sumcheck(
     config: &SumcheckConfig,
     combined_witness: &Vec<RingElement>,
@@ -106,24 +107,22 @@ pub fn sumcheck(
     let qe = combination_to_field.split_into_quadratic_extensions();
 
     // Load all data into the sumcheck context
-    let t_load = std::time::Instant::now();
-    load_sumcheck_data(
-        sumcheck_context,
-        config,
-        combined_witness,
-        &conjugated_combined_witness,
-        folding_challenges,
-        challenges_batching_projection_1,
-        opening,
-        projection_matrix,
-        &projection_matrix_flatter,
-        &combination,
-        &qe,
-    );
-    println!(
-        "    load_sumcheck_data: {} ms",
-        t_load.elapsed().as_millis()
-    );
+    {
+        let _s = tracing::info_span!("sumcheck::load_data").entered();
+        load_sumcheck_data(
+            sumcheck_context,
+            config,
+            combined_witness,
+            &conjugated_combined_witness,
+            folding_challenges,
+            challenges_batching_projection_1,
+            opening,
+            projection_matrix,
+            &projection_matrix_flatter,
+            &combination,
+            &qe,
+        );
+    }
 
     let norm_inner_norm_claim = sumcheck_context.type5sumcheck.output_2.borrow_mut().claim();
 
@@ -160,21 +159,22 @@ pub fn sumcheck(
     let mut evaluation_points: Vec<RingElement> = vec![];
 
     let mut polys: Vec<Polynomial<QuadraticExtension>> = vec![];
-    let t_loop = std::time::Instant::now();
-    let mut time_poly = 0;
-    let mut time_eval = 0;
 
+    let mut round = 0u64;
     while num_vars > 0 {
         num_vars -= 1;
+        round += 1;
+        let _round_span = tracing::info_span!("sumcheck::round", round = round).entered();
 
-        let t1 = std::time::Instant::now();
-        let mut poly_over_field = Polynomial::<QuadraticExtension>::new(0);
-
-        sumcheck_context
-            .field_combiner
-            .borrow_mut()
-            .univariate_polynomial_into(&mut poly_over_field);
-        time_poly += t1.elapsed().as_millis();
+        let poly_over_field = {
+            let _s = tracing::info_span!("sumcheck::round::poly").entered();
+            let mut poly_over_field = Polynomial::<QuadraticExtension>::new(0);
+            sumcheck_context
+                .field_combiner
+                .borrow_mut()
+                .univariate_polynomial_into(&mut poly_over_field);
+            poly_over_field
+        };
 
         hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
 
@@ -188,18 +188,13 @@ pub fn sumcheck(
 
         evaluation_points.push(r.clone());
 
-        let t2 = std::time::Instant::now();
-        sumcheck_context.partial_evaluate_all(&r);
-        time_eval += t2.elapsed().as_millis();
+        {
+            let _s = tracing::info_span!("sumcheck::round::eval").entered();
+            sumcheck_context.partial_evaluate_all(&r);
+        }
 
         polys.push(poly_over_field);
     }
-    println!(
-        "    sumcheck loop: {} ms (poly: {} ms, eval: {} ms)",
-        t_loop.elapsed().as_millis(),
-        time_poly,
-        time_eval
-    );
     #[cfg(feature = "profile-sumcheck")]
     crate::protocol::sumcheck_utils::profile::print_and_reset("sumcheck");
 

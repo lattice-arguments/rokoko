@@ -35,6 +35,7 @@ use crate::{
     },
 };
 
+#[tracing::instrument(skip_all, name = "verifier_round")]
 pub fn verifier_round(
     crs: &CRS,
     config: &SumcheckConfig,
@@ -46,7 +47,6 @@ pub fn verifier_round(
     sumcheck_context_verifier: &mut VerifierSumcheckContext,
     hash_wrapper_verifier: Option<HashWrapper>,
 ) {
-    let start = std::time::Instant::now();
     let mut hash_wrapper_verifier = hash_wrapper_verifier.unwrap_or_else(HashWrapper::new);
 
     let evaluation_points = sumcheck_verifier(
@@ -59,9 +59,6 @@ pub fn verifier_round(
         &claims,
         &mut hash_wrapper_verifier,
     );
-
-    let elapsed = start.elapsed().as_nanos();
-    println!("Verifier: {} ns", elapsed);
 
     match &round_proof.next {
         Some(next_round_proof) => {
@@ -243,6 +240,7 @@ pub(crate) fn fold_matrix_claims(
     folded_claims
 }
 
+#[tracing::instrument(skip_all, name = "verifier_round_intermediate")]
 pub fn verifier_round_intermediate(
     crs: &CRS,
     config: &IntermediateConfig,
@@ -477,6 +475,7 @@ pub fn verifier_round_intermediate(
     }
 }
 
+#[tracing::instrument(skip_all, name = "verifier_round_simple")]
 pub fn verifier_round_simple(
     crs: &CRS,
     config: &SimpleConfig,
@@ -487,7 +486,6 @@ pub fn verifier_round_simple(
     claims: &[RingElement],
     hash_wrapper: Option<HashWrapper>,
 ) {
-    let start = std::time::Instant::now();
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
     hash_wrapper.update_with_ring_element_slice(&round_proof.opening_rhs.data);
@@ -676,7 +674,4 @@ pub fn verifier_round_simple(
         "L2 norm of projection image in simple verifier: {}",
         l2_norm_proj
     );
-
-    let elapsed = start.elapsed().as_nanos();
-    println!("Simple verifier: {} ns", elapsed);
 }
