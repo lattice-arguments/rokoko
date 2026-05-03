@@ -86,6 +86,7 @@ fn main() {
             rokoko_profiling::TracingFormat::Snapshot,
         ],
         trace_name(),
+        &active_features(),
     );
 
     load_and_preallocate("pool_stats.txt").expect("Failed to load stats");
@@ -104,4 +105,31 @@ fn trace_name() -> &'static str {
     } else {
         "p28"
     }
+}
+
+#[cfg(feature = "profile")]
+fn active_features() -> String {
+    let mut features = Vec::new();
+    if cfg!(feature = "p-26") {
+        features.push("p-26");
+    }
+    if cfg!(feature = "p-28") {
+        features.push("p-28");
+    }
+    if cfg!(feature = "p-30") {
+        features.push("p-30");
+    }
+    if cfg!(feature = "incomplete-rexl") {
+        features.push("incomplete-rexl");
+    }
+    if cfg!(feature = "unsafe-sumcheck") {
+        features.push("unsafe-sumcheck");
+    }
+    if cfg!(feature = "debug-hardness") {
+        features.push("debug-hardness");
+    }
+    if cfg!(feature = "debug-decomp") {
+        features.push("debug-decomp");
+    }
+    features.join(",")
 }
