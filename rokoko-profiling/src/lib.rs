@@ -16,6 +16,6 @@ mod console;
 mod setup;
 mod snapshot;
 
-pub use console::ConsoleLayer;
+pub use console::{ConsoleLayer, ConsoleSummaryGuard};
 pub use setup::{setup_tracing, TracingFormat, TracingGuards};
 pub use snapshot::{SnapshotGuard, SnapshotLayer};

@@ -36,16 +36,10 @@ pub fn execute() {
 
     let witness = witness_sampler();
 
-    println!("===== COMMITTING WITNESS =====");
     let _commit_span = tracing::info_span!("commit").entered();
-
     let witness_decomposed = decompose_witness(&witness);
-    println!("Witness decomposed.");
-
     let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness_decomposed);
-
     drop(_commit_span);
-    println!("===== COMMITTING WITNESS DONE =====");
 
     let evaluation_points_inner = vec![evaluation_point_to_structured_row(
         &range(0, witness_decomposed.height.ilog2() as usize)
@@ -59,9 +53,7 @@ pub fn execute() {
             .collect::<Vec<RingElement>>(),
     )];
 
-    println!("==== PROVER STARTING ===");
     let _prover_span = tracing::info_span!("prover").entered();
-
     let (proof, claims) = prover_round(
         &crs,
         &config,
@@ -73,18 +65,14 @@ pub fn execute() {
         true,
         None,
     );
-
     drop(_prover_span);
-    println!("==== PROVER DONE ===");
 
     print!("==== PROOF SIZE ====\n");
     let proof_size_bits = proof.size_in_bits();
     println!("Total proof size: {} KB", to_kb(proof_size_bits));
     println!("====================\n");
 
-    println!("==== VERIFIER STARTING ===");
     let _verifier_span = tracing::info_span!("verifier").entered();
-
     verifier_round(
         &crs,
         &config,
@@ -96,7 +84,5 @@ pub fn execute() {
         &mut sumcheck_context_verifier,
         None,
     );
-
     drop(_verifier_span);
-    println!("==== VERIFIER DONE ===");
 }

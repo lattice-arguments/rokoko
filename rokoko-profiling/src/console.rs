@@ -1,13 +1,25 @@
-//! Bespoke console layer: indented hierarchical span timing on stdout.
+//! Console output layer.
 //!
-//! Each span emits one line on close. Indentation = nesting depth (two spaces
-//! per ancestor). Span attributes (e.g. `depth=0`, `round=1`) are appended
-//! after the name. Elapsed time is rendered with units (s, ms, μs, ns) chosen
-//! by magnitude so the output reads cleanly across the full dynamic range of
-//! the protocol — microsecond gadgets through tens-of-seconds top-level phases.
+//! Two outputs:
+//!
+//! 1. **Live stream**: as the program runs, span-close events with depth ≤
+//!    [`MAX_LIVE_DEPTH`] are emitted to stdout in compact form so progress is
+//!    visible without flooding the terminal with the full span tree.
+//!
+//! 2. **End-of-run summary**: when the layer's guard drops, a hierarchical
+//!    tree of every span observed during the run is printed, derived from
+//!    parent/child edges tracked at `on_close` time. Cycles introduced by
+//!    recursive spans (e.g. `prover_round → next_witness_and_recurse →
+//!    prover_round`) are detected and elided rather than expanded.
+//!
+//! The full per-instance detail still lives in the Chrome JSON; the snapshot
+//! JSON still has the flat by-name aggregates. This layer's job is to make
+//! the human-readable view useful at a glance.
 
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::io::{self, Write as _};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tracing::field::{Field, Visit};
@@ -16,17 +28,46 @@ use tracing::Subscriber;
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::registry::LookupSpan;
 
-pub struct ConsoleLayer;
+/// Live-stream output is suppressed for spans below this depth. Roots are at
+/// depth 0; their children at 1; grandchildren at 2. Beyond that, lines are
+/// dropped from the terminal but still tracked for the summary.
+const MAX_LIVE_DEPTH: usize = 2;
 
-impl ConsoleLayer {
-    pub fn new() -> Self {
-        Self
-    }
+#[derive(Hash, PartialEq, Eq, Clone, Debug)]
+struct EdgeKey {
+    /// `None` indicates a root-level span (no surrounding span).
+    parent: Option<String>,
+    child: String,
 }
 
-impl Default for ConsoleLayer {
-    fn default() -> Self {
-        Self::new()
+#[derive(Default, Clone)]
+struct EdgeAggregate {
+    total_ns: u128,
+    calls: u64,
+}
+
+type EdgeMap = HashMap<EdgeKey, EdgeAggregate>;
+
+pub struct ConsoleLayer {
+    edges: Arc<Mutex<EdgeMap>>,
+}
+
+/// RAII guard that prints the end-of-run summary when dropped. Must be held
+/// alive for the duration of profiling — `setup_tracing` packs it into
+/// [`crate::TracingGuards`].
+pub struct ConsoleSummaryGuard {
+    edges: Arc<Mutex<EdgeMap>>,
+}
+
+impl ConsoleLayer {
+    pub fn new() -> (Self, ConsoleSummaryGuard) {
+        let edges = Arc::new(Mutex::new(HashMap::new()));
+        (
+            ConsoleLayer {
+                edges: Arc::clone(&edges),
+            },
+            ConsoleSummaryGuard { edges },
+        )
     }
 }
 
@@ -56,25 +97,155 @@ where
             return;
         };
         let elapsed = timing.start.elapsed();
-        // depth = ancestor count (root span sits at depth 0)
         let depth = span.scope().skip(1).count();
+        let parent_name = span.parent().map(|p| p.name().to_string());
+        let child_name = span.name().to_string();
+
+        // Track edge for the end-of-run summary, regardless of live depth.
+        {
+            let mut edges = self.edges.lock().expect("edges lock poisoned");
+            let entry = edges
+                .entry(EdgeKey {
+                    parent: parent_name.clone(),
+                    child: child_name.clone(),
+                })
+                .or_default();
+            entry.total_ns += elapsed.as_nanos();
+            entry.calls += 1;
+        }
+
+        // Live stream: only emit spans at the top of the tree.
+        if depth > MAX_LIVE_DEPTH {
+            return;
+        }
+
         let indent = "  ".repeat(depth);
         let mut line = String::with_capacity(64);
         let _ = write!(
             line,
-            "{indent}{name}{attrs}  {elapsed}",
-            name = span.name(),
-            attrs = timing.attrs,
+            "{indent}{name:<width$}  {elapsed}{attrs}",
+            indent = indent,
+            name = child_name,
+            width = 40usize.saturating_sub(2 * depth),
             elapsed = format_duration(elapsed),
+            attrs = timing.attrs,
         );
         let mut out = io::stdout().lock();
         let _ = writeln!(out, "{line}");
     }
 }
 
-/// Walks the structured key/value pairs attached to a span and serializes
-/// them inline (` depth=0 round=5`) for console rendering. Named to avoid
-/// collision with the cryptographic notion of "field" used throughout rokoko.
+impl Drop for ConsoleSummaryGuard {
+    fn drop(&mut self) {
+        let edges = self.edges.lock().expect("edges lock poisoned").clone();
+        if edges.is_empty() {
+            return;
+        }
+        let mut out = io::stdout().lock();
+        let _ = writeln!(out);
+        let _ = writeln!(
+            out,
+            "─── profile summary ───────────────────────────────────────────"
+        );
+
+        // Roots: edges with no parent. Sort by total_ns descending for stable,
+        // useful ordering (biggest phase first).
+        let mut roots: Vec<(String, u128)> = edges
+            .iter()
+            .filter(|(k, _)| k.parent.is_none())
+            .map(|(k, v)| (k.child.clone(), v.total_ns))
+            .collect();
+        roots.sort_by(|a, b| b.1.cmp(&a.1));
+        roots.dedup_by(|a, b| a.0 == b.0);
+
+        let totals_by_name = totals_by_name(&edges);
+        for (root, _) in &roots {
+            let mut visited = HashSet::new();
+            print_subtree(&mut out, &edges, &totals_by_name, root, None, 0, &mut visited);
+        }
+
+        let _ = writeln!(
+            out,
+            "───────────────────────────────────────────────────────────────"
+        );
+    }
+}
+
+/// Sum total_ns and calls across all parents for each span name. The "global"
+/// total — what shows up in the snapshot JSON.
+fn totals_by_name(edges: &EdgeMap) -> HashMap<String, EdgeAggregate> {
+    let mut totals: HashMap<String, EdgeAggregate> = HashMap::new();
+    for (key, agg) in edges {
+        let entry = totals.entry(key.child.clone()).or_default();
+        entry.total_ns += agg.total_ns;
+        entry.calls += agg.calls;
+    }
+    totals
+}
+
+fn print_subtree(
+    out: &mut impl io::Write,
+    edges: &EdgeMap,
+    totals: &HashMap<String, EdgeAggregate>,
+    name: &str,
+    parent_total_ns: Option<u128>,
+    depth: usize,
+    visited: &mut HashSet<String>,
+) {
+    let indent = "  ".repeat(depth);
+
+    // Cycle: this name is already on the path from root to here. Emit a stub
+    // and stop; the full subtree is documented above.
+    if visited.contains(name) {
+        let _ = writeln!(out, "{indent}…{name} (recursive — see above)");
+        return;
+    }
+
+    let agg = totals.get(name).cloned().unwrap_or_default();
+    let time = format_duration(Duration::from_nanos(agg.total_ns as u64));
+    let calls_suffix = if agg.calls > 1 {
+        format!(" × {}", agg.calls)
+    } else {
+        String::new()
+    };
+    let pct_suffix = match parent_total_ns {
+        Some(parent_ns) if parent_ns > 0 && agg.total_ns <= parent_ns => {
+            let pct = (agg.total_ns as f64 / parent_ns as f64) * 100.0;
+            format!("   {pct:>4.1}%")
+        }
+        _ => String::new(),
+    };
+
+    let _ = writeln!(
+        out,
+        "{indent}{name:<width$}  {time:>8}{calls}{pct}",
+        indent = indent,
+        name = name,
+        width = 48usize.saturating_sub(2 * depth),
+        time = time,
+        calls = calls_suffix,
+        pct = pct_suffix,
+    );
+
+    visited.insert(name.to_string());
+
+    // Children: distinct child names from all (parent=name, *) edges, sorted
+    // by total_ns descending so heavy hitters surface first.
+    let mut children: Vec<(String, u128)> = edges
+        .iter()
+        .filter(|(k, _)| k.parent.as_deref() == Some(name))
+        .map(|(k, v)| (k.child.clone(), v.total_ns))
+        .collect();
+    children.sort_by(|a, b| b.1.cmp(&a.1));
+    children.dedup_by(|a, b| a.0 == b.0);
+
+    for (child, _) in children {
+        print_subtree(out, edges, totals, &child, Some(agg.total_ns), depth + 1, visited);
+    }
+
+    visited.remove(name);
+}
+
 struct AttrVisitor<'a>(&'a mut String);
 
 impl Visit for AttrVisitor<'_> {

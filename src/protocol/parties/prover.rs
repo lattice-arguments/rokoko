@@ -577,8 +577,6 @@ pub fn prover_round(
                         sumcheck_context,
                         &mut hash_wrapper,
                     );
-                    println!("Next round prover done.");
-
                     let evaluation_points = &sumcheck_output.5;
 
                     let (new_evaluation_points_outer, new_evaluation_points_inner) =

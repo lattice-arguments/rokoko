@@ -58,7 +58,9 @@ pub fn setup_tracing(
     );
 
     if formats.contains(&TracingFormat::Default) {
-        layers.push(ConsoleLayer::new().with_filter(filter()).boxed());
+        let (console_layer, console_guard) = ConsoleLayer::new();
+        layers.push(console_layer.with_filter(filter()).boxed());
+        guards.push(Box::new(console_guard));
     }
 
     if formats.contains(&TracingFormat::Chrome) {
