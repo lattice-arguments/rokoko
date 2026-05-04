@@ -317,7 +317,7 @@ fn print_subtree(
     let name_field_width = NAME_END.saturating_sub(2 * depth);
     let _ = writeln!(
         out,
-        "{indent}{name:<name_w$}  {time:>time_w$}{calls:>calls_w$}{pct:>pct_w$}",
+        "{indent}{name:<name_w$}  {time:>time_w$}  {calls:>calls_w$}  {pct:>pct_w$}",
         indent = indent,
         name = display,
         name_w = name_field_width,
