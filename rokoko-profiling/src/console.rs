@@ -217,8 +217,17 @@ impl Drop for ConsoleSummaryGuard {
 
             // Walk the root's children. The root span itself is represented by
             // the header line, so we skip emitting it as a normal row.
+            //
+            // `visited` tracks names currently on the descent path (cycle
+            // detection). `shown_edges` tracks every (parent, child) edge
+            // expanded anywhere in the run — when we encounter the same edge
+            // a second time, we emit a stub instead of re-expanding the same
+            // subtree with the same edge-aggregated numbers (which would be
+            // misleading: the (diff, product) edge is the same edge whether
+            // it's reached via combiner or via a direct sumcheck call).
             let mut visited = HashSet::new();
             visited.insert(root.clone());
+            let mut shown_edges: HashSet<(Option<String>, String)> = HashSet::new();
 
             let mut children: Vec<(String, u128)> = edges
                 .iter()
@@ -237,6 +246,7 @@ impl Drop for ConsoleSummaryGuard {
                     Some(*total_ns),
                     1,
                     &mut visited,
+                    &mut shown_edges,
                 );
             }
         }
@@ -260,9 +270,20 @@ fn print_subtree(
     parent_total_ns: Option<u128>,
     depth: usize,
     visited: &mut HashSet<String>,
+    shown_edges: &mut HashSet<(Option<String>, String)>,
 ) {
     let indent = "  ".repeat(depth);
     let display = strip_common_prefix(name, parent);
+
+    // If this exact (parent, child) edge has already been expanded once,
+    // emit a one-line stub. The aggregate is the same edge regardless of
+    // where the parent appears in the tree, so re-expanding it would print
+    // the same children and numbers a second time and mislead the reader.
+    let edge_id = (parent.map(String::from), name.to_string());
+    if shown_edges.contains(&edge_id) {
+        let _ = writeln!(out, "{indent}…{display}");
+        return;
+    }
 
     // Cycle: this name is already on the path from root to here. Emit a one-
     // line stub indicator (`…name`) and stop. The full subtree was already
@@ -271,6 +292,8 @@ fn print_subtree(
         let _ = writeln!(out, "{indent}…{display}");
         return;
     }
+
+    shown_edges.insert(edge_id);
 
     let edge_key = EdgeKey {
         parent: parent.map(String::from),
@@ -327,6 +350,7 @@ fn print_subtree(
             Some(agg.total_ns),
             depth + 1,
             visited,
+            shown_edges,
         );
     }
 
