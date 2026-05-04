@@ -158,10 +158,9 @@ impl Drop for ConsoleSummaryGuard {
         roots.sort_by(|a, b| b.1.cmp(&a.1));
         roots.dedup_by(|a, b| a.0 == b.0);
 
-        let totals_by_name = totals_by_name(&edges);
         for (root, _) in &roots {
             let mut visited = HashSet::new();
-            print_subtree(&mut out, &edges, &totals_by_name, root, None, 0, &mut visited);
+            print_subtree(&mut out, &edges, root, None, None, 0, &mut visited);
         }
 
         let _ = writeln!(
@@ -171,23 +170,18 @@ impl Drop for ConsoleSummaryGuard {
     }
 }
 
-/// Sum total_ns and calls across all parents for each span name. The "global"
-/// total — what shows up in the snapshot JSON.
-fn totals_by_name(edges: &EdgeMap) -> HashMap<String, EdgeAggregate> {
-    let mut totals: HashMap<String, EdgeAggregate> = HashMap::new();
-    for (key, agg) in edges {
-        let entry = totals.entry(key.child.clone()).or_default();
-        entry.total_ns += agg.total_ns;
-        entry.calls += agg.calls;
-    }
-    totals
-}
-
+/// Walks the call graph from `name` down through every edge whose parent is
+/// `name`. All times and call counts come from the **edge** `(parent, name)` —
+/// not from a global by-name aggregate. A span called from multiple parents
+/// (e.g. `commit::basic_internal`, called from both `commit::basic` during
+/// witness commit and from `prover_round::next_witness_and_recurse` during
+/// prover rounds) thus shows the correct slice of its time under each parent,
+/// and percentages relative to parent never exceed 100%.
 fn print_subtree(
     out: &mut impl io::Write,
     edges: &EdgeMap,
-    totals: &HashMap<String, EdgeAggregate>,
     name: &str,
+    parent: Option<&str>,
     parent_total_ns: Option<u128>,
     depth: usize,
     visited: &mut HashSet<String>,
@@ -201,7 +195,11 @@ fn print_subtree(
         return;
     }
 
-    let agg = totals.get(name).cloned().unwrap_or_default();
+    let edge_key = EdgeKey {
+        parent: parent.map(String::from),
+        child: name.to_string(),
+    };
+    let agg = edges.get(&edge_key).cloned().unwrap_or_default();
     let time = format_duration(Duration::from_nanos(agg.total_ns as u64));
     let calls_suffix = if agg.calls > 1 {
         format!(" × {}", agg.calls)
@@ -240,7 +238,15 @@ fn print_subtree(
     children.dedup_by(|a, b| a.0 == b.0);
 
     for (child, _) in children {
-        print_subtree(out, edges, totals, &child, Some(agg.total_ns), depth + 1, visited);
+        print_subtree(
+            out,
+            edges,
+            &child,
+            Some(name),
+            Some(agg.total_ns),
+            depth + 1,
+            visited,
+        );
     }
 
     visited.remove(name);
