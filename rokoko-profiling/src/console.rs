@@ -135,6 +135,19 @@ where
     }
 }
 
+// Layout constants for the summary table.
+//
+// Line shape: `<indent><name><pad><time><calls><pct>` where `<indent>` is
+// `2 * depth` spaces and the right-side columns have fixed widths so values
+// align across rows regardless of nesting depth.
+const NAME_END: usize = 48; // indent + name field fills to this column
+const TIME_WIDTH: usize = 10;
+const CALLS_WIDTH: usize = 6;
+const PCT_WIDTH: usize = 7;
+/// Phase header total width — matches `NAME_END + 2 + TIME_WIDTH` so the
+/// header's right-aligned time lands in the same column as child rows.
+const HEADER_WIDTH: usize = NAME_END + 2 + TIME_WIDTH;
+
 impl Drop for ConsoleSummaryGuard {
     fn drop(&mut self) {
         let edges = self.edges.lock().expect("edges lock poisoned").clone();
@@ -143,13 +156,9 @@ impl Drop for ConsoleSummaryGuard {
         }
         let mut out = io::stdout().lock();
         let _ = writeln!(out);
-        let _ = writeln!(
-            out,
-            "─── profile summary ───────────────────────────────────────────"
-        );
 
-        // Roots: edges with no parent. Sort by total_ns descending for stable,
-        // useful ordering (biggest phase first).
+        // Roots: edges with no parent. Sort by total_ns descending so the
+        // biggest phase prints first.
         let mut roots: Vec<(String, u128)> = edges
             .iter()
             .filter(|(k, _)| k.parent.is_none())
@@ -158,15 +167,47 @@ impl Drop for ConsoleSummaryGuard {
         roots.sort_by(|a, b| b.1.cmp(&a.1));
         roots.dedup_by(|a, b| a.0 == b.0);
 
-        for (root, _) in &roots {
+        for (i, (root, total_ns)) in roots.iter().enumerate() {
+            if i > 0 {
+                let _ = writeln!(out);
+            }
+            // Phase header: `=== PHASE === ... === <time>`, right-aligned at
+            // the same column as the child rows' time field.
+            let phase = root.to_uppercase();
+            let time = format_duration(Duration::from_nanos(*total_ns as u64));
+            let prefix = format!("=== {phase} ");
+            let suffix = format!(" {time}");
+            let filler_count =
+                HEADER_WIDTH.saturating_sub(prefix.len() + suffix.len());
+            let _ = writeln!(out, "{prefix}{}{suffix}", "=".repeat(filler_count));
+
+            // Walk the root's children. The root span itself is represented by
+            // the header line, so we skip emitting it as a normal row.
             let mut visited = HashSet::new();
-            print_subtree(&mut out, &edges, root, None, None, 0, &mut visited);
+            visited.insert(root.clone());
+
+            let mut children: Vec<(String, u128)> = edges
+                .iter()
+                .filter(|(k, _)| k.parent.as_deref() == Some(root.as_str()))
+                .map(|(k, v)| (k.child.clone(), v.total_ns))
+                .collect();
+            children.sort_by(|a, b| b.1.cmp(&a.1));
+            children.dedup_by(|a, b| a.0 == b.0);
+
+            for (child, _) in children {
+                print_subtree(
+                    &mut out,
+                    &edges,
+                    &child,
+                    Some(root),
+                    Some(*total_ns),
+                    1,
+                    &mut visited,
+                );
+            }
         }
 
-        let _ = writeln!(
-            out,
-            "───────────────────────────────────────────────────────────────"
-        );
+        let _ = writeln!(out);
     }
 }
 
@@ -187,11 +228,13 @@ fn print_subtree(
     visited: &mut HashSet<String>,
 ) {
     let indent = "  ".repeat(depth);
+    let display = strip_common_prefix(name, parent);
 
-    // Cycle: this name is already on the path from root to here. Emit a stub
-    // and stop; the full subtree is documented above.
+    // Cycle: this name is already on the path from root to here. Emit a one-
+    // line stub indicator (`…name`) and stop. The full subtree was already
+    // expanded under its first occurrence higher in the output.
     if visited.contains(name) {
-        let _ = writeln!(out, "{indent}…{name} (recursive — see above)");
+        let _ = writeln!(out, "{indent}…{display}");
         return;
     }
 
@@ -201,28 +244,32 @@ fn print_subtree(
     };
     let agg = edges.get(&edge_key).cloned().unwrap_or_default();
     let time = format_duration(Duration::from_nanos(agg.total_ns as u64));
-    let calls_suffix = if agg.calls > 1 {
-        format!(" × {}", agg.calls)
+    let calls_str = if agg.calls > 1 {
+        format!("× {}", agg.calls)
     } else {
         String::new()
     };
-    let pct_suffix = match parent_total_ns {
+    let pct_str = match parent_total_ns {
         Some(parent_ns) if parent_ns > 0 && agg.total_ns <= parent_ns => {
             let pct = (agg.total_ns as f64 / parent_ns as f64) * 100.0;
-            format!("   {pct:>4.1}%")
+            format!("{pct:.1}%")
         }
         _ => String::new(),
     };
 
+    let name_field_width = NAME_END.saturating_sub(2 * depth);
     let _ = writeln!(
         out,
-        "{indent}{name:<width$}  {time:>8}{calls}{pct}",
+        "{indent}{name:<name_w$}  {time:>time_w$}{calls:>calls_w$}{pct:>pct_w$}",
         indent = indent,
-        name = name,
-        width = 48usize.saturating_sub(2 * depth),
+        name = display,
+        name_w = name_field_width,
         time = time,
-        calls = calls_suffix,
-        pct = pct_suffix,
+        time_w = TIME_WIDTH,
+        calls = calls_str,
+        calls_w = CALLS_WIDTH,
+        pct = pct_str,
+        pct_w = PCT_WIDTH,
     );
 
     visited.insert(name.to_string());
@@ -250,6 +297,43 @@ fn print_subtree(
     }
 
     visited.remove(name);
+}
+
+/// Strip the longest `::`-bounded prefix shared between `name` and `parent`.
+///
+/// Span names follow a `<phase>::<step>::<sub>` convention (e.g.
+/// `commit::basic_internal`, `sumcheck::round::poly`). Tracing's parent/child
+/// relationship is independent of the name string, so the same node may be
+/// reached from many parents with different shared prefixes:
+///
+/// - Under `commit`, child `commit::basic` displays as `basic`.
+/// - Under `commit::basic`, child `commit::basic_internal` displays as
+///   `basic_internal` (the segment after `commit::`, since `basic` and
+///   `basic_internal` are different segments and `commit` is the common one).
+/// - Under `prover_round::next_witness_and_recurse`, child
+///   `commit::basic_internal` keeps its full name — no shared segment, so the
+///   cross-phase nesting is visible.
+fn strip_common_prefix<'a>(name: &'a str, parent: Option<&str>) -> &'a str {
+    let Some(parent) = parent else {
+        return name;
+    };
+    let mut bytes_to_skip = 0usize;
+    let mut name_iter = name.split("::");
+    let mut parent_iter = parent.split("::");
+    loop {
+        let (Some(n_seg), Some(p_seg)) = (name_iter.next(), parent_iter.next()) else {
+            break;
+        };
+        if n_seg != p_seg {
+            break;
+        }
+        bytes_to_skip += n_seg.len() + 2; // segment + "::"
+    }
+    if bytes_to_skip == 0 || bytes_to_skip > name.len() {
+        name
+    } else {
+        &name[bytes_to_skip..]
+    }
 }
 
 struct AttrVisitor<'a>(&'a mut String);
@@ -295,5 +379,45 @@ mod tests {
         assert_eq!(format_duration(Duration::from_nanos(2_500)), "2 μs");
         assert_eq!(format_duration(Duration::from_millis(7)), "7 ms");
         assert_eq!(format_duration(Duration::from_secs_f64(1.234)), "1.23 s");
+    }
+
+    #[test]
+    fn strip_common_prefix_strips_segments() {
+        // root: full name kept (no parent)
+        assert_eq!(strip_common_prefix("commit", None), "commit");
+
+        // single-segment parent matching first child segment
+        assert_eq!(strip_common_prefix("commit::basic", Some("commit")), "basic");
+        assert_eq!(
+            strip_common_prefix("commit::decompose_witness", Some("commit")),
+            "decompose_witness"
+        );
+
+        // two-segment parent matching first segment of child
+        assert_eq!(
+            strip_common_prefix("commit::basic_internal", Some("commit::basic")),
+            "basic_internal"
+        );
+
+        // sumcheck::round::poly under sumcheck::round → poly
+        assert_eq!(
+            strip_common_prefix("sumcheck::round::poly", Some("sumcheck::round")),
+            "poly"
+        );
+
+        // cross-phase: no shared first segment → keep full name
+        assert_eq!(
+            strip_common_prefix(
+                "commit::basic_internal",
+                Some("prover_round::next_witness_and_recurse"),
+            ),
+            "commit::basic_internal"
+        );
+
+        // shared name prefix without `::` boundary → not a real segment match
+        assert_eq!(
+            strip_common_prefix("prover_round", Some("prover")),
+            "prover_round"
+        );
     }
 }

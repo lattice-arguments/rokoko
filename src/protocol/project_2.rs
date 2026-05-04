@@ -151,7 +151,6 @@ pub fn compute_j_batched(
     // Index<(row, col)> impl and manually 4× unrolls for moderate throughput.
     #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
     {
-        tracing::trace!("Using scalar code for compute_j_batched");
         for i in 0..inner_width_ring {
             let row = &mut j_batched[i].v;
             let base_index = i * DEGREE;
