@@ -54,6 +54,24 @@ span (`total_ns`, `calls`) keyed by name, plus metadata (git SHA, ISO date,
 active features, machine string). Designed for diffing across runs —
 compact, stable, human-readable.
 
+## Per-gadget sumcheck aggregation
+
+Inside `sumcheck::round::poly` (the per-round univariate-polynomial extraction
+that dominates sumcheck cost), each constraint-type gadget records its own
+span:
+
+- `sumcheck::gadget::ring_to_field` — the field-level outer combiner
+- `sumcheck::gadget::combiner` — the ring-level batched combiner
+- `sumcheck::gadget::diff` — `<lhs, witness> - <rhs, witness> = 0` checks
+- `sumcheck::gadget::product` — inner-product gadgets (the leaf compute)
+- `sumcheck::gadget::sum`, `linear`, `selector_eq` — other constraint types
+
+These appear nested under `poly` in the end-of-run summary tree. The snapshot
+records each one's total time and call count, so per-gadget changes (e.g. a
+`DiffSumcheck` factoring optimization) show up directly when diffing two
+snapshots. Set `ROKOKO_PROFILE_FOCUS=sumcheck::gadget::diff` to scope the
+output to a single gadget kind.
+
 ## Subtree focus: `ROKOKO_PROFILE_FOCUS`
 
 When you're optimizing one component, the rest of the protocol's spans are
