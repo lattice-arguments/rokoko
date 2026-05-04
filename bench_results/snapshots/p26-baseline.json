@@ -1,0 +1,122 @@
+{
+  "metadata": {
+    "git_sha": "2b05541",
+    "date": "2026-05-04T17:33:03Z",
+    "features": "p-26,incomplete-rexl,unsafe-sumcheck",
+    "machine": "Darwin 24.5.0 arm64 / 12 cores"
+  },
+  "spans": {
+    "prover_round::project": {
+      "total_ns": 83826375,
+      "calls": 1
+    },
+    "commit::recursive": {
+      "total_ns": 53191875,
+      "calls": 1
+    },
+    "sumcheck::load_data": {
+      "total_ns": 107026584,
+      "calls": 6
+    },
+    "commit::decompose_witness": {
+      "total_ns": 845205417,
+      "calls": 1
+    },
+    "sumcheck::round::eval": {
+      "total_ns": 1010312750,
+      "calls": 77
+    },
+    "prover_round::rc_projection_ct": {
+      "total_ns": 12502167,
+      "calls": 4
+    },
+    "prover": {
+      "total_ns": 26207367041,
+      "calls": 1
+    },
+    "prover_round::fold": {
+      "total_ns": 3114400124,
+      "calls": 6
+    },
+    "prover_round::batch_projection_n_times": {
+      "total_ns": 265968875,
+      "calls": 4
+    },
+    "verifier_round": {
+      "total_ns": 701830001,
+      "calls": 6
+    },
+    "prover_round::open_at": {
+      "total_ns": 3621201626,
+      "calls": 6
+    },
+    "commit::basic_internal": {
+      "total_ns": 27997086125,
+      "calls": 18
+    },
+    "commit": {
+      "total_ns": 24182090667,
+      "calls": 1
+    },
+    "sumcheck": {
+      "total_ns": 9646463251,
+      "calls": 6
+    },
+    "commit::recursive_layer": {
+      "total_ns": 137303500,
+      "calls": 38
+    },
+    "verifier_round_simple": {
+      "total_ns": 17927917,
+      "calls": 1
+    },
+    "sumcheck::round": {
+      "total_ns": 9248597375,
+      "calls": 77
+    },
+    "prover_round::rc_projection": {
+      "total_ns": 21959458,
+      "calls": 1
+    },
+    "prover_round::project_cf": {
+      "total_ns": 7610586583,
+      "calls": 4
+    },
+    "commit::basic": {
+      "total_ns": 23283629833,
+      "calls": 1
+    },
+    "prover_round::next_witness_and_recurse": {
+      "total_ns": 42988232916,
+      "calls": 6
+    },
+    "prover_round::decompose": {
+      "total_ns": 51286334,
+      "calls": 6
+    },
+    "sumcheck::round::poly": {
+      "total_ns": 8238001081,
+      "calls": 77
+    },
+    "prover_round": {
+      "total_ns": 57830801624,
+      "calls": 6
+    },
+    "prover_round::rc_projection_batched": {
+      "total_ns": 7134542,
+      "calls": 4
+    },
+    "verifier_round_intermediate": {
+      "total_ns": 34315500,
+      "calls": 1
+    },
+    "verifier": {
+      "total_ns": 156595791,
+      "calls": 1
+    },
+    "prover_round::rc_opening": {
+      "total_ns": 14903833,
+      "calls": 6
+    }
+  }
+}
