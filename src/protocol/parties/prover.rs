@@ -192,8 +192,8 @@ pub fn prover_round(
 
     match &config.projection_recursion {
         Projection::Skip => {
-            println!(
-                "  Skipping projection recursion as per configuration. Likely the first round\n"
+            tracing::debug!(
+                "Skipping projection recursion as per configuration. Likely the first round"
             );
         }
         _ => {}
@@ -551,7 +551,7 @@ pub fn prover_round(
                         &next_round_rc_commitment_with_aux.most_inner_commitment(),
                     );
 
-                    println!(
+                    tracing::debug!(
                         "Next round commitment created of length {}.",
                         next_round_rc_commitment_with_aux.committed_data.len()
                     );
@@ -783,7 +783,7 @@ pub fn prover_round_intermediate(
     sumcheck_context: &mut IntermediateSumcheckContext,
     hash_wrapper: Option<HashWrapper>,
 ) -> IntermediateRoundProof {
-    println!("Prover intermediate round started.");
+    tracing::debug!("Prover intermediate round started.");
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
 
@@ -793,12 +793,12 @@ pub fn prover_round_intermediate(
         &evaluation_points_outer,
         true,
     );
-    println!(
+    tracing::debug!(
         "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
         evaluation_points_inner.len(),
         evaluation_points_outer.len()
     );
-    println!(
+    tracing::debug!(
         "int opening height: {}, width: {}",
         opening.rhs.height, opening.rhs.width
     );
@@ -838,7 +838,7 @@ pub fn prover_round_intermediate(
 
     let base_next_round_config = config.next.as_ref().map(|c| config_base_from_config(c));
 
-    println!("Creating next round commitment.");
+    tracing::debug!("Creating next round commitment.");
 
     let next_round_config = base_next_round_config
         .as_ref()
@@ -877,7 +877,7 @@ pub fn prover_round_intermediate(
     );
     hash_wrapper.update_with_ring_element_slice(&next_round_commitment.data);
 
-    println!(
+    tracing::debug!(
         "Next round commitment created of length {}.",
         next_round_commitment.data.len()
     );
@@ -1038,7 +1038,7 @@ pub fn prover_round_simple(
     evaluation_points_outer: &Vec<StructuredRow>,
     hash_wrapper: Option<HashWrapper>,
 ) -> SimpleRoundProof {
-    println!("Prover simple round started.");
+    tracing::debug!("Prover simple round started.");
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
 
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
@@ -1049,12 +1049,12 @@ pub fn prover_round_simple(
         &evaluation_points_outer,
         true,
     );
-    println!(
+    tracing::debug!(
         "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
         evaluation_points_inner.len(),
         evaluation_points_outer.len()
     );
-    println!(
+    tracing::debug!(
         "opening height: {}, width: {}",
         opening.rhs.height, opening.rhs.width
     );

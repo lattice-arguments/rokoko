@@ -67,10 +67,8 @@ pub fn execute() {
     );
     drop(_prover_span);
 
-    print!("==== PROOF SIZE ====\n");
     let proof_size_bits = proof.size_in_bits();
-    println!("Total proof size: {} KB", to_kb(proof_size_bits));
-    println!("====================\n");
+    tracing::debug!("Total proof size: {} KB", to_kb(proof_size_bits));
 
     let _verifier_span = tracing::info_span!("verifier").entered();
     verifier_round(

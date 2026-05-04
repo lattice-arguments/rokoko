@@ -137,8 +137,8 @@ pub fn sumcheck(
         .load_challenges_from(qe.clone());
 
     let mut num_vars = sumcheck_context.combiner.borrow().variable_count();
-    println!(
-        "    sumcheck num_vars: {}, hypercube_size: {}",
+    tracing::debug!(
+        "sumcheck num_vars: {}, hypercube_size: {}",
         num_vars,
         1u64 << (num_vars - 1)
     );

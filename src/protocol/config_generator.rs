@@ -69,15 +69,15 @@ impl AuxSumcheckConfig {
         // Sort by size (largest to smallest)
         components.sort_by(|a, b| b.size.cmp(&a.size));
 
-        println!("\n=== Prefix Assignment level {} ===", depth);
-        println!(
+        tracing::trace!("=== Prefix Assignment level {} ===", depth);
+        tracing::trace!(
             "Total size needed: {} -> Composed witness length: {} (compresion ratio {:.2}%)",
             total_size,
             composed_witness_length,
             (composed_witness_length as f64 / (self.witness_width * self.witness_height) as f64)
                 * 100.0
         );
-        println!("\nComponents sorted by size:");
+        tracing::trace!("Components sorted by size:");
 
         let total_bits = composed_witness_length.ilog2() as usize;
         let mut assigned_prefixes = Vec::new();
@@ -134,7 +134,7 @@ impl AuxSumcheckConfig {
             let indent_level = comp.path.iter().filter(|s| *s == "next").count();
             let indent = "  ".repeat(indent_level + 1);
 
-            println!(
+            tracing::trace!(
                 "{}{} (size={}): prefix=0b{} (len={}) -> indices [{}, {}]",
                 indent,
                 comp.name,
@@ -149,9 +149,9 @@ impl AuxSumcheckConfig {
         // Calculate usage ratio
         let used_memory = used_prefixes.len();
         let usage_ratio = used_memory as f64 / composed_witness_length as f64;
-        println!("\n=== Memory Usage level {} ===", depth);
-        println!("Used: {} / {}", used_memory, composed_witness_length);
-        println!("Usage ratio: {:.2}%\n", usage_ratio * 100.0);
+        tracing::trace!("=== Memory Usage level {} ===", depth);
+        tracing::trace!("Used: {} / {}", used_memory, composed_witness_length);
+        tracing::trace!("Usage ratio: {:.2}%", usage_ratio * 100.0);
 
         // Build the actual config with assigned prefixes
         self.build_config_with_prefixes(

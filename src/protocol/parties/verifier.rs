@@ -395,7 +395,7 @@ pub fn verifier_round_intermediate(
 
     let l2_norm_proj = l2_norm_coeffs(&round_proof.projection_image_ct.data);
 
-    println!(
+    tracing::debug!(
         "L2 norm of projection image in intermediate verifier: {}",
         l2_norm_proj
     );
@@ -666,11 +666,11 @@ pub fn verifier_round_simple(
     let l2_norm_witness = l2_norm_coeffs(&witness_even_odd);
     let l2_norm_proj = l2_norm_coeffs(&round_proof.projection_image_ct.data);
 
-    println!(
+    tracing::debug!(
         "L2 norm of folded witness in simple verifier: {}",
         l2_norm_witness
     );
-    println!(
+    tracing::debug!(
         "L2 norm of projection image in simple verifier: {}",
         l2_norm_proj
     );

@@ -4,6 +4,7 @@ use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::{prelude::*, registry::Registry, EnvFilter, Layer};
 
 use crate::console::ConsoleLayer;
+use crate::log::LogLayer;
 use crate::snapshot::SnapshotLayer;
 
 /// Output format for the tracing subscriber stack.
@@ -49,13 +50,7 @@ pub fn setup_tracing(
     let mut layers: Vec<Box<dyn Layer<Registry> + Send + Sync>> = Vec::new();
     let mut guards: Vec<Box<dyn Any>> = Vec::new();
 
-    layers.push(
-        tracing_subscriber::fmt::layer()
-            .compact()
-            .with_target(false)
-            .with_filter(filter())
-            .boxed(),
-    );
+    layers.push(LogLayer::new().with_filter(filter()).boxed());
 
     if formats.contains(&TracingFormat::Default) {
         let (console_layer, console_guard) = ConsoleLayer::new();
