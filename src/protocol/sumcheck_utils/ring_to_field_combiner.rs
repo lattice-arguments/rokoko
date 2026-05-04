@@ -41,9 +41,8 @@ impl RingToFieldCombiner {
 impl HighOrderSumcheckData for RingToFieldCombiner {
     type Element = QuadraticExtension;
 
-    #[cfg(feature = "profile-sumcheck")]
-    fn gadget_kind(&self) -> super::profile::GadgetKind {
-        super::profile::GadgetKind::RingToField
+    fn gadget_span(&self) -> tracing::Span {
+        tracing::info_span!("sumcheck::gadget::ring_to_field")
     }
 
     fn max_num_polynomial_coefficients(&self) -> usize {
@@ -73,6 +72,7 @@ impl HighOrderSumcheckData for RingToFieldCombiner {
     ///
     /// This cuts conversions from O(H) to O(1).
     fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
+        let _s = self.gadget_span().entered();
         let mut ring_poly = self.temp_poly.borrow_mut();
         ring_poly.set_zero();
         ring_poly.num_coefficients = 0;

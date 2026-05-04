@@ -14,7 +14,6 @@ debug-hardness = []
 debug-decomp = []
 # Prints a per-gadget breakdown of time spent in Combiner::univariate_polynomial_into
 # at the end of each sumcheck loop. Zero-cost when disabled.
-profile-sumcheck = []
 p-30 = []
 p-26 = []
 p-28 = []

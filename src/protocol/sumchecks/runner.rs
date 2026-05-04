@@ -195,8 +195,6 @@ pub fn sumcheck(
 
         polys.push(poly_over_field);
     }
-    #[cfg(feature = "profile-sumcheck")]
-    crate::protocol::sumcheck_utils::profile::print_and_reset("sumcheck");
 
     // final round
     debug_assert_eq!(sumcheck_context.field_combiner.borrow().variable_count(), 0);
