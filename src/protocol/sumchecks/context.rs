@@ -3,9 +3,14 @@ use crate::{
     protocol::{
         intermediate_sumchecks::context::IntermediateSumcheckContext,
         sumcheck_utils::{
-            combiner::Combiner, common::SumcheckBaseData, diff::DiffSumcheck,
-            elephant_cell::ElephantCell, linear::LinearSumcheck, product::ProductSumcheck,
-            ring_to_field_combiner::RingToFieldCombiner, selector_eq::SelectorEq,
+            combiner::Combiner,
+            common::SumcheckBaseData,
+            elephant_cell::ElephantCell,
+            factored_diff::FactoredDiffSumcheck,
+            linear::LinearSumcheck,
+            product::ProductSumcheck,
+            ring_to_field_combiner::RingToFieldCombiner,
+            selector_eq::SelectorEq,
         },
     },
 };
@@ -187,7 +192,7 @@ impl SumcheckContext {
 ///   RHS: commitment_selector · (recomposed_commitment · fold_challenge)
 pub struct Type0SumcheckContext {
     pub basic_commitment_row_sumcheck: ElephantCell<SelectorEq<RingElement>>,
-    pub output: ElephantCell<DiffSumcheck<RingElement>>,
+    pub output: ElephantCell<FactoredDiffSumcheck<RingElement>>,
 }
 
 /// Type1: Inner evaluation point consistency for openings.
@@ -200,7 +205,7 @@ pub struct Type0SumcheckContext {
 pub struct Type1SumcheckContext {
     pub inner_evaluation_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub opening_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
-    pub output: ElephantCell<DiffSumcheck<RingElement>>,
+    pub output: ElephantCell<FactoredDiffSumcheck<RingElement>>,
 }
 
 /// Type2: Outer evaluation point consistency for openings (`T` in a paper)
@@ -233,7 +238,7 @@ pub struct Type3SumcheckContext {
     pub rhs_fold_challenge_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub rhs_projection_flatter_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub projection_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
-    pub output: ElephantCell<DiffSumcheck<RingElement>>,
+    pub output: ElephantCell<FactoredDiffSumcheck<RingElement>>,
 }
 
 /// Type4 layer: One layer in a recursive commitment tree.
@@ -254,7 +259,7 @@ pub struct Type4LayerSumcheckContext {
     // pub rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
     pub commitment_sumcheck: Option<ElephantCell<LinearSumcheck<RingElement>>>,
     pub ck_sumchecks: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
-    pub outputs: Vec<ElephantCell<DiffSumcheck<RingElement>>>,
+    pub outputs: Vec<ElephantCell<FactoredDiffSumcheck<RingElement>>>,
 }
 
 /// Type4 output layer: Leaf layer checking `selector · (CK · witness) = public_commitment`.
@@ -300,12 +305,12 @@ pub struct Type3_1SumcheckContext {
     pub lhs_flatter_0_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub lhs_flatter_1_times_matrix_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub projection_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
-    pub output: ElephantCell<DiffSumcheck<RingElement>>,
+    pub output: ElephantCell<FactoredDiffSumcheck<RingElement>>,
 
     pub lhs_consistency_flatter_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub rhs_consistency_flatter_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub rhs_scalar_consistency_sumcheck: ElephantCell<LinearSumcheck<RingElement>>, // for e
-    pub output_2: ElephantCell<DiffSumcheck<RingElement>>,
+    pub output_2: ElephantCell<FactoredDiffSumcheck<RingElement>>,
 }
 
 /// Wrapper for multiple Type3_1 sumchecks (one per batch) with shared combiners.
