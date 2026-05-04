@@ -26,7 +26,31 @@ use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id};
 use tracing::Subscriber;
 use tracing_subscriber::layer::{Context, Layer};
-use tracing_subscriber::registry::LookupSpan;
+use tracing_subscriber::registry::{LookupSpan, SpanRef};
+
+/// Returns whether `span` (or any of its ancestors) matches the focus filter.
+/// Empty focus = no filter (everything in focus).
+///
+/// Matching rule per token: a span name `n` matches token `tok` iff `n == tok`
+/// or `n` starts with `"{tok}::"`. So `focus = ["commit"]` matches `commit`,
+/// `commit::basic`, `commit::basic_internal`, etc.
+pub(crate) fn is_in_focus<S>(span: &SpanRef<'_, S>, focus: &[String]) -> bool
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    if focus.is_empty() {
+        return true;
+    }
+    for ancestor in span.scope() {
+        let n = ancestor.name();
+        for tok in focus {
+            if n == tok || n.starts_with(&format!("{tok}::")) {
+                return true;
+            }
+        }
+    }
+    false
+}
 
 /// Live-stream output is suppressed for spans below this depth. Roots are at
 /// depth 0; their children at 1; grandchildren at 2. Beyond that, lines are
@@ -50,6 +74,9 @@ type EdgeMap = HashMap<EdgeKey, EdgeAggregate>;
 
 pub struct ConsoleLayer {
     edges: Arc<Mutex<EdgeMap>>,
+    /// Subtree-focus filter. If non-empty, only spans whose name (or any
+    /// ancestor's name) matches at least one token are tracked and emitted.
+    focus: Vec<String>,
 }
 
 /// RAII guard that prints the end-of-run summary when dropped. Must be held
@@ -60,11 +87,14 @@ pub struct ConsoleSummaryGuard {
 }
 
 impl ConsoleLayer {
-    pub fn new() -> (Self, ConsoleSummaryGuard) {
+    /// Construct the layer + summary guard. `focus` is a subtree-focus filter
+    /// (typically from `ROKOKO_PROFILE_FOCUS`); empty disables filtering.
+    pub fn new(focus: Vec<String>) -> (Self, ConsoleSummaryGuard) {
         let edges = Arc::new(Mutex::new(HashMap::new()));
         (
             ConsoleLayer {
                 edges: Arc::clone(&edges),
+                focus,
             },
             ConsoleSummaryGuard { edges },
         )
@@ -100,6 +130,10 @@ where
         let depth = span.scope().skip(1).count();
         let parent_name = span.parent().map(|p| p.name().to_string());
         let child_name = span.name().to_string();
+
+        if !is_in_focus(&span, &self.focus) {
+            return;
+        }
 
         // Track edge for the end-of-run summary, regardless of live depth.
         {

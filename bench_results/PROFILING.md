@@ -54,6 +54,33 @@ span (`total_ns`, `calls`) keyed by name, plus metadata (git SHA, ISO date,
 active features, machine string). Designed for diffing across runs —
 compact, stable, human-readable.
 
+## Subtree focus: `ROKOKO_PROFILE_FOCUS`
+
+When you're optimizing one component, the rest of the protocol's spans are
+noise. Set `ROKOKO_PROFILE_FOCUS=<name>` to scope the console summary and the
+snapshot JSON to a specific subtree:
+
+```bash
+# only the commit phase:
+ROKOKO_PROFILE_FOCUS=commit cargo +nightly run --release --features ...,profile
+
+# only the sumcheck loop:
+ROKOKO_PROFILE_FOCUS=sumcheck cargo +nightly run --release --features ...,profile
+
+# multiple roots (OR):
+ROKOKO_PROFILE_FOCUS=commit,verifier cargo +nightly run --release --features ...,profile
+```
+
+Matching: a span is in focus when its name (or any ancestor's name) equals a
+focus token, or starts with `<token>::`. So `commit` matches `commit`,
+`commit::basic`, `commit::basic_internal`, etc., and any deeper span emitted
+inside that subtree (e.g. `commit::recursive_layer` called from inside
+`commit::recursive`).
+
+**The Chrome JSON stays unfiltered** — Perfetto has its own search and zoom,
+and you usually want the full record there even when you're focused on one
+subtree.
+
 ## Filtering with `RUST_LOG`
 
 The default filter is `info`, which mutes `debug!` / `trace!` events. Set

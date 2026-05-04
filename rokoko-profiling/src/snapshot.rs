@@ -47,6 +47,9 @@ type Aggregates = Arc<Mutex<HashMap<String, SpanAggregate>>>;
 
 pub struct SnapshotLayer {
     aggregates: Aggregates,
+    /// Subtree-focus filter. If non-empty, only spans whose name (or any
+    /// ancestor's name) matches at least one token are aggregated.
+    focus: Vec<String>,
 }
 
 /// Holds the snapshot output path and metadata. Drop writes the JSON.
@@ -57,7 +60,11 @@ pub struct SnapshotGuard {
 }
 
 impl SnapshotLayer {
-    pub fn new(trace_name: &str, features: &str) -> (Self, SnapshotGuard) {
+    pub fn new(
+        trace_name: &str,
+        features: &str,
+        focus: Vec<String>,
+    ) -> (Self, SnapshotGuard) {
         let aggregates: Aggregates = Arc::new(Mutex::new(HashMap::new()));
         let path = PathBuf::from(format!("bench_results/snapshots/{trace_name}.json"));
         let metadata = SnapshotMetadata {
@@ -68,6 +75,7 @@ impl SnapshotLayer {
         };
         let layer = SnapshotLayer {
             aggregates: Arc::clone(&aggregates),
+            focus,
         };
         let guard = SnapshotGuard {
             aggregates,
@@ -99,6 +107,9 @@ where
         let Some(timing) = ext.get::<Timing>() else {
             return;
         };
+        if !crate::console::is_in_focus(&span, &self.focus) {
+            return;
+        }
         let elapsed_ns = timing.start.elapsed().as_nanos();
         let name = span.name().to_string();
         let mut agg = self.aggregates.lock().expect("aggregates lock poisoned");

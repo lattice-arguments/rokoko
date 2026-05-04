@@ -47,13 +47,28 @@ pub fn setup_tracing(
     let filter =
         || EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
+    // Subtree-focus filter from the env. Empty => no filter.
+    // Example: `ROKOKO_PROFILE_FOCUS=commit,sumcheck` keeps only spans inside
+    // the commit or sumcheck subtrees in the console summary and snapshot
+    // JSON. The Chrome JSON stays unfiltered so Perfetto can scope visually.
+    let focus: Vec<String> = std::env::var("ROKOKO_PROFILE_FOCUS")
+        .ok()
+        .map(|s| {
+            s.split(',')
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+
     let mut layers: Vec<Box<dyn Layer<Registry> + Send + Sync>> = Vec::new();
     let mut guards: Vec<Box<dyn Any>> = Vec::new();
 
     layers.push(LogLayer::new().with_filter(filter()).boxed());
 
     if formats.contains(&TracingFormat::Default) {
-        let (console_layer, console_guard) = ConsoleLayer::new();
+        let (console_layer, console_guard) = ConsoleLayer::new(focus.clone());
         layers.push(console_layer.with_filter(filter()).boxed());
         guards.push(Box::new(console_guard));
     }
@@ -70,7 +85,8 @@ pub fn setup_tracing(
     }
 
     if formats.contains(&TracingFormat::Snapshot) {
-        let (snapshot_layer, snapshot_guard) = SnapshotLayer::new(trace_name, features);
+        let (snapshot_layer, snapshot_guard) =
+            SnapshotLayer::new(trace_name, features, focus.clone());
         layers.push(snapshot_layer.with_filter(filter()).boxed());
         guards.push(Box::new(snapshot_guard));
     }
