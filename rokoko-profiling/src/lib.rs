@@ -8,9 +8,10 @@
 //! Modeled on `jolt-profiling`. Three output formats:
 //! - [`TracingFormat::Default`]: indented hierarchical [`ConsoleLayer`].
 //! - [`TracingFormat::Chrome`]: Chrome/Perfetto JSON timeline at
-//!   `target/profiles/{name}.json` (loads in <https://ui.perfetto.dev/>).
+//!   `bench_results/traces/{name}.json` (loads in
+//!   <https://ui.perfetto.dev/>).
 //! - [`TracingFormat::Snapshot`]: aggregated span totals at
-//!   `bench/snapshots/{name}.json` for diff-friendly PR evidence.
+//!   `bench_results/snapshots/{name}.json` for diff-friendly PR evidence.
 
 mod console;
 mod log;

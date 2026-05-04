@@ -109,3 +109,11 @@ _deps
 
 
 # End of https://mrkandreev.name/snippets/gitignore-generator/#C,C++,Rust,CMake,Make/target
+
+# Profiling runtime artifacts. Committed baselines are whitelisted by suffix.
+bench_results/snapshots/*.json
+!bench_results/snapshots/*-baseline.json
+bench_results/traces/
+
+# macOS metadata
+.DS_Store

@@ -59,8 +59,8 @@ pub fn setup_tracing(
     }
 
     if formats.contains(&TracingFormat::Chrome) {
-        let chrome_path = format!("target/profiles/{trace_name}.json");
-        let _ = std::fs::create_dir_all("target/profiles");
+        let chrome_path = format!("bench_results/traces/{trace_name}.json");
+        let _ = std::fs::create_dir_all("bench_results/traces");
         let (chrome_layer, chrome_guard) = ChromeLayerBuilder::new()
             .file(&chrome_path)
             .include_args(true)

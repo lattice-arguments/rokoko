@@ -6,8 +6,9 @@
 //! Chrome JSON preserves per-instance detail; this layer trades that for
 //! diff-ability and PR-friendliness.
 //!
-//! On guard drop, serializes to `bench/snapshots/{trace_name}.json` with
-//! metadata (git SHA, ISO 8601 date, active rokoko features, machine string).
+//! On guard drop, serializes to `bench_results/snapshots/{trace_name}.json`
+//! with metadata (git SHA, ISO 8601 date, active rokoko features, machine
+//! string).
 
 use std::collections::HashMap;
 use std::fs;
@@ -58,7 +59,7 @@ pub struct SnapshotGuard {
 impl SnapshotLayer {
     pub fn new(trace_name: &str, features: &str) -> (Self, SnapshotGuard) {
         let aggregates: Aggregates = Arc::new(Mutex::new(HashMap::new()));
-        let path = PathBuf::from(format!("bench/snapshots/{trace_name}.json"));
+        let path = PathBuf::from(format!("bench_results/snapshots/{trace_name}.json"));
         let metadata = SnapshotMetadata {
             git_sha: git_sha(),
             date: now_iso8601(),
