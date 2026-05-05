@@ -199,12 +199,6 @@ mod inner {
     }
 
     use crate::common::config::DEGREE;
-    use std::sync::LazyLock;
-
-    // Static scratch buffers – avoids heap allocations on every call.
-    static mut FUSED_TMP: LazyLock<[u64; DEGREE]> = LazyLock::new(|| [0u64; DEGREE]);
-    static mut FUSED_STMP: LazyLock<[u64; DEGREE]> = LazyLock::new(|| [0u64; DEGREE]);
-    static mut FUSED_AUX: LazyLock<[u64; DEGREE]> = LazyLock::new(|| [0u64; DEGREE]);
 
     /// Fallback: decompose into separate eltwise calls when the fused
     /// Rust AVX512 kernel is not available.
@@ -221,45 +215,58 @@ mod inner {
         n: usize,
         modulus: u64,
     ) {
+        use std::cell::UnsafeCell;
+
+        type ScratchBuffer = [u64; DEGREE];
+        thread_local! {
+            static SCRATCH_BUFFERS: UnsafeCell<(ScratchBuffer, ScratchBuffer, ScratchBuffer)> = const {
+                UnsafeCell::new((
+                    [0u64; DEGREE],
+                    [0u64; DEGREE],
+                    [0u64; DEGREE],
+                ))
+            };
+        }
+
         let n64 = n as u64;
 
-        // If result aliases operand1, copy operand1 into a static
-        // buffer so writes don't destroy inputs needed by later steps.
-        let op1: *const u64 = if result as *const u64 == operand1 {
-            let aux = &mut *FUSED_AUX;
-            std::ptr::copy_nonoverlapping(operand1, aux.as_mut_ptr(), 2 * n);
-            aux.as_ptr()
-        } else {
-            operand1
-        };
+        SCRATCH_BUFFERS.with(|scratch| {
+            let (tmp, stmp, aux) = &mut *scratch.get();
 
-        let tmp = &mut *FUSED_TMP;
-        let stmp = &mut *FUSED_STMP;
+            // If result aliases operand1, copy operand1 into the aux scratch
+            // so writes don't destroy inputs needed by later steps.
+            let op1: *const u64 = if result as *const u64 == operand1 {
+                std::ptr::copy_nonoverlapping(operand1, aux.as_mut_ptr(), 2 * n);
+                aux.as_ptr()
+            } else {
+                operand1
+            };
 
-        // result_even = op1_even * op2_even
-        eltwise_mult_mod(result, op1, operand2, n64, modulus);
+            // result_even = op1_even * op2_even
+            eltwise_mult_mod(result, op1, operand2, n64, modulus);
 
-        // result_odd = op1_odd * op2_even
-        eltwise_mult_mod(result.add(n), op1.add(n), operand2, n64, modulus);
+            // result_odd = op1_odd * op2_even
+            eltwise_mult_mod(result.add(n), op1.add(n), operand2, n64, modulus);
 
-        // tmp = op1_odd * op2_odd
-        eltwise_mult_mod(tmp.as_mut_ptr(), op1.add(n), operand2.add(n), n64, modulus);
+            // tmp = op1_odd * op2_odd
+            eltwise_mult_mod(tmp.as_mut_ptr(), op1.add(n), operand2.add(n), n64, modulus);
 
-        // result_even += shift_factors[i] * tmp[i]
-        eltwise_mult_mod(stmp.as_mut_ptr(), tmp.as_ptr(), shift_factors, n64, modulus);
-        eltwise_add_mod(result, result, stmp.as_ptr(), n64, modulus);
+            // result_even += shift_factors[i] * tmp[i]
+            eltwise_mult_mod(stmp.as_mut_ptr(), tmp.as_ptr(), shift_factors, n64, modulus);
+            eltwise_add_mod(result, result, stmp.as_ptr(), n64, modulus);
 
-        // tmp = op1_even * op2_odd
-        eltwise_mult_mod(tmp.as_mut_ptr(), op1, operand2.add(n), n64, modulus);
+            // tmp = op1_even * op2_odd
+            eltwise_mult_mod(tmp.as_mut_ptr(), op1, operand2.add(n), n64, modulus);
 
-        // result_odd += tmp
-        eltwise_add_mod(
-            result.add(n),
-            result.add(n) as *const u64,
-            tmp.as_ptr(),
-            n64,
-            modulus,
-        );
+            // result_odd += tmp
+            eltwise_add_mod(
+                result.add(n),
+                result.add(n) as *const u64,
+                tmp.as_ptr(),
+                n64,
+                modulus,
+            );
+        });
     }
 }
 
