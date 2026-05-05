@@ -61,9 +61,8 @@ impl<E: SumcheckElement> SelectorEq<E> {
 impl<E: SumcheckElement> HighOrderSumcheckData for SelectorEq<E> {
     type Element = E;
 
-    #[cfg(feature = "profile-sumcheck")]
-    fn gadget_kind(&self) -> super::profile::GadgetKind {
-        super::profile::GadgetKind::Selector
+    fn gadget_span(&self) -> tracing::Span {
+        tracing::info_span!("sumcheck::gadget::selector_eq")
     }
 
     fn get_scratch_poly(&self) -> &RefCell<Polynomial<E>> {

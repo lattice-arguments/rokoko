@@ -50,9 +50,8 @@ impl<E: SumcheckElement> DiffSumcheck<E> {
 impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
     type Element = E;
 
-    #[cfg(feature = "profile-sumcheck")]
-    fn gadget_kind(&self) -> super::profile::GadgetKind {
-        super::profile::GadgetKind::Diff
+    fn gadget_span(&self) -> tracing::Span {
+        tracing::info_span!("sumcheck::gadget::diff")
     }
 
     fn get_scratch_poly(&self) -> &RefCell<Polynomial<E>> {
@@ -127,21 +126,14 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
     /// child's `univariate_polynomial_into`, we let them handle their own
     /// zero-skipping internally, eliminating redundant tree traversals.
     fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
+        let _s = self.gadget_span().entered();
         let lhs_ref = self.lhs_sumcheck.get_ref();
-        {
-            #[cfg(feature = "profile-sumcheck")]
-            let _timer = super::profile::timer(lhs_ref.gadget_kind());
-            lhs_ref.univariate_polynomial_into(polynomial);
-        }
+        lhs_ref.univariate_polynomial_into(polynomial);
 
         let mut rhs_poly = self.rhs_eval_poly.borrow_mut();
         rhs_poly.set_zero();
         let rhs_ref = self.rhs_sumcheck.get_ref();
-        {
-            #[cfg(feature = "profile-sumcheck")]
-            let _timer = super::profile::timer(rhs_ref.gadget_kind());
-            rhs_ref.univariate_polynomial_into(&mut rhs_poly);
-        }
+        rhs_ref.univariate_polynomial_into(&mut rhs_poly);
         sub_poly_in_place(polynomial, &rhs_poly);
     }
 

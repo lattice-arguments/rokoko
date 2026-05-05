@@ -73,6 +73,7 @@ fn get_and_increment_round_id() -> usize {
 #[allow(dead_code)]
 static DEBUG_HARDNESS_FROM_ROUND: usize = 5;
 
+#[tracing::instrument(skip_all, name = "prover_round")]
 pub fn prover_round(
     crs: &CRS,
     config: &SumcheckConfig,
@@ -87,27 +88,29 @@ pub fn prover_round(
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     let rc_commitment = &commitment_with_aux.rc_commitment_with_aux;
 
-    let start = std::time::Instant::now();
     hash_wrapper.update_with_ring_element_slice(&rc_commitment.most_inner_commitment());
 
-    let t0 = std::time::Instant::now();
-    let opening = open_at(
-        &witness,
-        &evaluation_points_inner,
-        &evaluation_points_outer,
-        false,
-    );
+    let (opening, claims) = {
+        let _s = tracing::info_span!("prover_round::open_at").entered();
+        let opening = open_at(
+            &witness,
+            &evaluation_points_inner,
+            &evaluation_points_outer,
+            false,
+        );
 
-    let claims = if with_claims {
-        Some(claims(&opening.rhs, evaluation_points_outer))
-    } else {
-        None
+        let claims = if with_claims {
+            Some(claims(&opening.rhs, evaluation_points_outer))
+        } else {
+            None
+        };
+        (opening, claims)
     };
-    println!("  open_at: {} ms", t0.elapsed().as_millis());
-    let t1 = std::time::Instant::now();
 
-    let rc_opening = recursive_commit(crs, &config.opening_recursion, &opening.rhs.data);
-    println!("  rc_opening: {} ms", t1.elapsed().as_millis());
+    let rc_opening = {
+        let _s = tracing::info_span!("prover_round::rc_opening").entered();
+        recursive_commit(crs, &config.opening_recursion, &opening.rhs.data)
+    };
 
     hash_wrapper.update_with_ring_element_slice(&rc_opening.most_inner_commitment());
 
@@ -118,17 +121,19 @@ pub fn prover_round(
 
     let rc_projection_image = match &config.projection_recursion {
         Projection::Type0(proj_config) => {
-            let t2 = std::time::Instant::now();
-            let witness_i16 = match &commitment_with_aux.witness_i16 {
-                Some(witness_i16) => witness_i16,
-                None => &prepare_i16_witness(witness),
+            let projection_image = {
+                let _s = tracing::info_span!("prover_round::project").entered();
+                let witness_i16 = match &commitment_with_aux.witness_i16 {
+                    Some(witness_i16) => witness_i16,
+                    None => &prepare_i16_witness(witness),
+                };
+                project(witness_i16, &projection_matrix)
             };
-            let projection_image = project(witness_i16, &projection_matrix);
-            println!("  project: {} ms", t2.elapsed().as_millis());
 
-            let t3 = std::time::Instant::now();
-            let rc_projection_image = recursive_commit(&crs, &proj_config, &projection_image.data);
-            println!("  rc_projection: {} ms", t3.elapsed().as_millis());
+            let rc_projection_image = {
+                let _s = tracing::info_span!("prover_round::rc_projection").entered();
+                recursive_commit(&crs, &proj_config, &projection_image.data)
+            };
 
             hash_wrapper
                 .update_with_ring_element_slice(&rc_projection_image.most_inner_commitment());
@@ -139,39 +144,40 @@ pub fn prover_round(
 
     let rcs_projection_1 = match &config.projection_recursion {
         Projection::Type1(proj_config) => {
-            let t2 = std::time::Instant::now();
-            let projection_image_ct = project_coefficients(&witness, &projection_matrix);
-            println!("  project_cf: {} ms", t2.elapsed().as_millis());
-            let t3 = std::time::Instant::now();
-            let rc_projection_ct = recursive_commit(
-                &crs,
-                &proj_config.recursion_constant_term,
-                &projection_image_ct.data,
-            );
-            println!("  rc_projection_ct: {} ms", t3.elapsed().as_millis());
+            let projection_image_ct = {
+                let _s = tracing::info_span!("prover_round::project_cf").entered();
+                project_coefficients(&witness, &projection_matrix)
+            };
+            let rc_projection_ct = {
+                let _s = tracing::info_span!("prover_round::rc_projection_ct").entered();
+                recursive_commit(
+                    &crs,
+                    &proj_config.recursion_constant_term,
+                    &projection_image_ct.data,
+                )
+            };
 
             hash_wrapper.update_with_ring_element_slice(&rc_projection_ct.most_inner_commitment());
 
-            let t4 = std::time::Instant::now();
-            let (projection_batched, challenges_batching_projection_1) = batch_projection_n_times(
-                &witness,
-                &projection_matrix,
-                &mut hash_wrapper,
-                proj_config.nof_batches,
-                false,
-            );
-            println!(
-                "  batch_projection_n_times: {} ms",
-                t4.elapsed().as_millis()
-            );
+            let (projection_batched, challenges_batching_projection_1) = {
+                let _s = tracing::info_span!("prover_round::batch_projection_n_times").entered();
+                batch_projection_n_times(
+                    &witness,
+                    &projection_matrix,
+                    &mut hash_wrapper,
+                    proj_config.nof_batches,
+                    false,
+                )
+            };
 
-            let t5 = std::time::Instant::now();
-            let rc_projection_batched = recursive_commit(
-                &crs,
-                &proj_config.recursion_batched_projection,
-                &projection_batched.data,
-            );
-            println!("  rc_projection_batched: {} ms", t5.elapsed().as_millis());
+            let rc_projection_batched = {
+                let _s = tracing::info_span!("prover_round::rc_projection_batched").entered();
+                recursive_commit(
+                    &crs,
+                    &proj_config.recursion_batched_projection,
+                    &projection_batched.data,
+                )
+            };
             hash_wrapper
                 .update_with_ring_element_slice(&rc_projection_batched.most_inner_commitment());
 
@@ -186,8 +192,8 @@ pub fn prover_round(
 
     match &config.projection_recursion {
         Projection::Skip => {
-            println!(
-                "  Skipping projection recursion as per configuration. Likely the first round\n"
+            tracing::debug!(
+                "Skipping projection recursion as per configuration. Likely the first round"
             );
         }
         _ => {}
@@ -196,19 +202,21 @@ pub fn prover_round(
 
     hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut fold_challenge);
 
-    let t4 = std::time::Instant::now();
-    let folded_witness = fold(&witness, &fold_challenge);
-    println!("  fold: {} ms", t4.elapsed().as_millis());
+    let folded_witness = {
+        let _s = tracing::info_span!("prover_round::fold").entered();
+        fold(&witness, &fold_challenge)
+    };
 
     let mut next_round_data = new_vec_zero_preallocated(config.composed_witness_length);
 
-    let t5 = std::time::Instant::now();
-    let folded_witness_decomposed = decompose(
-        &folded_witness.data,
-        config.witness_decomposition_base_log as u64,
-        config.witness_decomposition_chunks,
-    );
-    println!("  decompose: {} ms", t5.elapsed().as_millis());
+    let folded_witness_decomposed = {
+        let _s = tracing::info_span!("prover_round::decompose").entered();
+        decompose(
+            &folded_witness.data,
+            config.witness_decomposition_base_log as u64,
+            config.witness_decomposition_chunks,
+        )
+    };
 
     paste_by_prefix(
         &mut next_round_data,
@@ -480,7 +488,7 @@ pub fn prover_round(
         );
     }
 
-    let t6 = std::time::Instant::now();
+    let _next_witness_span = tracing::info_span!("prover_round::next_witness_and_recurse").entered();
 
     let base_next_roung_config = config.next.as_ref().map(|c| config_base_from_config(c));
 
@@ -543,7 +551,7 @@ pub fn prover_round(
                         &next_round_rc_commitment_with_aux.most_inner_commitment(),
                     );
 
-                    println!(
+                    tracing::debug!(
                         "Next round commitment created of length {}.",
                         next_round_rc_commitment_with_aux.committed_data.len()
                     );
@@ -569,8 +577,6 @@ pub fn prover_round(
                         sumcheck_context,
                         &mut hash_wrapper,
                     );
-                    println!("Next round prover done.");
-
                     let evaluation_points = &sumcheck_output.5;
 
                     let (new_evaluation_points_outer, new_evaluation_points_inner) =
@@ -731,7 +737,7 @@ pub fn prover_round(
         }
     };
 
-    println!("  sumcheck: {} ms", t6.elapsed().as_millis());
+    drop(_next_witness_span);
 
     let (
         claim_over_witness,
@@ -764,8 +770,6 @@ pub fn prover_round(
         next: next_level_data.0.map(Box::new),
     };
 
-    let elapsed = start.elapsed().as_nanos();
-    println!("Prover: {} ns", elapsed);
     (rp, claims)
 }
 
@@ -779,7 +783,7 @@ pub fn prover_round_intermediate(
     sumcheck_context: &mut IntermediateSumcheckContext,
     hash_wrapper: Option<HashWrapper>,
 ) -> IntermediateRoundProof {
-    println!("Prover intermediate round started.");
+    tracing::debug!("Prover intermediate round started.");
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
 
@@ -789,12 +793,12 @@ pub fn prover_round_intermediate(
         &evaluation_points_outer,
         true,
     );
-    println!(
+    tracing::debug!(
         "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
         evaluation_points_inner.len(),
         evaluation_points_outer.len()
     );
-    println!(
+    tracing::debug!(
         "int opening height: {}, width: {}",
         opening.rhs.height, opening.rhs.width
     );
@@ -834,7 +838,7 @@ pub fn prover_round_intermediate(
 
     let base_next_round_config = config.next.as_ref().map(|c| config_base_from_config(c));
 
-    println!("Creating next round commitment.");
+    tracing::debug!("Creating next round commitment.");
 
     let next_round_config = base_next_round_config
         .as_ref()
@@ -873,7 +877,7 @@ pub fn prover_round_intermediate(
     );
     hash_wrapper.update_with_ring_element_slice(&next_round_commitment.data);
 
-    println!(
+    tracing::debug!(
         "Next round commitment created of length {}.",
         next_round_commitment.data.len()
     );
@@ -1034,7 +1038,7 @@ pub fn prover_round_simple(
     evaluation_points_outer: &Vec<StructuredRow>,
     hash_wrapper: Option<HashWrapper>,
 ) -> SimpleRoundProof {
-    println!("Prover simple round started.");
+    tracing::debug!("Prover simple round started.");
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
 
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
@@ -1045,12 +1049,12 @@ pub fn prover_round_simple(
         &evaluation_points_outer,
         true,
     );
-    println!(
+    tracing::debug!(
         "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
         evaluation_points_inner.len(),
         evaluation_points_outer.len()
     );
-    println!(
+    tracing::debug!(
         "opening height: {}, width: {}",
         opening.rhs.height, opening.rhs.width
     );
