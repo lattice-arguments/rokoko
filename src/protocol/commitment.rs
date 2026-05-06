@@ -29,6 +29,7 @@ impl CommitmentWithAux {
     }
 }
 
+#[tracing::instrument(skip_all, name = "commit::basic_internal")]
 pub fn commit_basic_internal(
     ck: &CK,
     witness: &VerticallyAlignedMatrix<RingElement>,
@@ -115,6 +116,7 @@ impl RecursiveCommitmentWithAux {
 
 pub type RecursiveCommitment = Vec<RingElement>;
 
+#[tracing::instrument(skip_all, name = "commit::recursive_layer")]
 pub fn recursive_commit(
     crs: &CRS,
     config: &RecursionConfig,

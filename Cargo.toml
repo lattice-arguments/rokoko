@@ -14,10 +14,13 @@ debug-hardness = []
 debug-decomp = []
 # Prints a per-gadget breakdown of time spent in Combiner::univariate_polynomial_into
 # at the end of each sumcheck loop. Zero-cost when disabled.
-profile-sumcheck = []
 p-30 = []
 p-26 = []
 p-28 = []
+# Enables tracing-based profiling. When off, info_span!/instrument calls in
+# library code are no-ops at runtime (no subscriber installed). When on, the
+# rokoko-profiling crate installs a subscriber stack at binary startup.
+profile = ["dep:rokoko-profiling"]
 
 [dependencies]
 criterion = "0.7.0"
@@ -29,6 +32,8 @@ ctr = "0.9"
 incomplete-rexl = { path = "incomplete-rexl", optional = true }
 libloading = "0.8.6"
 libm = "0.2"
+tracing = "0.1"
+rokoko-profiling = { path = "rokoko-profiling", optional = true }
 
 [profile.release]
 opt-level = 3

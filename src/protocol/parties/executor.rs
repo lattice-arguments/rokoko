@@ -36,18 +36,10 @@ pub fn execute() {
 
     let witness = witness_sampler();
 
-    println!("===== COMMITTING WITNESS =====");
-    let start = std::time::Instant::now();
-
+    let _commit_span = tracing::info_span!("commit").entered();
     let witness_decomposed = decompose_witness(&witness);
-    print!("Witness decomposed. ");
-
     let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness_decomposed);
-
-    let commit_duration = start.elapsed().as_nanos();
-    println!("TOTAL Commit time: {:?} ns", commit_duration);
-
-    println!("===== COMMITTING WITNESS DONE =====");
+    drop(_commit_span);
 
     let evaluation_points_inner = vec![evaluation_point_to_structured_row(
         &range(0, witness_decomposed.height.ilog2() as usize)
@@ -61,10 +53,7 @@ pub fn execute() {
             .collect::<Vec<RingElement>>(),
     )];
 
-    let start = std::time::Instant::now();
-
-    println!("==== PROVER STARTING ===");
-
+    let _prover_span = tracing::info_span!("prover").entered();
     let (proof, claims) = prover_round(
         &crs,
         &config,
@@ -76,17 +65,12 @@ pub fn execute() {
         true,
         None,
     );
-    println!("==== PROVER DONE ===");
-    let prover_duration = start.elapsed().as_nanos();
-    println!("TOTAL Prover time: {:?} ns", prover_duration);
+    drop(_prover_span);
 
-    print!("==== PROOF SIZE ====\n");
     let proof_size_bits = proof.size_in_bits();
-    println!("Total proof size: {} KB", to_kb(proof_size_bits));
-    println!("====================\n");
+    tracing::debug!("Total proof size: {} KB", to_kb(proof_size_bits));
 
-    let start = std::time::Instant::now();
-    println!("==== VERIFIER STARTING ===");
+    let _verifier_span = tracing::info_span!("verifier").entered();
     verifier_round(
         &crs,
         &config,
@@ -98,7 +82,5 @@ pub fn execute() {
         &mut sumcheck_context_verifier,
         None,
     );
-    println!("==== VERIFIER DONE ===");
-    let verifier_duration = start.elapsed().as_nanos();
-    println!("TOTAL Verifier time: {:?} ns", verifier_duration);
+    drop(_verifier_span);
 }

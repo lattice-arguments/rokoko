@@ -354,6 +354,7 @@ pub fn witness_sampler() -> VerticallyAlignedMatrix<RingElement> {
     }
 }
 
+#[tracing::instrument(skip_all, name = "commit::decompose_witness")]
 pub fn decompose_witness(
     witness: &VerticallyAlignedMatrix<RingElement>,
 ) -> VerticallyAlignedMatrix<RingElement> {
