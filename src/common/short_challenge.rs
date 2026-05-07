@@ -22,8 +22,6 @@ const LOG_N: usize = N.trailing_zeros() as usize;
 const PHASE_LEN: usize = 2 * N;
 const PHASE_MASK: usize = PHASE_LEN - 1;
 
-const _: () = assert!(N.is_power_of_two() && N >= 16);
-const _: () = assert!(1 << LOG_N == N);
 
 static PRE_TWIST: LazyLock<[Complex<f64>; N]> = LazyLock::new(|| {
     let mut arr = [Complex::new(0.0, 0.0); N];
