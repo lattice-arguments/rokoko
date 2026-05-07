@@ -12,6 +12,7 @@ pub mod projection_matrix;
 pub mod ring_arithmetic;
 pub mod sampling;
 pub mod structured_row;
+pub mod short_challenge;
 pub mod sumcheck_element;
 use crate::common::{
     arithmetic::{
