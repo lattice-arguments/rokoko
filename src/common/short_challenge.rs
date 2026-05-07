@@ -160,8 +160,6 @@ pub fn op_norm_sq_sparse_scalar(positions: &[u8; TAU], signs: &[i8; TAU]) -> f64
 unsafe fn op_norm_sq_sparse_avx512(positions: &[u8; TAU], signs: &[i8; TAU]) -> f64 {
     use std::arch::x86_64::*;
 
-    // Each batch holds 8 doubles (one zmm); we need N/2 outputs total. Live
-    // zmm regs = 2*NUM_BATCHES, which caps N at 256.
     const NUM_BATCHES: usize = N / 16;
     const _: () = assert!(N % 16 == 0 && NUM_BATCHES * 2 <= 32);
 
@@ -227,45 +225,35 @@ pub fn op_norm_direct(c: &[i8; N]) -> f64 {
 }
 
 const ATTEMPT_LABEL: &[u8] = b"short-ternary-challenge-attempt";
-const ATTEMPT_BUF_LEN: usize = 512;
+const ATTEMPT_BUF_LEN: usize = 128;
 const SIGN_BYTES: usize = (TAU + 7) / 8;
 
 const _: () = assert!(N <= 256, "Fisher-Yates uses one byte per index sample");
 
-struct AttemptBytes<'a> {
-    hasher: &'a mut HashWrapper,
-    buf: [u8; ATTEMPT_BUF_LEN],
-    idx: usize,
-}
+#[allow(unused_assignments)]
+fn sample_attempt(hasher: &mut HashWrapper) -> ([u8; TAU], [i8; TAU]) {
+    let mut buf = [0u8; ATTEMPT_BUF_LEN];
+    hasher.fill_from_xof(ATTEMPT_LABEL, &mut buf);
+    let mut idx: usize = 0;
 
-impl<'a> AttemptBytes<'a> {
-    fn new(hasher: &'a mut HashWrapper) -> Self {
-        Self {
-            hasher,
-            buf: [0u8; ATTEMPT_BUF_LEN],
-            idx: ATTEMPT_BUF_LEN,
-        }
+    macro_rules! next_byte {
+        () => {{
+            if idx >= ATTEMPT_BUF_LEN {
+                hasher.fill_from_xof(ATTEMPT_LABEL, &mut buf);
+                idx = 0;
+            }
+            let b = buf[idx];
+            idx += 1;
+            b
+        }};
     }
 
-    #[inline]
-    fn next_byte(&mut self) -> u8 {
-        if self.idx >= ATTEMPT_BUF_LEN {
-            self.hasher.fill_from_xof(ATTEMPT_LABEL, &mut self.buf);
-            self.idx = 0;
-        }
-        let b = unsafe { *self.buf.get_unchecked(self.idx) };
-        self.idx += 1;
-        b
-    }
-}
-
-fn sample_attempt(rng: &mut AttemptBytes<'_>) -> ([u8; TAU], [i8; TAU]) {
     let mut perm: [u8; N] = std::array::from_fn(|i| i as u8);
     for i in 0..TAU {
         let range = (N - i) as u32;
         let cutoff: u32 = 256 - (256 % range);
         let r = loop {
-            let b = rng.next_byte() as u32;
+            let b = next_byte!() as u32;
             if b < cutoff {
                 break b;
             }
@@ -276,7 +264,7 @@ fn sample_attempt(rng: &mut AttemptBytes<'_>) -> ([u8; TAU], [i8; TAU]) {
 
     let mut sign_bytes = [0u8; SIGN_BYTES];
     for b in &mut sign_bytes {
-        *b = rng.next_byte();
+        *b = next_byte!();
     }
 
     let mut positions = [0u8; TAU];
@@ -292,11 +280,10 @@ fn sample_attempt(rng: &mut AttemptBytes<'_>) -> ([u8; TAU], [i8; TAU]) {
 const T_OP_NORM_BOUND_SQ: f64 = T_OP_NORM_BOUND * T_OP_NORM_BOUND;
 
 pub fn sample_short_challenge(hasher: &mut HashWrapper) -> ([i8; N], usize) {
-    let mut rng = AttemptBytes::new(hasher);
     let mut attempts: usize = 0;
     loop {
         attempts += 1;
-        let (positions, signs) = sample_attempt(&mut rng);
+        let (positions, signs) = sample_attempt(hasher);
         if op_norm_sq_sparse(&positions, &signs) <= T_OP_NORM_BOUND_SQ {
             let mut c = [0i8; N];
             for i in 0..TAU {
@@ -318,6 +305,7 @@ pub fn sample_short_challenge_into(hasher: &mut HashWrapper, output: &mut RingEl
             _ => unreachable!(),
         };
     }
+    output.to_representation(Representation::IncompleteNTT);
     attempts
 }
 
@@ -383,10 +371,43 @@ mod tests {
     }
 
     #[test]
+    fn sampling_is_deterministic_and_post_state_matches() {
+        let mut h1 = HashWrapper::new();
+        let mut h2 = HashWrapper::new();
+        for _ in 0..20 {
+            let (c1, _) = sample_short_challenge(&mut h1);
+            let (c2, _) = sample_short_challenge(&mut h2);
+            assert_eq!(c1, c2);
+        }
+        assert_eq!(h1.sample_bytes(64), h2.sample_bytes(64));
+    }
+
+    #[test]
+    fn challenge_stream_fingerprint() {
+        let mut hasher = HashWrapper::new();
+        let mut digest = blake3::Hasher::new();
+        for _ in 0..100 {
+            let (c, _) = sample_short_challenge(&mut hasher);
+            let bytes: [u8; N] = std::array::from_fn(|i| c[i] as u8);
+            digest.update(&bytes);
+        }
+        let actual = digest.finalize().to_hex().to_string();
+        assert_eq!(
+            actual, EXPECTED_FINGERPRINT,
+            "challenge stream changed; update EXPECTED_FINGERPRINT if intentional"
+        );
+    }
+
+    const EXPECTED_FINGERPRINT: &str =
+        "5670da5c3578390a8e449b8d42526135dcdb708c95054a31c5767281218c42b1";
+
+    #[test]
     fn ring_output_encoding_is_consistent() {
         let mut hasher = HashWrapper::new();
         let mut elem = RingElement::new(Representation::Coefficients);
         let _ = sample_short_challenge_into(&mut hasher, &mut elem);
+        assert_eq!(elem.representation, Representation::IncompleteNTT);
+        elem.to_representation(Representation::Coefficients);
         let mut nonzero = 0;
         for &v in &elem.v {
             assert!(v == 0 || v == 1 || v == MOD_Q - 1);
