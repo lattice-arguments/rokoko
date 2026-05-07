@@ -1,6 +1,7 @@
 use crate::common::arithmetic::field_to_ring_element_into;
 use crate::common::config::{DEGREE, MOD_Q};
 use crate::common::ring_arithmetic::*;
+use crate::common::short_challenge::sample_short_challenge_into;
 use crate::common::sumcheck_element::SumcheckElement;
 use crate::hexl::bindings::eltwise_reduce_mod;
 use blake3::Hasher;
@@ -195,6 +196,15 @@ impl HashWrapper {
     pub fn sample_biased_ternary_ring_element_vec_into(&mut self, output: &mut [RingElement]) {
         for element in output.iter_mut() {
             self.sample_biased_ternary_ring_element_into(element);
+        }
+    }
+    pub fn sample_low_op_norm_ring_into(&mut self, output: &mut RingElement) {
+        sample_short_challenge_into(self, output);
+    }
+
+    pub fn sample_low_op_norm_ring_vec_into(&mut self, output: &mut [RingElement]) {
+        for element in output.iter_mut() {
+            self.sample_low_op_norm_ring_into(element);
         }
     }
 
