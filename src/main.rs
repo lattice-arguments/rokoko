@@ -98,38 +98,27 @@ fn main() {
 
 #[cfg(feature = "profile")]
 fn trace_name() -> &'static str {
-    if cfg!(feature = "p-26") {
-        "p26"
-    } else if cfg!(feature = "p-30") {
-        "p30"
-    } else {
-        "p28"
+    match (cfg!(feature = "p-26"), cfg!(feature = "p-28"), cfg!(feature = "p-30")) {
+        (true, _, _) => "p26",
+        (_, true, _) => "p28",
+        (_, _, true) => "p30",
+        _ => panic!("--features profile requires one of p-26, p-28, p-30"),
     }
 }
 
 #[cfg(feature = "profile")]
 fn active_features() -> String {
-    let mut features = Vec::new();
-    if cfg!(feature = "p-26") {
-        features.push("p-26");
-    }
-    if cfg!(feature = "p-28") {
-        features.push("p-28");
-    }
-    if cfg!(feature = "p-30") {
-        features.push("p-30");
-    }
-    if cfg!(feature = "incomplete-rexl") {
-        features.push("incomplete-rexl");
-    }
-    if cfg!(feature = "unsafe-sumcheck") {
-        features.push("unsafe-sumcheck");
-    }
-    if cfg!(feature = "debug-hardness") {
-        features.push("debug-hardness");
-    }
-    if cfg!(feature = "debug-decomp") {
-        features.push("debug-decomp");
-    }
-    features.join(",")
+    [
+        cfg!(feature = "p-26").then_some("p-26"),
+        cfg!(feature = "p-28").then_some("p-28"),
+        cfg!(feature = "p-30").then_some("p-30"),
+        cfg!(feature = "incomplete-rexl").then_some("incomplete-rexl"),
+        cfg!(feature = "unsafe-sumcheck").then_some("unsafe-sumcheck"),
+        cfg!(feature = "debug-hardness").then_some("debug-hardness"),
+        cfg!(feature = "debug-decomp").then_some("debug-decomp"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(",")
 }
