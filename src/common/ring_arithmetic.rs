@@ -419,7 +419,7 @@ impl RingElement {
         debug_assert_eq!(self.representation, Representation::IncompleteNTT);
 
         let transform = &*CONJUGATION_NTT_TRANSFORM;
-        let temp = get_temp_buffer();
+        let mut temp = [0u64; DEGREE];
 
         // Apply even part permutation
         for i in 0..HALF_DEGREE {
@@ -448,7 +448,7 @@ impl RingElement {
         result.representation = self.representation;
 
         let transform = &*CONJUGATION_NTT_TRANSFORM;
-        let temp = get_temp_buffer();
+        let mut temp = [0u64; DEGREE];
         for i in 0..HALF_DEGREE {
             temp[transform.even_permutation[i]] = self.v[i];
         }
@@ -581,7 +581,7 @@ impl RingElement {
 
     pub fn constant_term_from_incomplete_ntt(&self) -> u64 {
         debug_assert_eq!(self.representation, Representation::IncompleteNTT);
-        let buf = &mut *get_temp_buffer();
+        let mut buf = [0u64; DEGREE];
         buf.copy_from_slice(&self.v);
         unsafe {
             eltwise_mult_mod(
@@ -638,22 +638,6 @@ pub struct ConjugationTransform {
     pub even_permutation: [usize; HALF_DEGREE],
     pub odd_permutation: [usize; HALF_DEGREE],
     pub odd_factors: [u64; HALF_DEGREE],
-}
-
-pub static mut TEMP_BUFFER: LazyLock<[u64; DEGREE]> = LazyLock::new(|| [0u64; DEGREE]);
-
-#[inline(always)]
-fn get_temp_buffer() -> &'static mut [u64; DEGREE] {
-    unsafe { &mut TEMP_BUFFER }
-}
-
-pub static mut AUX: LazyLock<RingElement> =
-    LazyLock::new(|| RingElement::new(Representation::IncompleteNTT));
-
-#[allow(dead_code)]
-#[inline(always)]
-fn get_aux() -> &'static mut RingElement {
-    unsafe { &mut AUX }
 }
 
 /// Empirically derive the conjugation transformation in NTT domain
@@ -901,7 +885,7 @@ pub fn incomplete_ntt_multiplication_inner(
     }
 
     // Homogenized path: keep original separate-call implementation
-    let temp = get_temp_buffer();
+    let mut temp = [0u64; DEGREE];
 
     unsafe {
         // result_even = op1_even * op2_even
@@ -967,7 +951,7 @@ pub fn incomplete_ntt_multiplication_in_place_inner(
     operand1: &RingElement,
     homogenized: bool,
 ) {
-    let temp = get_temp_buffer();
+    let mut temp = [0u64; DEGREE];
 
     let op1_data = &operand1.v;
 

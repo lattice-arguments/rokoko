@@ -12,6 +12,7 @@ pub mod projection_matrix;
 pub mod ring_arithmetic;
 pub mod sampling;
 pub mod structured_row;
+pub mod short_challenge;
 pub mod sumcheck_element;
 use crate::common::{
     arithmetic::{
@@ -39,9 +40,6 @@ pub fn init_common() {
     LazyLock::force(&HALF_WAY_MOD_Q);
     LazyLock::force(&HALF_WAY_MOD_Q_RING_CF);
     LazyLock::force(&CONSTANT_TERM_FACTORS);
-
-    unsafe { LazyLock::force_mut(&mut TEMP_BUFFER) };
-    unsafe { LazyLock::force_mut(&mut AUX) };
 
     // init some caches of HEXL
     let mut a = RingElement::new(Representation::EvenOddCoefficients);
