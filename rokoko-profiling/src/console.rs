@@ -1,20 +1,6 @@
-//! Console output layer.
-//!
-//! Two outputs:
-//!
-//! 1. **Live stream**: as the program runs, span-close events with depth ≤
-//!    [`MAX_LIVE_DEPTH`] are emitted to stdout in compact form so progress is
-//!    visible without flooding the terminal with the full span tree.
-//!
-//! 2. **End-of-run summary**: when the layer's guard drops, a hierarchical
-//!    tree of every span observed during the run is printed, derived from
-//!    parent/child edges tracked at `on_close` time. Cycles introduced by
-//!    recursive spans (e.g. `prover_round → next_witness_and_recurse →
-//!    prover_round`) are detected and elided rather than expanded.
-//!
-//! The full per-instance detail still lives in the Chrome JSON; the snapshot
-//! JSON still has the flat by-name aggregates. This layer's job is to make
-//! the human-readable view useful at a glance.
+//! Live span stream (depth ≤ [`MAX_LIVE_DEPTH`]) plus an end-of-run
+//! hierarchical summary built from `(parent, child)` edge aggregates.
+//! Recursive cycles are elided, not expanded.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;

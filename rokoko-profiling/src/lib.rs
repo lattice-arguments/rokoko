@@ -1,17 +1,6 @@
-//! Tracing-based profiling infrastructure for rokoko.
-//!
-//! Call [`setup_tracing`] once at binary startup with the desired output
-//! formats. Hold the returned [`TracingGuards`] alive for the duration of the
-//! program; dropping them flushes pending trace data and writes the snapshot
-//! JSON.
-//!
-//! Modeled on `jolt-profiling`. Three output formats:
-//! - [`TracingFormat::Default`]: indented hierarchical [`ConsoleLayer`].
-//! - [`TracingFormat::Chrome`]: Chrome/Perfetto JSON timeline at
-//!   `bench_results/traces/{name}.json` (loads in
-//!   <https://ui.perfetto.dev/>).
-//! - [`TracingFormat::Snapshot`]: aggregated span totals at
-//!   `bench_results/snapshots/{name}.json` for diff-friendly PR evidence.
+//! `tracing`-based profiling for rokoko. Call [`setup_tracing`] once at
+//! startup, hold the returned [`TracingGuards`] for the program's lifetime.
+//! See `bench_results/PROFILING.md` for the user-facing workflow.
 
 mod console;
 mod log;

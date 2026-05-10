@@ -7,16 +7,15 @@ use crate::console::ConsoleLayer;
 use crate::log::LogLayer;
 use crate::snapshot::SnapshotLayer;
 
-/// Output format for the tracing subscriber stack.
-///
-/// Multiple variants can be selected at once; their outputs are independent.
+/// Output format for the tracing subscriber stack. Multiple variants can be
+/// selected at once; their outputs are independent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TracingFormat {
-    /// Indented hierarchical console output via [`crate::ConsoleLayer`].
+    /// Hierarchical console output (live stream + end-of-run summary).
     Default,
-    /// Chrome/Perfetto JSON trace at `target/profiles/{trace_name}.json`.
+    /// Chrome/Perfetto JSON at `bench_results/traces/{trace_name}.json`.
     Chrome,
-    /// Aggregated span totals at `bench/snapshots/{trace_name}.json`.
+    /// Aggregated span totals at `bench_results/snapshots/{trace_name}.json`.
     Snapshot,
 }
 
@@ -65,7 +64,7 @@ pub fn setup_tracing(
     let mut layers: Vec<Box<dyn Layer<Registry> + Send + Sync>> = Vec::new();
     let mut guards: Vec<Box<dyn Any>> = Vec::new();
 
-    layers.push(LogLayer::new().with_filter(filter()).boxed());
+    layers.push(LogLayer.with_filter(filter()).boxed());
 
     if formats.contains(&TracingFormat::Default) {
         let (console_layer, console_guard) = ConsoleLayer::new(focus.clone());
@@ -86,7 +85,7 @@ pub fn setup_tracing(
 
     if formats.contains(&TracingFormat::Snapshot) {
         let (snapshot_layer, snapshot_guard) =
-            SnapshotLayer::new(trace_name, features, focus.clone());
+            SnapshotLayer::new(trace_name, features, focus);
         layers.push(snapshot_layer.with_filter(filter()).boxed());
         guards.push(Box::new(snapshot_guard));
     }

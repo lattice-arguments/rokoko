@@ -1,14 +1,6 @@
-//! Snapshot layer: aggregate span totals into a small diff-friendly JSON.
-//!
-//! Hooks `on_new_span` to record start time and `on_close` to accumulate
-//! `(total_ns, calls)` keyed by span name. Aggregation is **flat** — span
-//! instances at different recursion depths are summed into one entry. The
-//! Chrome JSON preserves per-instance detail; this layer trades that for
-//! diff-ability and PR-friendliness.
-//!
-//! On guard drop, serializes to `bench_results/snapshots/{trace_name}.json`
-//! with metadata (git SHA, ISO 8601 date, active rokoko features, machine
-//! string).
+//! Flat aggregation of `(total_ns, calls)` per span name, written to
+//! `bench_results/snapshots/{trace_name}.json` on guard drop. Per-instance
+//! detail lives in the Chrome JSON; this layer trades that for diffability.
 
 use std::collections::HashMap;
 use std::fs;
