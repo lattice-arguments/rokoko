@@ -1,6 +1,3 @@
-//! `tracing`-based profiling for rokoko. Call [`setup_tracing`] once at
-//! startup and hold the returned [`TracingGuards`] for the program's lifetime.
-
 mod console;
 mod log;
 mod setup;

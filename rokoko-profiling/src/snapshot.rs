@@ -1,7 +1,3 @@
-//! Flat aggregation of `(total_ns, calls)` per span name, written to
-//! `bench_results/snapshots/{trace_name}.json` on guard drop. Per-instance
-//! detail lives in the Chrome JSON; this layer trades that for diffability.
-
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -39,12 +35,9 @@ type Aggregates = Arc<Mutex<HashMap<String, SpanAggregate>>>;
 
 pub struct SnapshotLayer {
     aggregates: Aggregates,
-    /// Subtree-focus filter. If non-empty, only spans whose name (or any
-    /// ancestor's name) matches at least one token are aggregated.
     focus: Vec<String>,
 }
 
-/// Holds the snapshot output path and metadata. Drop writes the JSON.
 pub struct SnapshotGuard {
     aggregates: Aggregates,
     path: PathBuf,

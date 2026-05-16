@@ -1,6 +1,5 @@
-//! Renders just the `message` field of each event, no prefix. Span context
-//! is shown by [`crate::ConsoleLayer`]; `fmt::layer`'s ancestor chain would
-//! be unreadable under the recursive `prover_round` span.
+// `fmt::layer`'s ancestor chain is unreadable under the recursive `prover_round`
+// span, so we render just the `message` field; span context comes from `ConsoleLayer`.
 
 use std::fmt::Write as _;
 use std::io::{self, Write as _};

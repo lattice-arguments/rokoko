@@ -1,7 +1,3 @@
-//! Live span stream (depth ≤ [`MAX_LIVE_DEPTH`]) plus an end-of-run
-//! hierarchical summary built from `(parent, child)` edge aggregates.
-//! Recursive cycles are elided, not expanded.
-
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::io::{self, Write as _};
@@ -14,12 +10,8 @@ use tracing::Subscriber;
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::registry::{LookupSpan, SpanRef};
 
-/// Returns whether `span` (or any of its ancestors) matches the focus filter.
-/// Empty focus = no filter (everything in focus).
-///
-/// Matching rule per token: a span name `n` matches token `tok` iff `n == tok`
-/// or `n` starts with `"{tok}::"`. So `focus = ["commit"]` matches `commit`,
-/// `commit::basic`, `commit::basic_internal`, etc.
+/// Matching rule per token: `n == tok` or `n` starts with `"{tok}::"`. Empty
+/// focus = no filter.
 pub(crate) fn is_in_focus<S>(span: &SpanRef<'_, S>, focus: &[String]) -> bool
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -38,14 +30,10 @@ where
     false
 }
 
-/// Live-stream output is suppressed for spans below this depth. Roots are at
-/// depth 0; their children at 1; grandchildren at 2. Beyond that, lines are
-/// dropped from the terminal but still tracked for the summary.
 const MAX_LIVE_DEPTH: usize = 2;
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 struct EdgeKey {
-    /// `None` indicates a root-level span (no surrounding span).
     parent: Option<String>,
     child: String,
 }
@@ -60,21 +48,14 @@ type EdgeMap = HashMap<EdgeKey, EdgeAggregate>;
 
 pub struct ConsoleLayer {
     edges: Arc<Mutex<EdgeMap>>,
-    /// Subtree-focus filter. If non-empty, only spans whose name (or any
-    /// ancestor's name) matches at least one token are tracked and emitted.
     focus: Vec<String>,
 }
 
-/// RAII guard that prints the end-of-run summary when dropped. Must be held
-/// alive for the duration of profiling — `setup_tracing` packs it into
-/// [`crate::TracingGuards`].
 pub struct ConsoleSummaryGuard {
     edges: Arc<Mutex<EdgeMap>>,
 }
 
 impl ConsoleLayer {
-    /// Construct the layer + summary guard. `focus` is a subtree-focus filter
-    /// (typically from `ROKOKO_PROFILE_FOCUS`); empty disables filtering.
     pub fn new(focus: Vec<String>) -> (Self, ConsoleSummaryGuard) {
         let edges = Arc::new(Mutex::new(HashMap::new()));
         (
@@ -121,7 +102,6 @@ where
             return;
         }
 
-        // Track edge for the end-of-run summary, regardless of live depth.
         {
             let mut edges = self.edges.lock().expect("edges lock poisoned");
             let entry = edges
@@ -134,7 +114,6 @@ where
             entry.calls += 1;
         }
 
-        // Live stream: only emit spans at the top of the tree.
         if depth > MAX_LIVE_DEPTH {
             return;
         }
@@ -155,17 +134,10 @@ where
     }
 }
 
-// Layout constants for the summary table.
-//
-// Line shape: `<indent><name><pad><time><calls><pct>` where `<indent>` is
-// `2 * depth` spaces and the right-side columns have fixed widths so values
-// align across rows regardless of nesting depth.
-const NAME_END: usize = 48; // indent + name field fills to this column
+const NAME_END: usize = 48;
 const TIME_WIDTH: usize = 10;
 const CALLS_WIDTH: usize = 6;
 const PCT_WIDTH: usize = 7;
-/// Phase header total width — matches `NAME_END + 2 + TIME_WIDTH` so the
-/// header's right-aligned time lands in the same column as child rows.
 const HEADER_WIDTH: usize = NAME_END + 2 + TIME_WIDTH;
 
 impl Drop for ConsoleSummaryGuard {
@@ -177,8 +149,6 @@ impl Drop for ConsoleSummaryGuard {
         let mut out = io::stdout().lock();
         let _ = writeln!(out);
 
-        // Roots: edges with no parent. Sort by total_ns descending so the
-        // biggest phase prints first.
         let mut roots: Vec<(String, u128)> = edges
             .iter()
             .filter(|(k, _)| k.parent.is_none())
@@ -191,8 +161,6 @@ impl Drop for ConsoleSummaryGuard {
             if i > 0 {
                 let _ = writeln!(out);
             }
-            // Phase header: `=== PHASE === ... === <time>`, right-aligned at
-            // the same column as the child rows' time field.
             let phase = root.to_uppercase();
             let time = format_duration(Duration::from_nanos(*total_ns as u64));
             let prefix = format!("=== {phase} ");
@@ -201,16 +169,6 @@ impl Drop for ConsoleSummaryGuard {
                 HEADER_WIDTH.saturating_sub(prefix.len() + suffix.len());
             let _ = writeln!(out, "{prefix}{}{suffix}", "=".repeat(filler_count));
 
-            // Walk the root's children. The root span itself is represented by
-            // the header line, so we skip emitting it as a normal row.
-            //
-            // `visited` tracks names currently on the descent path (cycle
-            // detection). `shown_edges` tracks every (parent, child) edge
-            // expanded anywhere in the run — when we encounter the same edge
-            // a second time, we emit a stub instead of re-expanding the same
-            // subtree with the same edge-aggregated numbers (which would be
-            // misleading: the (diff, product) edge is the same edge whether
-            // it's reached via combiner or via a direct sumcheck call).
             let mut visited = HashSet::new();
             visited.insert(root.clone());
             let mut shown_edges: HashSet<(Option<String>, String)> = HashSet::new();
@@ -241,13 +199,9 @@ impl Drop for ConsoleSummaryGuard {
     }
 }
 
-/// Walks the call graph from `name` down through every edge whose parent is
-/// `name`. All times and call counts come from the **edge** `(parent, name)` —
-/// not from a global by-name aggregate. A span called from multiple parents
-/// (e.g. `commit::basic_internal`, called from both `commit::basic` during
-/// witness commit and from `prover_round::next_witness_and_recurse` during
-/// prover rounds) thus shows the correct slice of its time under each parent,
-/// and percentages relative to parent never exceed 100%.
+/// All times and call counts are read from the `(parent, child)` edge — not
+/// from a by-name aggregate — so a span called from multiple parents shows the
+/// correct slice under each parent and percent-of-parent never exceeds 100%.
 fn print_subtree(
     out: &mut impl io::Write,
     edges: &EdgeMap,
@@ -261,19 +215,14 @@ fn print_subtree(
     let indent = "  ".repeat(depth);
     let display = strip_common_prefix(name, parent);
 
-    // If this exact (parent, child) edge has already been expanded once,
-    // emit a one-line stub. The aggregate is the same edge regardless of
-    // where the parent appears in the tree, so re-expanding it would print
-    // the same children and numbers a second time and mislead the reader.
+    // Re-expanding the same edge elsewhere in the tree would print identical
+    // numbers a second time and mislead the reader, so stub on repeat.
     let edge_id = (parent.map(String::from), name.to_string());
     if shown_edges.contains(&edge_id) {
         let _ = writeln!(out, "{indent}…{display}");
         return;
     }
 
-    // Cycle: this name is already on the path from root to here. Emit a one-
-    // line stub indicator (`…name`) and stop. The full subtree was already
-    // expanded under its first occurrence higher in the output.
     if visited.contains(name) {
         let _ = writeln!(out, "{indent}…{display}");
         return;
@@ -317,8 +266,6 @@ fn print_subtree(
 
     visited.insert(name.to_string());
 
-    // Children: distinct child names from all (parent=name, *) edges, sorted
-    // by total_ns descending so heavy hitters surface first.
     let mut children: Vec<(String, u128)> = edges
         .iter()
         .filter(|(k, _)| k.parent.as_deref() == Some(name))
@@ -344,19 +291,6 @@ fn print_subtree(
 }
 
 /// Strip the longest `::`-bounded prefix shared between `name` and `parent`.
-///
-/// Span names follow a `<phase>::<step>::<sub>` convention (e.g.
-/// `commit::basic_internal`, `sumcheck::round::poly`). Tracing's parent/child
-/// relationship is independent of the name string, so the same node may be
-/// reached from many parents with different shared prefixes:
-///
-/// - Under `commit`, child `commit::basic` displays as `basic`.
-/// - Under `commit::basic`, child `commit::basic_internal` displays as
-///   `basic_internal` (the segment after `commit::`, since `basic` and
-///   `basic_internal` are different segments and `commit` is the common one).
-/// - Under `prover_round::next_witness_and_recurse`, child
-///   `commit::basic_internal` keeps its full name — no shared segment, so the
-///   cross-phase nesting is visible.
 fn strip_common_prefix<'a>(name: &'a str, parent: Option<&str>) -> &'a str {
     let Some(parent) = parent else {
         return name;
@@ -371,7 +305,7 @@ fn strip_common_prefix<'a>(name: &'a str, parent: Option<&str>) -> &'a str {
         if n_seg != p_seg {
             break;
         }
-        bytes_to_skip += n_seg.len() + 2; // segment + "::"
+        bytes_to_skip += n_seg.len() + 2;
     }
     if bytes_to_skip == 0 || bytes_to_skip > name.len() {
         name
@@ -427,23 +361,19 @@ mod tests {
 
     #[test]
     fn strip_common_prefix_strips_segments() {
-        // root: full name kept (no parent)
         assert_eq!(strip_common_prefix("commit", None), "commit");
 
-        // single-segment parent matching first child segment
         assert_eq!(strip_common_prefix("commit::basic", Some("commit")), "basic");
         assert_eq!(
             strip_common_prefix("commit::decompose_witness", Some("commit")),
             "decompose_witness"
         );
 
-        // two-segment parent matching first segment of child
         assert_eq!(
             strip_common_prefix("commit::basic_internal", Some("commit::basic")),
             "basic_internal"
         );
 
-        // sumcheck::round::poly under sumcheck::round → poly
         assert_eq!(
             strip_common_prefix("sumcheck::round::poly", Some("sumcheck::round")),
             "poly"
