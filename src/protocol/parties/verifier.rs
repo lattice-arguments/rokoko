@@ -349,7 +349,7 @@ pub fn verifier_round_intermediate(
 
     let mut folding_challenges =
         vec![RingElement::zero(Representation::IncompleteNTT); config.witness_width];
-    hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut folding_challenges);
+    hash_wrapper.sample_low_op_norm_ring_vec_into(&mut folding_challenges);
 
     let next_round_commitment =
         match round_proof
@@ -520,7 +520,7 @@ pub fn verifier_round_simple(
     let mut folding_challenges =
         vec![RingElement::zero(Representation::IncompleteNTT); config.witness_width];
 
-    hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut folding_challenges);
+    hash_wrapper.sample_low_op_norm_ring_vec_into(&mut folding_challenges);
 
     let commitment_of_folded_witness = commit_basic(
         &crs,

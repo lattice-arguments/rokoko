@@ -200,6 +200,7 @@ impl HashWrapper {
     }
     pub fn sample_low_op_norm_ring_into(&mut self, output: &mut RingElement) {
         sample_short_challenge_into(self, output);
+        // self.sample_biased_ternary_ring_element_into(output);
     }
 
     pub fn sample_low_op_norm_ring_vec_into(&mut self, output: &mut [RingElement]) {
