@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use rokoko::common::hash::HashWrapper;
 use rokoko::common::ring_arithmetic::{Representation, RingElement};
-use rokoko::common::short_challenge::sample_short_challenge;
+use rokoko::common::short_challenge::{sample_attempt, sample_short_challenge};
 use std::hint::black_box;
 
 fn bench_ring_multiplication(c: &mut Criterion) {
@@ -40,6 +40,13 @@ fn bench_short_challenge(c: &mut Criterion) {
         bencher.iter(|| {
             let (challenge, _attempts) = sample_short_challenge(black_box(&mut hasher));
             black_box(challenge);
+        });
+    });
+    group.bench_function("sample_attempt", |bencher| {
+        let mut hasher = HashWrapper::new();
+        bencher.iter(|| {
+            let res = sample_attempt(black_box(&mut hasher));
+            black_box(res);
         });
     });
     group.bench_function("op_norm_sq_sparse", |bencher| {

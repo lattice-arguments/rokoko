@@ -255,7 +255,7 @@ pub fn prover_round(
             config::{DEGREE, MOD_Q},
             estimator::{estimate_rsis_security, RSISParameters},
             norms,
-            short_challenge::T_OP_NORM_BOUND
+            short_challenge::T_OP_NORM_BOUND,
         };
         use crate::protocol::commitment::{RecursionConfig, RecursiveCommitmentWithAux};
 
@@ -895,7 +895,7 @@ pub fn prover_round_intermediate(
             config::{DEGREE, MOD_Q},
             estimator::{estimate_rsis_security, RSISParameters},
             norms,
-            short_challenge::T_OP_NORM_BOUND
+            short_challenge::T_OP_NORM_BOUND,
         };
 
         let recommited_ell_2_norm = norms::l2_norm(&next_round_witness.data);
@@ -1095,7 +1095,7 @@ pub fn prover_round_simple(
             config::{DEGREE, MOD_Q},
             estimator::{estimate_rsis_security, RSISParameters},
             norms,
-            short_challenge::T_OP_NORM_BOUND
+            short_challenge::T_OP_NORM_BOUND,
         };
         let folded_witness_l2_norm = norms::l2_norm(&folded_witness.data);
 
