@@ -12,7 +12,9 @@ use crate::{
     protocol::{
         config::{NextRoundCommitment, Projection, SumcheckConfig, SumcheckRoundProof},
         open::evaluation_point_to_structured_row,
-        project_2::{BatchedProjectionChallengesSuccinct, verifier_sample_projection_challenges, verifier_sample_projection_challenges_collectively},
+        project_2::{
+            verifier_sample_projection_challenges_collectively, BatchedProjectionChallengesSuccinct,
+        },
         sumcheck_utils::common::EvaluationSumcheckData,
         sumchecks::{
             context_verifier::VerifierSumcheckContext, loader_verifier::load_verifier_sumcheck_data,
@@ -153,11 +155,11 @@ pub fn sumcheck_verifier(
     {
         hash_wrapper.update_with_ring_element_slice(rcs_projection_1_ct);
         let challenges_3_1: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] =
-                verifier_sample_projection_challenges_collectively(
-                    &projection_matrix,
-                    config,
-                    hash_wrapper,
-                );
+            verifier_sample_projection_challenges_collectively(
+                &projection_matrix,
+                config,
+                hash_wrapper,
+            );
         hash_wrapper.update_with_ring_element_slice(rcs_projection_1_batched);
         Some(challenges_3_1)
     } else {

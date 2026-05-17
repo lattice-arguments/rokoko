@@ -1,11 +1,9 @@
-use std::array;
-
 use crate::{
     common::{
         arithmetic::precompute_structured_values_fast,
         config::{DEGREE, MOD_Q, NOF_BATCHES},
         hash::HashWrapper,
-        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix, new_vec_zero_preallocated},
+        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         norms::l2_norm_coeffs,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
@@ -13,7 +11,7 @@ use crate::{
     },
     hexl::bindings::{add_mod, eltwise_mult_mod, multiply_mod},
     protocol::{
-        commitment::{BasicCommitment, commit_basic},
+        commitment::{commit_basic, BasicCommitment},
         config::{
             Config, IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, RoundProof,
             SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof,
@@ -27,7 +25,9 @@ use crate::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
             open_at,
         },
-        project_2::{BatchedProjectionChallengesSuccinct, verifier_sample_projection_challenges, verifier_sample_projection_challenges_collectively},
+        project_2::{
+            verifier_sample_projection_challenges_collectively, BatchedProjectionChallengesSuccinct,
+        },
         sumchecks::{
             context_verifier::{NextVerifierSumcheckContext, VerifierSumcheckContext},
             runner_verifier::sumcheck_verifier,
@@ -288,11 +288,12 @@ pub fn verifier_round_intermediate(
 
     projection_matrix.sample(&mut hash_wrapper);
     hash_wrapper.update_with_ring_element_slice(&round_proof.projection_image_ct.data);
-    let challenges: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] = verifier_sample_projection_challenges_collectively(
-        &projection_matrix,
-        config,
-        &mut hash_wrapper,
-    );
+    let challenges: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] =
+        verifier_sample_projection_challenges_collectively(
+            &projection_matrix,
+            config,
+            &mut hash_wrapper,
+        );
 
     let rows_per_chunk = config.projection_height / DEGREE;
 
@@ -501,11 +502,12 @@ pub fn verifier_round_simple(
 
     hash_wrapper.update_with_ring_element_slice(&round_proof.projection_image_ct.data);
 
-    let challenges: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] = verifier_sample_projection_challenges_collectively(
-        &projection_matrix,
-        config,
-        &mut hash_wrapper,
-    );
+    let challenges: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] =
+        verifier_sample_projection_challenges_collectively(
+            &projection_matrix,
+            config,
+            &mut hash_wrapper,
+        );
 
     debug_assert_eq!(
         challenges[0].c_0_layers.len(),

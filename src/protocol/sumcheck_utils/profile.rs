@@ -109,9 +109,7 @@ pub fn print_and_reset(label: &str) {
     if !containers.is_empty() {
         let container_summary: Vec<String> = containers
             .iter()
-            .map(|(kind, dur, count)| {
-                format!("{} {} ms [{}]", kind.name(), dur.as_millis(), count)
-            })
+            .map(|(kind, dur, count)| format!("{} {} ms [{}]", kind.name(), dur.as_millis(), count))
             .collect();
         println!(
             "    [{}] containers (overlap leaves): {}",
