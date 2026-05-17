@@ -15,13 +15,14 @@ use num::Complex;
 use std::sync::LazyLock;
 
 pub const TAU: usize = 22;
+// 2^103.31 enties
 pub const T_OP_NORM_BOUND: f64 = 10.0;
+// heuristic: with TAU=22, the expected number of attempts is about 2^0.31 = 1.24
 
 const N: usize = DEGREE;
 const LOG_N: usize = N.trailing_zeros() as usize;
 const PHASE_LEN: usize = 2 * N;
 const PHASE_MASK: usize = PHASE_LEN - 1;
-
 
 static PRE_TWIST: LazyLock<[Complex<f64>; N]> = LazyLock::new(|| {
     let mut arr = [Complex::new(0.0, 0.0); N];
@@ -307,6 +308,17 @@ pub fn sample_short_challenge_into(hasher: &mut HashWrapper, output: &mut RingEl
     attempts
 }
 
+pub fn repetition_rate() -> f64 {
+    let mut hasher = HashWrapper::new();
+    let mut total_attempts: usize = 0;
+    let trials = 10_000;
+    for _ in 0..trials {
+        let (_, attempts) = sample_short_challenge(&mut hasher);
+        total_attempts += attempts;
+    }
+    (total_attempts as f64) / (trials as f64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,7 +346,12 @@ mod tests {
         }
         let fft = op_norm(&c);
         let direct = op_norm_direct(&c);
-        assert!((fft - direct).abs() < 1e-10, "fft={} direct={}", fft, direct);
+        assert!(
+            (fft - direct).abs() < 1e-10,
+            "fft={} direct={}",
+            fft,
+            direct
+        );
     }
 
     #[test]
