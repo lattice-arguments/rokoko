@@ -3,6 +3,7 @@ pub mod crs;
 // pub mod execution_simple;
 pub mod config;
 pub mod config_generator;
+pub mod evaluation_point_sampler;
 pub mod fold;
 pub mod intermediate_sumchecks;
 pub mod open;

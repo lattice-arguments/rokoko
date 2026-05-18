@@ -58,10 +58,7 @@ impl AesCtrPublicSampler {
             *w = 0;
         }
         let bytes = unsafe {
-            std::slice::from_raw_parts_mut(
-                self.buf.as_mut_ptr() as *mut u8,
-                AES_BUF_U64 * 8,
-            )
+            std::slice::from_raw_parts_mut(self.buf.as_mut_ptr() as *mut u8, AES_BUF_U64 * 8)
         };
         self.cipher.apply_keystream(bytes);
         self.pos = 0;
@@ -125,8 +122,7 @@ mod tests {
 
     #[test]
     fn sampler_outputs_in_range() {
-        let v =
-            sample_public_vector_from_seed(PUBLIC_CRS_SEED, 4, Representation::IncompleteNTT);
+        let v = sample_public_vector_from_seed(PUBLIC_CRS_SEED, 4, Representation::IncompleteNTT);
         for el in &v {
             for &c in &el.v {
                 assert!(c < MOD_Q);

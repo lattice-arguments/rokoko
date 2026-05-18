@@ -71,7 +71,7 @@ fn get_and_increment_round_id() -> usize {
 }
 
 #[allow(dead_code)]
-static DEBUG_HARDNESS_FROM_ROUND: usize = 5;
+static DEBUG_HARDNESS_FROM_ROUND: usize = 0;
 
 #[tracing::instrument(skip_all, name = "prover_round")]
 pub fn prover_round(
@@ -200,7 +200,7 @@ pub fn prover_round(
     }
     let mut fold_challenge = vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
 
-    hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut fold_challenge);
+    hash_wrapper.sample_low_op_norm_ring_vec_into(&mut fold_challenge);
 
     let folded_witness = {
         let _s = tracing::info_span!("prover_round::fold").entered();
@@ -263,6 +263,7 @@ pub fn prover_round(
             config::{DEGREE, MOD_Q},
             estimator::{estimate_rsis_security, RSISParameters},
             norms,
+            short_challenge::T_OP_NORM_BOUND,
         };
         use crate::protocol::commitment::{RecursionConfig, RecursiveCommitmentWithAux};
 
@@ -427,7 +428,7 @@ pub fn prover_round(
                 .witness_decomposition_base_log
                 .pow((config.witness_decomposition_chunks - 1) as u32)) as f64;
 
-        let extracted_witness_bound = recomposed_witness_bound * DEGREE as f64 * 8.0; // factor 4 for difference in numerator and denominator in extraction and 2 for ISIS to SIS
+        let extracted_witness_bound = recomposed_witness_bound * T_OP_NORM_BOUND * 8.0; // factor 4 for difference in numerator and denominator in extraction and 2 for ISIS to SIS
 
         let recomposed_projection_bound = match &config.projection_recursion {
             Projection::Type0(proj_config) => {
@@ -826,7 +827,7 @@ pub fn prover_round_intermediate(
 
     let mut folding_challenge =
         vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
-    hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut folding_challenge);
+    hash_wrapper.sample_low_op_norm_ring_vec_into(&mut folding_challenge);
 
     let folded_witness = fold(&witness, &folding_challenge);
 
@@ -898,6 +899,7 @@ pub fn prover_round_intermediate(
             config::{DEGREE, MOD_Q},
             estimator::{estimate_rsis_security, RSISParameters},
             norms,
+            short_challenge::T_OP_NORM_BOUND,
         };
 
         let recommited_ell_2_norm = norms::l2_norm(&next_round_witness.data);
@@ -929,7 +931,7 @@ pub fn prover_round_intermediate(
 
         let projection_l2_norm = norms::l2_norm_coeffs(&projection_image_ct.data);
 
-        let extracted_witness_bound = recomposed_witness_bound * DEGREE as f64 * 8.0; // factor 4 for difference in numerator and denominator in extraction and 2 for ISIS to SIS
+        let extracted_witness_bound = recomposed_witness_bound * T_OP_NORM_BOUND * 8.0; // factor 4 for difference in numerator and denominator in extraction and 2 for ISIS to SIS
 
         // assert_eq(argued_witness_bound * argued_witness_bound
 
@@ -1086,7 +1088,7 @@ pub fn prover_round_simple(
 
     let mut fold_challenge = vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
 
-    hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut fold_challenge);
+    hash_wrapper.sample_low_op_norm_ring_vec_into(&mut fold_challenge);
 
     let folded_witness = fold(&witness, &fold_challenge);
 
@@ -1097,6 +1099,7 @@ pub fn prover_round_simple(
             config::{DEGREE, MOD_Q},
             estimator::{estimate_rsis_security, RSISParameters},
             norms,
+            short_challenge::T_OP_NORM_BOUND,
         };
         let folded_witness_l2_norm = norms::l2_norm(&folded_witness.data);
 
@@ -1104,7 +1107,7 @@ pub fn prover_round_simple(
 
         let projection_l2_norm = norms::l2_norm_coeffs(&projection_image_ct.data);
 
-        let extracted_witness_bound = folded_witness_l2_norm * DEGREE as f64 * 8.0; // factor 4 for difference in numerator and denominator in extraction and 2 for ISIS to SIS
+        let extracted_witness_bound = folded_witness_l2_norm * T_OP_NORM_BOUND * 8.0; // factor 4 for difference in numerator and denominator in extraction and 2 for ISIS to SIS
 
         let argued_witness_bound = projection_l2_norm / 5.477f64; // sqrt(30) as in the paper
         let worse_bound = if extracted_witness_bound > argued_witness_bound {

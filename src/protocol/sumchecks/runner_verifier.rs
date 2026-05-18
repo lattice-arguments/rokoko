@@ -12,7 +12,9 @@ use crate::{
     protocol::{
         config::{NextRoundCommitment, Projection, SumcheckConfig, SumcheckRoundProof},
         open::evaluation_point_to_structured_row,
-        project_2::{verifier_sample_projection_challenges, BatchedProjectionChallengesSuccinct},
+        project_2::{
+            verifier_sample_projection_challenges_collectively, BatchedProjectionChallengesSuccinct,
+        },
         sumcheck_utils::common::EvaluationSumcheckData,
         sumchecks::{
             context_verifier::VerifierSumcheckContext, loader_verifier::load_verifier_sumcheck_data,
@@ -153,10 +155,11 @@ pub fn sumcheck_verifier(
     {
         hash_wrapper.update_with_ring_element_slice(rcs_projection_1_ct);
         let challenges_3_1: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] =
-            std::array::from_fn(|_| {
-                verifier_sample_projection_challenges(&projection_matrix, config, hash_wrapper)
-            });
-
+            verifier_sample_projection_challenges_collectively(
+                &projection_matrix,
+                config,
+                hash_wrapper,
+            );
         hash_wrapper.update_with_ring_element_slice(rcs_projection_1_batched);
         Some(challenges_3_1)
     } else {
@@ -165,7 +168,7 @@ pub fn sumcheck_verifier(
 
     let mut folding_challenges =
         vec![RingElement::zero(Representation::IncompleteNTT); config.witness_width];
-    hash_wrapper.sample_biased_ternary_ring_element_vec_into(&mut folding_challenges);
+    hash_wrapper.sample_low_op_norm_ring_vec_into(&mut folding_challenges);
 
     let projection_height_flat = config.witness_height / config.projection_ratio;
 

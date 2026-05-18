@@ -78,54 +78,7 @@ pub fn compute_j_batched(
                     // index of the first column for ring element `i`.
                     let base_chunk = base_index >> 3;
 
-                    let mut j_ = 0usize;
-
-                    // --- 2× unrolled main loop ------------------------------------------
-                    // Processes two 8-column chunks (= 16 coefficients) per iteration,
-                    // giving the CPU two independent dependency chains to fill its pipeline.
-                    while j_ + 1 < degree_blocks {
-                        let chunk0 = base_chunk + j_;
-                        let chunk1 = chunk0 + 1;
-
-                        // Load one byte each from pos_masks and non_zero_masks.
-                        // Each byte's 8 bits correspond to 8 consecutive columns.
-                        let k_pos0 = *kpos_row.add(chunk0);
-                        let k_inc0 = *kinc_row.add(chunk0);
-                        let k_pos1 = *kpos_row.add(chunk1);
-                        let k_inc1 = *kinc_row.add(chunk1);
-
-                        // add-mask: lanes where entry is +1  (non_zero AND positive).
-                        // sub-mask: lanes where entry is −1  (non_zero AND NOT positive).
-                        let add0: __mmask8 = (k_inc0 & k_pos0) as __mmask8;
-                        let sub0: __mmask8 = (k_inc0 & !k_pos0) as __mmask8;
-                        let add1: __mmask8 = (k_inc1 & k_pos1) as __mmask8;
-                        let sub1: __mmask8 = (k_inc1 & !k_pos1) as __mmask8;
-
-                        // Pointers to the two 8-wide slices inside the output ring element.
-                        let base_ptr0 = row_ptr.add(j_ * 8);
-                        let base_ptr1 = row_ptr.add((j_ + 1) * 8);
-
-                        // Load current accumulator values for these 16 coefficients.
-                        let cur0 = _mm512_load_epi64(base_ptr0);
-                        let cur1 = _mm512_load_epi64(base_ptr1);
-
-                        // Conditionally add c_1[k] where J[k,col]=+1, then
-                        // conditionally subtract c_1[k] where J[k,col]=−1.
-                        let res0 = _mm512_mask_add_epi64(cur0, add0, cur0, coeff_vec);
-                        let res0 = _mm512_mask_sub_epi64(res0, sub0, res0, coeff_vec);
-
-                        let res1 = _mm512_mask_add_epi64(cur1, add1, cur1, coeff_vec);
-                        let res1 = _mm512_mask_sub_epi64(res1, sub1, res1, coeff_vec);
-
-                        // Write the updated accumulators back.
-                        _mm512_store_epi64(base_ptr0, res0);
-                        _mm512_store_epi64(base_ptr1, res1);
-
-                        j_ += 2;
-                    }
-
-                    // --- Tail: handle the last chunk when degree_blocks is odd ----------
-                    if j_ < degree_blocks {
+                    for j_ in 0..degree_blocks {
                         let chunk = base_chunk + j_;
                         let k_pos = *kpos_row.add(chunk);
                         let k_inc = *kinc_row.add(chunk);
@@ -158,50 +111,6 @@ pub fn compute_j_batched(
                 let coeff = c_1_values[k];
                 let mut j = 0;
 
-                // 4× unrolled scalar loop over columns within this ring element.
-                while j + 3 < DEGREE {
-                    let col_index0 = base_index + j;
-                    let col_index1 = col_index0 + 1;
-                    let col_index2 = col_index0 + 2;
-                    let col_index3 = col_index0 + 3;
-
-                    let (is_positive0, is_non_zero0) = &projection_matrix[(k, col_index0)];
-                    let (is_positive1, is_non_zero1) = &projection_matrix[(k, col_index1)];
-                    let (is_positive2, is_non_zero2) = &projection_matrix[(k, col_index2)];
-                    let (is_positive3, is_non_zero3) = &projection_matrix[(k, col_index3)];
-
-                    if *is_non_zero0 {
-                        if *is_positive0 {
-                            row[j] += coeff;
-                        } else {
-                            row[j] -= coeff;
-                        }
-                    }
-                    if *is_non_zero1 {
-                        if *is_positive1 {
-                            row[j + 1] += coeff;
-                        } else {
-                            row[j + 1] -= coeff;
-                        }
-                    }
-                    if *is_non_zero2 {
-                        if *is_positive2 {
-                            row[j + 2] += coeff;
-                        } else {
-                            row[j + 2] -= coeff;
-                        }
-                    }
-                    if *is_non_zero3 {
-                        if *is_positive3 {
-                            row[j + 3] += coeff;
-                        } else {
-                            row[j + 3] -= coeff;
-                        }
-                    }
-
-                    j += 4;
-                }
-
                 // Scalar tail for remaining columns (DEGREE not divisible by 4).
                 while j < DEGREE {
                     let col_index = base_index + j;
@@ -231,6 +140,100 @@ pub fn compute_j_batched(
         bp.to_representation(Representation::IncompleteNTT);
         // Conjugation accounts for the dual embedding sign flip on non-constant terms.
         bp.conjugate_in_place();
+    }
+
+    j_batched
+}
+
+pub fn compute_j_batched_collectively(
+    projection_matrix: &ProjectionMatrix,
+    c_1_values: &[Vec<u64>; NOF_BATCHES],
+) -> [Vec<RingElement>; NOF_BATCHES] {
+    use crate::common::matrix::new_vec_zero_preallocated;
+
+    let inner_width_ring =
+        projection_matrix.projection_ratio * (projection_matrix.projection_height / DEGREE);
+    let mut j_batched = std::array::from_fn(|_| new_vec_zero_preallocated(inner_width_ring));
+
+    for batch in j_batched.iter_mut() {
+        for el in batch.iter_mut() {
+            el.set_from(&HALF_WAY_MOD_Q_RING_CF);
+        }
+    }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    {
+        use std::arch::x86_64::*;
+
+        let degree_blocks = DEGREE / 8;
+
+        for i in 0..inner_width_ring {
+            let base_index = i * DEGREE;
+            for k in 0..projection_matrix.projection_height {
+                // Broadcast the k-th challenge weight into all 8 lanes of a zmm.
+                unsafe {
+                    let row_base = k * projection_matrix.width;
+                    let kpos_row = projection_matrix.pos_masks.data.as_ptr().add(row_base);
+                    let kinc_row = projection_matrix.non_zero_masks.data.as_ptr().add(row_base);
+                    let base_chunk = base_index >> 3;
+
+                    for j_ in 0..degree_blocks {
+                        let chunk = base_chunk + j_;
+                        let k_pos = *kpos_row.add(chunk);
+                        let k_inc = *kinc_row.add(chunk);
+                        let add: __mmask8 = (k_inc & k_pos) as __mmask8;
+                        let sub: __mmask8 = (k_inc & !k_pos) as __mmask8;
+                        for b in 0..NOF_BATCHES {
+                            let coeff_vec = _mm512_set1_epi64(c_1_values[b][k] as i64);
+
+                            let row_ptr = j_batched[b][i].v.as_mut_ptr() as *mut i64;
+                            let base_ptr = row_ptr.add(j_ * 8);
+                            let cur = _mm512_load_epi64(base_ptr);
+
+                            let res = _mm512_mask_add_epi64(cur, add, cur, coeff_vec);
+                            let res = _mm512_mask_sub_epi64(res, sub, res, coeff_vec);
+
+                            _mm512_store_epi64(base_ptr, res);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+    {
+        for i in 0..inner_width_ring {
+            let base_index = i * DEGREE;
+            for k in 0..projection_matrix.projection_height {
+                let mut j = 0;
+                while j < DEGREE {
+                    let col_index = base_index + j;
+                    let (is_positive, is_non_zero) = &projection_matrix[(k, col_index)];
+                    if *is_non_zero {
+                        for b in 0..NOF_BATCHES {
+                            let coeff = c_1_values[b][k];
+                            if *is_positive {
+                                j_batched[b][i].v[j] += coeff;
+                            } else {
+                                j_batched[b][i].v[j] -= coeff;
+                            }
+                        }
+                    }
+                    j += 1;
+                }
+            }
+        }
+    }
+
+    for bp in j_batched.iter_mut() {
+        for el in bp.iter_mut() {
+            unsafe {
+                eltwise_reduce_mod(el.v.as_mut_ptr(), el.v.as_mut_ptr(), DEGREE as u64, MOD_Q);
+            }
+            el.to_representation(Representation::IncompleteNTT);
+            el.conjugate_in_place();
+        }
     }
 
     j_batched
@@ -509,6 +512,12 @@ pub struct BatchedProjectionChallengesSuccinct {
     pub j_batched: Vec<RingElement>, // this is technically not needed, but since it's computed anyway, we return it for reuse
 }
 
+pub struct BatchedProjectionChallengesSuccinctWithoutJBatched {
+    pub c_0_layers: Vec<u64>,
+    pub c_1_layers: Vec<u64>,
+    pub c_2_layers: Vec<u64>, // for columns, not used here but for consistency
+}
+
 pub fn sample_layers(
     projection_matrix: &ProjectionMatrix,
     witness_width: usize,
@@ -687,7 +696,7 @@ pub fn verifier_sample_projection_challenges(
     // config: &Config,
     config: &dyn ConfigBase,
     hash_wrapper: &mut HashWrapper,
-) -> BatchedProjectionChallengesSuccinct {
+) -> BatchedProjectionChallengesSuccinctWithoutJBatched {
     let is_simple_config = (config as &dyn Any).is::<SimpleConfig>(); // we don't batch over columns in simple config
 
     let (c_0_layers, c_1_layers, c_2_layers) = sample_layers(
@@ -701,15 +710,47 @@ pub fn verifier_sample_projection_challenges(
         hash_wrapper,
     );
 
-    let c_1_values = precompute_structured_values_fast(&c_1_layers);
-    let j_batched = compute_j_batched(projection_matrix, &c_1_values);
+    // let c_1_values = precompute_structured_values_fast(&c_1_layers);
+    // let j_batched = compute_j_batched(projection_matrix, &c_1_values);
 
-    BatchedProjectionChallengesSuccinct {
+    BatchedProjectionChallengesSuccinctWithoutJBatched {
         c_0_layers,
         c_1_layers,
         c_2_layers,
-        j_batched,
+        // j_batched,
     }
+}
+
+pub fn verifier_sample_projection_challenges_collectively(
+    projection_matrix: &ProjectionMatrix,
+    config: &dyn ConfigBase,
+    hash_wrapper: &mut HashWrapper,
+) -> [BatchedProjectionChallengesSuccinct; NOF_BATCHES] {
+    let challenges: [BatchedProjectionChallengesSuccinctWithoutJBatched; NOF_BATCHES] =
+        std::array::from_fn(|_| {
+            verifier_sample_projection_challenges(projection_matrix, config, hash_wrapper)
+        });
+
+    let js_batched = {
+        let c_1_values_batches: [Vec<u64>; NOF_BATCHES] =
+            std::array::from_fn(|i| precompute_structured_values_fast(&challenges[i].c_1_layers));
+        compute_j_batched_collectively(projection_matrix, &c_1_values_batches)
+    };
+
+    js_batched
+        .into_iter()
+        .zip(challenges.into_iter())
+        .map(
+            |(j_batched, challenge)| BatchedProjectionChallengesSuccinct {
+                c_0_layers: challenge.c_0_layers,
+                c_1_layers: challenge.c_1_layers,
+                c_2_layers: challenge.c_2_layers,
+                j_batched: j_batched,
+            },
+        )
+        .collect::<Vec<BatchedProjectionChallengesSuccinct>>()
+        .try_into()
+        .unwrap_or_else(|_| panic!("Expected NOF_BATCHES challenges"))
 }
 
 #[cfg(test)]

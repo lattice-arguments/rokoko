@@ -10,7 +10,6 @@ pub mod ring_to_field_combiner;
 pub mod selector_eq;
 pub mod sum;
 
-
 #[cfg(test)]
 mod tests {
     use super::elephant_cell::ElephantCell;

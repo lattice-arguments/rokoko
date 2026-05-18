@@ -1,5 +1,6 @@
 use rokoko::common::init_common;
 use rokoko::common::pool::{load_and_preallocate, save_access_stats};
+use rokoko::common::short_challenge::repetition_rate;
 use rokoko::protocol::parties::executor::execute;
 // use rokoko::protocol::execution::execute;
 
@@ -77,6 +78,11 @@ fn main() {
     {
         println!("✗ AVX-512 is only available on x86_64 architecture");
     }
+    let challenge_set_repetition_rate = repetition_rate();
+    println!(
+        "Expected repetition rate for challenge set: {:.2}",
+        challenge_set_repetition_rate
+    );
 
     #[cfg(feature = "profile")]
     let _tracing_guards = rokoko_profiling::setup_tracing(
