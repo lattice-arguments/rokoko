@@ -54,7 +54,7 @@ pub fn run_intermediate_sumcheck(
     }
 
     let num_sumchecks = sumcheck_context.combiner.borrow().sumchecks_count();
-    println!("num_sumchecks: {}", num_sumchecks);
+    tracing::debug!("num_sumchecks: {}", num_sumchecks);
 
     let mut combination = new_vec_zero_preallocated(num_sumchecks);
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
@@ -110,9 +110,6 @@ pub fn run_intermediate_sumcheck(
         evaluation_points.push(challenge_ring);
         polys.push(poly_over_field);
     }
-    #[cfg(feature = "profile-sumcheck")]
-    crate::protocol::sumcheck_utils::profile::print_and_reset("intermediate-sumcheck");
-
     let claim_over_witness = sumcheck_context
         .witness_sumcheck
         .borrow()

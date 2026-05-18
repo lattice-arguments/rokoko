@@ -84,9 +84,47 @@ fn main() {
         challenge_set_repetition_rate
     );
 
+    #[cfg(feature = "profile")]
+    let _tracing_guards = rokoko_profiling::setup_tracing(
+        &[
+            rokoko_profiling::TracingFormat::Default,
+            rokoko_profiling::TracingFormat::Chrome,
+            rokoko_profiling::TracingFormat::Snapshot,
+        ],
+        trace_name(),
+        &active_features(),
+    );
+
     load_and_preallocate("pool_stats.txt").expect("Failed to load stats");
     init_common();
     println!("Running executor...");
     execute();
     save_access_stats("pool_stats.txt").expect("Failed to save stats");
+}
+
+#[cfg(feature = "profile")]
+fn trace_name() -> &'static str {
+    match (cfg!(feature = "p-26"), cfg!(feature = "p-28"), cfg!(feature = "p-30")) {
+        (true, _, _) => "p26",
+        (_, true, _) => "p28",
+        (_, _, true) => "p30",
+        _ => panic!("--features profile requires one of p-26, p-28, p-30"),
+    }
+}
+
+#[cfg(feature = "profile")]
+fn active_features() -> String {
+    [
+        cfg!(feature = "p-26").then_some("p-26"),
+        cfg!(feature = "p-28").then_some("p-28"),
+        cfg!(feature = "p-30").then_some("p-30"),
+        cfg!(feature = "incomplete-rexl").then_some("incomplete-rexl"),
+        cfg!(feature = "unsafe-sumcheck").then_some("unsafe-sumcheck"),
+        cfg!(feature = "debug-hardness").then_some("debug-hardness"),
+        cfg!(feature = "debug-decomp").then_some("debug-decomp"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(",")
 }
