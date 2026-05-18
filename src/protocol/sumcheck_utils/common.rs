@@ -19,6 +19,7 @@ pub trait HighOrderSumcheckData {
     // this is the univariate polynomial for the current variable with the other variables summed out
     // i.e. let a = f(x_0, x_1, ..., x_{n-1}) then this function returns g(x) = sum_{x_1, ..., x_{n-1}} f(x, x_1, ..., x_{n-1})
     fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
+        let _s = self.gadget_span().entered();
         let temp = self.get_scratch_poly();
 
         polynomial.set_zero();
@@ -105,12 +106,12 @@ pub trait HighOrderSumcheckData {
 
     fn final_evaluations_test_only(&self) -> Self::Element;
 
-    /// Identifies the concrete gadget type for the `profile-sumcheck` feature
-    /// to attribute time inside `Combiner::univariate_polynomial_into`.
-    /// Override with the matching [`super::profile::GadgetKind`] variant.
-    #[cfg(feature = "profile-sumcheck")]
-    fn gadget_kind(&self) -> super::profile::GadgetKind {
-        super::profile::GadgetKind::Unknown
+    /// Returns a `tracing::Span` named for this gadget's concrete kind. Each
+    /// implementor overrides this to return `info_span!("sumcheck::gadget::<kind>")`
+    /// so per-gadget timings show up in the snapshot and Chrome JSON without
+    /// any additional wiring at the call sites.
+    fn gadget_span(&self) -> tracing::Span {
+        tracing::info_span!("sumcheck::gadget::unknown")
     }
 }
 

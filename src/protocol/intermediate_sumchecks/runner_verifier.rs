@@ -72,7 +72,7 @@ pub fn intermediate_sumcheck_verifier(
     // );
 
     let norm_ct = proof.norm_claim.constant_term_from_incomplete_ntt();
-    println!("Norm claim via inner-product: {}", (norm_ct as f64).sqrt());
+    tracing::debug!("Norm claim via inner-product: {}", (norm_ct as f64).sqrt());
 
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);

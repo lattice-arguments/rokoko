@@ -68,7 +68,7 @@ pub fn get_preallocated_ring_element_vec(len: usize) -> Vec<RingElement> {
 
     let mut pool = PREALLOCATED_RING.lock().expect("pool poisoned");
     pool.get_mut(&len).and_then(|v| v.pop()).unwrap_or_else(|| {
-        println!(
+        tracing::trace!(
             "Preallocated RingElement pool miss for size {}, allocating new",
             len
         );
@@ -87,7 +87,7 @@ pub fn get_preallocated_quad_vec(len: usize) -> Vec<QuadraticExtension> {
 
     let mut pool = PREALLOCATED_QUAD.lock().expect("pool poisoned");
     pool.get_mut(&len).and_then(|v| v.pop()).unwrap_or_else(|| {
-        println!(
+        tracing::trace!(
             "Preallocated QuadraticExtension pool miss for size {}, allocating new",
             len
         );
