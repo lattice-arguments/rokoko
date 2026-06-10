@@ -155,8 +155,6 @@ mod tests {
             false,
         );
 
-        // debug_assert_eq!(opening.evaluations.len(), 2);
-
         debug_assert_eq!(
             opening.rhs[(0, 0)],
             RingElement::constant(
@@ -254,30 +252,5 @@ mod tests {
             )
         );
 
-        // debug_assert_eq!(
-        //     opening.evaluations[0],
-        //     RingElement::constant(
-        //         (MOD_Q as i64
-        //             + ((1 - 21) * (1 - 22) * opening.rhs[(0, 0)].v[0] as i64
-        //                 + (1 - 21) * (22) * opening.rhs[(0, 1)].v[0] as i64
-        //                 + (21) * (1 - 22) * opening.rhs[(0, 2)].v[0] as i64
-        //                 + (21) * (22) * opening.rhs[(0, 3)].v[0] as i64)) as u64
-        //             % MOD_Q,
-        //         Representation::IncompleteNTT
-        //     )
-        // );
-
-        // debug_assert_eq!(
-        //     opening.evaluations[1],
-        //     RingElement::constant(
-        //         (MOD_Q as i64
-        //             + ((1 - 23) * (1 - 24) * opening.rhs[(1, 0)].v[0] as i64
-        //                 + (1 - 23) * (24) * opening.rhs[(1, 1)].v[0] as i64
-        //                 + (23) * (1 - 24) * opening.rhs[(1, 2)].v[0] as i64
-        //                 + (23) * (24) * opening.rhs[(1, 3)].v[0] as i64)) as u64
-        //             % MOD_Q,
-        //         Representation::IncompleteNTT
-        //     )
-        // );
     }
 }
