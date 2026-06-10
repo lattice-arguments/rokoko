@@ -12,6 +12,7 @@ incomplete-rexl = ["dep:incomplete-rexl"]
 unsafe-sumcheck = []
 debug-hardness = []
 debug-decomp = []
+debug-fs = []
 # Prints a per-gadget breakdown of time spent in Combiner::univariate_polynomial_into
 # at the end of each sumcheck loop. Zero-cost when disabled.
 profile-sumcheck = []

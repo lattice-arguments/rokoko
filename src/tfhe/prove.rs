@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::bootstrap::{BlindRotationTrace, BootstrapKey};
 use super::embed::pack;
 use super::glwe::GlweCiphertext;
@@ -359,7 +361,11 @@ fn seg_factor(seg: &Segment) -> ClaimFactor {
 
 fn pub_factor(seg: &Segment, mut values: Vec<RingElement>) -> ClaimFactor {
     values.resize(seg.len, zero());
-    ClaimFactor::Public(PublicFactor::DensePrefixed(seg.prefix.length, values))
+    ClaimFactor::Public(PublicFactor::DensePrefixed(
+        seg.prefix.length,
+        0,
+        Arc::new(values),
+    ))
 }
 
 fn normalized(seg: &Segment, extra: u64) -> RingElement {
@@ -388,33 +394,31 @@ fn copy_claim(
     src_of: &[usize],
     chunks: usize,
     hash_wrapper: &mut HashWrapper,
-) -> Vec<SnarkClaim> {
-    (0..chunks)
-        .map(|c| {
-            let mut rho = sample_rho(hash_wrapper, src_of.len());
-            let mut scatter = vec![zero(); lin_seg.len];
-            for (o, &src) in src_of.iter().enumerate() {
-                if src == usize::MAX {
-                    rho[o] = zero();
-                    continue;
-                }
-                scatter[src_off + c * src_plane_pad + src] += &rho[o];
+) -> SnarkClaim {
+    let mut scatter = vec![zero(); lin_seg.len];
+    let mut terms = vec![];
+    for c in 0..chunks {
+        let mut rho = sample_rho(hash_wrapper, src_of.len());
+        for (o, &src) in src_of.iter().enumerate() {
+            if src == usize::MAX {
+                rho[o] = zero();
+                continue;
             }
-            SnarkClaim {
-                terms: vec![
-                    ClaimTerm::scaled(
-                        normalized(&dst_segs[c], 1),
-                        vec![pub_factor(&dst_segs[c], rho), seg_factor(&dst_segs[c])],
-                    ),
-                    ClaimTerm::scaled(
-                        normalized(lin_seg, Q - 1),
-                        vec![pub_factor(lin_seg, scatter), seg_factor(lin_seg)],
-                    ),
-                ],
-                value: zero(),
-            }
-        })
-        .collect()
+            scatter[src_off + c * src_plane_pad + src] += &rho[o];
+        }
+        terms.push(ClaimTerm::scaled(
+            normalized(&dst_segs[c], 1),
+            vec![pub_factor(&dst_segs[c], rho), seg_factor(&dst_segs[c])],
+        ));
+    }
+    terms.push(ClaimTerm::scaled(
+        normalized(lin_seg, Q - 1),
+        vec![pub_factor(lin_seg, scatter), seg_factor(lin_seg)],
+    ));
+    SnarkClaim {
+        terms,
+        value: zero(),
+    }
 }
 
 fn conv_coeff(shift_packed: &[RingElement], x: &RingElement, t: usize, t1: usize, l: usize) -> RingElement {
@@ -448,48 +452,47 @@ pub fn build_claims(
     let o_bits_lop = o_len.ilog2() as usize;
     let total_vars_w = (witness.matrix.height * witness.matrix.width).ilog2() as usize;
     let suffix_lop = l.ilog2() as usize;
-    for c in 0..chunks {
-        let mut rho = sample_rho(hash_wrapper, pairs.lop_src.len());
+    {
         let mut scatter = vec![zero(); witness.seg_lin.len];
-        for (i, &src) in pairs.lop_src.iter().enumerate() {
-            if src == usize::MAX {
-                rho[i] = zero();
-                continue;
+        let mut terms = vec![];
+        for c in 0..chunks {
+            let mut rho = sample_rho(hash_wrapper, pairs.lop_src.len());
+            for (i, &src) in pairs.lop_src.iter().enumerate() {
+                if src == usize::MAX {
+                    rho[i] = zero();
+                    continue;
+                }
+                scatter[witness.off_dig + c * witness.plane_dig + src] += &rho[i];
             }
-            scatter[witness.off_dig + c * witness.plane_dig + src] += &rho[i];
+            terms.push(ClaimTerm::scaled(
+                constant(inv_pow2_q(total_vars_w - o_bits_lop + suffix_lop)),
+                vec![
+                    ClaimFactor::Public(PublicFactor::DensePrefixed(
+                        total_vars_w - o_bits_lop,
+                        suffix_lop,
+                        Arc::new(rho),
+                    )),
+                    ClaimFactor::WitnessSegmentShifted(
+                        witness.seg_lop[c].prefix.clone(),
+                        suffix_lop,
+                    ),
+                ],
+            ));
         }
-        let mut rho_o = vec![zero(); o_len];
-        for (i, r) in rho.iter().enumerate() {
-            rho_o[i * l] = r.clone();
-        }
-        claims.push(SnarkClaim {
-            terms: vec![
-                ClaimTerm::scaled(
-                    constant(inv_pow2_q(total_vars_w - o_bits_lop)),
-                    vec![
-                        ClaimFactor::Public(PublicFactor::DensePrefixed(
-                            total_vars_w - o_bits_lop,
-                            rho_o,
-                        )),
-                        ClaimFactor::WitnessSegmentShifted(
-                            witness.seg_lop[c].prefix.clone(),
-                            suffix_lop,
-                        ),
-                    ],
-                ),
-                ClaimTerm::scaled(
-                    normalized(&witness.seg_lin, Q - 1),
-                    vec![
-                        pub_factor(&witness.seg_lin, scatter),
-                        seg_factor(&witness.seg_lin),
-                    ],
-                ),
+        terms.push(ClaimTerm::scaled(
+            normalized(&witness.seg_lin, Q - 1),
+            vec![
+                pub_factor(&witness.seg_lin, scatter),
+                seg_factor(&witness.seg_lin),
             ],
+        ));
+        claims.push(SnarkClaim {
+            terms,
             value: zero(),
         });
     }
     for (v, segs) in witness.seg_rop.iter().enumerate() {
-        claims.extend(copy_claim(
+        claims.push(copy_claim(
             segs,
             &witness.seg_lin,
             witness.off_bsk,
@@ -596,7 +599,7 @@ pub fn build_claims(
     }
     let g_pad = pairs.lop_src.len() / l;
     let n_o = pairs.eq_of_pair[0].len();
-    let weights: Vec<Vec<RingElement>> = (0..k1)
+    let weights: Vec<Arc<Vec<RingElement>>> = (0..k1)
         .map(|v| {
             (0..n_o)
                 .map(|o| {
@@ -610,8 +613,9 @@ pub fn build_claims(
                     }
                     neg(&w)
                 })
-                .collect()
+                .collect::<Vec<_>>()
         })
+        .map(Arc::new)
         .collect();
 
     let mut lin2_public = vec![zero(); witness.seg_lin.len];
@@ -637,6 +641,7 @@ pub fn build_claims(
                     vec![
                         ClaimFactor::Public(PublicFactor::DensePrefixed(
                             total_vars - o_bits,
+                            0,
                             weights[v].clone(),
                         )),
                         ClaimFactor::WitnessSegmentShifted(
@@ -699,7 +704,7 @@ mod tests {
             &lut,
             params.glwe_dimension,
         );
-        let witness = CggiWitness::build(&keys.bsk, &[&trace], 15, 4, 4096, 4);
+        let witness = CggiWitness::build(&keys.bsk, &[&trace], 7, 8, 4096, 8);
         (witness, trace)
     }
 
@@ -757,7 +762,7 @@ mod tests {
             })
             .collect();
         let trace_refs: Vec<&_> = traces.iter().collect();
-        let witness = CggiWitness::build(&keys.bsk, &trace_refs, 15, 4, 8192, 8);
+        let witness = CggiWitness::build(&keys.bsk, &trace_refs, 7, 8, 8192, 16);
 
         let mut hw_p = HashWrapper::new();
         let claims_p = build_claims(&witness, &trace_refs, &mut hw_p);

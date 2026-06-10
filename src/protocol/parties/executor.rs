@@ -311,9 +311,12 @@ pub fn execute_cggi() {
         _ => panic!("Expected sumcheck config at the top level."),
     };
 
-    let real = std::env::var("ROKOKO_CGGI_REAL").is_ok();
-    let (params, nof_bootstraps): (&tfhe::TfheParams, usize) = if real {
-        (&tfhe::SCALED_ZAMA_2_2, 1)
+    let real_count: usize = std::env::var("ROKOKO_CGGI_REAL")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let (params, nof_bootstraps): (&tfhe::TfheParams, usize) = if real_count > 0 {
+        (&tfhe::SCALED_ZAMA_2_2, real_count)
     } else {
         (&tfhe::TOY, 4)
     };
@@ -346,8 +349,8 @@ pub fn execute_cggi() {
     let witness = tfhe::prove::CggiWitness::build(
         &keys.bsk,
         &trace_refs,
-        15,
-        4,
+        7,
+        8,
         config.witness_height,
         config.witness_width,
     );

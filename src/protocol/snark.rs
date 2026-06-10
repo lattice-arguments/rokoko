@@ -30,6 +30,8 @@ use crate::{
     },
 };
 
+use std::sync::Arc;
+
 pub enum PublicFactor {
     /// Tensor row over all sumcheck variables; succinct verifier evaluation.
     Structured(StructuredRow),
@@ -38,9 +40,11 @@ pub enum PublicFactor {
     /// Arbitrary public vector of full hypercube length; verifier evaluation
     /// is linear in the length, intended for tests and small relations.
     Dense(Vec<RingElement>),
-    /// Public vector over the low variables only (constant in the prefix
-    /// variables), aligned with WitnessSegment oracles of the same length.
-    DensePrefixed(usize, Vec<RingElement>),
+    /// Public vector over middle variables (constant in `prefix` high
+    /// variables and `suffix` low variables), aligned with WitnessSegment /
+    /// WitnessSegmentShifted oracles. Arc-shared: terms reusing one vector
+    /// cost a single buffer in the prover.
+    DensePrefixed(usize, usize, Arc<Vec<RingElement>>),
 }
 
 pub enum ClaimFactor {
@@ -331,6 +335,7 @@ pub fn prove_initial_claims(
 
     let mut witness_pool = OraclePool::new();
     let mut conj_pool = OraclePool::new();
+    let mut public_pool = OraclePool::new();
     let mut leaves: Vec<LeafCell> = vec![];
 
     let make_full = |data: &[RingElement]| {
@@ -352,6 +357,7 @@ pub fn prove_initial_claims(
         for term in &claim.terms {
             witness_pool.reset_term();
             conj_pool.reset_term();
+            public_pool.reset_term();
             let mut factors: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>> =
                 vec![];
             // the term coefficient is folded into the first scalable public factor
@@ -390,23 +396,19 @@ pub fn prove_initial_claims(
                                 assert_eq!(v.len(), n);
                                 v.clone()
                             }
-                            PublicFactor::DensePrefixed(prefix_len, v) => {
-                                assert_eq!(v.len(), n >> prefix_len);
-                                let mut data = v.clone();
-                                if let Some(scale) = pending_scale.take() {
-                                    for d in data.iter_mut() {
-                                        *d *= &scale;
-                                    }
-                                }
-                                let mut ls = LinearSumcheck::new_with_prefixed_sufixed_data(
-                                    data.len(),
-                                    *prefix_len,
-                                    0,
-                                );
-                                ls.load_from(&data);
-                                let cell = ElephantCell::new(ls);
-                                leaves.push(LeafCell::Linear(cell.clone()));
-                                factors.push(cell as _);
+                            PublicFactor::DensePrefixed(prefix_len, suffix_len, v) => {
+                                assert_eq!(v.len(), n >> (prefix_len + suffix_len));
+                                let key = (Arc::as_ptr(v) as usize, *prefix_len, *suffix_len);
+                                let cell = public_pool.next(key, || {
+                                    let mut ls = LinearSumcheck::new_with_prefixed_sufixed_data(
+                                        v.len(),
+                                        *prefix_len,
+                                        *suffix_len,
+                                    );
+                                    ls.load_from(v);
+                                    ls
+                                });
+                                factors.push(cell.clone() as _);
                                 continue;
                             }
                             PublicFactor::Selector(prefix) => {
@@ -434,9 +436,9 @@ pub fn prove_initial_claims(
                 }
             }
             if let Some(scale) = pending_scale.take() {
-                // no scalable public factor: add an explicit constant factor
-                let mut ls = LinearSumcheck::new(n);
-                ls.load_from(&vec![scale; n]);
+                // constant factor: one element repeated across all variables
+                let mut ls = LinearSumcheck::new_with_prefixed_sufixed_data(1, total_vars, 0);
+                ls.load_from(std::slice::from_ref(&scale));
                 let cell = ElephantCell::new(ls);
                 leaves.push(LeafCell::Linear(cell.clone()));
                 factors.push(cell as _);
@@ -454,6 +456,9 @@ pub fn prove_initial_claims(
         leaves.push(LeafCell::Linear(cell.clone()));
     }
     for cell in conj_pool.all_cells() {
+        leaves.push(LeafCell::Linear(cell.clone()));
+    }
+    for cell in public_pool.all_cells() {
         leaves.push(LeafCell::Linear(cell.clone()));
     }
 
@@ -638,15 +643,16 @@ pub fn verify_initial_claims(
                                     ev.load_from(v);
                                     ElephantCell::new(ev) as _
                                 }
-                                PublicFactor::DensePrefixed(prefix_len, v) => {
+                                PublicFactor::DensePrefixed(prefix_len, suffix_len, v) => {
                                     let mut ev =
                                         BasicEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
                                             v.len(),
                                             *prefix_len,
-                                            0,
+                                            *suffix_len,
                                         );
                                     ev.load_from(v);
-                                    ElephantCell::new(ev) as _
+                                    factors.push(ElephantCell::new(ev) as _);
+                                    continue;
                                 }
                                 PublicFactor::Selector(prefix) => {
                                     factors.push(ElephantCell::new(SelectorEqEvaluation::new(
