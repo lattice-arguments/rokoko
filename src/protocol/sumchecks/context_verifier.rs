@@ -36,13 +36,13 @@ pub struct VerifierSumcheckContext {
     pub opening_combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
 
     // Type-specific contexts
-    pub type0evaluations: Vec<Type0VerifierContext>,
-    pub type1evaluations: Vec<Type1VerifierContext>,
-    pub type2evaluations: Vec<Type2VerifierContext>,
-    pub type3evaluation: Option<Type3VerifierContext>,
-    pub type3_1_evaluations: Option<Type3_1VerifierContextWrapper>,
-    pub type4evaluations: Vec<Type4VerifierContext>,
-    pub type5evaluation: Type5VerifierContext,
+    pub commitment_fold_evaluations: Vec<CommitmentFoldVerifierContext>,
+    pub inner_eval_fold_evaluations: Vec<InnerEvalFoldVerifierContext>,
+    pub outer_eval_claim_evaluations: Vec<OuterEvalClaimVerifierContext>,
+    pub coarse_proj_evaluation: Option<CoarseProjVerifierContext>,
+    pub fine_proj_evaluations: Option<FineProjVerifierContextWrapper>,
+    pub com_verify_evaluations: Vec<ComVerifyVerifierContext>,
+    pub norm_check_evaluation: NormCheckVerifierContext,
 
     // Top-level combiners
     pub combiner_evaluation: ElephantCell<CombinerEvaluation<RingElement>>,
@@ -64,23 +64,23 @@ impl VerifierSumcheckContext {
     }
 }
 
-pub struct Type0VerifierContext {
+pub struct CommitmentFoldVerifierContext {
     pub basic_commitment_row_evaluation: ElephantCell<SelectorEqEvaluation>,
     pub output: ElephantCell<DiffSumcheckEvaluation>,
 }
 
-pub struct Type1VerifierContext {
+pub struct InnerEvalFoldVerifierContext {
     pub inner_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
     pub opening_selector_evaluation: ElephantCell<SelectorEqEvaluation>,
     pub output: ElephantCell<DiffSumcheckEvaluation>,
 }
 
-pub struct Type2VerifierContext {
+pub struct OuterEvalClaimVerifierContext {
     pub outer_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
     pub output: ElephantCell<ProductSumcheckEvaluation>,
 }
 
-pub struct Type3VerifierContext {
+pub struct CoarseProjVerifierContext {
     pub projection_combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub lhs_flatter_0_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
     pub lhs_flatter_1_times_matrix_evaluation_field:
@@ -94,7 +94,7 @@ pub struct Type3VerifierContext {
     pub output: ElephantCell<DiffSumcheckEvaluation>,
 }
 
-pub struct Type3_1VerifierContext {
+pub struct FineProjVerifierContext {
     pub lhs_flatter_0_evaluation_field:
         ElephantCell<StructuredRowEvaluationLinearSumcheck<QuadraticExtension>>,
     pub lhs_flatter_0_evaluation: ElephantCell<RingToFieldWrapperEvaluation>,
@@ -115,8 +115,8 @@ pub struct Type3_1VerifierContext {
 
     pub output_2: ElephantCell<DiffSumcheckEvaluation>,
 }
-pub struct Type3_1VerifierContextWrapper {
-    pub sumchecks: [Type3_1VerifierContext; NOF_BATCHES],
+pub struct FineProjVerifierContextWrapper {
+    pub sumchecks: [FineProjVerifierContext; NOF_BATCHES],
     pub projection_combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub rhs_fold_challenge_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub lhs_scalar_consistency_evaluation_field:
@@ -124,12 +124,12 @@ pub struct Type3_1VerifierContextWrapper {
     pub lhs_scalar_consistency_evaluation: ElephantCell<RingToFieldWrapperEvaluation>,
 }
 
-pub struct Type4VerifierContext {
-    pub layers: Vec<Type4LayerVerifierContext>,
-    pub output_layer: Type4OutputLayerVerifierContext,
+pub struct ComVerifyVerifierContext {
+    pub layers: Vec<ComVerifyLayerVerifierContext>,
+    pub output_layer: ComVerifyOutputLayerVerifierContext,
 }
 
-pub struct Type4LayerVerifierContext {
+pub struct ComVerifyLayerVerifierContext {
     pub selector_evaluation: ElephantCell<SelectorEqEvaluation>,
     pub child_selector_evaluations: Vec<ElephantCell<SelectorEqEvaluation>>,
     pub combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
@@ -137,13 +137,13 @@ pub struct Type4LayerVerifierContext {
     pub outputs: Vec<ElephantCell<DiffSumcheckEvaluation>>,
 }
 
-pub struct Type4OutputLayerVerifierContext {
+pub struct ComVerifyOutputLayerVerifierContext {
     pub selector_evaluation: ElephantCell<SelectorEqEvaluation>,
     pub ck_evaluations: Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
     pub outputs: Vec<ElephantCell<ProductSumcheckEvaluation>>,
 }
 
-pub struct Type5VerifierContext {
+pub struct NormCheckVerifierContext {
     pub conjugated_combined_witness_evaluation:
         ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
     pub output: ElephantCell<ProductSumcheckEvaluation>,

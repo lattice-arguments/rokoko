@@ -1,6 +1,6 @@
 use std::sync::LazyLock;
 
-use crate::protocol::project::Signed16RingElement;
+use crate::protocol::project_coarse::Signed16RingElement;
 use crate::{
     common::{
         config::{DEGREE, HALF_DEGREE, MOD_Q},

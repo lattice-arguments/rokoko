@@ -13,28 +13,21 @@ use crate::{
     },
 };
 
-// 2^26 = 2^7 (DEGREE) * 2^19
-// 2^19 = 2^5 * 2^14
-
 #[derive(Clone)]
-pub enum ProjectionType {
-    Type0, // full ring elements + no batching
-    Type1, // coefficient-wise + batching + commit to constant terms + commit to batched projection
-}
-
-#[derive(Clone)]
-pub struct Type1ProjectionConfig {
+pub struct FineProjectionConfig {
     pub nof_batches: usize,
-    pub recursion_constant_term: RecursionConfig, // here we check the norm
-    pub recursion_batched_projection: RecursionConfig, // this one is for the actual projection and we need to show consistency
+    pub recursion_constant_term: RecursionConfig, // carries the norm claim
+    pub recursion_batched_projection: RecursionConfig, // carries the consistency checks
 }
 
-pub type Type0ProjectionConfig = RecursionConfig;
+pub type CoarseProjectionConfig = RecursionConfig;
 
+/// Paper: Π^proj-c (ring elements) / Π^proj-f (coefficients); `Skip` in the
+/// first round, where extraction slack is tolerable.
 #[derive(Clone)]
 pub enum Projection {
-    Type0(Type0ProjectionConfig),
-    Type1(Type1ProjectionConfig),
+    Coarse(CoarseProjectionConfig),
+    Fine(FineProjectionConfig),
     Skip,
 }
 
@@ -63,7 +56,7 @@ pub static SOMEWHAT_REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| {
             rank: 1,
             next: None,
         },
-        projection_recursion: AuxProjection::Type0(AuxRecursionConfig {
+        projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
             // 2^14 (witness_height) * 2^5 (witness_width) / 2^5 (projection_ratio) * 2^0 (decomp) = 2^14
             decomposition_base_log: 20, // no decomposition
             decomposition_chunks: 1,
@@ -98,7 +91,7 @@ pub static SOMEWHAT_REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| {
                 rank: 1,
                 next: None,
             },
-            projection_recursion: AuxProjection::Type1 {
+            projection_recursion: AuxProjection::Fine {
                 nof_batches: 2,
                 recursion_constant_term: AuxRecursionConfig {
                     decomposition_base_log: 15,
@@ -149,7 +142,7 @@ pub static TOY_CONFIG: LazyLock<Config> = LazyLock::new(|| {
             rank: 1,
             next: None,
         },
-        projection_recursion: AuxProjection::Type0(AuxRecursionConfig {
+        projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
             decomposition_base_log: 15,
             decomposition_chunks: 2,
             rank: 1,
@@ -189,7 +182,7 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
             rank: 1,
             next: None,
         },
-        projection_recursion: AuxProjection::Type1 {
+        projection_recursion: AuxProjection::Fine {
             nof_batches: 2,
             recursion_constant_term: AuxRecursionConfig {
                 decomposition_base_log: 10,
@@ -234,6 +227,14 @@ pub trait ConfigBase: Any {
     fn projection_ratio(&self) -> usize;
     fn projection_height(&self) -> usize;
     fn basic_commitment_rank(&self) -> usize;
+}
+
+pub fn config_base_from_config(config: &Config) -> &dyn ConfigBase {
+    match config {
+        Config::Sumcheck(sumcheck_config) => sumcheck_config,
+        Config::Simple(simple_config) => simple_config,
+        Config::Intermediate(intermediate_config) => intermediate_config,
+    }
 }
 
 #[derive(Clone)]
@@ -370,8 +371,8 @@ pub struct SumcheckRoundProof {
     pub norm_claim: RingElement,
     pub most_inner_norm_claim: RingElement,
     pub rc_opening_inner: Vec<RingElement>,
-    pub rc_projection_inner: Option<Vec<RingElement>>,
-    pub rcs_projection_1_inner: Option<(Vec<RingElement>, Vec<RingElement>)>,
+    pub rc_coarse_projection_inner: Option<Vec<RingElement>>,
+    pub rc_fine_projection_inner: Option<(Vec<RingElement>, Vec<RingElement>)>,
     pub constant_term_claims: Option<Vec<RingElement>>,
     pub next_round_commitment: Option<NextRoundCommitment>,
     pub next: Option<Box<RoundProof>>,
@@ -415,20 +416,20 @@ impl SizeableProof for SumcheckRoundProof {
             to_kb(rc_opening_inner_size)
         );
 
-        if let Some(rc_projection_inner) = &self.rc_projection_inner {
+        if let Some(rc_coarse_projection_inner) = &self.rc_coarse_projection_inner {
             let mut rc_projection_inner_size = 0;
-            for el in rc_projection_inner {
+            for el in rc_coarse_projection_inner {
                 rc_projection_inner_size += el.size_in_bits();
             }
             size += rc_projection_inner_size;
             println!(
-                "RC projection 0 inner size: {} KB, ",
+                "RC coarse projection inner size: {} KB, ",
                 to_kb(rc_projection_inner_size)
             );
         }
 
         if let Some((rcs_projection_1_inner_0, rcs_projection_1_inner_1)) =
-            &self.rcs_projection_1_inner
+            &self.rc_fine_projection_inner
         {
             let mut rcs_projection_1_inner_size = 0;
             for el in rcs_projection_1_inner_0 {
@@ -439,7 +440,7 @@ impl SizeableProof for SumcheckRoundProof {
             }
             size += rcs_projection_1_inner_size;
             println!(
-                "RCs projection 1 inner size: {} KB, ",
+                "RC fine projection inner size: {} KB, ",
                 to_kb(rcs_projection_1_inner_size)
             );
         }

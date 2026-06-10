@@ -60,8 +60,8 @@ pub fn open_at(
     }
 
     Opening {
-        rhs,                                                // Y
-        evaluation_points_inner: preprocessed_points_inner, // we keep it here as well for convenience so we don't have to prerocess again later
+        rhs, // paper: T = matrix-from-rows(l_j) W
+        evaluation_points_inner: preprocessed_points_inner, // kept to avoid re-preprocessing
         evaluation_points_outer: preprocessed_points_outer,
     }
 }
@@ -154,8 +154,6 @@ mod tests {
             &outer_evaluation_points,
             false,
         );
-
-        // debug_assert_eq!(opening.evaluations.len(), 2);
 
         debug_assert_eq!(
             opening.rhs[(0, 0)],
@@ -254,30 +252,5 @@ mod tests {
             )
         );
 
-        // debug_assert_eq!(
-        //     opening.evaluations[0],
-        //     RingElement::constant(
-        //         (MOD_Q as i64
-        //             + ((1 - 21) * (1 - 22) * opening.rhs[(0, 0)].v[0] as i64
-        //                 + (1 - 21) * (22) * opening.rhs[(0, 1)].v[0] as i64
-        //                 + (21) * (1 - 22) * opening.rhs[(0, 2)].v[0] as i64
-        //                 + (21) * (22) * opening.rhs[(0, 3)].v[0] as i64)) as u64
-        //             % MOD_Q,
-        //         Representation::IncompleteNTT
-        //     )
-        // );
-
-        // debug_assert_eq!(
-        //     opening.evaluations[1],
-        //     RingElement::constant(
-        //         (MOD_Q as i64
-        //             + ((1 - 23) * (1 - 24) * opening.rhs[(1, 0)].v[0] as i64
-        //                 + (1 - 23) * (24) * opening.rhs[(1, 1)].v[0] as i64
-        //                 + (23) * (1 - 24) * opening.rhs[(1, 2)].v[0] as i64
-        //                 + (23) * (24) * opening.rhs[(1, 3)].v[0] as i64)) as u64
-        //             % MOD_Q,
-        //         Representation::IncompleteNTT
-        //     )
-        // );
     }
 }

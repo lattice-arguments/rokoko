@@ -12,7 +12,7 @@ use crate::{
     protocol::{
         config::{NextRoundCommitment, Projection, SumcheckConfig, SumcheckRoundProof},
         open::evaluation_point_to_structured_row,
-        project_2::{
+        project_fine::{
             verifier_sample_projection_challenges_collectively, BatchedProjectionChallengesSuccinct,
         },
         sumcheck_utils::common::EvaluationSumcheckData,
@@ -27,8 +27,8 @@ fn batch_claims(
     claims: &[RingElement],
     rc_commitment_inner: &[RingElement],
     rc_opening_inner: &[RingElement],
-    rc_projection_inner: Option<&[RingElement]>,
-    rcs_projection_1_inner: Option<(&[RingElement], &[RingElement])>,
+    rc_coarse_projection_inner: Option<&[RingElement]>,
+    rc_fine_projection_inner: Option<(&[RingElement], &[RingElement])>,
     rcs_projection_1_constant_term_claims: Option<&[RingElement]>,
     norm_claim: &RingElement,
     most_inner_norm_claim: &RingElement,
@@ -37,13 +37,13 @@ fn batch_claims(
     let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
     let mut idx = 0;
 
-    // Type0: zero claims (difference sumchecks)
+    // CommitmentFold: zero claims (difference sumchecks)
     idx += config.basic_commitment_rank;
 
-    // Type1: zero claims (difference sumchecks)
+    // InnerEvalFold: zero claims (difference sumchecks)
     idx += config.nof_openings;
 
-    // Type2: claims for evaluations
+    // OuterEvalClaim: claims for evaluations
     for claim in claims.iter() {
         let mut weighted = claim.clone();
         weighted *= &combination[idx];
@@ -51,13 +51,13 @@ fn batch_claims(
         idx += 1;
     }
 
-    if rc_projection_inner.is_some() {
-        // Type3: zero claim (difference sumcheck)
+    if rc_coarse_projection_inner.is_some() {
+        // CoarseProj: zero claim (difference sumcheck)
         idx += 1;
     }
 
-    if rcs_projection_1_inner.is_some() {
-        // Type3_1_A: zero claim (difference sumcheck) + consistence between ct comm and bp comm
+    if rc_fine_projection_inner.is_some() {
+        // FineProj-consistency: zero claim (difference sumcheck) + consistence between ct comm and bp comm
         for i in 0..NOF_BATCHES {
             idx += 1;
             let mut weighted = rcs_projection_1_constant_term_claims.as_ref().unwrap()[i].clone();
@@ -67,14 +67,14 @@ fn batch_claims(
         }
     }
 
-    // Type4: Three recursion trees (commitment, opening, projection)
+    // ComVerify: Three recursion trees (commitment, opening, projection)
     // Each tree has: (layers with rank each) + (output layer with rank)
     for (recursion_idx, rc_inner) in [
         Some(rc_commitment_inner),
         Some(rc_opening_inner),
-        rc_projection_inner,
-        rcs_projection_1_inner.map(|(rc_ct, _)| rc_ct),
-        rcs_projection_1_inner.map(|(_, rc_bp)| rc_bp),
+        rc_coarse_projection_inner,
+        rc_fine_projection_inner.map(|(rc_ct, _)| rc_ct),
+        rc_fine_projection_inner.map(|(_, rc_bp)| rc_bp),
     ]
     .iter()
     .enumerate()
@@ -87,16 +87,16 @@ fn batch_claims(
             0 => &config.commitment_recursion,
             1 => &config.opening_recursion,
             2 => match &config.projection_recursion {
-                Projection::Type0(proj_config) => proj_config,
-                // Projection::Type1(proj_config) => &proj_config.recursion_constant_term,
+                Projection::Coarse(proj_config) => proj_config,
+                // Projection::Fine(proj_config) => &proj_config.recursion_constant_term,
                 _ => unreachable!(),
             },
             3 => match &config.projection_recursion {
-                Projection::Type1(proj_config) => &proj_config.recursion_constant_term,
+                Projection::Fine(proj_config) => &proj_config.recursion_constant_term,
                 _ => unreachable!(),
             },
             4 => match &config.projection_recursion {
-                Projection::Type1(proj_config) => &proj_config.recursion_batched_projection,
+                Projection::Fine(proj_config) => &proj_config.recursion_batched_projection,
                 _ => unreachable!(),
             },
             _ => unreachable!(),
@@ -118,7 +118,7 @@ fn batch_claims(
         }
     }
 
-    // Type5: norm claim
+    // NormCheck: norm claim
     let mut weighted_norm = norm_claim.clone();
     weighted_norm *= &combination[idx];
     batched_claim += &weighted_norm;
@@ -147,11 +147,11 @@ pub fn sumcheck_verifier(
         ProjectionMatrix::new(config.projection_ratio, config.projection_height);
 
     projection_matrix.sample(hash_wrapper);
-    if let Some(rc_projection_inner) = &round_proof.rc_projection_inner {
-        hash_wrapper.update_with_ring_element_slice(rc_projection_inner);
+    if let Some(rc_coarse_projection_inner) = &round_proof.rc_coarse_projection_inner {
+        hash_wrapper.update_with_ring_element_slice(rc_coarse_projection_inner);
     }
     let challenges_3_1 = if let Some((rcs_projection_1_ct, rcs_projection_1_batched)) =
-        &round_proof.rcs_projection_1_inner
+        &round_proof.rc_fine_projection_inner
     {
         hash_wrapper.update_with_ring_element_slice(rcs_projection_1_ct);
         let challenges_3_1: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] =
@@ -172,18 +172,6 @@ pub fn sumcheck_verifier(
 
     let projection_height_flat = config.witness_height / config.projection_ratio;
 
-    // hash_wrapper.update_with_ring_element_slice(round_proof.next_round_commitment.as_ref().unwrap());
-
-    // if Some(next_round_commitment_most_inner) !=
-    //     round_proof
-    //         .next_round_commitment
-    //         .as_ref()
-    //         .map(|nrc| nrc.most_inner_commitment())
-
-    // {
-    //     panic!("Next round most inner commitment does not match the last commitment in rc_commitment!");
-    // }
-
     if let Some(next_round_commitment) = round_proof.next_round_commitment.as_ref() {
         match &next_round_commitment {
             NextRoundCommitment::Recursive(recursive) => {
@@ -196,7 +184,7 @@ pub fn sumcheck_verifier(
     }
 
     let projection_matrix_flatter_structured = match config.projection_recursion {
-        Projection::Type0(_) => {
+        Projection::Coarse(_) => {
             let mut projection_matrix_flatter_base =
                 new_vec_zero_preallocated(projection_height_flat.ilog2() as usize);
             hash_wrapper
@@ -206,11 +194,15 @@ pub fn sumcheck_verifier(
                 &projection_matrix_flatter_base,
             ))
         }
-        Projection::Type1(_) => None,
+        Projection::Fine(_) => None,
         Projection::Skip => None,
     };
 
     hash_wrapper.update_with_ring_element(&round_proof.norm_claim);
+    hash_wrapper.update_with_ring_element(&round_proof.most_inner_norm_claim);
+    if let Some(constant_term_claims) = &round_proof.constant_term_claims {
+        hash_wrapper.update_with_ring_element_slice(constant_term_claims);
+    }
 
     // Sample random batching coefficients from Fiat-Shamir
     let num_sumchecks = verifier_sumcheck_context
@@ -225,18 +217,16 @@ pub fn sumcheck_verifier(
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
     let qe = combination_to_field.split_into_quadratic_extensions();
 
-    // Compute batched claim matching the combiner's output order:
-    // type0 (rank many) -> type1 (nof_openings) -> type2 (nof_openings) ->
-    // type3 (1) -> type4[3 recursions, each with layers*rank + output_rank] -> type5 (1)
+    // Batched claim must match the combiner's output order; see batch_claims.
 
     let batched_claim = batch_claims(
         config,
         claims,
         rc_commitment,
         &round_proof.rc_opening_inner,
-        round_proof.rc_projection_inner.as_deref(),
+        round_proof.rc_coarse_projection_inner.as_deref(),
         round_proof
-            .rcs_projection_1_inner
+            .rc_fine_projection_inner
             .as_ref()
             .map(|(a, b)| (a.as_slice(), b.as_slice())),
         round_proof.constant_term_claims.as_deref(),
@@ -325,6 +315,9 @@ pub fn sumcheck_verifier(
             .borrow_mut()
             .evaluate(&evaluation_points)
     );
+
+    hash_wrapper.update_with_ring_element(&round_proof.claim_over_witness);
+    hash_wrapper.update_with_ring_element(&round_proof.claim_over_witness_conjugate);
 
     let eps = evaluation_points
         .iter()

@@ -7,20 +7,20 @@ use crate::{
     },
 };
 
-pub struct Type0IntermediateSumcheckContext {
+pub struct CommitmentFoldIntermediateSumcheckContext {
     pub output: ElephantCell<ProductSumcheck<RingElement>>,
 }
-pub struct Type1IntermediateSumcheckContext {
+pub struct InnerEvalFoldIntermediateSumcheckContext {
     pub inner_evaluation_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub output: ElephantCell<ProductSumcheck<RingElement>>,
 }
 
-pub struct Type5IntermediateSumcheckContext {
+pub struct NormCheckIntermediateSumcheckContext {
     pub conjugated_witness_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub output: ElephantCell<ProductSumcheck<RingElement>>,
 }
 
-pub struct Type3_1IntermediateSumcheckContext {
+pub struct FineProjIntermediateSumcheckContext {
     pub output: ElephantCell<ProductSumcheck<RingElement>>,
     pub c_0_sumcheck: ElephantCell<LinearSumcheck<RingElement>>, // across blocks
     pub j_batched_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
@@ -30,10 +30,10 @@ pub struct IntermediateSumcheckContext {
     pub witness_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub witness_combiner_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub commitment_key_rows_sumcheck: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
-    pub type0sumchecks: Vec<Type0IntermediateSumcheckContext>,
-    pub type1sumchecks: Vec<Type1IntermediateSumcheckContext>,
-    pub type3_1sumcheck: [Type3_1IntermediateSumcheckContext; NOF_BATCHES],
-    pub type5sumcheck: Type5IntermediateSumcheckContext,
+    pub commitment_fold_sumchecks: Vec<CommitmentFoldIntermediateSumcheckContext>,
+    pub inner_eval_fold_sumchecks: Vec<InnerEvalFoldIntermediateSumcheckContext>,
+    pub fine_proj_sumchecks: [FineProjIntermediateSumcheckContext; NOF_BATCHES],
+    pub norm_check_sumcheck: NormCheckIntermediateSumcheckContext,
     pub combiner: ElephantCell<Combiner<RingElement>>,
     pub field_combiner: ElephantCell<RingToFieldCombiner>,
     pub next: Option<Box<IntermediateSumcheckContext>>,
@@ -48,20 +48,20 @@ impl IntermediateSumcheckContext {
         for ck_row_sc in self.commitment_key_rows_sumcheck.iter() {
             ck_row_sc.borrow_mut().partial_evaluate(r);
         }
-        for type1_sc in self.type1sumchecks.iter() {
-            type1_sc
+        for inner_eval_fold_sc in self.inner_eval_fold_sumchecks.iter() {
+            inner_eval_fold_sc
                 .inner_evaluation_sumcheck
                 .borrow_mut()
                 .partial_evaluate(r);
         }
-        for type3_1_sc in self.type3_1sumcheck.iter() {
-            type3_1_sc.c_0_sumcheck.borrow_mut().partial_evaluate(r);
-            type3_1_sc
+        for fine_proj_sc in self.fine_proj_sumchecks.iter() {
+            fine_proj_sc.c_0_sumcheck.borrow_mut().partial_evaluate(r);
+            fine_proj_sc
                 .j_batched_sumcheck
                 .borrow_mut()
                 .partial_evaluate(r);
         }
-        self.type5sumcheck
+        self.norm_check_sumcheck
             .conjugated_witness_sumcheck
             .borrow_mut()
             .partial_evaluate(r);
