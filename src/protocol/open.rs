@@ -60,8 +60,8 @@ pub fn open_at(
     }
 
     Opening {
-        rhs,                                                // Y
-        evaluation_points_inner: preprocessed_points_inner, // we keep it here as well for convenience so we don't have to prerocess again later
+        rhs, // paper: T = matrix-from-rows(l_j) W
+        evaluation_points_inner: preprocessed_points_inner, // kept to avoid re-preprocessing
         evaluation_points_outer: preprocessed_points_outer,
     }
 }

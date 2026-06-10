@@ -3,7 +3,9 @@
 //! Each challenge has weight TAU and operator norm <= T_OP_NORM_BOUND. For a
 //! sparse `c = sum_k eps_k * X^{p_k}`,
 //!
-//!     c(zeta^{2j+1}) = sum_k eps_k * T[((2j+1) * p_k) mod 2N]
+//! ```text
+//! c(zeta^{2j+1}) = sum_k eps_k * T[((2j+1) * p_k) mod 2N]
+//! ```
 //!
 //! with `T[m] = exp(i*pi*m/N)`. The hot path uses this directly via a length-2N
 //! phase LUT instead of a full FFT.
