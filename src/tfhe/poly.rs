@@ -2,8 +2,14 @@
 //! proof system's ring degree.
 
 use crate::common::config::MOD_Q;
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, RwLock};
 
 pub const Q: u64 = MOD_Q;
+
+const TWO_Q: u64 = 2 * Q;
+const M50: u128 = (1u128 << 50) - 1;
+const R50: u128 = (1u128 << 50) - Q as u128;
 
 #[inline]
 pub fn add_q(a: u64, b: u64) -> u64 {
@@ -51,6 +57,165 @@ pub fn center(a: u64) -> i64 {
 #[inline]
 pub fn from_i64(v: i64) -> u64 {
     v.rem_euclid(Q as i64) as u64
+}
+
+#[inline]
+fn reduce_u128(x: u128) -> u64 {
+    let x = (x >> 50) * R50 + (x & M50);
+    let x = (x >> 50) * R50 + (x & M50);
+    let x = ((x >> 50) * R50 + (x & M50)) as u64;
+    if x >= Q {
+        x - Q
+    } else {
+        x
+    }
+}
+
+#[inline]
+fn mul_lazy(x: u64, w: u64, w_precon: u64) -> u64 {
+    let h = ((x as u128 * w_precon as u128) >> 64) as u64;
+    w.wrapping_mul(x).wrapping_sub(h.wrapping_mul(Q))
+}
+
+fn precon(w: u64) -> u64 {
+    (((w as u128) << 64) / Q as u128) as u64
+}
+
+fn pow_q(mut b: u64, mut e: u64) -> u64 {
+    let mut r = 1u64;
+    while e > 0 {
+        if e & 1 == 1 {
+            r = mul_q(r, b);
+        }
+        b = mul_q(b, b);
+        e >>= 1;
+    }
+    r
+}
+
+fn primitive_root_128() -> u64 {
+    let e = (Q - 1) / 128;
+    let mut g = 2u64;
+    loop {
+        let c = pow_q(g, e);
+        if pow_q(c, 64) == Q - 1 {
+            return c;
+        }
+        g += 1;
+    }
+}
+
+struct MulTables {
+    levels: u32,
+    block: usize,
+    fwd: Vec<(u64, u64)>,
+    inv: Vec<(u64, u64)>,
+    rho: Vec<u64>,
+    scale: (u64, u64),
+}
+
+fn build_tables(n: usize) -> MulTables {
+    debug_assert!(n >= 2 && n.is_power_of_two());
+    let levels = 6.min(n.trailing_zeros());
+    let blocks = 1usize << levels;
+    let psi = primitive_root_128();
+    let mut fwd = vec![(0u64, 0u64); blocks];
+    let mut inv = vec![(0u64, 0u64); blocks];
+    for idx in 1..blocks {
+        let w = pow_q(psi, ((idx as u64).reverse_bits() >> 58) as u64);
+        let wi = pow_q(w, Q - 2);
+        fwd[idx] = (w, precon(w));
+        inv[idx] = (wi, precon(wi));
+    }
+    let mut rho = vec![0u64; blocks];
+    let half = blocks / 2;
+    for i in 0..half {
+        rho[2 * i] = fwd[half + i].0;
+        rho[2 * i + 1] = neg_q(fwd[half + i].0);
+    }
+    let s_inv = pow_q(pow_q(2, levels as u64), Q - 2);
+    MulTables {
+        levels,
+        block: n >> levels,
+        fwd,
+        inv,
+        rho,
+        scale: (s_inv, precon(s_inv)),
+    }
+}
+
+static TABLES: LazyLock<RwLock<HashMap<usize, Arc<MulTables>>>> = LazyLock::new(Default::default);
+
+fn tables(n: usize) -> Arc<MulTables> {
+    if let Some(t) = TABLES.read().unwrap().get(&n) {
+        return t.clone();
+    }
+    let t = Arc::new(build_tables(n));
+    TABLES.write().unwrap().entry(n).or_insert(t).clone()
+}
+
+fn forward(v: &mut [u64], tb: &MulTables) {
+    let mut len = v.len() >> 1;
+    let mut m = 1usize;
+    while m < (1usize << tb.levels) {
+        for i in 0..m {
+            let (w, wp) = tb.fwd[m + i];
+            let (xs, ys) = v[2 * len * i..2 * len * (i + 1)].split_at_mut(len);
+            for (x, y) in xs.iter_mut().zip(ys.iter_mut()) {
+                let tx = if *x >= TWO_Q { *x - TWO_Q } else { *x };
+                let u = mul_lazy(*y, w, wp);
+                *x = tx + u;
+                *y = tx + TWO_Q - u;
+            }
+        }
+        len >>= 1;
+        m <<= 1;
+    }
+}
+
+fn inverse(v: &mut [u64], tb: &MulTables) {
+    let mut len = tb.block;
+    let mut m = 1usize << (tb.levels - 1);
+    while m > 0 {
+        for i in 0..m {
+            let (w, wp) = tb.inv[m + i];
+            let (xs, ys) = v[2 * len * i..2 * len * (i + 1)].split_at_mut(len);
+            for (x, y) in xs.iter_mut().zip(ys.iter_mut()) {
+                let s = *x + *y;
+                let d = *x + TWO_Q - *y;
+                *x = if s >= TWO_Q { s - TWO_Q } else { s };
+                *y = mul_lazy(d, w, wp);
+            }
+        }
+        len <<= 1;
+        m >>= 1;
+    }
+    let (sc, scp) = tb.scale;
+    for x in v.iter_mut() {
+        let r = mul_lazy(*x, sc, scp);
+        *x = if r >= Q { r - Q } else { r };
+    }
+}
+
+fn block_products(a: &[u64], b: &[u64], tb: &MulTables, out: &mut [u64]) {
+    let l = tb.block;
+    let mut acc = vec![0u128; 2 * l];
+    for (bi, &rho) in tb.rho.iter().enumerate() {
+        let off = bi * l;
+        let ab = &a[off..off + l];
+        let bb = &b[off..off + l];
+        acc.fill(0);
+        for (i, &ai) in ab.iter().enumerate() {
+            let ai = ai as u128;
+            for (s, &bj) in acc[i..i + l].iter_mut().zip(bb.iter()) {
+                *s += ai * bj as u128;
+            }
+        }
+        for t in 0..l {
+            let hi = reduce_u128(acc[t + l]) as u128;
+            out[off + t] = reduce_u128(acc[t] + rho as u128 * hi);
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -101,6 +266,21 @@ impl Poly {
     }
 
     pub fn mul(&self, other: &Poly) -> Poly {
+        let n = self.n();
+        debug_assert_eq!(n, other.n());
+        let tb = tables(n);
+        let mut a = self.coeffs.clone();
+        let mut b = other.coeffs.clone();
+        forward(&mut a, &tb);
+        forward(&mut b, &tb);
+        let mut out = Poly::zero(n);
+        block_products(&a, &b, &tb, &mut out.coeffs);
+        inverse(&mut out.coeffs, &tb);
+        out
+    }
+
+    #[cfg(test)]
+    pub fn mul_schoolbook(&self, other: &Poly) -> Poly {
         let n = self.n();
         debug_assert_eq!(n, other.n());
         let mut pos = vec![0u128; n];
@@ -184,6 +364,72 @@ mod tests {
             };
             assert_eq!(a.mul(&b), naive_mul(&a, &b));
         }
+    }
+
+    #[test]
+    fn test_mul_matches_schoolbook_across_sizes_and_densities() {
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        for n in [64usize, 256, 2048] {
+            for density in [1usize, 8, 0] {
+                let sample = |rng: &mut rand::rngs::StdRng| Poly {
+                    coeffs: (0..n)
+                        .map(|_| {
+                            if density != 0 && rng.random_range(0..n) >= density {
+                                0
+                            } else {
+                                rng.random_range(0..Q)
+                            }
+                        })
+                        .collect(),
+                };
+                let a = sample(&mut rng);
+                let b = sample(&mut rng);
+                assert_eq!(
+                    a.mul(&b),
+                    a.mul_schoolbook(&b),
+                    "n={} density={}",
+                    n,
+                    density
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "benchmark: prints schoolbook vs partial-NTT timings at N=2048"]
+    fn bench_mul_schoolbook_vs_ntt() {
+        use rand::{Rng, SeedableRng};
+        use std::time::Instant;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(9);
+        let n = 2048;
+        let a = Poly {
+            coeffs: (0..n).map(|_| rng.random_range(0..Q)).collect(),
+        };
+        let b = Poly {
+            coeffs: (0..n).map(|_| rng.random_range(0..Q)).collect(),
+        };
+        let _ = a.mul(&b);
+        let reps = 20;
+        let t0 = Instant::now();
+        let mut c_new = Poly::zero(n);
+        for _ in 0..reps {
+            c_new = a.mul(&b);
+        }
+        let t_new = t0.elapsed() / reps;
+        let t1 = Instant::now();
+        let mut c_old = Poly::zero(n);
+        for _ in 0..3 {
+            c_old = a.mul_schoolbook(&b);
+        }
+        let t_old = t1.elapsed() / 3;
+        assert_eq!(c_new, c_old);
+        println!(
+            "N=2048 mul: schoolbook {:?}, partial-NTT {:?}, speedup {:.1}x",
+            t_old,
+            t_new,
+            t_old.as_secs_f64() / t_new.as_secs_f64()
+        );
     }
 
     #[test]
