@@ -120,3 +120,8 @@ pool_stats.txt
 report.txt
 .vscode/
 .claude/
+
+docs/**/*.aux
+docs/**/*.xdv
+docs/**/*.out
+docs/**/*.log

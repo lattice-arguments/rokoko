@@ -105,9 +105,10 @@ pub static P_SNARK: LazyLock<Config> = LazyLock::new(|| p_root_aux(2).generate_c
 pub static P_CGGI: LazyLock<Config> = LazyLock::new(|| {
     AuxSumcheckConfig {
         projection_ratio: per_config(2usize.pow(5), 2usize.pow(6), 2usize.pow(7)),
-        // base 2^7: coarser image digits overflow the round-1 fold capacity
+        // image digits scale-match the composed fold digits (cfg_p30 base):
+        // one base step coarser overflows the round-1 (6,2) fold window
         projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
-            decomposition_base_log: 7,
+            decomposition_base_log: cfg_p30(7, 6),
             decomposition_chunks: 4,
             rank: 2,
             next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),

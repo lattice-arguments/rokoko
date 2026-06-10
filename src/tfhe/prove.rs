@@ -630,29 +630,25 @@ pub fn build_claims(
     let suffix = l.ilog2() as usize;
     let o_bits = (l * g_pad * l).ilog2() as usize;
     let total_vars = (witness.matrix.height * witness.matrix.width).ilog2() as usize;
+    let recomposed = |segs: &[Segment]| -> Vec<(Prefix, RingElement)> {
+        segs.iter()
+            .enumerate()
+            .map(|(c, s)| (s.prefix.clone(), constant(pow_q(2, delta * c as u64))))
+            .collect()
+    };
     for v in 0..k1 {
-        for c in 0..chunks {
-            for c2 in 0..chunks {
-                let scale2 = pow_q(2, delta * (c as u64 + c2 as u64));
-                let mut coeff = constant(inv_pow2_q(total_vars - o_bits));
-                coeff *= &constant(scale2);
-                prod_terms.push(ClaimTerm::scaled(
-                    coeff,
-                    vec![
-                        ClaimFactor::Public(PublicFactor::DensePrefixed(
-                            total_vars - o_bits,
-                            0,
-                            weights[v].clone(),
-                        )),
-                        ClaimFactor::WitnessSegmentShifted(
-                            witness.seg_lop[c].prefix.clone(),
-                            suffix,
-                        ),
-                        seg_factor(&witness.seg_rop[v][c2]),
-                    ],
-                ));
-            }
-        }
+        prod_terms.push(ClaimTerm::scaled(
+            constant(inv_pow2_q(total_vars - o_bits)),
+            vec![
+                ClaimFactor::Public(PublicFactor::DensePrefixed(
+                    total_vars - o_bits,
+                    0,
+                    weights[v].clone(),
+                )),
+                ClaimFactor::WitnessSegmentsScaled(recomposed(&witness.seg_lop), suffix),
+                ClaimFactor::WitnessSegmentsScaled(recomposed(&witness.seg_rop[v]), 0),
+            ],
+        ));
     }
     claims.push(SnarkClaim {
         terms: prod_terms,

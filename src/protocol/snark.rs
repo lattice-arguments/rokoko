@@ -59,6 +59,10 @@ pub enum ClaimFactor {
     /// whose index spaces interleave (the opening point takes the matching
     /// middle slice of the challenges).
     WitnessSegmentShifted(Prefix, usize),
+    /// Virtual oracle sum_i scale_i * segment_i, all segments sharing one
+    /// (length, suffix). No opening of its own: the verifier derives its
+    /// evaluation from the component openings, which are forced into the chain.
+    WitnessSegmentsScaled(Vec<(Prefix, RingElement)>, usize),
     Public(PublicFactor),
 }
 
@@ -148,7 +152,6 @@ impl EvaluationSumcheckData for ScaledEvaluation {
 /// RefCell cannot appear twice in one product), reused across terms.
 struct OraclePool {
     pools: std::collections::HashMap<(usize, usize, usize), (Vec<ElephantCell<LinearSumcheck<RingElement>>>, usize)>,
-    order: Vec<(usize, usize, usize)>,
 }
 
 const FULL_WITNESS_KEY: (usize, usize, usize) = (usize::MAX, usize::MAX, 0);
@@ -157,7 +160,6 @@ impl OraclePool {
     fn new() -> Self {
         OraclePool {
             pools: std::collections::HashMap::new(),
-            order: vec![],
         }
     }
 
@@ -166,10 +168,7 @@ impl OraclePool {
         key: (usize, usize, usize),
         make: impl Fn() -> LinearSumcheck<RingElement>,
     ) -> ElephantCell<LinearSumcheck<RingElement>> {
-        let entry = self.pools.entry(key).or_insert_with(|| {
-            self.order.push(key);
-            (vec![], 0)
-        });
+        let entry = self.pools.entry(key).or_insert_with(|| (vec![], 0));
         if entry.1 == entry.0.len() {
             entry.0.push(ElephantCell::new(make()));
         }
@@ -191,15 +190,6 @@ impl OraclePool {
     fn all_cells(&self) -> impl Iterator<Item = &ElephantCell<LinearSumcheck<RingElement>>> {
         self.pools.values().flat_map(|(cells, _)| cells.iter())
     }
-
-    /// Distinct segment keys (excluding the full witness), in first-use order.
-    fn segment_keys(&self) -> Vec<(usize, usize, usize)> {
-        self.order
-            .iter()
-            .copied()
-            .filter(|k| *k != FULL_WITNESS_KEY)
-            .collect()
-    }
 }
 
 /// The order in which segment prefixes first appear in the claims; both sides
@@ -209,13 +199,18 @@ fn segment_order(claims: &[SnarkClaim]) -> Vec<(usize, usize, usize)> {
     for claim in claims {
         for term in &claim.terms {
             for factor in &term.factors {
-                let key = match factor {
-                    ClaimFactor::WitnessSegment(p) => (p.prefix, p.length, 0),
-                    ClaimFactor::WitnessSegmentShifted(p, s) => (p.prefix, p.length, *s),
+                let keys: Vec<(usize, usize, usize)> = match factor {
+                    ClaimFactor::WitnessSegment(p) => vec![(p.prefix, p.length, 0)],
+                    ClaimFactor::WitnessSegmentShifted(p, s) => vec![(p.prefix, p.length, *s)],
+                    ClaimFactor::WitnessSegmentsScaled(parts, s) => {
+                        parts.iter().map(|(p, _)| (p.prefix, p.length, *s)).collect()
+                    }
                     _ => continue,
                 };
-                if !order.contains(&key) {
-                    order.push(key);
+                for key in keys {
+                    if !order.contains(&key) {
+                        order.push(key);
+                    }
                 }
             }
         }
@@ -386,6 +381,38 @@ pub fn prove_initial_claims(
                         });
                         factors.push(cell.clone() as _);
                     }
+                    ClaimFactor::WitnessSegmentsScaled(parts, suffix) => {
+                        let length = parts[0].0.length;
+                        let seg_len = n >> length;
+                        let mut combined =
+                            vec![RingElement::zero(Representation::IncompleteNTT); seg_len];
+                        let mut tmp = RingElement::zero(Representation::IncompleteNTT);
+                        for (p, scale) in parts {
+                            assert_eq!(p.length, length);
+                            let start = p.prefix << (total_vars - length);
+                            let mut scale = scale.clone();
+                            if let Some(s) = &pending_scale {
+                                scale *= s;
+                            }
+                            for (acc, w) in combined
+                                .iter_mut()
+                                .zip(&witness.data[start..start + seg_len])
+                            {
+                                tmp *= (w, &scale);
+                                *acc += &tmp;
+                            }
+                        }
+                        pending_scale = None;
+                        let mut ls = LinearSumcheck::new_with_prefixed_sufixed_data(
+                            seg_len,
+                            length - suffix,
+                            *suffix,
+                        );
+                        ls.load_from(&combined);
+                        let cell = ElephantCell::new(ls);
+                        leaves.push(LeafCell::Linear(cell.clone()));
+                        factors.push(cell as _);
+                    }
                     ClaimFactor::Public(public) => {
                         let mut data = match public {
                             PublicFactor::Structured(row) => {
@@ -446,6 +473,22 @@ pub fn prove_initial_claims(
             term_cells.push(fold_product(factors));
         }
         outputs.push(fold_sum(term_cells));
+    }
+
+    for claim in claims {
+        for term in &claim.terms {
+            for factor in &term.factors {
+                if let ClaimFactor::WitnessSegmentsScaled(parts, suffix) = factor {
+                    witness_pool.reset_term();
+                    for (p, _) in parts {
+                        let (prefix, length) = (p.prefix, p.length);
+                        let _ = witness_pool.next((prefix, length, *suffix), || {
+                            make_segment(&witness.data, prefix, length, *suffix)
+                        });
+                    }
+                }
+            }
+        }
     }
 
     // ensure the full-witness oracle exists: z_0 always seeds the chain
@@ -612,6 +655,11 @@ pub fn verify_initial_claims(
             (*key, cell)
         })
         .collect();
+    let eval_of: std::collections::HashMap<(usize, usize, usize), RingElement> = seg_order
+        .iter()
+        .zip(proof.segment_evals.iter())
+        .map(|(key, eval)| (*key, eval.clone()))
+        .collect();
 
     let mut outputs: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>> = vec![];
     for claim in claims {
@@ -629,6 +677,22 @@ pub fn verify_initial_claims(
                     }
                     ClaimFactor::WitnessSegmentShifted(p, s) => {
                         factors.push(segment_cells[&(p.prefix, p.length, *s)].clone() as _)
+                    }
+                    ClaimFactor::WitnessSegmentsScaled(parts, suffix) => {
+                        let mut value = RingElement::zero(Representation::IncompleteNTT);
+                        let mut tmp = RingElement::zero(Representation::IncompleteNTT);
+                        for (p, scale) in parts {
+                            let mut scale = scale.clone();
+                            if let Some(s) = &pending_scale {
+                                scale *= s;
+                            }
+                            tmp *= (&eval_of[&(p.prefix, p.length, *suffix)], &scale);
+                            value += &tmp;
+                        }
+                        pending_scale = None;
+                        let cell = ElephantCell::new(FakeEvaluationLinearSumcheck::new());
+                        cell.borrow_mut().set_result(value);
+                        factors.push(cell as _);
                     }
                     ClaimFactor::Public(public) => {
                         let inner: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
