@@ -178,11 +178,24 @@ fn mod_pow2(e: u64) -> u64 {
 pub fn external_product(ggsw: &GgswCiphertext, ct: &GlweCiphertext) -> GlweCiphertext {
     let k = ct.mask.len();
     let n = ct.body.n();
+    let digits: Vec<Vec<Poly>> = ct
+        .mask
+        .iter()
+        .chain(std::iter::once(&ct.body))
+        .map(|p| decompose_poly(p, ggsw.base_log, ggsw.levels))
+        .collect();
+    external_product_with_digits(ggsw, &digits, k, n)
+}
+
+pub fn external_product_with_digits(
+    ggsw: &GgswCiphertext,
+    digits: &[Vec<Poly>],
+    k: usize,
+    n: usize,
+) -> GlweCiphertext {
     let mut out = GlweCiphertext::zero(k, n);
-    for u in 0..=k {
-        let poly = if u < k { &ct.mask[u] } else { &ct.body };
-        let digits = decompose_poly(poly, ggsw.base_log, ggsw.levels);
-        for (j, digit) in digits.iter().enumerate() {
+    for (u, poly_digits) in digits.iter().enumerate() {
+        for (j, digit) in poly_digits.iter().enumerate() {
             let row = &ggsw.rows[u][j];
             for v in 0..k {
                 out.mask[v].add_assign(&digit.mul(&row.mask[v]));

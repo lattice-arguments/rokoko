@@ -187,6 +187,63 @@ mod tests {
     }
 
     #[test]
+    fn test_traced_blind_rotation_matches_and_replays() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(5);
+        let params = &TOY;
+        let keys = keygen(params, &mut rng);
+        let ct = encrypt(params, &keys, 3, &mut rng);
+        let lut = bootstrap::generate_lut(
+            params.polynomial_size,
+            (params.message_modulus * params.carry_modulus) as usize,
+            params.delta(),
+            |x| x,
+        );
+
+        let plain = bootstrap::blind_rotate(&keys.bsk, &ct, &lut, params.glwe_dimension);
+        let (traced, trace) =
+            bootstrap::blind_rotate_traced(&keys.bsk, &ct, &lut, params.glwe_dimension);
+        assert_eq!(plain, traced);
+
+        // replay: every recorded step satisfies
+        // acc_{s+1} = acc_s + sum_{u,j} digits[u][j] * ggsw_rows[u][j]
+        // and the digits recompose to X^{a~} acc_s - acc_s
+        for (s, step) in trace.steps.iter().enumerate() {
+            let acc = &trace.acc_states[s];
+            let ggsw = &keys.bsk.ggsws[step.index];
+
+            let mut diff = acc.monomial_mul(step.a_switched);
+            diff.sub_assign(acc);
+            for (u, poly) in diff
+                .mask
+                .iter()
+                .chain(std::iter::once(&diff.body))
+                .enumerate()
+            {
+                let mut recomposed = poly::Poly::zero(params.polynomial_size);
+                for (j, d) in step.digits[u].iter().enumerate() {
+                    let mut term = d.clone();
+                    let mut base_pow = 1u64;
+                    for _ in 0..(params.pbs_base_log as usize * j) {
+                        base_pow = poly::add_q(base_pow, base_pow);
+                    }
+                    term.scalar_mul_assign(base_pow);
+                    recomposed.add_assign(&term);
+                }
+                assert_eq!(&recomposed, poly, "digit recomposition, step {}", s);
+            }
+
+            let mut next = acc.clone();
+            next.add_assign(&glwe::external_product_with_digits(
+                ggsw,
+                &step.digits,
+                params.glwe_dimension,
+                params.polynomial_size,
+            ));
+            assert_eq!(&next, &trace.acc_states[s + 1], "step equation, step {}", s);
+        }
+    }
+
+    #[test]
     #[ignore = "minutes-long: full scaled-Zama bootstrap (N=2048, n=918)"]
     fn test_scaled_zama_pbs() {
         pbs_roundtrip(&SCALED_ZAMA_2_2, |x| (x * x) % 16, 3);
