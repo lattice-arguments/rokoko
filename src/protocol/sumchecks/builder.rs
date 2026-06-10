@@ -50,7 +50,6 @@ fn build_com_verify_sumcheck_context(
     let mut current = config;
     while let Some(next) = current.next.as_deref() {
         let selector_sumcheck = sumcheck_from_prefix(&current.prefix, total_vars);
-        // let child_selector_sumcheck = sumcheck_from_prefix(&next.prefix, total_vars);
 
         let child_selector_sumchecks = (0..current.rank)
             .into_iter()
@@ -83,11 +82,6 @@ fn build_com_verify_sumcheck_context(
             combined_witness_sumcheck.clone(),
             combiner_sumcheck.clone(),
         ));
-
-        // let recomposed_child_sumcheck = ElephantCell::new(ProductSumcheck::new(
-        //     child_selector_sumcheck.clone(),
-        //     recomposed_child_raw,
-        // ));
 
         let recomposed_child_sumchecks = (0..current.rank)
             .into_iter()
@@ -744,7 +738,6 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
 
     most_inner_commitments_selectors.push(most_inner_opening_recursion);
 
-    // if let Some(config.p
     match config.projection_recursion {
         Projection::Coarse(ref proj_config) => {
             let most_inner_projection_recursion =

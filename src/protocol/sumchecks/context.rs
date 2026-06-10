@@ -244,14 +244,11 @@ pub struct CoarseProjSumcheckContext {
 /// - `selector_sumcheck`, `child_selector_sumcheck`: select layer and child data slices
 /// - `ck_sumchecks`: commitment key rows (one per rank)
 /// - `outputs`: DiffSumchecks proving the constraint for each CK row
-/// while allowing for different constraint types (difference vs. product sumchecks), and
-/// from the sharing of sub-computations across multiple CK rows to minimize prover work.
 pub struct ComVerifyLayerSumcheckContext {
     pub selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
     pub child_selector_sumcheck: Option<Vec<ElephantCell<SelectorEq<RingElement>>>>,
     pub combiner_sumcheck: Option<ElephantCell<LinearSumcheck<RingElement>>>,
     pub data_selected_sumcheck: ElephantCell<ProductSumcheck<RingElement>>,
-    // pub rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
     pub commitment_sumcheck: Option<ElephantCell<LinearSumcheck<RingElement>>>,
     pub ck_sumchecks: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
     pub outputs: Vec<ElephantCell<DiffSumcheck<RingElement>>>,
@@ -285,17 +282,15 @@ pub struct NormCheckSumcheckContext {
     pub output_2: ElephantCell<ProductSumcheck<RingElement>>,
 }
 
-/// FineProj: Projection validity constraint using Kronecker product structure.
+/// FineProj: fine (coefficient-level) projection validity (paper: Pi^proj-f).
 ///
-/// Proves: `c^T (I ⊗ projection_matrix) · folded_witness = c^T projection_image · fold_challenge`
+/// Proves: `c^T (I ⊗ J) · folded_witness = c^T projection_image · fold_challenge`
+/// over the coefficient embedding, via the trace-dual / constant-term trick.
 ///
-/// This is an alternative to CoarseProj that uses a Kronecker product structure (I ⊗ P) instead of
-/// a block-diagonal structure. Used when the projection matrix has this specific form.
-///
-/// Contains two outputs:
+/// Two outputs:
 /// - `output`: main projection constraint
-/// - `output_2`: consistency check for constant terms
-/// the norm is embedded in ct which are back embedded in ring.
+/// - `output_2`: consistency between the constant-term commitment and the
+///   batched-projection commitment (paper: trace(r_i) = 0 checks)
 pub struct FineProjSumcheckContext {
     pub lhs_flatter_0_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub lhs_flatter_1_times_matrix_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,

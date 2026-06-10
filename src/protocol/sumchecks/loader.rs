@@ -1,10 +1,10 @@
 use crate::{
     common::{
         arithmetic::{field_to_ring_element_into, precompute_structured_values_fast},
-        config::{DEGREE, HALF_DEGREE, NOF_BATCHES},
+        config::{DEGREE, NOF_BATCHES},
         matrix::new_vec_zero_preallocated,
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        ring_arithmetic::{Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{

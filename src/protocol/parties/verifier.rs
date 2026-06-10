@@ -390,14 +390,6 @@ pub fn verifier_round_intermediate(
     let folded_batched_projection_claims =
         fold_matrix_claims(&round_proof.batched_projection_image, &folding_challenges);
 
-    // let mut intermediate_sumcheck_context_verifier = init_intermediate_verifier(crs, config);
-    // let intermediate_sumcheck_proof = IntermediateSumcheckProof {
-    //     claim_over_witness: round_proof.claim_over_witness.clone(),
-    //     claim_over_witness_conjugate: round_proof.claim_over_witness_conjugate.clone(),
-    //     norm_claim: round_proof.norm_claim.clone(),
-    //     polys: round_proof.polys.clone(),
-    // };
-
     let l2_norm_proj = l2_norm_coeffs(&round_proof.projection_image_ct.data);
 
     println!(

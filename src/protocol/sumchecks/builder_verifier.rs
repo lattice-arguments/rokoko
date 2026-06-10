@@ -124,8 +124,6 @@ fn build_com_verify_verifier_context(
             })
             .collect::<Vec<_>>();
 
-        selector_evaluation_from_prefix(&next.prefix, total_vars);
-
         let combiner_eval = load_combiner_evaluation_data(
             next.decomposition_base_log as u64,
             next.decomposition_chunks,

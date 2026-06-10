@@ -16,10 +16,10 @@ use crate::common::ring_arithmetic::{Representation, RingElement};
 use num::Complex;
 use std::sync::LazyLock;
 
+// Challenge set size before rejection: C(128,22) * 2^22 = 2^103.31 elements.
 pub const TAU: usize = 22;
-// 2^103.31 enties
+// With TAU=22, the expected number of sampling attempts is about 2^0.31 = 1.24.
 pub const T_OP_NORM_BOUND: f64 = 10.0;
-// heuristic: with TAU=22, the expected number of attempts is about 2^0.31 = 1.24
 
 const N: usize = DEGREE;
 const LOG_N: usize = N.trailing_zeros() as usize;

@@ -60,7 +60,6 @@ pub fn sumcheck(
     Vec<RingElement>,
     Option<Vec<RingElement>>,
 ) {
-    // Removed: let mut hash_wrapper_clone = hash_wrapper.clone(); - unused
     let projection_matrix_flatter = match config.projection_recursion {
         Projection::Coarse(_) => {
             let projection_height_flat = config.witness_height / config.projection_ratio;

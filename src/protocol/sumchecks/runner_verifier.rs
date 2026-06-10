@@ -217,9 +217,7 @@ pub fn sumcheck_verifier(
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
     let qe = combination_to_field.split_into_quadratic_extensions();
 
-    // Compute batched claim matching the combiner's output order:
-    // commitment_fold (rank many) -> inner_eval_fold (nof_openings) -> outer_eval_claim (nof_openings) ->
-    // coarse_proj (1) -> com_verify[3 recursions, each with layers*rank + output_rank] -> norm_check (1)
+    // Batched claim must match the combiner's output order; see batch_claims.
 
     let batched_claim = batch_claims(
         config,
