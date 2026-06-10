@@ -7,6 +7,7 @@
 //! centered-mean body correction is not implemented).
 
 pub mod bootstrap;
+pub mod embed;
 pub mod glwe;
 pub mod lwe;
 pub mod poly;
