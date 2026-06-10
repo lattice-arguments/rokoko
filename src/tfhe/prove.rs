@@ -443,15 +443,51 @@ pub fn build_claims(
 
     let mut claims = vec![];
 
-    claims.extend(copy_claim(
-        &witness.seg_lop,
-        &witness.seg_lin,
-        witness.off_dig,
-        witness.plane_dig,
-        &pairs.lop_src,
-        chunks,
-        hash_wrapper,
-    ));
+    let g_pad_lop = pairs.lop_src.len() / l;
+    let o_len = l * g_pad_lop * l;
+    let o_bits_lop = o_len.ilog2() as usize;
+    let total_vars_w = (witness.matrix.height * witness.matrix.width).ilog2() as usize;
+    let suffix_lop = l.ilog2() as usize;
+    for c in 0..chunks {
+        let mut rho = sample_rho(hash_wrapper, pairs.lop_src.len());
+        let mut scatter = vec![zero(); witness.seg_lin.len];
+        for (i, &src) in pairs.lop_src.iter().enumerate() {
+            if src == usize::MAX {
+                rho[i] = zero();
+                continue;
+            }
+            scatter[witness.off_dig + c * witness.plane_dig + src] += &rho[i];
+        }
+        let mut rho_o = vec![zero(); o_len];
+        for (i, r) in rho.iter().enumerate() {
+            rho_o[i * l] = r.clone();
+        }
+        claims.push(SnarkClaim {
+            terms: vec![
+                ClaimTerm::scaled(
+                    constant(inv_pow2_q(total_vars_w - o_bits_lop)),
+                    vec![
+                        ClaimFactor::Public(PublicFactor::DensePrefixed(
+                            total_vars_w - o_bits_lop,
+                            rho_o,
+                        )),
+                        ClaimFactor::WitnessSegmentShifted(
+                            witness.seg_lop[c].prefix.clone(),
+                            suffix_lop,
+                        ),
+                    ],
+                ),
+                ClaimTerm::scaled(
+                    normalized(&witness.seg_lin, Q - 1),
+                    vec![
+                        pub_factor(&witness.seg_lin, scatter),
+                        seg_factor(&witness.seg_lin),
+                    ],
+                ),
+            ],
+            value: zero(),
+        });
+    }
     for (v, segs) in witness.seg_rop.iter().enumerate() {
         claims.extend(copy_claim(
             segs,
