@@ -34,8 +34,6 @@ pub fn load_sumcheck_data(
     opening: &Opening,
     projection_matrix: &ProjectionMatrix,
     projection_matrix_flatter: &Option<(PreprocessedRow, StructuredRow)>,
-    combination: &Vec<RingElement>,
-    qe: &[QuadraticExtension; HALF_DEGREE],
 ) {
     // The witness vector is padded to composed_witness_length (a power of 2),
     // but only a fraction is actually used. Passing the non-zero boundary
@@ -244,13 +242,4 @@ pub fn load_sumcheck_data(
         }
     }
 
-    sumcheck_context
-        .combiner
-        .borrow_mut()
-        .load_challenges_from(&combination);
-
-    sumcheck_context
-        .field_combiner
-        .borrow_mut()
-        .load_challenges_from(qe.clone());
 }

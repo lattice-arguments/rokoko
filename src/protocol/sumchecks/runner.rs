@@ -95,16 +95,6 @@ pub fn sumcheck(
 
     hash_wrapper.update_with_ring_element(&norm_claim);
 
-    // Sample random batching coefficients from Fiat-Shamir
-    let num_sumchecks = sumcheck_context.combiner.borrow().sumchecks_count();
-    let mut combination = new_vec_zero_preallocated(num_sumchecks);
-    hash_wrapper.sample_ring_element_vec_into(&mut combination);
-
-    let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
-    hash_wrapper.sample_ring_element_into(&mut combination_to_field);
-    combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
-    let qe = combination_to_field.split_into_quadratic_extensions();
-
     // Load all data into the sumcheck context
     let t_load = std::time::Instant::now();
     load_sumcheck_data(
@@ -117,8 +107,6 @@ pub fn sumcheck(
         opening,
         projection_matrix,
         &projection_matrix_flatter,
-        &combination,
-        &qe,
     );
     println!(
         "    load_sumcheck_data: {} ms",
@@ -126,6 +114,35 @@ pub fn sumcheck(
     );
 
     let norm_inner_norm_claim = sumcheck_context.norm_check_sumcheck.output_2.borrow_mut().claim();
+
+    let constant_term_claims =
+        sumcheck_context
+            .fine_proj_sumchecks
+            .as_ref()
+            .map(|fine_proj_sumchecks| {
+                fine_proj_sumchecks
+                    .sumchecks
+                    .iter()
+                    .map(|fine_proj_sc| fine_proj_sc.output_2.borrow().claim())
+                    .collect::<Vec<_>>()
+            });
+
+    // All prover claims entering the batched combination must be bound by the
+    // transcript before the batching challenges are sampled.
+    hash_wrapper.update_with_ring_element(&norm_inner_norm_claim);
+    if let Some(constant_term_claims) = &constant_term_claims {
+        hash_wrapper.update_with_ring_element_slice(constant_term_claims);
+    }
+
+    // Sample random batching coefficients from Fiat-Shamir
+    let num_sumchecks = sumcheck_context.combiner.borrow().sumchecks_count();
+    let mut combination = new_vec_zero_preallocated(num_sumchecks);
+    hash_wrapper.sample_ring_element_vec_into(&mut combination);
+
+    let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
+    hash_wrapper.sample_ring_element_into(&mut combination_to_field);
+    combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
+    let qe = combination_to_field.split_into_quadratic_extensions();
 
     sumcheck_context
         .combiner
@@ -143,18 +160,6 @@ pub fn sumcheck(
         num_vars,
         1u64 << (num_vars - 1)
     );
-
-    let constant_term_claims =
-        sumcheck_context
-            .fine_proj_sumchecks
-            .as_ref()
-            .map(|fine_proj_sumchecks| {
-                fine_proj_sumchecks
-                    .sumchecks
-                    .iter()
-                    .map(|fine_proj_sc| fine_proj_sc.output_2.borrow().claim())
-                    .collect::<Vec<_>>()
-            });
 
     // Collect evaluation points during sumcheck
     let mut evaluation_points: Vec<RingElement> = vec![];
@@ -218,6 +223,11 @@ pub fn sumcheck(
         .borrow()
         .final_evaluations()
         .clone();
+
+    // z_0, z_1 become the next round's outer claims; bind them before any
+    // later challenge is sampled.
+    hash_wrapper.update_with_ring_element(&claim_over_witness);
+    hash_wrapper.update_with_ring_element(&claim_over_witness_conjugate);
 
     evaluation_points.reverse();
 

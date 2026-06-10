@@ -172,18 +172,6 @@ pub fn sumcheck_verifier(
 
     let projection_height_flat = config.witness_height / config.projection_ratio;
 
-    // hash_wrapper.update_with_ring_element_slice(round_proof.next_round_commitment.as_ref().unwrap());
-
-    // if Some(next_round_commitment_most_inner) !=
-    //     round_proof
-    //         .next_round_commitment
-    //         .as_ref()
-    //         .map(|nrc| nrc.most_inner_commitment())
-
-    // {
-    //     panic!("Next round most inner commitment does not match the last commitment in rc_commitment!");
-    // }
-
     if let Some(next_round_commitment) = round_proof.next_round_commitment.as_ref() {
         match &next_round_commitment {
             NextRoundCommitment::Recursive(recursive) => {
@@ -211,6 +199,10 @@ pub fn sumcheck_verifier(
     };
 
     hash_wrapper.update_with_ring_element(&round_proof.norm_claim);
+    hash_wrapper.update_with_ring_element(&round_proof.most_inner_norm_claim);
+    if let Some(constant_term_claims) = &round_proof.constant_term_claims {
+        hash_wrapper.update_with_ring_element_slice(constant_term_claims);
+    }
 
     // Sample random batching coefficients from Fiat-Shamir
     let num_sumchecks = verifier_sumcheck_context
@@ -325,6 +317,9 @@ pub fn sumcheck_verifier(
             .borrow_mut()
             .evaluate(&evaluation_points)
     );
+
+    hash_wrapper.update_with_ring_element(&round_proof.claim_over_witness);
+    hash_wrapper.update_with_ring_element(&round_proof.claim_over_witness_conjugate);
 
     let eps = evaluation_points
         .iter()

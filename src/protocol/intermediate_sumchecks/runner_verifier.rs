@@ -58,18 +58,14 @@ pub fn intermediate_sumcheck_verifier(
         "Folded commitment length mismatch for intermediate batcher"
     );
 
+    hash_wrapper.update_with_ring_element(&proof.norm_claim);
+
     let num_sumchecks = verifier_sumcheck_context
         .combiner_evaluation
         .borrow()
         .sumchecks_count();
     let mut combination = new_vec_zero_preallocated(num_sumchecks);
-    // hash_wrapper.sample_ring_element_into(&mut combination[num_sumchecks - 1]);
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
-    // assert_eq!(
-    //     num_sumchecks,
-    //     config.basic_commitment_rank + 1,
-    //     "Intermediate verifier expected folded commitment plus one norm_check claim"
-    // );
 
     let norm_ct = proof.norm_claim.constant_term_from_incomplete_ntt();
     println!("Norm claim via inner-product: {}", (norm_ct as f64).sqrt());
@@ -144,6 +140,9 @@ pub fn intermediate_sumcheck_verifier(
             .borrow_mut()
             .evaluate(&evaluation_points_field)
     );
+
+    hash_wrapper.update_with_ring_element(&proof.claim_over_witness);
+    hash_wrapper.update_with_ring_element(&proof.claim_over_witness_conjugate);
 
     evaluation_points_field
         .iter()

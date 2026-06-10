@@ -53,12 +53,13 @@ pub fn run_intermediate_sumcheck(
         norm_claim += &temp;
     }
 
+    hash_wrapper.update_with_ring_element(&norm_claim);
+
     let num_sumchecks = sumcheck_context.combiner.borrow().sumchecks_count();
     println!("num_sumchecks: {}", num_sumchecks);
 
     let mut combination = new_vec_zero_preallocated(num_sumchecks);
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
-    // hash_wrapper.sample_ring_element_into(&mut combination[num_sumchecks - 1]);
 
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
@@ -124,6 +125,9 @@ pub fn run_intermediate_sumcheck(
         .borrow()
         .final_evaluations()
         .clone();
+
+    hash_wrapper.update_with_ring_element(&claim_over_witness);
+    hash_wrapper.update_with_ring_element(&claim_over_witness_conjugate);
 
     evaluation_points.reverse();
 

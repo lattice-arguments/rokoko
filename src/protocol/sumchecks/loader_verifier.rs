@@ -219,14 +219,4 @@ pub fn load_verifier_sumcheck_data(
         .field_combiner_evaluation
         .borrow_mut()
         .load_challenges_from(qe.clone());
-
-    verifier_sumcheck_context
-        .combiner_evaluation
-        .borrow_mut()
-        .load_challenges_from(&combination);
-
-    verifier_sumcheck_context
-        .field_combiner_evaluation
-        .borrow_mut()
-        .load_challenges_from(qe.clone());
 }

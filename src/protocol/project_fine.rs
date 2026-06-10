@@ -534,8 +534,7 @@ pub fn sample_layers(
         .collect();
 
     let c_1_layers: Vec<u64> = (0..projection_matrix.projection_height.ilog2())
-        // .map(|_| hash_wrapper.sample_u64_mod_q())
-        .map(|_| 1)
+        .map(|_| hash_wrapper.sample_u64_mod_q())
         .collect();
 
     let c_2_layers: Vec<u64> = (0..witness_width.ilog2())
