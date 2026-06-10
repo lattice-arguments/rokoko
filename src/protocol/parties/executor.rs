@@ -346,7 +346,7 @@ pub fn execute_cggi() {
         traces.iter().map(|t| t.steps.len()).sum::<usize>()
     );
     let t_wit = std::time::Instant::now();
-    let witness = tfhe::prove::CggiWitness::build(
+    let mut witness = tfhe::prove::CggiWitness::build(
         &keys.bsk,
         &trace_refs,
         7,
@@ -413,6 +413,13 @@ pub fn execute_cggi() {
 
     let proof_size_bits = proof.size_in_bits();
     println!("Total proof size: {} KB", to_kb(proof_size_bits));
+
+    // prover + verifier halves together OOM at full parameters
+    drop(sumcheck_context);
+    drop(commitment_with_aux);
+    drop(claims);
+    drop(chain_inputs);
+    witness.matrix.data = vec![];
 
     println!("==== CGGI VERIFIER STARTING ===");
     let start = std::time::Instant::now();
