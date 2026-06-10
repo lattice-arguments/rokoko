@@ -442,3 +442,41 @@ pub fn decompose_witness(
         used_cols: witness.width,
     }
 }
+
+/// Sizing rule for targets between compiled parameter sets: keep the compiled
+/// set's height and drop column bits (p27 = p28 with one column-bit fewer).
+/// Returns the number of witness columns to use; remaining columns stay zero
+/// (`used_cols` on the witness matrix).
+pub fn witness_cols_for_target(
+    witness_height: usize,
+    witness_width: usize,
+    target_log2_zq_coeffs: usize,
+) -> usize {
+    use crate::common::config::DEGREE;
+    let full_log2 = (witness_height * witness_width * DEGREE).ilog2() as usize;
+    assert!(
+        target_log2_zq_coeffs <= full_log2,
+        "target 2^{} exceeds the compiled parameter set's capacity 2^{}",
+        target_log2_zq_coeffs,
+        full_log2
+    );
+    let drop = full_log2 - target_log2_zq_coeffs;
+    assert!(
+        drop < witness_width.ilog2() as usize,
+        "target 2^{} too small for this parameter set; compile a smaller p-XX feature",
+        target_log2_zq_coeffs
+    );
+    witness_width >> drop
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_witness_cols_for_target() {
+        // p-28-shaped set: 2^13 x 2^8 ring elements = 2^28 Zq coefficients
+        assert_eq!(super::witness_cols_for_target(1 << 13, 1 << 8, 28), 1 << 8);
+        // p27 rule: one column-bit fewer
+        assert_eq!(super::witness_cols_for_target(1 << 13, 1 << 8, 27), 1 << 7);
+        assert_eq!(super::witness_cols_for_target(1 << 13, 1 << 8, 25), 1 << 5);
+    }
+}
