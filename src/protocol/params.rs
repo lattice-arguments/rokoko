@@ -90,6 +90,9 @@ fn p_root_aux(nof_openings: usize) -> AuxSumcheckConfig {
         witness_decomposition_chunks: 4,
         witness_decomposition_base_log: cfg_p30(7, 6),
 
+        norm_bound_log2: 20.0,
+        most_inner_norm_bound_log2: 15.0,
+
         next: Some(Box::new(AuxConfig::Sumcheck(P_1.clone()))),
     }
 }
@@ -128,6 +131,9 @@ pub static P_1: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| {
 
         witness_decomposition_chunks: 2,
         witness_decomposition_base_log: cfg_p30(7, 6),
+
+        norm_bound_log2: 20.0,
+        most_inner_norm_bound_log2: 15.0,
 
         next: Some(Box::new(AuxConfig::Sumcheck(P_2.clone()))),
         // next: None,
@@ -172,6 +178,9 @@ pub static P_2: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
     witness_decomposition_chunks: 2,
     witness_decomposition_base_log: 8,
 
+    norm_bound_log2: 19.0,
+    most_inner_norm_bound_log2: 15.0,
+
     next: Some(Box::new(AuxConfig::Sumcheck(P_3.clone()))),
 });
 
@@ -212,6 +221,9 @@ pub static P_3: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
 
     witness_decomposition_chunks: 2,
     witness_decomposition_base_log: 8,
+
+    norm_bound_log2: 19.0,
+    most_inner_norm_bound_log2: 15.0,
 
     next: Some(Box::new(AuxConfig::Sumcheck(P_4.clone()))),
 });
@@ -254,6 +266,9 @@ pub static P_4: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
     witness_decomposition_chunks: 2,
     witness_decomposition_base_log: 7,
 
+    norm_bound_log2: 20.0,
+    most_inner_norm_bound_log2: 20.0,
+
     next: Some(Box::new(AuxConfig::Sumcheck(P_5.clone()))),
 });
 
@@ -294,6 +309,9 @@ pub static P_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
 
     witness_decomposition_chunks: 2,
     witness_decomposition_base_log: 7,
+
+    norm_bound_log2: 23.0,
+    most_inner_norm_bound_log2: 22.0,
 
     next: Some(Box::new(AuxConfig::Sumcheck(P_6.clone()))),
 });
@@ -338,6 +356,9 @@ pub static P_6: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
     witness_decomposition_chunks: 1,
     witness_decomposition_base_log: 17,
 
+    norm_bound_log2: 23.0,
+    most_inner_norm_bound_log2: 22.0,
+
     next: Some(Box::new(AuxConfig::Intermediate(P_INTERMEDIATE.clone()))),
 });
 
@@ -351,6 +372,8 @@ pub static P_INTERMEDIATE: LazyLock<IntermediateConfig> = LazyLock::new(|| Inter
     projection_nof_batches: 2,
     witness_decomposition_base_log: 11,
     witness_decomposition_chunks: 2,
+    norm_bound_log2: 20.0,
+    projection_image_norm_bound_log2: 26.0,
     next: Some(Box::new(Config::Simple(P_LAST.clone()))),
 });
 
@@ -361,6 +384,8 @@ pub static P_LAST: LazyLock<SimpleConfig> = LazyLock::new(|| SimpleConfig {
     projection_height: 2usize.pow(8),
     basic_commitment_rank: 4,
     projection_nof_batches: 2,
+    folded_witness_norm_bound_log2: 21.0,
+    projection_image_norm_bound_log2: 23.0,
 });
 
 // 2^28 Z_q elements of norm 2^32
