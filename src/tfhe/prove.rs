@@ -89,6 +89,7 @@ fn chunk_planes(elems: &[RingElement], base_log: u32, chunks: usize) -> Vec<Vec<
 }
 
 struct PairIndex {
+    n_groups: usize,
     lop_src: Vec<usize>,
     rop_src: Vec<Vec<usize>>,
     eq_of_pair: Vec<Vec<usize>>,
@@ -120,38 +121,63 @@ fn pair_index(
         }
     }
 
-    let mut idx = PairIndex {
-        lop_src: vec![],
-        rop_src: vec![vec![]; k1],
-        eq_of_pair: vec![vec![]; k1],
-        twisted: vec![],
-    };
+    let n_groups: usize = traces.iter().map(|t| t.steps.len()).sum::<usize>() * k1 * levels;
+    let g_pad = n_groups.next_power_of_two();
+
+    let mut group_dig = vec![0usize; n_groups];
+    let mut group_bsk: Vec<Vec<usize>> = vec![vec![0; n_groups]; k1];
+    let mut group_eq = vec![0usize; n_groups];
+    let mut g = 0usize;
     let mut dig_base = 0usize;
     let mut eq_base = 0usize;
     for trace in traces {
         for step in &trace.steps {
             for u in 0..k1 {
                 for j in 0..levels {
-                    let d_idx = dig_base + (u * levels + j) * l;
-                    for t1 in 0..l {
-                        for t2 in 0..l {
-                            idx.lop_src.push(d_idx + t1);
-                            let (t, tw) = if t1 + t2 < l {
-                                (t1 + t2, false)
-                            } else {
-                                (t1 + t2 - l, true)
-                            };
-                            idx.twisted.push(tw);
-                            for v in 0..k1 {
-                                idx.rop_src[v].push(bsk_pos[&(step.index, u, j, v)] + t2);
-                                idx.eq_of_pair[v].push(eq_base + v * l + t);
-                            }
-                        }
+                    group_dig[g] = dig_base + (u * levels + j) * l;
+                    for v in 0..k1 {
+                        group_bsk[v][g] = bsk_pos[&(step.index, u, j, v)];
                     }
+                    group_eq[g] = eq_base;
+                    g += 1;
                 }
             }
             dig_base += k1 * levels * l;
             eq_base += k1 * l;
+        }
+    }
+
+    // operand index spaces: lop over (t1, g), rop over (g, t2);
+    // the product space o = t1 * (g_pad * l) + g * l + t2
+    let mut idx = PairIndex {
+        n_groups,
+        lop_src: vec![usize::MAX; l * g_pad],
+        rop_src: vec![vec![usize::MAX; g_pad * l]; k1],
+        eq_of_pair: vec![vec![0; l * g_pad * l]; k1],
+        twisted: vec![false; l * g_pad * l],
+    };
+    for g in 0..n_groups {
+        for t1 in 0..l {
+            idx.lop_src[t1 * g_pad + g] = group_dig[g] + t1;
+        }
+        for v in 0..k1 {
+            for t2 in 0..l {
+                idx.rop_src[v][g * l + t2] = group_bsk[v][g] + t2;
+            }
+        }
+        for t1 in 0..l {
+            for t2 in 0..l {
+                let o = t1 * (g_pad * l) + g * l + t2;
+                let (t, tw) = if t1 + t2 < l {
+                    (t1 + t2, false)
+                } else {
+                    (t1 + t2 - l, true)
+                };
+                idx.twisted[o] = tw;
+                for v in 0..k1 {
+                    idx.eq_of_pair[v][o] = group_eq[g] + v * l + t;
+                }
+            }
         }
     }
     (idx, bsk_pos, bsk_cursor)
@@ -196,11 +222,22 @@ impl CggiWitness {
             bsk_vals[*pos..pos + l].clone_from_slice(&packed);
         }
 
-        let lop_vals: Vec<RingElement> = pairs.lop_src.iter().map(|&i| dig_vals[i].clone()).collect();
+        let take = |srcs: &[usize], from: &[RingElement]| -> Vec<RingElement> {
+            srcs.iter()
+                .map(|&i| {
+                    if i == usize::MAX {
+                        zero()
+                    } else {
+                        from[i].clone()
+                    }
+                })
+                .collect()
+        };
+        let lop_vals = take(&pairs.lop_src, &dig_vals);
         let rop_vals: Vec<Vec<RingElement>> = pairs
             .rop_src
             .iter()
-            .map(|srcs| srcs.iter().map(|&i| bsk_vals[i].clone()).collect())
+            .map(|srcs| take(srcs, &bsk_vals))
             .collect();
 
         let n = height * width;
@@ -354,9 +391,13 @@ fn copy_claim(
 ) -> Vec<SnarkClaim> {
     (0..chunks)
         .map(|c| {
-            let rho = sample_rho(hash_wrapper, src_of.len());
+            let mut rho = sample_rho(hash_wrapper, src_of.len());
             let mut scatter = vec![zero(); lin_seg.len];
             for (o, &src) in src_of.iter().enumerate() {
+                if src == usize::MAX {
+                    rho[o] = zero();
+                    continue;
+                }
                 scatter[src_off + c * src_plane_pad + src] += &rho[o];
             }
             SnarkClaim {
@@ -517,10 +558,16 @@ pub fn build_claims(
         }
         acc_base += trace.acc_states.len() * k1 * l;
     }
+    let g_pad = pairs.lop_src.len() / l;
+    let n_o = pairs.eq_of_pair[0].len();
     let weights: Vec<Vec<RingElement>> = (0..k1)
         .map(|v| {
-            (0..witness.n_pairs)
+            (0..n_o)
                 .map(|o| {
+                    let g = (o / l) % g_pad;
+                    if g >= pairs.n_groups {
+                        return zero();
+                    }
                     let mut w = rho2[pairs.eq_of_pair[v][o]].clone();
                     if pairs.twisted[o] {
                         w *= &x;
@@ -540,15 +587,26 @@ pub fn build_claims(
             seg_factor(&witness.seg_lin),
         ],
     )];
+    let suffix = l.ilog2() as usize;
+    let o_bits = (l * g_pad * l).ilog2() as usize;
+    let total_vars = (witness.matrix.height * witness.matrix.width).ilog2() as usize;
     for v in 0..k1 {
         for c in 0..chunks {
             for c2 in 0..chunks {
                 let scale2 = pow_q(2, delta * (c as u64 + c2 as u64));
+                let mut coeff = constant(inv_pow2_q(total_vars - o_bits));
+                coeff *= &constant(scale2);
                 prod_terms.push(ClaimTerm::scaled(
-                    normalized(&witness.seg_lop[c], scale2),
+                    coeff,
                     vec![
-                        pub_factor(&witness.seg_lop[c], weights[v].clone()),
-                        seg_factor(&witness.seg_lop[c]),
+                        ClaimFactor::Public(PublicFactor::DensePrefixed(
+                            total_vars - o_bits,
+                            weights[v].clone(),
+                        )),
+                        ClaimFactor::WitnessSegmentShifted(
+                            witness.seg_lop[c].prefix.clone(),
+                            suffix,
+                        ),
                         seg_factor(&witness.seg_rop[v][c2]),
                     ],
                 ));
