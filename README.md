@@ -143,6 +143,10 @@ ROKOKO_MODE=snark cargo +nightly run --release --features incomplete-rexl,p-26,u
 
 SNARK witnesses are committed undecomposed (nonlinear claims do not commute with the PCS path's initial norm decomposition); when a relation needs small values, encode the decomposition checks as claims. For witness sizes between the compiled parameter sets, keep the set's height and drop column bits (`params::witness_cols_for_target`; e.g. a 2^27 target runs on `p-28` with half the columns used).
 
+## TFHE layer (CGGI bootstrapping over the native modulus)
+
+`src/tfhe/` implements CGGI programmable bootstrapping directly over the proof system's modulus q (no auxiliary 2^64 torus), following the tfhe-rs 1.6.2 algorithms: Standard modulus switch, redundant LUT with a padding bit, the blind-rotation CMUX loop, sample extract, and key switching. `SCALED_ZAMA_2_2` mirrors Zama's default `PARAM_MESSAGE_2_CARRY_2` shape (n = 918, k = 1, N = 2048) with noise bounds rescaled by q/2^64 and an exact balanced base-2^25/2-level gadget chosen for the prime modulus. This is the relation that the SNARK mode proves (see the CGGI proving PR).
+
 ## Code ↔ paper notation
 
 | Code | Paper |
