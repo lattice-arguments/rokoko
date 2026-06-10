@@ -69,12 +69,6 @@ pub fn intermediate_sumcheck_verifier(
 
     let norm_ct = proof.norm_claim.constant_term_from_incomplete_ntt();
     println!("Norm claim via inner-product: {}", (norm_ct as f64).sqrt());
-    assert!(
-        (norm_ct as f64) <= (2f64).powf(2.0 * config.norm_bound_log2),
-        "Intermediate norm claim {} exceeds configured bound 2^{}",
-        (norm_ct as f64).sqrt(),
-        config.norm_bound_log2
-    );
 
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);

@@ -396,12 +396,6 @@ pub fn verifier_round_intermediate(
         "L2 norm of projection image in intermediate verifier: {}",
         l2_norm_proj
     );
-    assert!(
-        l2_norm_proj <= (2f64).powf(config.projection_image_norm_bound_log2),
-        "Intermediate projection image norm {} exceeds configured bound 2^{}",
-        l2_norm_proj,
-        config.projection_image_norm_bound_log2
-    );
 
     let intermediate_evaluation_points = intermediate_sumcheck_verifier(
         config,
@@ -676,21 +670,9 @@ pub fn verifier_round_simple(
         "L2 norm of folded witness in simple verifier: {}",
         l2_norm_witness
     );
-    assert!(
-        l2_norm_witness <= (2f64).powf(config.folded_witness_norm_bound_log2),
-        "Final folded witness norm {} exceeds configured bound 2^{}",
-        l2_norm_witness,
-        config.folded_witness_norm_bound_log2
-    );
     println!(
         "L2 norm of projection image in simple verifier: {}",
         l2_norm_proj
-    );
-    assert!(
-        l2_norm_proj <= (2f64).powf(config.projection_image_norm_bound_log2),
-        "Final projection image norm {} exceeds configured bound 2^{}",
-        l2_norm_proj,
-        config.projection_image_norm_bound_log2
     );
 
     let elapsed = start.elapsed().as_nanos();

@@ -143,8 +143,6 @@ ROKOKO_MODE=snark cargo +nightly run --release --features incomplete-rexl,p-26,u
 
 SNARK witnesses are committed undecomposed (nonlinear claims do not commute with the PCS path's initial norm decomposition); when a relation needs small values, encode the decomposition checks as claims. For witness sizes between the compiled parameter sets, keep the set's height and drop column bits (`params::witness_cols_for_target`; e.g. a 2^27 target runs on `p-28` with half the columns used).
 
-Each round's config carries explicit norm bounds (`norm_bound_log2` etc.) that the verifier enforces against the prover's norm claims; the shipped values are measured honest norms with headroom, pending the planned parameter-selection work.
-
 ## Code ↔ paper notation
 
 | Code | Paper |

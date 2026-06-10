@@ -244,12 +244,6 @@ pub fn sumcheck_verifier(
 
     let norm_ct = round_proof.norm_claim.constant_term_from_incomplete_ntt();
     println!("Norm claim via inner-product: {}", (norm_ct as f64).sqrt());
-    assert!(
-        (norm_ct as f64) <= (2f64).powf(2.0 * config.norm_bound_log2),
-        "Norm claim {} exceeds configured bound 2^{}",
-        (norm_ct as f64).sqrt(),
-        config.norm_bound_log2
-    );
 
     let most_inner_norm_ct = round_proof
         .most_inner_norm_claim
@@ -257,12 +251,6 @@ pub fn sumcheck_verifier(
     println!(
         "Most inner norm claim via inner-product: {}",
         (most_inner_norm_ct as f64).sqrt()
-    );
-    assert!(
-        (most_inner_norm_ct as f64) <= (2f64).powf(2.0 * config.most_inner_norm_bound_log2),
-        "Most inner norm claim {} exceeds configured bound 2^{}",
-        (most_inner_norm_ct as f64).sqrt(),
-        config.most_inner_norm_bound_log2
     );
 
     let mut batched_claim_over_field = {

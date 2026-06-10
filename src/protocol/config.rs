@@ -67,9 +67,6 @@ pub static SOMEWHAT_REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| {
         witness_decomposition_chunks: 2,
         witness_decomposition_base_log: 10, // no decomposition
 
-        norm_bound_log2: 24.0,
-        most_inner_norm_bound_log2: 24.0,
-
         next: Some(Box::new(AuxConfig::Sumcheck(AuxSumcheckConfig {
             witness_height: 2usize.pow(10),
             witness_width: 2usize.pow(7),
@@ -113,9 +110,6 @@ pub static SOMEWHAT_REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| {
             witness_decomposition_chunks: 2,
             witness_decomposition_base_log: 10, // no decomposition
 
-            norm_bound_log2: 24.0,
-            most_inner_norm_bound_log2: 24.0,
-
             next: None,
         }))),
     }
@@ -157,8 +151,6 @@ pub static TOY_CONFIG: LazyLock<Config> = LazyLock::new(|| {
 
         witness_decomposition_chunks: 2,
         witness_decomposition_base_log: 15,
-        norm_bound_log2: 24.0,
-        most_inner_norm_bound_log2: 24.0,
         next: None,
     }
     .generate_config()
@@ -208,8 +200,6 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
 
         witness_decomposition_chunks: 2,
         witness_decomposition_base_log: 15,
-        norm_bound_log2: 24.0,
-        most_inner_norm_bound_log2: 24.0,
         next: Some(Box::new(AuxConfig::Simple(SimpleConfig {
             witness_height: 256,
             witness_width: 16,
@@ -217,8 +207,6 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
             projection_height: 256,
             projection_nof_batches: 2,
             basic_commitment_rank: 2,
-            folded_witness_norm_bound_log2: 24.0,
-            projection_image_norm_bound_log2: 26.0,
         }))),
     }
     .generate_config()
@@ -268,11 +256,6 @@ pub struct SumcheckConfig {
     pub basic_commitment_rank: usize,
     pub composed_witness_length: usize,
 
-    // log2 of the norm bounds the verifier enforces on the packed-witness
-    // norm claim ct(v) and the most-inner-layer claim (paper: ct(v) <= beta^2)
-    pub norm_bound_log2: f64,
-    pub most_inner_norm_bound_log2: f64,
-
     pub next: Option<Box<Config>>, // for multiple rounds
 }
 
@@ -310,9 +293,6 @@ pub struct IntermediateConfig {
     pub witness_decomposition_base_log: usize,
     pub witness_decomposition_chunks: usize,
 
-    pub norm_bound_log2: f64,
-    pub projection_image_norm_bound_log2: f64,
-
     pub next: Option<Box<Config>>,
 }
 
@@ -345,9 +325,7 @@ pub struct SimpleConfig {
     pub projection_height: usize, // likely 256 unless for testing
     pub projection_nof_batches: usize,
     pub basic_commitment_rank: usize,
-
-    pub folded_witness_norm_bound_log2: f64,
-    pub projection_image_norm_bound_log2: f64,
+    // pub next: Option<Box<SimpleConfig>>, // for multiple rounds
 }
 
 impl ConfigBase for SimpleConfig {

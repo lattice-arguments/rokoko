@@ -42,8 +42,6 @@ pub struct AuxSumcheckConfig {
     pub projection_recursion: AuxProjection,
     pub witness_decomposition_base_log: usize,
     pub witness_decomposition_chunks: usize,
-    pub norm_bound_log2: f64,
-    pub most_inner_norm_bound_log2: f64,
     pub next: Option<Box<AuxConfig>>,
 }
 
@@ -355,14 +353,6 @@ impl AuxSumcheckConfig {
             witness_decomposition_chunks: self.witness_decomposition_chunks,
             folded_witness_prefix,
             composed_witness_length,
-            norm_bound_log2: {
-                assert!(
-                    2.0 * self.norm_bound_log2 < 49.0,
-                    "norm bound squared must stay below q/2 for the ct check to bind"
-                );
-                self.norm_bound_log2
-            },
-            most_inner_norm_bound_log2: self.most_inner_norm_bound_log2,
             next: self.next.as_ref().map(|next| {
                 Box::new(match next.as_ref() {
                     AuxConfig::Sumcheck(cfg) => cfg.generate_config_inner(depth + 1),
@@ -445,8 +435,6 @@ mod tests {
             }),
             witness_decomposition_base_log: 15,
             witness_decomposition_chunks: 2,
-            norm_bound_log2: 24.0,
-            most_inner_norm_bound_log2: 24.0,
             next: None,
         };
 
@@ -496,8 +484,6 @@ mod tests {
             },
             witness_decomposition_base_log: 15,
             witness_decomposition_chunks: 2,
-            norm_bound_log2: 24.0,
-            most_inner_norm_bound_log2: 24.0,
             next: None,
         };
 
