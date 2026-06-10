@@ -25,28 +25,28 @@ pub fn load_intermediate_verifier_sumcheck_data(
         .borrow_mut()
         .set_result(claim_over_witness_conjugate.clone());
     verifier_sumcheck_context
-        .type5evaluation
+        .norm_check_evaluation
         .conjugated_witness_evaluation
         .borrow_mut()
         .set_result(claim_over_witness_conjugate.clone());
 
-    for (type1_eval, point) in verifier_sumcheck_context
-        .type1evaluations
+    for (inner_eval_fold_eval, point) in verifier_sumcheck_context
+        .inner_eval_fold_evaluations
         .iter()
         .zip(evaluation_points_inner.iter())
     {
-        type1_eval
+        inner_eval_fold_eval
             .inner_evaluation
             .borrow_mut()
             .load_from(point.clone());
     }
 
-    for (type3_1_eval, challenge) in verifier_sumcheck_context
-        .type3_1evaluations
+    for (fine_proj_eval, challenge) in verifier_sumcheck_context
+        .fine_proj_evaluations
         .iter()
         .zip(challenges_batching_projection_1.iter())
     {
-        type3_1_eval
+        fine_proj_eval
             .c_0_evaluation
             .borrow_mut()
             .load_from(StructuredRow {
@@ -56,7 +56,7 @@ pub fn load_intermediate_verifier_sumcheck_data(
                     .map(|&val| RingElement::constant(val, Representation::IncompleteNTT))
                     .collect(),
             });
-        type3_1_eval
+        fine_proj_eval
             .j_batched_evaluation
             .borrow_mut()
             .load_from(&challenge.j_batched);

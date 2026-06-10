@@ -37,13 +37,13 @@ fn batch_claims(
     let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
     let mut idx = 0;
 
-    // Type0: zero claims (difference sumchecks)
+    // CommitmentFold: zero claims (difference sumchecks)
     idx += config.basic_commitment_rank;
 
-    // Type1: zero claims (difference sumchecks)
+    // InnerEvalFold: zero claims (difference sumchecks)
     idx += config.nof_openings;
 
-    // Type2: claims for evaluations
+    // OuterEvalClaim: claims for evaluations
     for claim in claims.iter() {
         let mut weighted = claim.clone();
         weighted *= &combination[idx];
@@ -52,12 +52,12 @@ fn batch_claims(
     }
 
     if rc_projection_inner.is_some() {
-        // Type3: zero claim (difference sumcheck)
+        // CoarseProj: zero claim (difference sumcheck)
         idx += 1;
     }
 
     if rcs_projection_1_inner.is_some() {
-        // Type3_1_A: zero claim (difference sumcheck) + consistence between ct comm and bp comm
+        // FineProj-consistency: zero claim (difference sumcheck) + consistence between ct comm and bp comm
         for i in 0..NOF_BATCHES {
             idx += 1;
             let mut weighted = rcs_projection_1_constant_term_claims.as_ref().unwrap()[i].clone();
@@ -67,7 +67,7 @@ fn batch_claims(
         }
     }
 
-    // Type4: Three recursion trees (commitment, opening, projection)
+    // ComVerify: Three recursion trees (commitment, opening, projection)
     // Each tree has: (layers with rank each) + (output layer with rank)
     for (recursion_idx, rc_inner) in [
         Some(rc_commitment_inner),
@@ -118,7 +118,7 @@ fn batch_claims(
         }
     }
 
-    // Type5: norm claim
+    // NormCheck: norm claim
     let mut weighted_norm = norm_claim.clone();
     weighted_norm *= &combination[idx];
     batched_claim += &weighted_norm;
@@ -226,8 +226,8 @@ pub fn sumcheck_verifier(
     let qe = combination_to_field.split_into_quadratic_extensions();
 
     // Compute batched claim matching the combiner's output order:
-    // type0 (rank many) -> type1 (nof_openings) -> type2 (nof_openings) ->
-    // type3 (1) -> type4[3 recursions, each with layers*rank + output_rank] -> type5 (1)
+    // commitment_fold (rank many) -> inner_eval_fold (nof_openings) -> outer_eval_claim (nof_openings) ->
+    // coarse_proj (1) -> com_verify[3 recursions, each with layers*rank + output_rank] -> norm_check (1)
 
     let batched_claim = batch_claims(
         config,

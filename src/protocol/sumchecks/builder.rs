@@ -3,7 +3,7 @@ use crate::common::config::DEGREE;
 use crate::protocol::config::{Projection, SumcheckConfig};
 use crate::protocol::intermediate_sumchecks::builder::init_intermediate_sumcheck;
 use crate::protocol::sumcheck_utils::sum::SumSumcheck;
-use crate::protocol::sumchecks::context::{NextSumcheckContext, Type3_1SumcheckContextWrapper};
+use crate::protocol::sumchecks::context::{NextSumcheckContext, FineProjSumcheckContextWrapper};
 use crate::{
     common::{config::NOF_BATCHES, ring_arithmetic::RingElement},
     protocol::{
@@ -15,15 +15,15 @@ use crate::{
             elephant_cell::ElephantCell, linear::LinearSumcheck, product::ProductSumcheck,
             ring_to_field_combiner::RingToFieldCombiner,
         },
-        sumchecks::context::Type5SumcheckContext,
+        sumchecks::context::NormCheckSumcheckContext,
     },
 };
 
 use super::{
     context::{
-        SumcheckContext, Type0SumcheckContext, Type1SumcheckContext, Type2SumcheckContext,
-        Type3SumcheckContext, Type3_1SumcheckContext, Type4LayerSumcheckContext,
-        Type4OutputLayerSumcheckContext, Type4SumcheckContext,
+        SumcheckContext, CommitmentFoldSumcheckContext, InnerEvalFoldSumcheckContext, OuterEvalClaimSumcheckContext,
+        CoarseProjSumcheckContext, FineProjSumcheckContext, ComVerifyLayerSumcheckContext,
+        ComVerifyOutputLayerSumcheckContext, ComVerifySumcheckContext,
     },
     helpers::{ck_sumcheck, composition_sumcheck, sumcheck_from_prefix},
 };
@@ -40,12 +40,12 @@ use super::{
 /// - Output constraints: DiffSumcheck enforcing selector_i · (CK_i · witness_i) = selector_{i+1} · compose(witness_{i+1})
 ///
 /// The leaf layer anchors to the public commitment value. RefCell enables shared mutation during folding.
-fn build_type4_sumcheck_context(
+fn build_com_verify_sumcheck_context(
     crs: &CRS,
     total_vars: usize,
     combined_witness_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
     config: &commitment::RecursionConfig,
-) -> Type4SumcheckContext {
+) -> ComVerifySumcheckContext {
     let mut layers = Vec::new();
     let mut current = config;
     while let Some(next) = current.next.as_deref() {
@@ -116,7 +116,7 @@ fn build_type4_sumcheck_context(
             })
             .collect::<Vec<_>>();
 
-        layers.push(Type4LayerSumcheckContext {
+        layers.push(ComVerifyLayerSumcheckContext {
             selector_sumcheck,
             child_selector_sumcheck: Some(child_selector_sumchecks),
             combiner_sumcheck: Some(combiner_sumcheck),
@@ -159,9 +159,9 @@ fn build_type4_sumcheck_context(
         })
         .collect::<Vec<_>>();
 
-    Type4SumcheckContext {
+    ComVerifySumcheckContext {
         layers,
-        output_layer: Type4OutputLayerSumcheckContext {
+        output_layer: ComVerifyOutputLayerSumcheckContext {
             selector_sumcheck,
             ck_sumchecks,
             outputs,
@@ -170,13 +170,13 @@ fn build_type4_sumcheck_context(
 }
 
 /// Constructs all sumcheck gadgets for constraint verification:
-///   - Type0: CK · folded_witness = commitment · fold_challenge
-///   - Type1: inner_eval · folded_witness = opening.rhs · fold_challenge
-///   - Type2: outer_eval · opening.rhs = claimed_evaluation
-///   - Type3: projection_coeffs · folded_witness = fold_tensor · projection_image (block-diagonal)
-///   - Type3_1: c^T (I ⊗ P) · folded_witness = c^T projection_image · fold_challenge (Kronecker) + consistency checks for batched projections
-///   - Type4: recursive commitment well-formedness at each layer
-///   - Type5: witness norm via <combined_witness, conjugate>
+///   - CommitmentFold: CK · folded_witness = commitment · fold_challenge
+///   - InnerEvalFold: inner_eval · folded_witness = opening.rhs · fold_challenge
+///   - OuterEvalClaim: outer_eval · opening.rhs = claimed_evaluation
+///   - CoarseProj: projection_coeffs · folded_witness = fold_tensor · projection_image (block-diagonal)
+///   - FineProj: c^T (I ⊗ P) · folded_witness = c^T projection_image · fold_challenge (Kronecker) + consistency checks for batched projections
+///   - ComVerify: recursive commitment well-formedness at each layer
+///   - NormCheck: witness norm via <combined_witness, conjugate>
 ///             (also, we derive a specialised sumcheck for the most outer commitment layer)
 ///
 /// Prefix padding enables composition without reindexing. Decomposition
@@ -231,9 +231,9 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         ),
     );
 
-    // Type0 sumchecks
+    // CommitmentFold sumchecks
     // CK \cdot folded_witness - commitment \cdot fold_challenge = 0
-    let type0sumchecks = (0..config.basic_commitment_rank)
+    let commitment_fold_sumchecks = (0..config.basic_commitment_rank)
         .map(|i| {
             let basic_commitment_row_sumcheck = sumcheck_from_prefix(
                 &Prefix {
@@ -246,7 +246,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                 total_vars,
             );
 
-            let ctxt = Type0SumcheckContext {
+            let ctxt = CommitmentFoldSumcheckContext {
                 basic_commitment_row_sumcheck: basic_commitment_row_sumcheck.clone(),
                 output: ElephantCell::new(DiffSumcheck::new(
                     ElephantCell::new(ProductSumcheck::new(
@@ -273,9 +273,9 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
             };
             ctxt
         })
-        .collect::<Vec<Type0SumcheckContext>>();
+        .collect::<Vec<CommitmentFoldSumcheckContext>>();
 
-    // Type1 sumchecks
+    // InnerEvalFold sumchecks
     // inner_evaluation_points \cdot folded_witness - opening.rhs \cdot fold_challenge = 0
 
     let recomposed_folded_witness = ElephantCell::new(ProductSumcheck::new(
@@ -288,7 +288,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         opening_combiner_sumcheck.clone(),
     ));
 
-    let type1sumchecks = (0..config.nof_openings)
+    let inner_eval_fold_sumchecks = (0..config.nof_openings)
         .map(|i| {
             let opening_selector_sumcheck = sumcheck_from_prefix(
                 &Prefix {
@@ -327,19 +327,19 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
 
             let output = ElephantCell::new(DiffSumcheck::new(lhs, rhs));
 
-            Type1SumcheckContext {
+            InnerEvalFoldSumcheckContext {
                 inner_evaluation_sumcheck,
                 opening_selector_sumcheck,
                 output,
             }
         })
-        .collect::<Vec<Type1SumcheckContext>>();
+        .collect::<Vec<InnerEvalFoldSumcheckContext>>();
 
-    // Type2 sumchecks
+    // OuterEvalClaim sumchecks
     // <opening.rhs[i], outer_evaluation_points> = evaluations[i] (public)
-    let type2sumchecks = type1sumchecks
+    let outer_eval_claim_sumchecks = inner_eval_fold_sumchecks
         .iter()
-        .map(|type1_sc| {
+        .map(|inner_eval_fold_sc| {
             let outer_evaluation_sumcheck = ElephantCell::new(
                 LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
                     config.witness_width,
@@ -351,21 +351,21 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
             );
 
             let output = ElephantCell::new(ProductSumcheck::new(
-                type1_sc.opening_selector_sumcheck.clone(),
+                inner_eval_fold_sc.opening_selector_sumcheck.clone(),
                 ElephantCell::new(ProductSumcheck::new(
                     recomposed_opening.clone(),
                     outer_evaluation_sumcheck.clone(),
                 )),
             ));
 
-            Type2SumcheckContext {
+            OuterEvalClaimSumcheckContext {
                 outer_evaluation_sumcheck,
                 output,
             }
         })
-        .collect::<Vec<Type2SumcheckContext>>();
+        .collect::<Vec<OuterEvalClaimSumcheckContext>>();
 
-    // type3 sumchecks
+    // coarse_proj sumchecks
     // projection_matrix_flatter \cdot (I \otimes projection_matrix) \cdot folded_witness - projection_matrix_flatter \cdot projection_image \cdot fold_challenge = 0
     // Here, we treat projection_matrix_flatter \cdot (I \otimes projection_matrix) as a single multilinear polynomial
     // Also, we treat projection_matrix_flatter \tensor fold_challenge as a single multilinear polynomial
@@ -376,7 +376,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     // \sum_z Diff(Prod(projection_matrix_flatter_0, Prod(projection_matrix_flatter_1 \cdot (I \otimes projection_matrix), folded_witness)), Prod(Prod(projection_matrix_flatter, Prod(fold_challenge, projection_image))
 
     let projection_height_flat = config.witness_height / config.projection_ratio;
-    let type3sumcheck = match &config.projection_recursion {
+    let coarse_proj_sumcheck = match &config.projection_recursion {
         Projection::Coarse(projection_recursion) => {
             let projection_selector_sumcheck =
                 sumcheck_from_prefix(&projection_recursion.prefix, total_vars);
@@ -400,7 +400,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
             let blocks = config.witness_height / inner_width;
 
             if blocks == 0 {
-                panic!("Type3 Sumcheck: Your type0 projection configuration is invalid. The number of blocks computed as witness_height / (projection_ratio * projection_height) is zero. Please check your configuration.");
+                panic!("Coarse-projection sumcheck: invalid configuration. The number of blocks computed as witness_height / (projection_ratio * projection_height) is zero. Please check your configuration.");
             }
 
             // Elder variables: projection_flatter_0 (length = blocks)
@@ -477,7 +477,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
             ));
             let output = ElephantCell::new(DiffSumcheck::new(lhs, rhs));
 
-            Some(Type3SumcheckContext {
+            Some(CoarseProjSumcheckContext {
                 projection_combiner_sumcheck,
                 lhs_flatter_0_sumcheck,
                 lhs_flatter_1_times_matrix_sumcheck,
@@ -490,12 +490,12 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         _ => None,
     };
 
-    // let type_3_1_sumchecks = match &config.projection_recursion {
-    // Type3_1_A sumchecks for batched projections
-    // Similar to type3 but for each batch: c_0'^T (I ⊗ j_batched) · folded_witness = projection_image_i · fold_challenge
+    // let fine_proj_sumchecks = match &config.projection_recursion {
+    // FineProj-consistency sumchecks for batched projections
+    // Similar to coarse_proj but for each batch: c_0'^T (I ⊗ j_batched) · folded_witness = projection_image_i · fold_challenge
     // c_0 and c_1 are u64 challenges that need to be lifted to RingElement
     // j_batched is already a Vec<RingElement>
-    let type3_1_sumchecks = match &config.projection_recursion {
+    let fine_proj_sumchecks = match &config.projection_recursion {
         Projection::Fine(projection_recursion) => {
             // Projection combiner for decomposition (same for all batches)
             let projection_combiner_sumcheck = {
@@ -560,8 +560,8 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                 .load_from(&[ONE.clone()]);
             // Build one context per batch
             // Each batch has its own projection result stored at a different prefix location
-            let contexts: [Type3_1SumcheckContext; NOF_BATCHES] = std::array::from_fn(|i| {
-                // Create selectors and combiners similar to type3
+            let contexts: [FineProjSumcheckContext; NOF_BATCHES] = std::array::from_fn(|i| {
+                // Create selectors and combiners similar to coarse_proj
                 // Note: We'll load the actual challenge data (c_0, c_1, j_batched) in the loader
 
                 // Split coefficients into block indices (elder vars) and within-block (LS vars)
@@ -700,7 +700,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
 
                 let output_consistency = ElephantCell::new(DiffSumcheck::new(lhs, rhs));
 
-                Type3_1SumcheckContext {
+                FineProjSumcheckContext {
                     lhs_flatter_0_sumcheck,
                     lhs_flatter_1_times_matrix_sumcheck,
                     projection_selector_sumcheck,
@@ -712,7 +712,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                 }
             });
 
-            Some(Type3_1SumcheckContextWrapper {
+            Some(FineProjSumcheckContextWrapper {
                 sumchecks: contexts,
                 projection_combiner_sumcheck,
                 projection_constant_terms_embedded_combiner_sumcheck,
@@ -770,7 +770,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
             most_inner_commitments_selectors.push(most_inner_batched_projection_recursion);
         }
         Projection::Skip => {
-            // No type4 sumcheck for projection
+            // No com_verify sumcheck for projection
         }
     }
 
@@ -792,27 +792,27 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         output.clone(),
     ));
 
-    let type5sumcheck = Type5SumcheckContext {
+    let norm_check_sumcheck = NormCheckSumcheckContext {
         conjugated_combined_witness: conjugated_combined_witness_sumcheck.clone(),
         output,
         selectors: most_inner_commitments_selectors,
         output_2,
     };
 
-    // Type4 sumchecks: Three separate recursive commitment trees
+    // ComVerify sumchecks: Three separate recursive commitment trees
     // 1. Commitment recursion: verifies the basic witness commitments are well-formed
     // 2. Opening recursion: verifies the opening proofs are correctly committed
     // 3. Projection recursion: verifies the projection images are correctly committed
     // Each tree has its own depth, rank, and decomposition parameters defined in config.
 
-    let mut type4sumchecks = vec![
-        build_type4_sumcheck_context(
+    let mut com_verify_sumchecks = vec![
+        build_com_verify_sumcheck_context(
             crs,
             total_vars,
             combined_witness_sumcheck.clone(),
             &config.commitment_recursion,
         ),
-        build_type4_sumcheck_context(
+        build_com_verify_sumcheck_context(
             crs,
             total_vars,
             combined_witness_sumcheck.clone(),
@@ -822,7 +822,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
 
     match &config.projection_recursion {
         Projection::Coarse(recursion_config) => {
-            type4sumchecks.push(build_type4_sumcheck_context(
+            com_verify_sumchecks.push(build_com_verify_sumcheck_context(
                 crs,
                 total_vars,
                 combined_witness_sumcheck.clone(),
@@ -830,13 +830,13 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
             ));
         }
         Projection::Fine(recursion_config) => {
-            type4sumchecks.push(build_type4_sumcheck_context(
+            com_verify_sumchecks.push(build_com_verify_sumcheck_context(
                 crs,
                 total_vars,
                 combined_witness_sumcheck.clone(),
                 &recursion_config.recursion_constant_term,
             ));
-            type4sumchecks.push(build_type4_sumcheck_context(
+            com_verify_sumchecks.push(build_com_verify_sumcheck_context(
                 crs,
                 total_vars,
                 combined_witness_sumcheck.clone(),
@@ -844,44 +844,44 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
             ));
         }
         Projection::Skip => {
-            // No type4 sumcheck for projection
+            // No com_verify sumcheck for projection
         }
     }
 
     let mut all_outputs: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>> =
         vec![];
-    for type0 in &type0sumchecks {
-        all_outputs.push(type0.output.clone());
+    for commitment_fold in &commitment_fold_sumchecks {
+        all_outputs.push(commitment_fold.output.clone());
     }
-    for type1 in &type1sumchecks {
-        all_outputs.push(type1.output.clone());
+    for inner_eval_fold in &inner_eval_fold_sumchecks {
+        all_outputs.push(inner_eval_fold.output.clone());
     }
-    for type2 in &type2sumchecks {
-        all_outputs.push(type2.output.clone());
+    for outer_eval_claim in &outer_eval_claim_sumchecks {
+        all_outputs.push(outer_eval_claim.output.clone());
     }
 
-    if let Some(type3sumcheck) = &type3sumcheck {
-        all_outputs.push(type3sumcheck.output.clone());
-    } else if let Some(type3_1_contexts) = &type3_1_sumchecks {
-        for type3_1_ctx in type3_1_contexts.sumchecks.iter() {
-            all_outputs.push(type3_1_ctx.output.clone());
-            all_outputs.push(type3_1_ctx.output_2.clone());
+    if let Some(coarse_proj_sumcheck) = &coarse_proj_sumcheck {
+        all_outputs.push(coarse_proj_sumcheck.output.clone());
+    } else if let Some(fine_proj_contexts) = &fine_proj_sumchecks {
+        for fine_proj_ctx in fine_proj_contexts.sumchecks.iter() {
+            all_outputs.push(fine_proj_ctx.output.clone());
+            all_outputs.push(fine_proj_ctx.output_2.clone());
         }
     }
 
-    for type4 in &type4sumchecks {
-        for layer in &type4.layers {
+    for com_verify in &com_verify_sumchecks {
+        for layer in &com_verify.layers {
             for output in &layer.outputs {
                 all_outputs.push(output.clone());
             }
         }
-        for output in &type4.output_layer.outputs {
+        for output in &com_verify.output_layer.outputs {
             all_outputs.push(output.clone());
         }
     }
 
-    all_outputs.push(type5sumcheck.output.clone());
-    all_outputs.push(type5sumcheck.output_2.clone());
+    all_outputs.push(norm_check_sumcheck.output.clone());
+    all_outputs.push(norm_check_sumcheck.output_2.clone());
 
     let combiner = ElephantCell::new(Combiner::new(all_outputs));
 
@@ -895,13 +895,13 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         basic_commitment_combiner_sumcheck,
         commitment_key_rows_sumcheck,
         opening_combiner_sumcheck,
-        type0sumchecks,
-        type1sumchecks,
-        type2sumchecks,
-        type3sumcheck,
-        type4sumchecks,
-        type5sumcheck,
-        type3_1_sumchecks,
+        commitment_fold_sumchecks,
+        inner_eval_fold_sumchecks,
+        outer_eval_claim_sumchecks,
+        coarse_proj_sumcheck,
+        com_verify_sumchecks,
+        norm_check_sumcheck,
+        fine_proj_sumchecks,
         combiner,
         field_combiner,
         next: match &config.next {

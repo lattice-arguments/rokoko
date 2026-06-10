@@ -27,7 +27,7 @@ pub fn load_verifier_sumcheck_data(
     evaluation_points_inner: &[StructuredRow],
     evaluation_points_outer: &[StructuredRow],
     projection_matrix: &ProjectionMatrix,
-    projection_matrix_flatter_structured: &Option<StructuredRow>, // Only needed for type0 projection
+    projection_matrix_flatter_structured: &Option<StructuredRow>, // Only needed for coarse projection
     challenges_3_1: &Option<[BatchedProjectionChallengesSuccinct; NOF_BATCHES]>,
     combination: &[RingElement],
     qe: &[QuadraticExtension; HALF_DEGREE],
@@ -38,7 +38,7 @@ pub fn load_verifier_sumcheck_data(
         .set_result(claim_over_witness.clone());
 
     verifier_sumcheck_context
-        .type5evaluation
+        .norm_check_evaluation
         .conjugated_combined_witness_evaluation
         .borrow_mut()
         .set_result(claim_over_witness_conjugate.clone());
@@ -48,29 +48,29 @@ pub fn load_verifier_sumcheck_data(
         .borrow_mut()
         .load_from(folding_challenges);
 
-    for (type1_eval, point) in verifier_sumcheck_context
-        .type1evaluations
+    for (inner_eval_fold_eval, point) in verifier_sumcheck_context
+        .inner_eval_fold_evaluations
         .iter()
         .zip(evaluation_points_inner.iter())
     {
-        type1_eval
+        inner_eval_fold_eval
             .inner_evaluation
             .borrow_mut()
             .load_from(point.clone());
     }
 
-    for (type2_eval, point) in verifier_sumcheck_context
-        .type2evaluations
+    for (outer_eval_claim_eval, point) in verifier_sumcheck_context
+        .outer_eval_claim_evaluations
         .iter()
         .zip(evaluation_points_outer.iter())
     {
-        type2_eval
+        outer_eval_claim_eval
             .outer_evaluation
             .borrow_mut()
             .load_from(point.clone());
     }
-    if let Some(type3_eval) = &mut verifier_sumcheck_context.type3evaluation {
-        // Type3: projection image consistency with split LHS structure
+    if let Some(coarse_proj_eval) = &mut verifier_sumcheck_context.coarse_proj_evaluation {
+        // CoarseProj: projection image consistency with split LHS structure
         // LHS: Prod(flatter_0, flatter_1·matrix) where flatter_0 covers elder (block) variables
         // and flatter_1·matrix covers LS (within-block) variables
 
@@ -80,7 +80,7 @@ pub fn load_verifier_sumcheck_data(
                 projection_matrix.projection_height,
             );
 
-        type3_eval
+        coarse_proj_eval
             .lhs_flatter_0_evaluation
             .borrow_mut()
             .load_from(projection_flatter_0_structured.clone());
@@ -94,13 +94,13 @@ pub fn load_verifier_sumcheck_data(
             &projection_flatter_1_preprocessed,
         );
 
-        type3_eval
+        coarse_proj_eval
             .lhs_flatter_1_times_matrix_evaluation_field
             .borrow_mut()
             .load_from(&flatter_1_times_matrix);
 
         // RHS: Split into projection_flatter and fold_challenge (Product)
-        type3_eval
+        coarse_proj_eval
             .rhs_projection_flatter_evaluation
             .borrow_mut()
             .load_from(
@@ -110,22 +110,22 @@ pub fn load_verifier_sumcheck_data(
                     .clone(),
             );
 
-        type3_eval
+        coarse_proj_eval
             .rhs_fold_challenge_evaluation
             .borrow_mut()
             .load_from(folding_challenges);
     }
 
-    if let Some(type3_1_eval) = &mut verifier_sumcheck_context.type3_1_evaluations {
-        // Type3_1_A: projection image consistency for type1.1 projection
+    if let Some(fine_proj_eval) = &mut verifier_sumcheck_context.fine_proj_evaluations {
+        // Fine-projection consistency between constant-term and batched-projection commitments
 
-        type3_1_eval
+        fine_proj_eval
             .rhs_fold_challenge_evaluation
             .borrow_mut()
             .load_from(folding_challenges);
 
         for (batch_idx, challenges) in challenges_3_1.as_ref().unwrap().iter().enumerate() {
-            type3_1_eval.sumchecks[batch_idx]
+            fine_proj_eval.sumchecks[batch_idx]
                 .lhs_flatter_1_times_matrix_evaluation
                 .borrow_mut()
                 .load_from(&challenges.j_batched);
@@ -137,7 +137,7 @@ pub fn load_verifier_sumcheck_data(
                     .map(|e| QuadraticExtension { coeffs: [*e, 0] })
                     .collect::<Vec<_>>(),
             };
-            type3_1_eval.sumchecks[batch_idx]
+            fine_proj_eval.sumchecks[batch_idx]
                 .lhs_flatter_0_evaluation_field
                 .borrow_mut()
                 .load_from(c_0_field);
@@ -193,17 +193,17 @@ pub fn load_verifier_sumcheck_data(
                 }
             };
 
-            type3_1_eval.sumchecks[batch_idx]
+            fine_proj_eval.sumchecks[batch_idx]
                 .lhs_consistency_flatter_evaluation_field
                 .borrow_mut()
                 .load_from(lhs_layers_fields);
 
-            type3_1_eval.sumchecks[batch_idx]
+            fine_proj_eval.sumchecks[batch_idx]
                 .rhs_consistency_flatter_evaluation_field
                 .borrow_mut()
                 .load_from(rhs_layers_field);
 
-            type3_1_eval.sumchecks[batch_idx]
+            fine_proj_eval.sumchecks[batch_idx]
                 .rhs_scalar_consistency_evaluation
                 .borrow_mut()
                 .load_from(&vec![e]);

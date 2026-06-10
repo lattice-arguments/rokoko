@@ -40,25 +40,25 @@ pub fn load_intermediate_sumcheck_data(
         .borrow_mut()
         .load_from(combined_witness);
     sumcheck_context
-        .type5sumcheck
+        .norm_check_sumcheck
         .conjugated_witness_sumcheck
         .borrow_mut()
         .load_from(conjugated_combined_witness);
 
-    for (type1_sc, eval_point) in sumcheck_context
-        .type1sumchecks
+    for (inner_eval_fold_sc, eval_point) in sumcheck_context
+        .inner_eval_fold_sumchecks
         .iter()
         .zip(evaluation_points_inner.iter())
     {
-        type1_sc
+        inner_eval_fold_sc
             .inner_evaluation_sumcheck
             .borrow_mut()
             .load_from(&PreprocessedRow::from_structured_row(eval_point).preprocessed_row);
     }
 
-    for (challenge, type3_1_sc) in challenges_batching_projection_1
+    for (challenge, fine_proj_sc) in challenges_batching_projection_1
         .iter()
-        .zip(sumcheck_context.type3_1sumcheck.iter())
+        .zip(sumcheck_context.fine_proj_sumchecks.iter())
     {
         let c_0_ring: Vec<RingElement> = challenge
             .c_0_values
@@ -66,9 +66,9 @@ pub fn load_intermediate_sumcheck_data(
             .map(|&val| RingElement::constant(val, Representation::IncompleteNTT))
             .collect();
 
-        type3_1_sc.c_0_sumcheck.borrow_mut().load_from(&c_0_ring);
+        fine_proj_sc.c_0_sumcheck.borrow_mut().load_from(&c_0_ring);
 
-        type3_1_sc
+        fine_proj_sc
             .j_batched_sumcheck
             .borrow_mut()
             .load_from(&challenge.j_batched);

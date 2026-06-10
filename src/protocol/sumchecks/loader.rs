@@ -61,38 +61,38 @@ pub fn load_sumcheck_data(
         .load_from(&folding_challenges);
 
     sumcheck_context
-        .type5sumcheck
+        .norm_check_sumcheck
         .conjugated_combined_witness
         .borrow_mut()
         .load_from_with_non_zero_end(&conjugated_combined_witness, non_zero_end);
 
-    // Load inner evaluation points (type1)
-    for (type1_sc, eval_point) in sumcheck_context
-        .type1sumchecks
+    // Load inner evaluation points (inner_eval_fold)
+    for (inner_eval_fold_sc, eval_point) in sumcheck_context
+        .inner_eval_fold_sumchecks
         .iter()
         .zip(opening.evaluation_points_inner.iter())
     {
-        type1_sc
+        inner_eval_fold_sc
             .inner_evaluation_sumcheck
             .borrow_mut()
             .load_from(&eval_point.preprocessed_row);
     }
 
-    // Load outer evaluation points (type2)
-    for (type2_sc, eval_point) in sumcheck_context
-        .type2sumchecks
+    // Load outer evaluation points (outer_eval_claim)
+    for (outer_eval_claim_sc, eval_point) in sumcheck_context
+        .outer_eval_claim_sumchecks
         .iter()
         .zip(opening.evaluation_points_outer.iter())
     {
-        type2_sc
+        outer_eval_claim_sc
             .outer_evaluation_sumcheck
             .borrow_mut()
             .load_from(&eval_point.preprocessed_row);
     }
 
-    // Load projection data (type3)
+    // Load projection data (coarse_proj)
     // LHS: Split into flatter_0 (elder/block variables) and flatter_1·matrix (LS/within-block variables)
-    if let Some(type3_sc) = &mut sumcheck_context.type3sumcheck {
+    if let Some(coarse_proj_sc) = &mut sumcheck_context.coarse_proj_sumcheck {
         let (projection_flatter_0_structured, projection_flatter_1_structured) =
             split_projection_flatter(
                 &projection_matrix_flatter.as_ref().unwrap().1,
@@ -102,7 +102,7 @@ pub fn load_sumcheck_data(
         // Load flatter_0 (block-level weights)
         let projection_flatter_0_preprocessed =
             PreprocessedRow::from_structured_row(&projection_flatter_0_structured);
-        type3_sc
+        coarse_proj_sc
             .lhs_flatter_0_sumcheck
             .borrow_mut()
             .load_from(&projection_flatter_0_preprocessed.preprocessed_row);
@@ -126,18 +126,18 @@ pub fn load_sumcheck_data(
             flatter_1_times_matrix_ring[i].from_homogenized_field_extensions_to_incomplete_ntt();
         }
 
-        type3_sc
+        coarse_proj_sc
             .lhs_flatter_1_times_matrix_sumcheck
             .borrow_mut()
             .load_from(&flatter_1_times_matrix_ring);
 
         // RHS: Split into fold_challenge and projection_flatter (Product)
-        type3_sc
+        coarse_proj_sc
             .rhs_fold_challenge_sumcheck
             .borrow_mut()
             .load_from(folding_challenges);
 
-        type3_sc
+        coarse_proj_sc
             .rhs_projection_flatter_sumcheck
             .borrow_mut()
             .load_from(
@@ -149,11 +149,11 @@ pub fn load_sumcheck_data(
             );
     }
 
-    // Load type3_1_sumchecks if present (batched projections)
-    if let Some(type3_1_contexts) = &mut sumcheck_context.type3_1_sumchecks {
+    // Load fine_proj_sumchecks if present (batched projections)
+    if let Some(fine_proj_contexts) = &mut sumcheck_context.fine_proj_sumchecks {
         if let Some(challenges) = challenges_batching_projection_1 {
             // Each batch gets its own (c_0_values, c_1_values, j_batched) tuple
-            for (_batch_idx, (type3_1_ctx, challenges)) in type3_1_contexts
+            for (_batch_idx, (fine_proj_ctx, challenges)) in fine_proj_contexts
                 .sumchecks
                 .iter_mut()
                 .zip(challenges.iter())
@@ -166,12 +166,12 @@ pub fn load_sumcheck_data(
                     .map(|&val| RingElement::constant(val, Representation::IncompleteNTT))
                     .collect();
 
-                type3_1_ctx
+                fine_proj_ctx
                     .lhs_flatter_0_sumcheck
                     .borrow_mut()
                     .load_from(&c_0_ring);
 
-                type3_1_ctx
+                fine_proj_ctx
                     .lhs_flatter_1_times_matrix_sumcheck
                     .borrow_mut()
                     .load_from(&challenges.j_batched);
@@ -223,21 +223,21 @@ pub fn load_sumcheck_data(
                     e
                 };
 
-                type3_1_ctx
+                fine_proj_ctx
                     .lhs_consistency_flatter_sumcheck
                     .borrow_mut()
                     .load_from(&lhs_multipier_ring);
-                type3_1_ctx
+                fine_proj_ctx
                     .rhs_consistency_flatter_sumcheck
                     .borrow_mut()
                     .load_from(&rhs_multipier_ring);
-                type3_1_ctx
+                fine_proj_ctx
                     .rhs_scalar_consistency_sumcheck
                     .borrow_mut()
                     .load_from(&vec![e]);
             }
             // RHS: fold_challenge (same for all batches, already loaded in folding_challenges_sumcheck)
-            type3_1_contexts
+            fine_proj_contexts
                 .rhs_fold_challenge_sumcheck
                 .borrow_mut()
                 .load_from(folding_challenges);

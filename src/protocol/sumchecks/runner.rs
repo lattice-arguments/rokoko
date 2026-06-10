@@ -33,15 +33,15 @@ use super::loader::load_sumcheck_data;
 /// 5. Return final evaluations at the random point
 ///
 /// **Constraints:**
-/// - **Type0**: `CK · folded_witness = commitment · fold_challenge`
-/// - **Type1**: `<inner_eval, folded_witness> = opening.rhs · fold_challenge`
-/// - **Type2**: `<outer_eval, opening.rhs> = claimed_evaluation`
-/// - **Type3**: `<projection_coeffs, folded_witness> = <fold_tensor, projection_image>` (block-diagonal projection)
-/// - **Type3_1**: `c^T (I ⊗ projection_matrix) · folded_witness = c^T projection_image · fold_challenge` (Kronecker projection)
-/// - **Type4**: Recursive commitment trees (commitment, opening, projection recursions)
+/// - **CommitmentFold**: `CK · folded_witness = commitment · fold_challenge`
+/// - **InnerEvalFold**: `<inner_eval, folded_witness> = opening.rhs · fold_challenge`
+/// - **OuterEvalClaim**: `<outer_eval, opening.rhs> = claimed_evaluation`
+/// - **CoarseProj**: `<projection_coeffs, folded_witness> = <fold_tensor, projection_image>` (block-diagonal projection)
+/// - **FineProj**: `c^T (I ⊗ projection_matrix) · folded_witness = c^T projection_image · fold_challenge` (Kronecker projection)
+/// - **ComVerify**: Recursive commitment trees (commitment, opening, projection recursions)
 ///   - Internal layers: `CK_i · selected_witness_i = compose(child_commitment_{i+1})`
 ///   - Output layer: `selector · (CK_leaf · witness) = public_commitment`
-/// - **Type5**: `<combined_witness, conjugated_combined_witness> = norm_claim`
+/// - **NormCheck**: `<combined_witness, conjugated_combined_witness> = norm_claim`
 pub fn sumcheck(
     config: &SumcheckConfig,
     combined_witness: &Vec<RingElement>,
@@ -125,7 +125,7 @@ pub fn sumcheck(
         t_load.elapsed().as_millis()
     );
 
-    let norm_inner_norm_claim = sumcheck_context.type5sumcheck.output_2.borrow_mut().claim();
+    let norm_inner_norm_claim = sumcheck_context.norm_check_sumcheck.output_2.borrow_mut().claim();
 
     sumcheck_context
         .combiner
@@ -146,13 +146,13 @@ pub fn sumcheck(
 
     let constant_term_claims =
         sumcheck_context
-            .type3_1_sumchecks
+            .fine_proj_sumchecks
             .as_ref()
-            .map(|type3_1_sumchecks| {
-                type3_1_sumchecks
+            .map(|fine_proj_sumchecks| {
+                fine_proj_sumchecks
                     .sumchecks
                     .iter()
-                    .map(|type3_1_sc| type3_1_sc.output_2.borrow().claim())
+                    .map(|fine_proj_sc| fine_proj_sc.output_2.borrow().claim())
                     .collect::<Vec<_>>()
             });
 
@@ -213,7 +213,7 @@ pub fn sumcheck(
         .clone();
 
     let claim_over_witness_conjugate = sumcheck_context
-        .type5sumcheck
+        .norm_check_sumcheck
         .conjugated_combined_witness
         .borrow()
         .final_evaluations()

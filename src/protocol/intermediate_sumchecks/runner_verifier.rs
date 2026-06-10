@@ -68,7 +68,7 @@ pub fn intermediate_sumcheck_verifier(
     // assert_eq!(
     //     num_sumchecks,
     //     config.basic_commitment_rank + 1,
-    //     "Intermediate verifier expected folded commitment plus one type5 claim"
+    //     "Intermediate verifier expected folded commitment plus one norm_check claim"
     // );
 
     let norm_ct = proof.norm_claim.constant_term_from_incomplete_ntt();
@@ -81,11 +81,11 @@ pub fn intermediate_sumcheck_verifier(
         combination_to_field.split_into_quadratic_extensions();
 
     let (mut batched_claim, idx) = batch_claims_linear(folded_commitment, &combination, 0);
-    let (batched_type1_claims, idx) = batch_claims_linear(folded_opening_claims, &combination, idx);
-    batched_claim += &batched_type1_claims;
-    let (batched_type3_1_claims, idx) =
+    let (batched_inner_eval_claims, idx) = batch_claims_linear(folded_opening_claims, &combination, idx);
+    batched_claim += &batched_inner_eval_claims;
+    let (batched_fine_proj_claims, idx) =
         batch_claims_linear(folded_batched_projection_claims, &combination, idx);
-    batched_claim += &batched_type3_1_claims;
+    batched_claim += &batched_fine_proj_claims;
     assert!(
         idx < combination.len(),
         "Not enough combination challenges for norm claim (idx={}, len={})",

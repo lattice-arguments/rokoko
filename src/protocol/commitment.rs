@@ -14,7 +14,7 @@ use crate::{
 
 pub type BasicCommitment = HorizontallyAlignedMatrix<RingElement>;
 
-// precompute auxiliary witness stored as i16 faster type 0 projections
+// precompute auxiliary witness stored as i16 for faster coarse projections
 pub struct CommitmentWithAux {
     pub rc_commitment_with_aux: RecursiveCommitmentWithAux,
     pub witness_i16: Option<VerticallyAlignedMatrix<Signed16RingElement>>,

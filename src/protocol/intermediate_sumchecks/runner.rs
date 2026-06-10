@@ -77,10 +77,10 @@ pub fn run_intermediate_sumcheck(
         &qe,
     );
 
-    let type5_claim = sumcheck_context.type5sumcheck.output.borrow_mut().claim();
+    let norm_check_claim = sumcheck_context.norm_check_sumcheck.output.borrow_mut().claim();
     assert_eq!(
-        type5_claim, norm_claim,
-        "Type5 intermediate claim mismatch: expected <w, conj(w)>"
+        norm_check_claim, norm_claim,
+        "NormCheck intermediate claim mismatch: expected <w, conj(w)>"
     );
 
     let mut num_vars = sumcheck_context.combiner.borrow().variable_count();
@@ -119,7 +119,7 @@ pub fn run_intermediate_sumcheck(
         .final_evaluations()
         .clone();
     let claim_over_witness_conjugate = sumcheck_context
-        .type5sumcheck
+        .norm_check_sumcheck
         .conjugated_witness_sumcheck
         .borrow()
         .final_evaluations()
