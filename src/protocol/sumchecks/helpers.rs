@@ -4,7 +4,7 @@ use crate::{
     common::{
         arithmetic::HALF_WAY_MOD_Q,
         config::{HALF_DEGREE, MOD_Q},
-        matrix::{new_vec_zero_field_preallocated, new_vec_zero_preallocated},
+        matrix::new_vec_zero_field_preallocated,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
@@ -19,11 +19,9 @@ use crate::{
     },
 };
 
-/// Builds sumchecks for recomposing base-`2^{base_log}` decomposition:
-/// - `combiner_sumcheck`: carries radix weights (1, base, base², ...)
-/// - `constant_sumcheck`: holds the signed-digit offset to subtract
-///
-/// Prefix padding enables composition without re-indexing the hypercube.
+/// Builds the sumcheck carrying radix weights (1, base, base^2, ...) used to
+/// recompose a base-`2^{base_log}` decomposition; prefix padding enables
+/// composition without re-indexing the hypercube.
 pub(crate) fn composition_sumcheck(
     base_log: u64,
     chunks: usize,
@@ -95,23 +93,6 @@ pub(crate) fn ck_sumcheck(
     sumcheck
 }
 
-/// Computes tensor product a ⊗ b = [a0·b0, a0·b1, ..., a0·b_{n-1}, a1·b0, ..., a_{m-1}·b_{n-1}].
-///
-/// Used in projection constraints: (folding_challenges ⊗ projection_flatter) selects which
-/// projected elements contribute to the folded projection image, exploiting the block structure
-/// of the projection matrix.
-#[allow(dead_code)]
-pub(crate) fn tensor_product(a: &Vec<RingElement>, b: &Vec<RingElement>) -> Vec<RingElement> {
-    let mut result: Vec<RingElement> = new_vec_zero_preallocated(a.len() * b.len());
-    let mut idx = 0;
-    for a_elem in a.iter() {
-        for b_elem in b.iter() {
-            result[idx] *= (a_elem, b_elem);
-            idx += 1;
-        }
-    }
-    result
-}
 
 pub fn tensor_product_u64(a: &Vec<u64>, b: &Vec<u64>) -> Vec<u64> {
     let mut result: Vec<u64> = vec![0u64; a.len() * b.len()];
@@ -125,104 +106,7 @@ pub fn tensor_product_u64(a: &Vec<u64>, b: &Vec<u64>) -> Vec<u64> {
     }
     result
 }
-/// Computes the projection coefficients for proving the projection image consistency.
-///
-/// This is one of the most intricate helper functions in the protocol because it bridges
-/// the gap between the structured projection matrix and the flat witness representation
-/// that the sumcheck operates on. Here's the full story:
-///
-/// We need to prove that:
-///   (I ⊗ ProjectionMatrix) · folded_witness = projection_image · fold_challenge
-///
-/// where I is a block identity matrix, ProjectionMatrix is a small structured matrix,
-/// and the tensor product arranges copies of ProjectionMatrix along the diagonal blocks.
-///
-/// Instead of proving the projection row-by-row (which would require many constraints),
-/// we sample a random linear combination (projection_flatter) of the rows. This gives us
-/// a single inner product constraint:
-///   <projection_flatter, (I ⊗ ProjectionMatrix) · folded_witness>
-///      = <projection_flatter, projection_image · fold_challenge>
-///
-/// The witness is organized into `blocks` many blocks of size `inner_width`, where
-/// inner_width = projection_ratio * height. Each block gets multiplied by its own
-/// copy of the projection matrix. By splitting `projection_flatter` into:
-///   - projection_flatter_0: weights for which block (length = blocks)
-///   - projection_flatter_1: weights for positions within each block (length = height)
-/// we can compute the effective coefficients for the full witness vector by combining
-/// these two layers.
-#[allow(dead_code)]
-pub(crate) fn projection_coefficients(
-    projection_matrix: &ProjectionMatrix,
-    projection_flatter: &StructuredRow,
-    witness_height: usize,
-    projection_ratio: usize,
-) -> Vec<RingElement> {
-    let height = projection_matrix.projection_height;
-    let height_log = height.ilog2() as usize;
-    let tensor_layers = &projection_flatter.tensor_layers;
-    debug_assert!(tensor_layers.len() >= height_log);
-    debug_assert_eq!(1usize << height_log, height);
-    let block_layers = tensor_layers.len() - height_log;
-    let blocks = witness_height / (projection_ratio * height);
-    debug_assert_eq!(blocks, 1usize << block_layers);
-    debug_assert_eq!(
-        witness_height,
-        projection_ratio * (1usize << tensor_layers.len())
-    );
 
-    let projection_flatter_0 = PreprocessedRow::from_structured_row(&StructuredRow {
-        tensor_layers: tensor_layers[..block_layers].to_vec(),
-    });
-    let projection_flatter_1 = PreprocessedRow::from_structured_row(&StructuredRow {
-        tensor_layers: tensor_layers[block_layers..].to_vec(),
-    });
-
-    let inner_width = projection_ratio * height;
-    let zero = RingElement::zero(Representation::IncompleteNTT);
-
-    let mut projection_flatter_1_projection = new_vec_zero_preallocated(inner_width);
-    for inner_row in 0..height {
-        let weight = &projection_flatter_1.preprocessed_row[inner_row];
-        if weight == &zero {
-            continue;
-        }
-
-        for i in 0..inner_width {
-            let (is_positive, is_non_zero) = projection_matrix[(inner_row, i)];
-            if !is_non_zero {
-                continue;
-            }
-            if is_positive {
-                projection_flatter_1_projection[i] += weight;
-            } else {
-                projection_flatter_1_projection[i] -= weight;
-            }
-        }
-    }
-
-    let non_zero_inner_indices = projection_flatter_1_projection
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, value)| (value != &zero).then_some(idx))
-        .collect::<Vec<_>>();
-
-    let mut result = new_vec_zero_preallocated(witness_height);
-    for block in 0..blocks {
-        let coeff = &projection_flatter_0.preprocessed_row[block];
-        if coeff == &zero {
-            continue;
-        }
-
-        let offset = block * inner_width;
-        for &i in non_zero_inner_indices.iter() {
-            let mut contribution = projection_flatter_1_projection[i].clone();
-            contribution *= coeff;
-            result[offset + i] = contribution;
-        }
-    }
-
-    result
-}
 
 /// Splits projection_flatter into two components for the elder/LS variable separation.
 ///

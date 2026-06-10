@@ -501,7 +501,7 @@ pub struct BatchedProjectionChallenges {
     pub c_0_values: Vec<u64>,
     pub c_1_values: Vec<u64>,
     pub c_1_layers: Vec<u64>,
-    pub c_2_values: Vec<u64>, // for columns, not used here but for consistency
+    pub c_2_values: Vec<u64>, // column challenges, consumed in the sumcheck loader
     pub j_batched: Vec<RingElement>, // this is technically not needed, but since it's computed anyway, we return it for reuse
 }
 
@@ -533,8 +533,7 @@ pub fn sample_layers(
         .collect();
 
     let c_1_layers: Vec<u64> = (0..projection_matrix.projection_height.ilog2())
-        // .map(|_| hash_wrapper.sample_u64_mod_q())
-        .map(|_| 1)
+        .map(|_| hash_wrapper.sample_u64_mod_q())
         .collect();
 
     let c_2_layers: Vec<u64> = (0..witness_width.ilog2())
@@ -551,12 +550,6 @@ fn batch_projection_into(
     hash_wrapper: &mut HashWrapper,
     is_simple_config: bool,
 ) -> BatchedProjectionChallenges {
-    // Sample structured challenge layers
-    // c'_0 is over d (number of blocks in image_ct when viewed coefficient-wise)
-    // c'_1 is over n_rp (projection height coefficients)
-
-    // d = image_ct.height * DEGREE / PROJECTION_HEIGHT
-    // let c_0_layers: Vec<u64> = (0..d.ilog2())
     //     .map(|_| hash_wrapper.sample_u64_mod_q())
     //     .collect();
 

@@ -7,9 +7,9 @@ use crate::{
         config::{Config, IntermediateConfig},
         crs::CRS,
         intermediate_sumchecks::context_verifier::{
-            IntermediateVerifierSumcheckContext, Type0IntermediateVerifierContext,
-            Type1IntermediateVerifierContext, Type3_1IntermediateVerifierContext,
-            Type5IntermediateVerifierContext,
+            IntermediateVerifierSumcheckContext, CommitmentFoldIntermediateVerifierContext,
+            InnerEvalFoldIntermediateVerifierContext, FineProjIntermediateVerifierContext,
+            NormCheckIntermediateVerifierContext,
         },
         sumcheck_utils::{
             combiner::CombinerEvaluation,
@@ -73,8 +73,8 @@ pub fn init_intermediate_verifier(
         })
         .collect::<Vec<_>>();
 
-    let type0evaluations = (0..config.basic_commitment_rank)
-        .map(|i| Type0IntermediateVerifierContext {
+    let commitment_fold_evaluations = (0..config.basic_commitment_rank)
+        .map(|i| CommitmentFoldIntermediateVerifierContext {
             output: ElephantCell::new(ProductSumcheckEvaluation::new(
                 recomposed_witness.clone(),
                 commitment_key_rows_evaluation[i].clone(),
@@ -82,8 +82,8 @@ pub fn init_intermediate_verifier(
         })
         .collect::<Vec<_>>();
 
-    let type1evaluations = (0..config.nof_openings)
-        .map(|i| Type1IntermediateVerifierContext {
+    let inner_eval_fold_evaluations = (0..config.nof_openings)
+        .map(|i| InnerEvalFoldIntermediateVerifierContext {
             inner_evaluation: inner_evaluation_structured[i].clone(),
             output: ElephantCell::new(ProductSumcheckEvaluation::new(
                 recomposed_witness.clone(),
@@ -95,7 +95,7 @@ pub fn init_intermediate_verifier(
     let height = config.projection_height;
     let inner_width = config.projection_ratio * height / DEGREE;
     let blocks = config.witness_height / inner_width;
-    let type3_1evaluations: [Type3_1IntermediateVerifierContext; NOF_BATCHES] =
+    let fine_proj_evaluations: [FineProjIntermediateVerifierContext; NOF_BATCHES] =
         std::array::from_fn(|_| {
             let c_0_evaluation = ElephantCell::new(
                 StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
@@ -124,14 +124,14 @@ pub fn init_intermediate_verifier(
                 )),
             ));
 
-            Type3_1IntermediateVerifierContext {
+            FineProjIntermediateVerifierContext {
                 c_0_evaluation,
                 j_batched_evaluation,
                 output,
             }
         });
 
-    let type5evaluation = Type5IntermediateVerifierContext {
+    let norm_check_evaluation = NormCheckIntermediateVerifierContext {
         conjugated_witness_evaluation: conjugated_witness_evaluation.clone(),
         output: ElephantCell::new(ProductSumcheckEvaluation::new(
             witness_evaluation.clone(),
@@ -140,16 +140,16 @@ pub fn init_intermediate_verifier(
     };
 
     let mut all_outputs: Vec<ElephantCell<EvalData>> = Vec::new();
-    for type0 in &type0evaluations {
-        all_outputs.push(type0.output.clone());
+    for commitment_fold in &commitment_fold_evaluations {
+        all_outputs.push(commitment_fold.output.clone());
     }
-    for type1 in &type1evaluations {
-        all_outputs.push(type1.output.clone());
+    for inner_eval_fold in &inner_eval_fold_evaluations {
+        all_outputs.push(inner_eval_fold.output.clone());
     }
-    for type3_1 in &type3_1evaluations {
-        all_outputs.push(type3_1.output.clone());
+    for fine_proj in &fine_proj_evaluations {
+        all_outputs.push(fine_proj.output.clone());
     }
-    all_outputs.push(type5evaluation.output.clone());
+    all_outputs.push(norm_check_evaluation.output.clone());
 
     let combiner_evaluation = ElephantCell::new(CombinerEvaluation::new(all_outputs));
     let field_combiner_evaluation = ElephantCell::new(RingToFieldCombinerEvaluation::new(
@@ -161,10 +161,10 @@ pub fn init_intermediate_verifier(
         conjugated_witness_evaluation,
         witness_combiner_evaluation,
         commitment_key_rows_evaluation,
-        type0evaluations,
-        type1evaluations,
-        type3_1evaluations,
-        type5evaluation,
+        commitment_fold_evaluations,
+        inner_eval_fold_evaluations,
+        fine_proj_evaluations,
+        norm_check_evaluation,
         combiner_evaluation,
         field_combiner_evaluation,
         next: match config.next.as_deref() {

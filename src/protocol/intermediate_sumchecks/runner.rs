@@ -10,7 +10,7 @@ use crate::{
     },
     protocol::{
         config::IntermediateConfig,
-        project_2::BatchedProjectionChallenges,
+        project_fine::BatchedProjectionChallenges,
         sumcheck_utils::{
             common::{HighOrderSumcheckData, SumcheckBaseData},
             polynomial::Polynomial,
@@ -32,7 +32,7 @@ pub fn run_intermediate_sumcheck(
     config: &IntermediateConfig,
     combined_witness: &[RingElement],
     evaluation_points_inner: &[StructuredRow],
-    challenges_batching_projection_1: &[BatchedProjectionChallenges; NOF_BATCHES],
+    fine_proj_batching_challenges: &[BatchedProjectionChallenges; NOF_BATCHES],
     sumcheck_context: &mut IntermediateSumcheckContext,
     hash_wrapper: &mut HashWrapper,
 ) -> (IntermediateSumcheckProof, Vec<RingElement>) {
@@ -53,12 +53,13 @@ pub fn run_intermediate_sumcheck(
         norm_claim += &temp;
     }
 
+    hash_wrapper.update_with_ring_element(&norm_claim);
+
     let num_sumchecks = sumcheck_context.combiner.borrow().sumchecks_count();
     tracing::debug!("num_sumchecks: {}", num_sumchecks);
 
     let mut combination = new_vec_zero_preallocated(num_sumchecks);
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
-    // hash_wrapper.sample_ring_element_into(&mut combination[num_sumchecks - 1]);
 
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
@@ -73,14 +74,14 @@ pub fn run_intermediate_sumcheck(
         &conjugated_combined_witness,
         evaluation_points_inner,
         &combination,
-        challenges_batching_projection_1,
+        fine_proj_batching_challenges,
         &qe,
     );
 
-    let type5_claim = sumcheck_context.type5sumcheck.output.borrow_mut().claim();
+    let norm_check_claim = sumcheck_context.norm_check_sumcheck.output.borrow_mut().claim();
     assert_eq!(
-        type5_claim, norm_claim,
-        "Type5 intermediate claim mismatch: expected <w, conj(w)>"
+        norm_check_claim, norm_claim,
+        "NormCheck intermediate claim mismatch: expected <w, conj(w)>"
     );
 
     let mut num_vars = sumcheck_context.combiner.borrow().variable_count();
@@ -116,11 +117,14 @@ pub fn run_intermediate_sumcheck(
         .final_evaluations()
         .clone();
     let claim_over_witness_conjugate = sumcheck_context
-        .type5sumcheck
+        .norm_check_sumcheck
         .conjugated_witness_sumcheck
         .borrow()
         .final_evaluations()
         .clone();
+
+    hash_wrapper.update_with_ring_element(&claim_over_witness);
+    hash_wrapper.update_with_ring_element(&claim_over_witness_conjugate);
 
     evaluation_points.reverse();
 

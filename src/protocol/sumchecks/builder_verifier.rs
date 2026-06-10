@@ -24,10 +24,10 @@ use crate::{
             sum::SumSumcheckEvaluation,
         },
         sumchecks::context_verifier::{
-            NextVerifierSumcheckContext, Type0VerifierContext, Type1VerifierContext,
-            Type2VerifierContext, Type3VerifierContext, Type3_1VerifierContext,
-            Type3_1VerifierContextWrapper, Type4LayerVerifierContext,
-            Type4OutputLayerVerifierContext, Type4VerifierContext, Type5VerifierContext,
+            NextVerifierSumcheckContext, CommitmentFoldVerifierContext, InnerEvalFoldVerifierContext,
+            OuterEvalClaimVerifierContext, CoarseProjVerifierContext, FineProjVerifierContext,
+            FineProjVerifierContextWrapper, ComVerifyLayerVerifierContext,
+            ComVerifyOutputLayerVerifierContext, ComVerifyVerifierContext, NormCheckVerifierContext,
             VerifierSumcheckContext,
         },
     },
@@ -100,12 +100,12 @@ pub fn structured_row_ck_evaluation(
     eval
 }
 
-fn build_type4_verifier_context(
+fn build_com_verify_verifier_context(
     crs: &CRS,
     total_vars: usize,
     combined_witness_eval: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
     config: &commitment::RecursionConfig,
-) -> Type4VerifierContext {
+) -> ComVerifyVerifierContext {
     let mut layers = Vec::new();
     let mut current = config;
 
@@ -123,8 +123,6 @@ fn build_type4_verifier_context(
                 )
             })
             .collect::<Vec<_>>();
-
-        selector_evaluation_from_prefix(&next.prefix, total_vars);
 
         let combiner_eval = load_combiner_evaluation_data(
             next.decomposition_base_log as u64,
@@ -190,7 +188,7 @@ fn build_type4_verifier_context(
         //     })
         //     .collect::<Vec<_>>();
 
-        layers.push(Type4LayerVerifierContext {
+        layers.push(ComVerifyLayerVerifierContext {
             selector_evaluation: selector_eval,
             child_selector_evaluations: child_selectors_evals,
             combiner_evaluation: combiner_eval,
@@ -221,9 +219,9 @@ fn build_type4_verifier_context(
         })
         .collect::<Vec<_>>();
 
-    Type4VerifierContext {
+    ComVerifyVerifierContext {
         layers,
-        output_layer: Type4OutputLayerVerifierContext {
+        output_layer: ComVerifyOutputLayerVerifierContext {
             selector_evaluation: selector_eval,
             ck_evaluations: ck_evals,
             outputs,
@@ -337,7 +335,7 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
         basic_commitment_combiner_product.clone(),
     ));
 
-    let type0evaluations = (0..config.basic_commitment_rank)
+    let commitment_fold_evaluations = (0..config.basic_commitment_rank)
         .map(|i| {
             let row_selector = selector_evaluation_from_prefix(
                 &Prefix {
@@ -364,14 +362,14 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                 folding_with_commitment_diff.clone(),
             ));
 
-            Type0VerifierContext {
+            CommitmentFoldVerifierContext {
                 basic_commitment_row_evaluation: row_selector,
                 output: ElephantCell::new(DiffSumcheckEvaluation::new(lhs, rhs)),
             }
         })
         .collect::<Vec<_>>();
 
-    let type1evaluations = (0..config.nof_openings)
+    let inner_eval_fold_evaluations = (0..config.nof_openings)
         .map(|i| {
             let inner_evaluation = inner_evaluation_structured[i].clone();
             let opening_selector = opening_selector_evaluations[i].clone();
@@ -394,7 +392,7 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                 rhs_inner.clone(),
             ));
 
-            Type1VerifierContext {
+            InnerEvalFoldVerifierContext {
                 inner_evaluation,
                 opening_selector_evaluation: opening_selector,
                 output: ElephantCell::new(DiffSumcheckEvaluation::new(lhs, rhs)),
@@ -402,7 +400,7 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
         })
         .collect::<Vec<_>>();
 
-    let type2evaluations = (0..config.nof_openings)
+    let outer_eval_claim_evaluations = (0..config.nof_openings)
         .map(|i| {
             let opening_selector = opening_selector_evaluations[i].clone();
             let outer_evaluation = outer_evaluation_structured[i].clone();
@@ -416,17 +414,17 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                 inner_product.clone(),
             ));
 
-            Type2VerifierContext {
+            OuterEvalClaimVerifierContext {
                 outer_evaluation,
                 output,
             }
         })
         .collect::<Vec<_>>();
 
-    // Build Type3 with Product of split LHS and RHS coefficients
-    let type3evaluation = {
+    // Build CoarseProj with Product of split LHS and RHS coefficients
+    let coarse_proj_evaluation = {
         match &config.projection_recursion {
-            Projection::Type0(projection_recursion) => {
+            Projection::Coarse(projection_recursion) => {
                 let projection_combiner_evaluation = load_combiner_evaluation_data(
                     projection_recursion.decomposition_base_log as u64,
                     projection_recursion.decomposition_chunks,
@@ -508,25 +506,25 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                     rhs_fold_challenge_evaluation.clone(),
                 ));
 
-                let type3lhs_inner = ElephantCell::new(ProductSumcheckEvaluation::new(
+                let coarse_proj_lhs_inner = ElephantCell::new(ProductSumcheckEvaluation::new(
                     recomposed_folded_witness.clone(),
                     lhs_projection_coeff_product,
                 ));
-                let type3lhs = ElephantCell::new(ProductSumcheckEvaluation::new(
+                let coarse_proj_lhs = ElephantCell::new(ProductSumcheckEvaluation::new(
                     folded_witness_selector_evaluation.clone(),
-                    type3lhs_inner.clone(),
+                    coarse_proj_lhs_inner.clone(),
                 ));
 
-                let type3rhs_inner = ElephantCell::new(ProductSumcheckEvaluation::new(
+                let coarse_proj_rhs_inner = ElephantCell::new(ProductSumcheckEvaluation::new(
                     recomposed_projection.clone(),
                     rhs_fold_tensor_product,
                 ));
-                let type3rhs = ElephantCell::new(ProductSumcheckEvaluation::new(
+                let coarse_proj_rhs = ElephantCell::new(ProductSumcheckEvaluation::new(
                     projection_selector_evaluation.clone(),
-                    type3rhs_inner.clone(),
+                    coarse_proj_rhs_inner.clone(),
                 ));
 
-                Some(Type3VerifierContext {
+                Some(CoarseProjVerifierContext {
                     projection_combiner_evaluation,
                     lhs_flatter_0_evaluation,
                     lhs_flatter_1_times_matrix_evaluation_field,
@@ -534,16 +532,16 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                     rhs_projection_flatter_evaluation,
                     rhs_fold_challenge_evaluation,
                     projection_selector_evaluation,
-                    output: ElephantCell::new(DiffSumcheckEvaluation::new(type3lhs, type3rhs)),
+                    output: ElephantCell::new(DiffSumcheckEvaluation::new(coarse_proj_lhs, coarse_proj_rhs)),
                 })
             }
-            Projection::Type1(_projection_recursion) => None,
+            Projection::Fine(_projection_recursion) => None,
             Projection::Skip => None,
         }
     };
 
-    let type3_1_evaluations = match &config.projection_recursion {
-        Projection::Type1(proj_config) => {
+    let fine_proj_evaluations = match &config.projection_recursion {
+        Projection::Fine(proj_config) => {
             let projection_combiner_evaluation = load_combiner_evaluation_data(
                 proj_config
                     .recursion_batched_projection
@@ -605,7 +603,7 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                 RingToFieldWrapperEvaluation::new(lhs_scalar_consistency_evaluation_field.clone()),
             );
 
-            let contexts: [Type3_1VerifierContext; NOF_BATCHES] = std::array::from_fn(|i| {
+            let contexts: [FineProjVerifierContext; NOF_BATCHES] = std::array::from_fn(|i| {
                 // Split coefficients into block indices (elder vars) and within-block (LS vars)
                 let height = config.projection_height;
                 let inner_width = config.projection_ratio * height / DEGREE;
@@ -742,7 +740,7 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
 
                 let output_consistency = ElephantCell::new(DiffSumcheckEvaluation::new(lhs, rhs));
 
-                Type3_1VerifierContext {
+                FineProjVerifierContext {
                     lhs_flatter_0_evaluation_field,
                     lhs_flatter_0_evaluation,
                     lhs_flatter_1_times_matrix_evaluation,
@@ -756,7 +754,7 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                     output_2: output_consistency,
                 }
             });
-            Some(Type3_1VerifierContextWrapper {
+            Some(FineProjVerifierContextWrapper {
                 sumchecks: contexts,
                 projection_combiner_evaluation,
                 rhs_fold_challenge_evaluation,
@@ -767,14 +765,14 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
         _ => None,
     };
 
-    let mut type4evaluations = vec![
-        build_type4_verifier_context(
+    let mut com_verify_evaluations = vec![
+        build_com_verify_verifier_context(
             crs,
             total_vars,
             combined_witness_evaluation.clone(),
             &config.commitment_recursion,
         ),
-        build_type4_verifier_context(
+        build_com_verify_verifier_context(
             crs,
             total_vars,
             combined_witness_evaluation.clone(),
@@ -783,23 +781,23 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
     ];
 
     match &config.projection_recursion {
-        Projection::Type0(proj_config) => {
-            type4evaluations.push(build_type4_verifier_context(
+        Projection::Coarse(proj_config) => {
+            com_verify_evaluations.push(build_com_verify_verifier_context(
                 crs,
                 total_vars,
                 combined_witness_evaluation.clone(),
                 &proj_config,
             ));
         }
-        Projection::Type1(proj_config) => {
-            type4evaluations.push(build_type4_verifier_context(
+        Projection::Fine(proj_config) => {
+            com_verify_evaluations.push(build_com_verify_verifier_context(
                 crs,
                 total_vars,
                 combined_witness_evaluation.clone(),
                 &proj_config.recursion_constant_term,
             ));
 
-            type4evaluations.push(build_type4_verifier_context(
+            com_verify_evaluations.push(build_com_verify_verifier_context(
                 crs,
                 total_vars,
                 combined_witness_evaluation.clone(),
@@ -830,14 +828,14 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
     most_inner_commitments_selectors.push(most_inner_opening_recursion);
 
     match &config.projection_recursion {
-        Projection::Type0(proj_config) => {
+        Projection::Coarse(proj_config) => {
             let most_inner_projection_recursion = selector_evaluation_from_prefix(
                 &proj_config.most_inner_config().prefix,
                 total_vars,
             );
             most_inner_commitments_selectors.push(most_inner_projection_recursion);
         }
-        Projection::Type1(proj_config) => {
+        Projection::Fine(proj_config) => {
             let most_inner_constant_term_recursion = selector_evaluation_from_prefix(
                 &proj_config
                     .recursion_constant_term
@@ -881,7 +879,7 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
         output.clone(),
     ));
 
-    let type5evaluation = Type5VerifierContext {
+    let norm_check_evaluation = NormCheckVerifierContext {
         conjugated_combined_witness_evaluation: conjugated_combined_witness_evaluation.clone(),
         output,
         selectors: most_inner_commitments_selectors,
@@ -889,37 +887,37 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
     };
 
     let mut all_outputs: Vec<ElephantCell<EvalData>> = vec![];
-    for type0 in &type0evaluations {
-        all_outputs.push(type0.output.clone());
+    for commitment_fold in &commitment_fold_evaluations {
+        all_outputs.push(commitment_fold.output.clone());
     }
-    for type1 in &type1evaluations {
-        all_outputs.push(type1.output.clone());
+    for inner_eval_fold in &inner_eval_fold_evaluations {
+        all_outputs.push(inner_eval_fold.output.clone());
     }
-    for type2 in &type2evaluations {
-        all_outputs.push(type2.output.clone());
+    for outer_eval_claim in &outer_eval_claim_evaluations {
+        all_outputs.push(outer_eval_claim.output.clone());
     }
-    if let Some(type3evaluation) = &type3evaluation {
-        all_outputs.push(type3evaluation.output.clone());
+    if let Some(coarse_proj_evaluation) = &coarse_proj_evaluation {
+        all_outputs.push(coarse_proj_evaluation.output.clone());
     }
-    if let Some(type3_1_evaluations) = &type3_1_evaluations {
-        for type3_1 in &type3_1_evaluations.sumchecks {
-            all_outputs.push(type3_1.output.clone());
-            all_outputs.push(type3_1.output_2.clone());
+    if let Some(fine_proj_evaluations) = &fine_proj_evaluations {
+        for fine_proj in &fine_proj_evaluations.sumchecks {
+            all_outputs.push(fine_proj.output.clone());
+            all_outputs.push(fine_proj.output_2.clone());
         }
     }
 
-    for type4 in &type4evaluations {
-        for layer in &type4.layers {
+    for com_verify in &com_verify_evaluations {
+        for layer in &com_verify.layers {
             for output in &layer.outputs {
                 all_outputs.push(output.clone());
             }
         }
-        for output in &type4.output_layer.outputs {
+        for output in &com_verify.output_layer.outputs {
             all_outputs.push(output.clone());
         }
     }
-    all_outputs.push(type5evaluation.output.clone());
-    all_outputs.push(type5evaluation.output_2.clone());
+    all_outputs.push(norm_check_evaluation.output.clone());
+    all_outputs.push(norm_check_evaluation.output_2.clone());
 
     let combiner_evaluation = ElephantCell::new(CombinerEvaluation::new(all_outputs));
     let field_combiner_evaluation = ElephantCell::new(RingToFieldCombinerEvaluation::new(
@@ -934,13 +932,13 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
         basic_commitment_combiner_evaluation,
         commitment_key_rows_evaluation,
         opening_combiner_evaluation,
-        type0evaluations,
-        type1evaluations,
-        type2evaluations,
-        type3evaluation,
-        type3_1_evaluations,
-        type4evaluations,
-        type5evaluation,
+        commitment_fold_evaluations,
+        inner_eval_fold_evaluations,
+        outer_eval_claim_evaluations,
+        coarse_proj_evaluation,
+        fine_proj_evaluations,
+        com_verify_evaluations,
+        norm_check_evaluation,
         combiner_evaluation,
         field_combiner_evaluation,
         next: match &config.next {

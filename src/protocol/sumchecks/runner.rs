@@ -12,7 +12,7 @@ use crate::{
     protocol::{
         config::{Projection, SumcheckConfig},
         open::{evaluation_point_to_structured_row, Opening},
-        project_2::BatchedProjectionChallenges,
+        project_fine::BatchedProjectionChallenges,
         sumcheck::SumcheckContext,
         sumcheck_utils::{
             common::{HighOrderSumcheckData, SumcheckBaseData},
@@ -33,22 +33,22 @@ use super::loader::load_sumcheck_data;
 /// 5. Return final evaluations at the random point
 ///
 /// **Constraints:**
-/// - **Type0**: `CK · folded_witness = commitment · fold_challenge`
-/// - **Type1**: `<inner_eval, folded_witness> = opening.rhs · fold_challenge`
-/// - **Type2**: `<outer_eval, opening.rhs> = claimed_evaluation`
-/// - **Type3**: `<projection_coeffs, folded_witness> = <fold_tensor, projection_image>` (block-diagonal projection)
-/// - **Type3_1**: `c^T (I ⊗ projection_matrix) · folded_witness = c^T projection_image · fold_challenge` (Kronecker projection)
-/// - **Type4**: Recursive commitment trees (commitment, opening, projection recursions)
+/// - **CommitmentFold**: `CK · folded_witness = commitment · fold_challenge`
+/// - **InnerEvalFold**: `<inner_eval, folded_witness> = opening.rhs · fold_challenge`
+/// - **OuterEvalClaim**: `<outer_eval, opening.rhs> = claimed_evaluation`
+/// - **CoarseProj**: `<projection_coeffs, folded_witness> = <fold_tensor, projection_image>` (block-diagonal projection)
+/// - **FineProj**: `c^T (I ⊗ projection_matrix) · folded_witness = c^T projection_image · fold_challenge` (Kronecker projection)
+/// - **ComVerify**: Recursive commitment trees (commitment, opening, projection recursions)
 ///   - Internal layers: `CK_i · selected_witness_i = compose(child_commitment_{i+1})`
 ///   - Output layer: `selector · (CK_leaf · witness) = public_commitment`
-/// - **Type5**: `<combined_witness, conjugated_combined_witness> = norm_claim`
+/// - **NormCheck**: `<combined_witness, conjugated_combined_witness> = norm_claim`
 #[tracing::instrument(skip_all, name = "sumcheck")]
 pub fn sumcheck(
     config: &SumcheckConfig,
     combined_witness: &Vec<RingElement>,
     projection_matrix: &ProjectionMatrix,
     folding_challenges: &Vec<RingElement>,
-    challenges_batching_projection_1: &Option<&[BatchedProjectionChallenges; NOF_BATCHES]>,
+    fine_proj_batching_challenges: &Option<&[BatchedProjectionChallenges; NOF_BATCHES]>,
     opening: &Opening,
     sumcheck_context: &mut SumcheckContext,
     hash_wrapper: &mut HashWrapper,
@@ -61,9 +61,8 @@ pub fn sumcheck(
     Vec<RingElement>,
     Option<Vec<RingElement>>,
 ) {
-    // Removed: let mut hash_wrapper_clone = hash_wrapper.clone(); - unused
     let projection_matrix_flatter = match config.projection_recursion {
-        Projection::Type0(_) => {
+        Projection::Coarse(_) => {
             let projection_height_flat = config.witness_height / config.projection_ratio;
             let mut projection_matrix_flatter_base =
                 new_vec_zero_preallocated(projection_height_flat.ilog2() as usize);
@@ -80,7 +79,7 @@ pub fn sumcheck(
                 projection_matrix_flatter_structured,
             ))
         }
-        Projection::Type1(_) => None,
+        Projection::Fine(_) => None,
         Projection::Skip => None,
     };
 
@@ -96,6 +95,42 @@ pub fn sumcheck(
 
     hash_wrapper.update_with_ring_element(&norm_claim);
 
+    {
+        let _s = tracing::info_span!("sumcheck::load_data").entered();
+        load_sumcheck_data(
+            sumcheck_context,
+            config,
+            combined_witness,
+            &conjugated_combined_witness,
+            folding_challenges,
+            fine_proj_batching_challenges,
+            opening,
+            projection_matrix,
+            &projection_matrix_flatter,
+        );
+    }
+
+    let norm_inner_norm_claim = sumcheck_context.norm_check_sumcheck.output_2.borrow_mut().claim();
+
+    let constant_term_claims =
+        sumcheck_context
+            .fine_proj_sumchecks
+            .as_ref()
+            .map(|fine_proj_sumchecks| {
+                fine_proj_sumchecks
+                    .sumchecks
+                    .iter()
+                    .map(|fine_proj_sc| fine_proj_sc.output_2.borrow().claim())
+                    .collect::<Vec<_>>()
+            });
+
+    // All prover claims entering the batched combination must be bound by the
+    // transcript before the batching challenges are sampled.
+    hash_wrapper.update_with_ring_element(&norm_inner_norm_claim);
+    if let Some(constant_term_claims) = &constant_term_claims {
+        hash_wrapper.update_with_ring_element_slice(constant_term_claims);
+    }
+
     // Sample random batching coefficients from Fiat-Shamir
     let num_sumchecks = sumcheck_context.combiner.borrow().sumchecks_count();
     let mut combination = new_vec_zero_preallocated(num_sumchecks);
@@ -105,26 +140,6 @@ pub fn sumcheck(
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
     let qe = combination_to_field.split_into_quadratic_extensions();
-
-    // Load all data into the sumcheck context
-    {
-        let _s = tracing::info_span!("sumcheck::load_data").entered();
-        load_sumcheck_data(
-            sumcheck_context,
-            config,
-            combined_witness,
-            &conjugated_combined_witness,
-            folding_challenges,
-            challenges_batching_projection_1,
-            opening,
-            projection_matrix,
-            &projection_matrix_flatter,
-            &combination,
-            &qe,
-        );
-    }
-
-    let norm_inner_norm_claim = sumcheck_context.type5sumcheck.output_2.borrow_mut().claim();
 
     sumcheck_context
         .combiner
@@ -142,18 +157,6 @@ pub fn sumcheck(
         num_vars,
         1u64 << (num_vars - 1)
     );
-
-    let constant_term_claims =
-        sumcheck_context
-            .type3_1_sumchecks
-            .as_ref()
-            .map(|type3_1_sumchecks| {
-                type3_1_sumchecks
-                    .sumchecks
-                    .iter()
-                    .map(|type3_1_sc| type3_1_sc.output_2.borrow().claim())
-                    .collect::<Vec<_>>()
-            });
 
     // Collect evaluation points during sumcheck
     let mut evaluation_points: Vec<RingElement> = vec![];
@@ -206,11 +209,16 @@ pub fn sumcheck(
         .clone();
 
     let claim_over_witness_conjugate = sumcheck_context
-        .type5sumcheck
+        .norm_check_sumcheck
         .conjugated_combined_witness
         .borrow()
         .final_evaluations()
         .clone();
+
+    // z_0, z_1 become the next round's outer claims; bind them before any
+    // later challenge is sampled.
+    hash_wrapper.update_with_ring_element(&claim_over_witness);
+    hash_wrapper.update_with_ring_element(&claim_over_witness_conjugate);
 
     evaluation_points.reverse();
 

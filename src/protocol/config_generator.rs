@@ -1,6 +1,6 @@
 use crate::protocol::commitment::{Prefix, RecursionConfig};
 use crate::protocol::config::{
-    Config, IntermediateConfig, Projection, SimpleConfig, SumcheckConfig, Type1ProjectionConfig,
+    Config, IntermediateConfig, Projection, SimpleConfig, SumcheckConfig, FineProjectionConfig,
 };
 
 #[derive(Clone)]
@@ -13,8 +13,8 @@ pub struct AuxRecursionConfig {
 
 #[derive(Clone)]
 pub enum AuxProjection {
-    Type0(AuxRecursionConfig),
-    Type1 {
+    Coarse(AuxRecursionConfig),
+    Fine {
         nof_batches: usize,
         recursion_constant_term: AuxRecursionConfig,
         recursion_batched_projection: AuxRecursionConfig,
@@ -191,7 +191,7 @@ impl AuxSumcheckConfig {
 
         // Projection recursion
         match &self.projection_recursion {
-            AuxProjection::Type0(config) => {
+            AuxProjection::Coarse(config) => {
                 let base_size = self.witness_height * self.witness_width / self.projection_ratio;
                 self.collect_recursion_components(
                     config,
@@ -201,7 +201,7 @@ impl AuxSumcheckConfig {
                     vec!["projection_recursion".to_string()],
                 );
             }
-            AuxProjection::Type1 {
+            AuxProjection::Fine {
                 nof_batches,
                 recursion_constant_term,
                 recursion_batched_projection,
@@ -298,12 +298,12 @@ impl AuxSumcheckConfig {
 
         // Build projection recursion
         let projection_recursion = match &self.projection_recursion {
-            AuxProjection::Type0(config) => Projection::Type0(self.build_recursion_config(
+            AuxProjection::Coarse(config) => Projection::Coarse(self.build_recursion_config(
                 config,
                 assigned_prefixes,
                 &["projection_recursion".to_string()],
             )),
-            AuxProjection::Type1 {
+            AuxProjection::Fine {
                 nof_batches,
                 recursion_constant_term,
                 recursion_batched_projection,
@@ -326,7 +326,7 @@ impl AuxSumcheckConfig {
                     ],
                 );
 
-                Projection::Type1(Type1ProjectionConfig {
+                Projection::Fine(FineProjectionConfig {
                     nof_batches: *nof_batches,
                     recursion_constant_term: constant_term,
                     recursion_batched_projection: batched_projection,
@@ -427,7 +427,7 @@ mod tests {
                 rank: 1,
                 next: None,
             },
-            projection_recursion: AuxProjection::Type0(AuxRecursionConfig {
+            projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
                 decomposition_base_log: 15,
                 decomposition_chunks: 2,
                 rank: 1,
@@ -467,7 +467,7 @@ mod tests {
                 rank: 1,
                 next: None,
             },
-            projection_recursion: AuxProjection::Type1 {
+            projection_recursion: AuxProjection::Fine {
                 nof_batches: 2,
                 recursion_constant_term: AuxRecursionConfig {
                     decomposition_base_log: 15,

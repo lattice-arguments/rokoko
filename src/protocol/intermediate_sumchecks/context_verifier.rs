@@ -15,22 +15,22 @@ use crate::{
     },
 };
 
-pub struct Type0IntermediateVerifierContext {
+pub struct CommitmentFoldIntermediateVerifierContext {
     pub output: ElephantCell<ProductSumcheckEvaluation>,
 }
 
-pub struct Type1IntermediateVerifierContext {
+pub struct InnerEvalFoldIntermediateVerifierContext {
     pub inner_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
     pub output: ElephantCell<ProductSumcheckEvaluation>,
 }
 
-pub struct Type3_1IntermediateVerifierContext {
+pub struct FineProjIntermediateVerifierContext {
     pub c_0_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
     pub j_batched_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub output: ElephantCell<ProductSumcheckEvaluation>,
 }
 
-pub struct Type5IntermediateVerifierContext {
+pub struct NormCheckIntermediateVerifierContext {
     pub conjugated_witness_evaluation: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
     pub output: ElephantCell<ProductSumcheckEvaluation>,
 }
@@ -41,10 +41,10 @@ pub struct IntermediateVerifierSumcheckContext {
     pub witness_combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub commitment_key_rows_evaluation:
         Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
-    pub type0evaluations: Vec<Type0IntermediateVerifierContext>,
-    pub type1evaluations: Vec<Type1IntermediateVerifierContext>,
-    pub type3_1evaluations: [Type3_1IntermediateVerifierContext; NOF_BATCHES],
-    pub type5evaluation: Type5IntermediateVerifierContext,
+    pub commitment_fold_evaluations: Vec<CommitmentFoldIntermediateVerifierContext>,
+    pub inner_eval_fold_evaluations: Vec<InnerEvalFoldIntermediateVerifierContext>,
+    pub fine_proj_evaluations: [FineProjIntermediateVerifierContext; NOF_BATCHES],
+    pub norm_check_evaluation: NormCheckIntermediateVerifierContext,
     pub combiner_evaluation: ElephantCell<CombinerEvaluation<RingElement>>,
     pub field_combiner_evaluation: ElephantCell<RingToFieldCombinerEvaluation>,
     pub next: Option<Box<IntermediateVerifierSumcheckContext>>,

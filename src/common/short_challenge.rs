@@ -3,7 +3,9 @@
 //! Each challenge has weight TAU and operator norm <= T_OP_NORM_BOUND. For a
 //! sparse `c = sum_k eps_k * X^{p_k}`,
 //!
-//!     c(zeta^{2j+1}) = sum_k eps_k * T[((2j+1) * p_k) mod 2N]
+//! ```text
+//! c(zeta^{2j+1}) = sum_k eps_k * T[((2j+1) * p_k) mod 2N]
+//! ```
 //!
 //! with `T[m] = exp(i*pi*m/N)`. The hot path uses this directly via a length-2N
 //! phase LUT instead of a full FFT.
@@ -14,10 +16,10 @@ use crate::common::ring_arithmetic::{Representation, RingElement};
 use num::Complex;
 use std::sync::LazyLock;
 
+// Challenge set size before rejection: C(128,22) * 2^22 = 2^103.31 elements.
 pub const TAU: usize = 22;
-// 2^103.31 enties
+// With TAU=22, the expected number of sampling attempts is about 2^0.31 = 1.24.
 pub const T_OP_NORM_BOUND: f64 = 10.0;
-// heuristic: with TAU=22, the expected number of attempts is about 2^0.31 = 1.24
 
 const N: usize = DEGREE;
 const LOG_N: usize = N.trailing_zeros() as usize;

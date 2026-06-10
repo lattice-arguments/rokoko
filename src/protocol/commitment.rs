@@ -8,13 +8,13 @@ use crate::{
     },
     protocol::{
         crs::{CK, CRS},
-        project::Signed16RingElement,
+        project_coarse::Signed16RingElement,
     },
 };
 
 pub type BasicCommitment = HorizontallyAlignedMatrix<RingElement>;
 
-// precompute auxiliary witness stored as i16 faster type 0 projections
+// precompute auxiliary witness stored as i16 for faster coarse projections
 pub struct CommitmentWithAux {
     pub rc_commitment_with_aux: RecursiveCommitmentWithAux,
     pub witness_i16: Option<VerticallyAlignedMatrix<Signed16RingElement>>,

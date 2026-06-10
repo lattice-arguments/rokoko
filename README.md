@@ -10,7 +10,7 @@ Our protocol is run over power-of-two cyclotomic rings, and parameters are selec
 
 The sumcheck protocol efficiently enforces a collection of algebraic constraints over committed and folded witnesses. A general, highly modular interface for sumcheck protocols is provided, which supports different constraints and may be used for different relations.
 
-We implement two variants of committed random projections based on the Johnson-Lindestrauss lemma, a coarse (also referred to as `Type0` in the codebase) variant applying a projection matrix to full ring elements, and a fine variant (`Type1`) projecting only the coefficients of the witness ring elements. Both implementations are efficient and vectorised, specifically achieving a higher degree of vectorisation for the coarse projection by leveraging smaller registers and thus utilising a greater number of lanes.
+We implement two variants of committed random projections based on the Johnson-Lindestrauss lemma, a coarse variant (`Projection::Coarse`, paper: Π^proj-c) applying a projection matrix to full ring elements, and a fine variant (`Projection::Fine`, paper: Π^proj-f) projecting only the coefficients of the witness ring elements. Both implementations are efficient and vectorised, specifically achieving a higher degree of vectorisation for the coarse projection by leveraging smaller registers and thus utilising a greater number of lanes.
 
 ## Build and Run Instructions
 
@@ -115,15 +115,37 @@ The verifier interface, similarly to the prover, requires a CRS, `SumcheckConfig
 
 We support different constraint types, each encoding a specific semantic guarantee:
 
-* `Type0`: Basic commitment correctness - verifies `CK · folded_witness = commitment · fold_challenge`
-* `Type1`: Inner evaluation consistency - verifies opening RHS matches witness evaluation. In matches the claim of ``matrix-from-rows(l) W = T'' from the publication.
-* `Type2`: Outer evaluation consistency - verifies the correctness of the evaluation of the rows of the matrix T with outer evaluation points. Those inner products are known to the verifier.
-* `Type3`: Coarse projection validity (block-diagonal) - verifies projection image is correctly computed from witness
-* `Type3_1`: Fine projection validity- verifies `c^T (I ⊗ P) · witness = c^T projection_image · fold_challenge` (batched). Also verifies the correspondence of the constant terms of the fine projection.
-* `Type4`: Recursive commitment well-formedness - verifies the entire recursive commitment  tree structure
-* `Type5`: Witness norm check - verifies `<combined_witness, conjugated_witness> = norm_claim`. Further, we derive an additional check for the most external commitment layer. 
+Each constraint family is implemented as a sumcheck gadget named after the paper constraint it enforces (former `TypeN` codenames in parentheses):
+
+* `CommitmentFold` (Type0): basic commitment correctness - verifies `CK · folded_witness = commitment · fold_challenge`
+* `InnerEvalFold` (Type1): inner evaluation consistency - verifies the opening RHS matches the witness evaluation; the claim ``matrix-from-rows(l) W = T'' from the publication.
+* `OuterEvalClaim` (Type2): outer evaluation consistency - verifies the evaluation of the rows of the matrix T at the outer evaluation points; these inner products are known to the verifier.
+* `CoarseProj` (Type3): coarse projection validity (block-diagonal) - verifies the projection image is correctly computed from the witness
+* `FineProj` (Type3_1): fine projection validity - verifies `c^T (I ⊗ P) · witness = c^T projection_image · fold_challenge` (batched), plus the correspondence of the constant terms of the fine projection.
+* `ComVerify` (Type4): recursive commitment well-formedness - verifies the recursive commitment tree structure (paper: `COM.Verify`)
+* `NormCheck` (Type5): witness norm check - verifies `<combined_witness, conjugated_witness> = norm_claim` (paper: `v = <w-hat, conj(w-hat)>`), with an additional check for the innermost commitment layer.
 
 Currently, a framework for supporting different kinds of relations is not fully exposed. Yet, all of those checks have been (generally) built from composable blocks, not specific to our relation in general. 
+
+## Code ↔ paper notation
+
+| Code | Paper |
+|---|---|
+| `witness` (`witness_height` × `witness_width`) | `W ∈ R^{m_w × r}` |
+| `fold_challenge` | folding challenge `c ∈ C^r` |
+| `folded_witness` / decomposed | `W c` / `w̃ = G^{-1}(W c)` |
+| `next_round_data` (packed) | `ŵ = pack(w̃, Y_i, x_i, …)` |
+| `next_round_witness` | `U = reshape_{r'}(ŵ)` |
+| `opening.rhs` | `T = matrix-from-rows(l_j) · W` |
+| `evaluation_points_inner` / `outer` | left/right vectors `l_j` / `r_j` |
+| `claims` (`outer_eval_claims`) | `t_j = l_j^T W r_j` |
+| `rc_commitment` / `rc_opening` | recursive commitments `com_i` of `vec(Y_i)`, aux `x_i` |
+| `projection_matrix` | `J ← χ^{n_rp × m_rp}` (block-diagonal `I ⊗ J`) |
+| `norm_claim` | `v = ⟨ŵ, conj(ŵ)⟩`, norm via `ct(v)` |
+| `claim_over_witness`, `…_conjugate` | `z_0 = MLE[w](c)`, `z_1 = MLE[w](conj(c))` |
+| sumcheck `combination` challenges | batching `γ` (via `eq(bin(i), γ)`) |
+| `combination_to_field` (`RingToFieldCombiner`) | the F_{q^a}-linear map `Φ = δ^T ∘ θ_a` |
+| `Prefix` selectors | packing prefixes `p_i` with `eq(p_i, ·)` |
 
 ## Configuration and Structure
 
@@ -167,13 +189,13 @@ The different variants of projections can be selected through:
 
 ```rust
 pub enum Projection {
-    Type0(Type0ProjectionConfig),
-    Type1(Type1ProjectionConfig),
+    Coarse(CoarseProjectionConfig),
+    Fine(FineProjectionConfig),
     Skip,
 }
 ```
 
-where, as mentioned above, `Type0` and `Type1` define the coarse and fine random projections, respectively.
+where `Coarse` and `Fine` are the two random projection variants (paper: Π^proj-c and Π^proj-f).
 
 ## Experiments
 

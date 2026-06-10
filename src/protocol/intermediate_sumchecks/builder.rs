@@ -7,7 +7,7 @@ use crate::{
         config::{Config, IntermediateConfig},
         crs::CRS,
         intermediate_sumchecks::context::{
-            Type1IntermediateSumcheckContext, Type3_1IntermediateSumcheckContext,
+            InnerEvalFoldIntermediateSumcheckContext, FineProjIntermediateSumcheckContext,
         },
         sumcheck_utils::{
             combiner::Combiner, common::HighOrderSumcheckData, elephant_cell::ElephantCell,
@@ -19,7 +19,7 @@ use crate::{
 };
 
 use super::context::{
-    IntermediateSumcheckContext, Type0IntermediateSumcheckContext, Type5IntermediateSumcheckContext,
+    IntermediateSumcheckContext, CommitmentFoldIntermediateSumcheckContext, NormCheckIntermediateSumcheckContext,
 };
 
 pub fn init_intermediate_sumcheck(
@@ -56,16 +56,16 @@ pub fn init_intermediate_sumcheck(
         witness_combiner_sumcheck.clone(),
     ));
 
-    let type0sumchecks = (0..config.basic_commitment_rank)
-        .map(|i| Type0IntermediateSumcheckContext {
+    let commitment_fold_sumchecks = (0..config.basic_commitment_rank)
+        .map(|i| CommitmentFoldIntermediateSumcheckContext {
             output: ElephantCell::new(ProductSumcheck::new(
                 commitment_key_rows_sumcheck[i].clone(),
                 recomposed_witness.clone(),
             )),
         })
-        .collect::<Vec<Type0IntermediateSumcheckContext>>();
+        .collect::<Vec<CommitmentFoldIntermediateSumcheckContext>>();
 
-    let type1sumchecks = (0..config.nof_openings)
+    let inner_eval_fold_sumchecks = (0..config.nof_openings)
         .map(|_| {
             let inner_evaluation_sumcheck = ElephantCell::new(
                 LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
@@ -75,7 +75,7 @@ pub fn init_intermediate_sumcheck(
                 ),
             );
 
-            Type1IntermediateSumcheckContext {
+            InnerEvalFoldIntermediateSumcheckContext {
                 inner_evaluation_sumcheck: inner_evaluation_sumcheck.clone(),
                 output: ElephantCell::new(ProductSumcheck::new(
                     recomposed_witness.clone(),
@@ -83,12 +83,12 @@ pub fn init_intermediate_sumcheck(
                 )),
             }
         })
-        .collect::<Vec<Type1IntermediateSumcheckContext>>();
+        .collect::<Vec<InnerEvalFoldIntermediateSumcheckContext>>();
 
     let height = config.projection_height;
     let inner_width = config.projection_ratio * height / DEGREE;
     let blocks = config.witness_height / inner_width;
-    let type3_1sumcheck: [Type3_1IntermediateSumcheckContext; NOF_BATCHES] =
+    let fine_proj_sumchecks: [FineProjIntermediateSumcheckContext; NOF_BATCHES] =
         std::array::from_fn(|_| {
             let c_0_sumcheck = ElephantCell::new(
                 LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
@@ -118,7 +118,7 @@ pub fn init_intermediate_sumcheck(
                     j_batched_sumcheck.clone(),
                 )),
             ));
-            Type3_1IntermediateSumcheckContext {
+            FineProjIntermediateSumcheckContext {
                 output,
                 c_0_sumcheck,
                 j_batched_sumcheck,
@@ -128,7 +128,7 @@ pub fn init_intermediate_sumcheck(
     let conjugated_witness_sumcheck = ElephantCell::new(LinearSumcheck::<RingElement>::new(
         decomposed_witness_height,
     ));
-    let type5sumcheck = Type5IntermediateSumcheckContext {
+    let norm_check_sumcheck = NormCheckIntermediateSumcheckContext {
         conjugated_witness_sumcheck: conjugated_witness_sumcheck.clone(),
         output: ElephantCell::new(ProductSumcheck::new(
             witness_sumcheck.clone(),
@@ -139,16 +139,16 @@ pub fn init_intermediate_sumcheck(
     let mut all_outputs: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>> =
         Vec::new();
 
-    for type0 in &type0sumchecks {
-        all_outputs.push(type0.output.clone());
+    for commitment_fold in &commitment_fold_sumchecks {
+        all_outputs.push(commitment_fold.output.clone());
     }
-    for type1 in &type1sumchecks {
-        all_outputs.push(type1.output.clone());
+    for inner_eval_fold in &inner_eval_fold_sumchecks {
+        all_outputs.push(inner_eval_fold.output.clone());
     }
-    for type3_1 in &type3_1sumcheck {
-        all_outputs.push(type3_1.output.clone());
+    for fine_proj in &fine_proj_sumchecks {
+        all_outputs.push(fine_proj.output.clone());
     }
-    all_outputs.push(type5sumcheck.output.clone());
+    all_outputs.push(norm_check_sumcheck.output.clone());
 
     let combiner = ElephantCell::new(Combiner::new(all_outputs));
     let field_combiner = ElephantCell::new(RingToFieldCombiner::new(combiner.clone()));
@@ -157,10 +157,10 @@ pub fn init_intermediate_sumcheck(
         witness_sumcheck,
         witness_combiner_sumcheck,
         commitment_key_rows_sumcheck,
-        type0sumchecks,
-        type1sumchecks,
-        type3_1sumcheck,
-        type5sumcheck,
+        commitment_fold_sumchecks,
+        inner_eval_fold_sumchecks,
+        fine_proj_sumchecks,
+        norm_check_sumcheck,
         combiner,
         field_combiner,
         next: match config.next.as_deref() {

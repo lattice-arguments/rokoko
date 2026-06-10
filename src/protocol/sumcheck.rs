@@ -1,23 +1,23 @@
 //! Sumcheck Protocol Implementation
 //!
 //! This module has been refactored into a more maintainable structure under `sumchecks/`.
-//! The sumcheck protocol is complex and involves many types of constraints (Type0-Type5),
+//! The sumcheck protocol is complex and involves many types of constraints (CommitmentFold-NormCheck),
 //! each with its own sumcheck gadgets and verification logic.
 //!
 //! **Constraint Types Overview:**
 //!
-//! - **Type0**: Basic commitment correctness - verifies `CK · folded_witness = commitment · fold_challenge`
-//! - **Type1**: Inner evaluation consistency - verifies opening RHS matches witness evaluation
-//! - **Type2**: Outer evaluation consistency - verifies opening produces the claimed scalar result
-//! - **Type3**: Projection validity (block-diagonal) - verifies projection image is correctly computed from witness
-//! - **Type3_1**: Projection validity (Kronecker) - verifies `c^T (I ⊗ P) · witness = c^T projection_image · fold_challenge`
-//! - **Type4**: Recursive commitment well-formedness - verifies the entire recursive commitment
+//! - **CommitmentFold**: Basic commitment correctness - verifies `CK · folded_witness = commitment · fold_challenge`
+//! - **InnerEvalFold**: Inner evaluation consistency - verifies opening RHS matches witness evaluation
+//! - **OuterEvalClaim**: Outer evaluation consistency - verifies opening produces the claimed scalar result
+//! - **CoarseProj**: Projection validity (block-diagonal) - verifies projection image is correctly computed from witness
+//! - **FineProj**: Projection validity (Kronecker) - verifies `c^T (I ⊗ P) · witness = c^T projection_image · fold_challenge`
+//! - **ComVerify**: Recursive commitment well-formedness - verifies the entire recursive commitment
 //!   tree structure (internal layer parent-child consistency + leaf layer anchoring to public values)
-//! - **Type5**: Witness norm check - verifies `<combined_witness, conjugated_witness> = norm_claim`
+//! - **NormCheck**: Witness norm check - verifies `<combined_witness, conjugated_witness> = norm_claim`
 //!
 //! **Module Organization:**
 //!
-//! - `sumchecks::context`: Type definitions for all sumcheck contexts (Type0-Type4).
+//! - `sumchecks::context`: Type definitions for all sumcheck contexts (CommitmentFold-ComVerify).
 //!   Each type represents a different semantic constraint in the protocol (commitment
 //!   correctness, opening consistency, projection validity, recursive commitment
 //!   well-formedness).
@@ -48,9 +48,9 @@
 pub use crate::protocol::sumchecks::{
     builder::init_sumcheck,
     context::{
-        SumcheckContext, Type0SumcheckContext, Type1SumcheckContext, Type2SumcheckContext,
-        Type3SumcheckContext, Type4LayerSumcheckContext, Type4OutputLayerSumcheckContext,
-        Type4SumcheckContext,
+        SumcheckContext, CommitmentFoldSumcheckContext, InnerEvalFoldSumcheckContext, OuterEvalClaimSumcheckContext,
+        CoarseProjSumcheckContext, ComVerifyLayerSumcheckContext, ComVerifyOutputLayerSumcheckContext,
+        ComVerifySumcheckContext,
     },
     runner::sumcheck,
 };

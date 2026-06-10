@@ -10,7 +10,7 @@ use crate::{
     },
     protocol::{
         config::{IntermediateConfig, IntermediateRoundProof},
-        project_2::BatchedProjectionChallengesSuccinct,
+        project_fine::BatchedProjectionChallengesSuccinct,
         sumcheck_utils::common::EvaluationSumcheckData,
     },
 };
@@ -49,7 +49,7 @@ pub fn intermediate_sumcheck_verifier(
     folded_opening_claims: &[RingElement],
     folded_batched_projection_claims: &[RingElement],
     evaluation_points_inner: &[StructuredRow],
-    challenges_batching_projection_1: &[BatchedProjectionChallengesSuccinct; NOF_BATCHES],
+    fine_proj_batching_challenges: &[BatchedProjectionChallengesSuccinct; NOF_BATCHES],
     hash_wrapper: &mut HashWrapper,
 ) -> Vec<RingElement> {
     assert_eq!(
@@ -58,18 +58,14 @@ pub fn intermediate_sumcheck_verifier(
         "Folded commitment length mismatch for intermediate batcher"
     );
 
+    hash_wrapper.update_with_ring_element(&proof.norm_claim);
+
     let num_sumchecks = verifier_sumcheck_context
         .combiner_evaluation
         .borrow()
         .sumchecks_count();
     let mut combination = new_vec_zero_preallocated(num_sumchecks);
-    // hash_wrapper.sample_ring_element_into(&mut combination[num_sumchecks - 1]);
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
-    // assert_eq!(
-    //     num_sumchecks,
-    //     config.basic_commitment_rank + 1,
-    //     "Intermediate verifier expected folded commitment plus one type5 claim"
-    // );
 
     let norm_ct = proof.norm_claim.constant_term_from_incomplete_ntt();
     tracing::debug!("Norm claim via inner-product: {}", (norm_ct as f64).sqrt());
@@ -81,11 +77,11 @@ pub fn intermediate_sumcheck_verifier(
         combination_to_field.split_into_quadratic_extensions();
 
     let (mut batched_claim, idx) = batch_claims_linear(folded_commitment, &combination, 0);
-    let (batched_type1_claims, idx) = batch_claims_linear(folded_opening_claims, &combination, idx);
-    batched_claim += &batched_type1_claims;
-    let (batched_type3_1_claims, idx) =
+    let (batched_inner_eval_claims, idx) = batch_claims_linear(folded_opening_claims, &combination, idx);
+    batched_claim += &batched_inner_eval_claims;
+    let (batched_fine_proj_claims, idx) =
         batch_claims_linear(folded_batched_projection_claims, &combination, idx);
-    batched_claim += &batched_type3_1_claims;
+    batched_claim += &batched_fine_proj_claims;
     assert!(
         idx < combination.len(),
         "Not enough combination challenges for norm claim (idx={}, len={})",
@@ -133,7 +129,7 @@ pub fn intermediate_sumcheck_verifier(
         &proof.claim_over_witness_conjugate,
         evaluation_points_inner,
         &combination,
-        challenges_batching_projection_1,
+        fine_proj_batching_challenges,
         &qe,
     );
 
@@ -144,6 +140,9 @@ pub fn intermediate_sumcheck_verifier(
             .borrow_mut()
             .evaluate(&evaluation_points_field)
     );
+
+    hash_wrapper.update_with_ring_element(&proof.claim_over_witness);
+    hash_wrapper.update_with_ring_element(&proof.claim_over_witness_conjugate);
 
     evaluation_points_field
         .iter()
