@@ -99,6 +99,9 @@ pub static P: LazyLock<Config> = LazyLock::new(|| p_root_aux(1).generate_config(
 /// SNARK-mode chain: the entry sumcheck emits two openings (z_0, z_1).
 pub static P_SNARK: LazyLock<Config> = LazyLock::new(|| p_root_aux(2).generate_config());
 
+/// CGGI chain: z_0, z_1 plus the segment-oracle openings, padded to 16.
+pub static P_CGGI: LazyLock<Config> = LazyLock::new(|| p_root_aux(16).generate_config());
+
 pub static P_1: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| {
     AuxSumcheckConfig {
         witness_height: cfg_p30(2usize.pow(14), 2usize.pow(13)),

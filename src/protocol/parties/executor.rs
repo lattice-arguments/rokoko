@@ -298,3 +298,116 @@ pub fn execute_snark() {
     println!("==== SNARK VERIFIER DONE ===");
     println!("TOTAL Verifier time: {:?} ns", start.elapsed().as_nanos());
 }
+
+pub fn execute_cggi() {
+    use crate::common::hash::HashWrapper;
+    use crate::protocol::params::P_CGGI;
+    use crate::protocol::snark::{prove_initial_claims, verify_initial_claims};
+    use crate::tfhe;
+    use rand::SeedableRng;
+
+    let config = match &*P_CGGI {
+        Config::Sumcheck(config) => config,
+        _ => panic!("Expected sumcheck config at the top level."),
+    };
+
+    println!("Generating CGGI instance (4 toy bootstraps, shared key)...");
+    let params = &tfhe::TOY;
+    let mut rng = rand::rngs::StdRng::seed_from_u64(99);
+    let keys = tfhe::keygen(params, &mut rng);
+    let lut = tfhe::bootstrap::generate_lut(
+        params.polynomial_size,
+        (params.message_modulus * params.carry_modulus) as usize,
+        params.delta(),
+        |m| (m * m) % 16,
+    );
+    let traces: Vec<_> = (0..4)
+        .map(|m| {
+            let ct = tfhe::encrypt(params, &keys, m as u64, &mut rng);
+            tfhe::bootstrap::blind_rotate_traced(&keys.bsk, &ct, &lut, params.glwe_dimension).1
+        })
+        .collect();
+    let trace_refs: Vec<&_> = traces.iter().collect();
+    let witness = tfhe::prove::CggiWitness::build(
+        &keys.bsk,
+        &trace_refs,
+        13,
+        4,
+        config.witness_height,
+        config.witness_width,
+    );
+
+    println!("Generating CRS...");
+    let crs = CRS::gen_crs(
+        config.composed_witness_length,
+        config.basic_commitment_rank + 2,
+    );
+    let mut sumcheck_context = init_sumcheck(&crs, &config);
+    let mut sumcheck_context_verifier = init_verifier(&crs, &config);
+
+    println!("===== COMMITTING CGGI WITNESS =====");
+    let start = std::time::Instant::now();
+    let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness.matrix);
+    println!("TOTAL Commit time: {:?} ns", start.elapsed().as_nanos());
+
+    println!("==== CGGI PROVER STARTING ===");
+    let start = std::time::Instant::now();
+    let mut hash_wrapper = HashWrapper::new();
+    hash_wrapper.update_with_ring_element_slice(
+        &commitment_with_aux
+            .rc_commitment_with_aux
+            .most_inner_commitment(),
+    );
+    let claims = tfhe::prove::build_claims(&witness, &trace_refs, &mut hash_wrapper);
+    let (initial_proof, chain_inputs) =
+        prove_initial_claims(&witness.matrix, &claims, &mut hash_wrapper);
+    println!(
+        "Initial CGGI sumcheck done: {} ms ({} claims, {} openings)",
+        start.elapsed().as_millis(),
+        claims.len(),
+        chain_inputs.claims.len()
+    );
+
+    let (proof, _) = prover_round(
+        &crs,
+        &config,
+        &commitment_with_aux,
+        &witness.matrix,
+        &chain_inputs.evaluation_points_inner,
+        &chain_inputs.evaluation_points_outer,
+        &mut sumcheck_context,
+        false,
+        Some(hash_wrapper),
+    );
+    println!("==== CGGI PROVER DONE ===");
+    println!("TOTAL Prover time: {:?} ns", start.elapsed().as_nanos());
+
+    let proof_size_bits = proof.size_in_bits();
+    println!("Total proof size: {} KB", to_kb(proof_size_bits));
+
+    println!("==== CGGI VERIFIER STARTING ===");
+    let start = std::time::Instant::now();
+    let mut hash_wrapper_verifier = HashWrapper::new();
+    hash_wrapper_verifier.update_with_ring_element_slice(&rc_commitment);
+    let claims_v = tfhe::prove::build_claims(&witness, &trace_refs, &mut hash_wrapper_verifier);
+    let chain_inputs_verifier = verify_initial_claims(
+        config.witness_height,
+        config.witness_width,
+        &claims_v,
+        &initial_proof,
+        &mut hash_wrapper_verifier,
+    );
+    verifier_round(
+        &crs,
+        &config,
+        &rc_commitment,
+        &proof,
+        &chain_inputs_verifier.evaluation_points_inner,
+        &chain_inputs_verifier.evaluation_points_outer,
+        &chain_inputs_verifier.claims,
+        &mut sumcheck_context_verifier,
+        Some(hash_wrapper_verifier),
+    );
+    println!("==== CGGI VERIFIER DONE ===");
+    println!("TOTAL Verifier time: {:?} ns", start.elapsed().as_nanos());
+}

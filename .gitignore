@@ -119,3 +119,4 @@ bench_results/
 pool_stats.txt
 report.txt
 .vscode/
+.claude/

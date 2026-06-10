@@ -88,6 +88,9 @@ fn main() {
     if std::env::var("ROKOKO_MODE").as_deref() == Ok("snark") {
         println!("Running executor in SNARK mode...");
         rokoko::protocol::parties::executor::execute_snark();
+    } else if std::env::var("ROKOKO_MODE").as_deref() == Ok("cggi") {
+        println!("Running executor in CGGI mode...");
+        rokoko::protocol::parties::executor::execute_cggi();
     } else {
         println!("Running executor...");
         execute();

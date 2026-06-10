@@ -235,6 +235,24 @@ pub fn sumcheck_verifier(
         &combination,
     );
 
+    if std::env::var("ROKOKO_DEBUG_CLAIMS").is_ok() {
+        eprintln!(
+            "VERIFIER nof_openings={} claims: {:?}",
+            config.nof_openings,
+            claims
+                .iter()
+                .map(|c| c.constant_term_from_incomplete_ntt())
+                .collect::<Vec<_>>()
+        );
+        eprintln!(
+            "VERIFIER rc_com={:?} rc_open={:?} norm={} mi={}",
+            rc_commitment.iter().map(|c| c.constant_term_from_incomplete_ntt()).collect::<Vec<_>>(),
+            round_proof.rc_opening_inner.iter().map(|c| c.constant_term_from_incomplete_ntt()).collect::<Vec<_>>(),
+            round_proof.norm_claim.constant_term_from_incomplete_ntt(),
+            round_proof.most_inner_norm_claim.constant_term_from_incomplete_ntt()
+        );
+    }
+
     if let Some(constant_term_claims) = &round_proof.constant_term_claims {
         for ct_claim in constant_term_claims.iter() {
             let ct = ct_claim.constant_term_from_incomplete_ntt();

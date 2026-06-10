@@ -11,6 +11,7 @@ pub mod embed;
 pub mod glwe;
 pub mod lwe;
 pub mod poly;
+pub mod prove;
 
 use rand::Rng;
 

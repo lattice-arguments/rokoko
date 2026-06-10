@@ -146,11 +146,16 @@ impl AuxSumcheckConfig {
             );
         }
 
-        // Calculate usage ratio
+        // The ratio must cover the highest used index: the layout can leave
+        // gaps, and downstream non_zero_end/used_cols cutoffs are prefixes.
         let used_memory = used_prefixes.len();
-        let usage_ratio = used_memory as f64 / composed_witness_length as f64;
+        let highest_used = used_prefixes.iter().max().map_or(0, |m| m + 1);
+        let usage_ratio = highest_used as f64 / composed_witness_length as f64;
         println!("\n=== Memory Usage level {} ===", depth);
-        println!("Used: {} / {}", used_memory, composed_witness_length);
+        println!(
+            "Used: {} / {} (highest index {})",
+            used_memory, composed_witness_length, highest_used
+        );
         println!("Usage ratio: {:.2}%\n", usage_ratio * 100.0);
 
         // Build the actual config with assigned prefixes
