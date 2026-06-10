@@ -134,6 +134,9 @@ pub enum ClaimFactor {
     /// whose index spaces interleave (the opening point takes the matching
     /// middle slice of the challenges).
     WitnessSegmentShifted(Prefix, usize),
+    /// Conjugate of a witness segment; opens through the conjugate rows like
+    /// z_1 (prefix bits are 0/1, hence self-conjugate).
+    ConjWitnessSegment(Prefix),
     /// Virtual oracle sum_i scale_i * segment_i, all segments sharing one
     /// (length, suffix). No opening of its own: the verifier derives its
     /// evaluation from the component openings, which are forced into the chain.
@@ -167,6 +170,10 @@ impl ClaimTerm {
 pub struct SnarkClaim {
     pub terms: Vec<ClaimTerm>,
     pub value: RingElement,
+    /// The value is witness-dependent: the prover ships it in the proof and
+    /// the verifier substitutes it after checking its constant coefficient
+    /// is zero (the conjugate inner-product trick).
+    pub ct_zero_from_proof: bool,
 }
 
 pub struct InitialSumcheckProof {
@@ -178,6 +185,8 @@ pub struct InitialSumcheckProof {
     /// MLE[segment](c-tail) per distinct WitnessSegment prefix, in order of
     /// first appearance in the claims.
     pub segment_evals: Vec<RingElement>,
+    /// Values of ct_zero_from_proof claims, in claim order.
+    pub auxiliary_values: Vec<RingElement>,
 }
 
 /// What the PCS chain consumes as its initial statement: evaluation rows and
@@ -226,10 +235,10 @@ impl EvaluationSumcheckData for ScaledEvaluation {
 /// Oracle pool keyed by segment; distinct cell per use within one term (a
 /// RefCell cannot appear twice in one product), reused across terms.
 struct OraclePool {
-    pools: std::collections::HashMap<(usize, usize, usize), (Vec<ElephantCell<LinearSumcheck<RingElement>>>, usize)>,
+    pools: std::collections::HashMap<(usize, usize, usize, bool), (Vec<ElephantCell<LinearSumcheck<RingElement>>>, usize)>,
 }
 
-const FULL_WITNESS_KEY: (usize, usize, usize) = (usize::MAX, usize::MAX, 0);
+const FULL_WITNESS_KEY: (usize, usize, usize, bool) = (usize::MAX, usize::MAX, 0, false);
 
 impl OraclePool {
     fn new() -> Self {
@@ -240,7 +249,7 @@ impl OraclePool {
 
     fn next(
         &mut self,
-        key: (usize, usize, usize),
+        key: (usize, usize, usize, bool),
         make: impl Fn() -> LinearSumcheck<RingElement>,
     ) -> ElephantCell<LinearSumcheck<RingElement>> {
         let entry = self.pools.entry(key).or_insert_with(|| (vec![], 0));
@@ -258,7 +267,7 @@ impl OraclePool {
         }
     }
 
-    fn first_cell(&self, key: &(usize, usize, usize)) -> Option<&ElephantCell<LinearSumcheck<RingElement>>> {
+    fn first_cell(&self, key: &(usize, usize, usize, bool)) -> Option<&ElephantCell<LinearSumcheck<RingElement>>> {
         self.pools.get(key).and_then(|(cells, _)| cells.first())
     }
 
@@ -269,16 +278,17 @@ impl OraclePool {
 
 /// The order in which segment prefixes first appear in the claims; both sides
 /// derive it from the public claims.
-fn segment_order(claims: &[SnarkClaim]) -> Vec<(usize, usize, usize)> {
+fn segment_order(claims: &[SnarkClaim]) -> Vec<(usize, usize, usize, bool)> {
     let mut order = vec![];
     for claim in claims {
         for term in &claim.terms {
             for factor in &term.factors {
-                let keys: Vec<(usize, usize, usize)> = match factor {
-                    ClaimFactor::WitnessSegment(p) => vec![(p.prefix, p.length, 0)],
-                    ClaimFactor::WitnessSegmentShifted(p, s) => vec![(p.prefix, p.length, *s)],
+                let keys: Vec<(usize, usize, usize, bool)> = match factor {
+                    ClaimFactor::WitnessSegment(p) => vec![(p.prefix, p.length, 0, false)],
+                    ClaimFactor::ConjWitnessSegment(p) => vec![(p.prefix, p.length, 0, true)],
+                    ClaimFactor::WitnessSegmentShifted(p, s) => vec![(p.prefix, p.length, *s, false)],
                     ClaimFactor::WitnessSegmentsScaled(parts, s) => {
-                        parts.iter().map(|(p, _)| (p.prefix, p.length, *s)).collect()
+                        parts.iter().map(|(p, _)| (p.prefix, p.length, *s, false)).collect()
                     }
                     _ => continue,
                 };
@@ -338,7 +348,7 @@ fn chain_inputs(
     witness_width: usize,
     witness_eval: &RingElement,
     conj_witness_eval: &RingElement,
-    segments: &[((usize, usize, usize), RingElement)],
+    segments: &[((usize, usize, usize, bool), RingElement)],
 ) -> ChainInputs {
     let total_vars = evaluation_points.len();
     let width_bits = witness_width.ilog2() as usize;
@@ -353,7 +363,7 @@ fn chain_inputs(
     ];
     let mut claims = vec![witness_eval.clone(), conj_witness_eval.conjugate()];
 
-    for ((prefix, length, suffix), eval) in segments {
+    for ((prefix, length, suffix, conj), eval) in segments {
         // full MSB-first point: prefix bits, then the data-variable challenge
         // slice; a suffix-shifted oracle folded vars [suffix, suffix+data),
         // i.e. the slice eps[length - suffix .. total - suffix]
@@ -367,9 +377,15 @@ fn chain_inputs(
             .collect();
         point.extend_from_slice(&evaluation_points[length - suffix..total_vars - suffix]);
         let (p_outer, p_inner) = point.split_at(width_bits);
-        inner.push(evaluation_point_to_structured_row(p_inner));
-        outer.push(evaluation_point_to_structured_row(p_outer));
-        claims.push(eval.clone());
+        if *conj {
+            inner.push(evaluation_point_to_structured_row_conjugate(p_inner));
+            outer.push(evaluation_point_to_structured_row_conjugate(p_outer));
+            claims.push(eval.conjugate());
+        } else {
+            inner.push(evaluation_point_to_structured_row(p_inner));
+            outer.push(evaluation_point_to_structured_row(p_outer));
+            claims.push(eval.clone());
+        }
     }
 
     // InnerEvalFold prefix arithmetic requires a power-of-two opening count
@@ -444,14 +460,32 @@ pub fn prove_initial_claims(
                     }
                     ClaimFactor::WitnessSegment(p) => {
                         let (prefix, length) = (p.prefix, p.length);
-                        let cell = witness_pool.next((prefix, length, 0), || {
+                        let cell = witness_pool.next((prefix, length, 0, false), || {
                             make_segment(&witness.data, prefix, length, 0)
+                        });
+                        factors.push(cell.clone() as _);
+                    }
+                    ClaimFactor::ConjWitnessSegment(p) => {
+                        let (prefix, length) = (p.prefix, p.length);
+                        let cell = witness_pool.next((prefix, length, 0, true), || {
+                            let seg_len = n >> length;
+                            let start = prefix << (total_vars - length);
+                            let conj: Vec<RingElement> = witness.data
+                                [start..start + seg_len]
+                                .iter()
+                                .map(|w| w.conjugate())
+                                .collect();
+                            let mut ls = LinearSumcheck::new_with_prefixed_sufixed_data(
+                                seg_len, length, 0,
+                            );
+                            ls.load_from(&conj);
+                            ls
                         });
                         factors.push(cell.clone() as _);
                     }
                     ClaimFactor::WitnessSegmentShifted(p, s) => {
                         let (prefix, length, suffix) = (p.prefix, p.length, *s);
-                        let cell = witness_pool.next((prefix, length, suffix), || {
+                        let cell = witness_pool.next((prefix, length, suffix, false), || {
                             make_segment(&witness.data, prefix, length, suffix)
                         });
                         factors.push(cell.clone() as _);
@@ -500,7 +534,7 @@ pub fn prove_initial_claims(
                             }
                             PublicFactor::DensePrefixed(prefix_len, suffix_len, v) => {
                                 assert_eq!(v.len(), n >> (prefix_len + suffix_len));
-                                let key = (Arc::as_ptr(v) as usize, *prefix_len, *suffix_len);
+                                let key = (Arc::as_ptr(v) as usize, *prefix_len, *suffix_len, false);
                                 let cell = public_pool.next(key, || {
                                     let mut ls = LinearSumcheck::new_with_prefixed_sufixed_data(
                                         v.len(),
@@ -522,8 +556,12 @@ pub fn prove_initial_claims(
                                     1usize << layers.len(),
                                     n >> (prefix_len + suffix_len)
                                 );
-                                let key =
-                                    (Arc::as_ptr(layers) as usize, *prefix_len, *suffix_len);
+                                let key = (
+                                    Arc::as_ptr(layers) as usize,
+                                    *prefix_len,
+                                    *suffix_len,
+                                    false,
+                                );
                                 let cell = public_pool.next(key, || {
                                     let dense = expand_field_tensor(layers);
                                     let mut ls = LinearSumcheck::new_with_prefixed_sufixed_data(
@@ -545,7 +583,7 @@ pub fn prove_initial_claims(
                             } => {
                                 let v = data.as_ref().expect("prover needs dense lazy data");
                                 assert_eq!(v.len(), n >> (prefix_len + suffix_len));
-                                let key = (Arc::as_ptr(v) as usize, *prefix_len, *suffix_len);
+                                let key = (Arc::as_ptr(v) as usize, *prefix_len, *suffix_len, false);
                                 let cell = public_pool.next(key, || {
                                     let mut ls = LinearSumcheck::new_with_prefixed_sufixed_data(
                                         v.len(),
@@ -602,7 +640,7 @@ pub fn prove_initial_claims(
                     witness_pool.reset_term();
                     for (p, _) in parts {
                         let (prefix, length) = (p.prefix, p.length);
-                        let _ = witness_pool.next((prefix, length, *suffix), || {
+                        let _ = witness_pool.next((prefix, length, *suffix, false), || {
                             make_segment(&witness.data, prefix, length, *suffix)
                         });
                     }
@@ -626,6 +664,11 @@ pub fn prove_initial_claims(
     }
 
     // Bind the claim values, then sample batching challenges
+    let auxiliary_values: Vec<RingElement> = claims
+        .iter()
+        .filter(|c| c.ct_zero_from_proof)
+        .map(|c| c.value.clone())
+        .collect();
     for claim in claims {
         hash_wrapper.update_with_ring_element(&claim.value);
     }
@@ -732,7 +775,7 @@ pub fn prove_initial_claims(
 
     evaluation_points.reverse();
 
-    let segments: Vec<((usize, usize, usize), RingElement)> = segment_order(claims)
+    let segments: Vec<((usize, usize, usize, bool), RingElement)> = segment_order(claims)
         .into_iter()
         .zip(segment_evals.iter().cloned())
         .collect();
@@ -750,6 +793,7 @@ pub fn prove_initial_claims(
             witness_eval,
             conj_witness_eval,
             segment_evals,
+            auxiliary_values,
         },
         inputs,
     )
@@ -783,7 +827,7 @@ pub fn verify_initial_claims(
         "segment evaluation count mismatch"
     );
     let segment_cells: std::collections::HashMap<
-        (usize, usize, usize),
+        (usize, usize, usize, bool),
         ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
     > = seg_order
         .iter()
@@ -794,7 +838,7 @@ pub fn verify_initial_claims(
             (*key, cell)
         })
         .collect();
-    let eval_of: std::collections::HashMap<(usize, usize, usize), RingElement> = seg_order
+    let eval_of: std::collections::HashMap<(usize, usize, usize, bool), RingElement> = seg_order
         .iter()
         .zip(proof.segment_evals.iter())
         .map(|(key, eval)| (*key, eval.clone()))
@@ -812,10 +856,13 @@ pub fn verify_initial_claims(
                     ClaimFactor::Witness => factors.push(witness_eval_cell.clone() as _),
                     ClaimFactor::ConjWitness => factors.push(conj_eval_cell.clone() as _),
                     ClaimFactor::WitnessSegment(p) => {
-                        factors.push(segment_cells[&(p.prefix, p.length, 0)].clone() as _)
+                        factors.push(segment_cells[&(p.prefix, p.length, 0, false)].clone() as _)
+                    }
+                    ClaimFactor::ConjWitnessSegment(p) => {
+                        factors.push(segment_cells[&(p.prefix, p.length, 0, true)].clone() as _)
                     }
                     ClaimFactor::WitnessSegmentShifted(p, s) => {
-                        factors.push(segment_cells[&(p.prefix, p.length, *s)].clone() as _)
+                        factors.push(segment_cells[&(p.prefix, p.length, *s, false)].clone() as _)
                     }
                     ClaimFactor::WitnessSegmentsScaled(parts, suffix) => {
                         let mut value = RingElement::zero(Representation::IncompleteNTT);
@@ -825,7 +872,7 @@ pub fn verify_initial_claims(
                             if let Some(s) = &pending_scale {
                                 scale *= s;
                             }
-                            tmp *= (&eval_of[&(p.prefix, p.length, *suffix)], &scale);
+                            tmp *= (&eval_of[&(p.prefix, p.length, *suffix, false)], &scale);
                             value += &tmp;
                         }
                         pending_scale = None;
@@ -918,8 +965,27 @@ pub fn verify_initial_claims(
         outputs.push(fold_sum_evaluation(term_cells));
     }
 
-    for claim in claims {
-        hash_wrapper.update_with_ring_element(&claim.value);
+    let mut aux_iter = proof.auxiliary_values.iter();
+    let effective_values: Vec<RingElement> = claims
+        .iter()
+        .map(|claim| {
+            if claim.ct_zero_from_proof {
+                let v = aux_iter
+                    .next()
+                    .expect("missing auxiliary claim value")
+                    .clone();
+                let mut coeffs = v.clone();
+                coeffs.to_representation(Representation::Coefficients);
+                assert_eq!(coeffs.v[0], 0, "auxiliary claim constant term nonzero");
+                v
+            } else {
+                claim.value.clone()
+            }
+        })
+        .collect();
+    assert!(aux_iter.next().is_none(), "extra auxiliary claim values");
+    for value in &effective_values {
+        hash_wrapper.update_with_ring_element(value);
     }
     let mut combination = new_vec_zero_preallocated(outputs.len());
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
@@ -932,8 +998,8 @@ pub fn verify_initial_claims(
     // batched claim = sum_i gamma_i * value_i, mapped through Phi
     let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
-    for (claim, gamma) in claims.iter().zip(combination.iter()) {
-        temp *= (&claim.value, gamma);
+    for (value, gamma) in effective_values.iter().zip(combination.iter()) {
+        temp *= (value, gamma);
         batched_claim += &temp;
     }
 
@@ -990,7 +1056,7 @@ pub fn verify_initial_claims(
 
     evaluation_points.reverse();
 
-    let segments: Vec<((usize, usize, usize), RingElement)> = seg_order
+    let segments: Vec<((usize, usize, usize, bool), RingElement)> = seg_order
         .into_iter()
         .zip(proof.segment_evals.iter().cloned())
         .collect();
@@ -1038,6 +1104,7 @@ mod tests {
                 ClaimFactor::Witness,
             ])],
             value: t1,
+            ct_zero_from_proof: false,
         };
 
         // sum_z b(z) * w(z)^2 = t (degree 2 in the witness oracle)
@@ -1055,6 +1122,7 @@ mod tests {
                 ClaimFactor::Witness,
             ])],
             value: t2,
+            ct_zero_from_proof: false,
         };
 
         // segment sum via selector: indices [n/4, n/2)
@@ -1072,6 +1140,7 @@ mod tests {
                 ClaimFactor::Witness,
             ])],
             value: t3,
+            ct_zero_from_proof: false,
         };
 
         // scaled two-term claim: 7*<a, w> - <a, conj(w)> = t
@@ -1101,6 +1170,7 @@ mod tests {
                 ),
             ],
             value: t4,
+            ct_zero_from_proof: false,
         };
 
         (witness, vec![claim1, claim2, claim3, claim4])
@@ -1191,6 +1261,7 @@ mod tests {
                 ClaimFactor::WitnessSegment(p_g),
             ])],
             value,
+            ct_zero_from_proof: false,
         }];
 
         let mut hw_p = HashWrapper::new();
@@ -1269,6 +1340,7 @@ mod tests {
                 ],
             )],
             value: value1.clone(),
+            ct_zero_from_proof: false,
         };
 
         let dense2 = sample_random_short_vector(quarter, 9, Representation::IncompleteNTT);
@@ -1293,6 +1365,7 @@ mod tests {
                 ],
             )],
             value: value2.clone(),
+            ct_zero_from_proof: false,
         };
 
         let mut hw_p = HashWrapper::new();
@@ -1313,6 +1386,126 @@ mod tests {
             );
             assert_eq!(direct, chain_p.claims[j], "opening {}", j);
         }
+    }
+
+    fn binariness_setup(tamper: bool) -> (VerticallyAlignedMatrix<RingElement>, Vec<SnarkClaim>) {
+        let height = 64;
+        let width = 4;
+        let n = height * width;
+        let mut data = sample_random_short_vector(n, 100, Representation::IncompleteNTT);
+        let quarter = n / 4;
+        for (i, w) in data[quarter..2 * quarter].iter_mut().enumerate() {
+            let mut bits = RingElement::zero(Representation::EvenOddCoefficients);
+            for (c, b) in bits.v.iter_mut().enumerate() {
+                *b = ((i * 31 + c * 7 + 3) % 5 < 2) as u64;
+            }
+            if tamper && i == 5 {
+                bits.v[17] = 2;
+            }
+            bits.from_even_odd_coefficients_to_incomplete_ntt_representation();
+            *w = bits;
+        }
+        let witness = VerticallyAlignedMatrix {
+            height,
+            width,
+            used_cols: width,
+            data,
+        };
+
+        let ones = {
+            let mut e = RingElement::zero(Representation::EvenOddCoefficients);
+            for c in e.v.iter_mut() {
+                *c = 1;
+            }
+            e.from_even_odd_coefficients_to_incomplete_ntt_representation();
+            e
+        };
+        let inv4 = RingElement::constant(
+            crate::common::arithmetic::inv_mod(4),
+            Representation::IncompleteNTT,
+        );
+        let minus_inv4 = {
+            let mut m = inv4.clone();
+            m *= &RingElement::constant(crate::common::config::MOD_Q - 1, Representation::IncompleteNTT);
+            m
+        };
+        let p = Prefix {
+            prefix: 1,
+            length: 2,
+        };
+        let mut value = RingElement::zero(Representation::IncompleteNTT);
+        let mut tmp = RingElement::zero(Representation::IncompleteNTT);
+        for w in &witness.data[quarter..2 * quarter] {
+            tmp *= (w, &w.conjugate());
+            value += &tmp;
+            tmp *= (w, &ones.conjugate());
+            let mut neg = tmp.clone();
+            neg *= &RingElement::constant(crate::common::config::MOD_Q - 1, Representation::IncompleteNTT);
+            value += &neg;
+        }
+        let claims = vec![SnarkClaim {
+            terms: vec![
+                ClaimTerm::scaled(
+                    inv4.clone(),
+                    vec![
+                        ClaimFactor::WitnessSegment(p.clone()),
+                        ClaimFactor::ConjWitnessSegment(p.clone()),
+                    ],
+                ),
+                ClaimTerm::scaled(
+                    minus_inv4,
+                    vec![
+                        ClaimFactor::Public(PublicFactor::DensePrefixed(
+                            2,
+                            0,
+                            Arc::new(vec![ones.conjugate(); quarter]),
+                        )),
+                        ClaimFactor::WitnessSegment(p),
+                    ],
+                ),
+            ],
+            value,
+            ct_zero_from_proof: true,
+        }];
+        (witness, claims)
+    }
+
+    #[test]
+    fn test_conj_segment_ct_zero_roundtrip() {
+        init_common();
+        let (witness, claims) = binariness_setup(false);
+        let mut hw_p = HashWrapper::new();
+        let (proof, chain_p) = prove_initial_claims(&witness, &claims, &mut hw_p);
+
+        let (witness_v, mut claims_v) = binariness_setup(false);
+        let _ = witness_v;
+        claims_v[0].value = RingElement::zero(Representation::IncompleteNTT);
+        let mut hw_v = HashWrapper::new();
+        let chain_v =
+            verify_initial_claims(witness.height, witness.width, &claims_v, &proof, &mut hw_v);
+        assert_eq!(chain_p.claims, chain_v.claims);
+        for j in 0..chain_p.claims.len() {
+            let direct = crate::protocol::open::claim(
+                &witness,
+                &chain_p.evaluation_points_inner[j],
+                &chain_p.evaluation_points_outer[j],
+            );
+            assert_eq!(direct, chain_p.claims[j], "opening {}", j);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "auxiliary claim constant term nonzero")]
+    fn test_conj_segment_nonbinary_rejected() {
+        init_common();
+        let (witness, claims) = binariness_setup(true);
+        let mut hw_p = HashWrapper::new();
+        let (proof, _) = prove_initial_claims(&witness, &claims, &mut hw_p);
+
+        let (_, mut claims_v) = binariness_setup(true);
+        claims_v[0].value = RingElement::zero(Representation::IncompleteNTT);
+        let mut hw_v = HashWrapper::new();
+        verify_initial_claims(witness.height, witness.width, &claims_v, &proof, &mut hw_v);
     }
 
     #[test]

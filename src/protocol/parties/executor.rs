@@ -207,6 +207,7 @@ pub fn execute_snark() {
             ClaimFactor::Witness,
         ])],
         value: t1,
+        ct_zero_from_proof: false,
     };
 
     let segment = Prefix {
@@ -230,6 +231,7 @@ pub fn execute_snark() {
             ClaimFactor::Witness,
         ])],
         value: t2,
+        ct_zero_from_proof: false,
     };
 
     let claims = vec![claim_linear, claim_square];
