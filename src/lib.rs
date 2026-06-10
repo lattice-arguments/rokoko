@@ -3,4 +3,5 @@
 pub mod common;
 pub mod hexl;
 pub mod protocol;
+#[cfg(feature = "incomplete-rexl")]
 pub mod tfhe;

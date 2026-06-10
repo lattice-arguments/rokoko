@@ -2,12 +2,12 @@
 //! proof system's ring degree.
 
 use crate::common::config::MOD_Q;
+use incomplete_rexl::{eltwise_mult_mod, ntt_forward_in_place, ntt_inverse_in_place};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, RwLock};
 
 pub const Q: u64 = MOD_Q;
 
-const TWO_Q: u64 = 2 * Q;
 const M50: u128 = (1u128 << 50) - 1;
 const R50: u128 = (1u128 << 50) - Q as u128;
 
@@ -71,76 +71,22 @@ fn reduce_u128(x: u128) -> u64 {
     }
 }
 
-#[inline]
-fn mul_lazy(x: u64, w: u64, w_precon: u64) -> u64 {
-    let h = ((x as u128 * w_precon as u128) >> 64) as u64;
-    w.wrapping_mul(x).wrapping_sub(h.wrapping_mul(Q))
-}
-
-fn precon(w: u64) -> u64 {
-    (((w as u128) << 64) / Q as u128) as u64
-}
-
-fn pow_q(mut b: u64, mut e: u64) -> u64 {
-    let mut r = 1u64;
-    while e > 0 {
-        if e & 1 == 1 {
-            r = mul_q(r, b);
-        }
-        b = mul_q(b, b);
-        e >>= 1;
-    }
-    r
-}
-
-fn primitive_root_128() -> u64 {
-    let e = (Q - 1) / 128;
-    let mut g = 2u64;
-    loop {
-        let c = pow_q(g, e);
-        if pow_q(c, 64) == Q - 1 {
-            return c;
-        }
-        g += 1;
-    }
-}
-
 struct MulTables {
-    levels: u32,
+    ntt_size: usize,
     block: usize,
-    fwd: Vec<(u64, u64)>,
-    inv: Vec<(u64, u64)>,
     rho: Vec<u64>,
-    scale: (u64, u64),
 }
 
 fn build_tables(n: usize) -> MulTables {
     debug_assert!(n >= 2 && n.is_power_of_two());
-    let levels = 6.min(n.trailing_zeros());
-    let blocks = 1usize << levels;
-    let psi = primitive_root_128();
-    let mut fwd = vec![(0u64, 0u64); blocks];
-    let mut inv = vec![(0u64, 0u64); blocks];
-    for idx in 1..blocks {
-        let w = pow_q(psi, ((idx as u64).reverse_bits() >> 58) as u64);
-        let wi = pow_q(w, Q - 2);
-        fwd[idx] = (w, precon(w));
-        inv[idx] = (wi, precon(wi));
-    }
-    let mut rho = vec![0u64; blocks];
-    let half = blocks / 2;
-    for i in 0..half {
-        rho[2 * i] = fwd[half + i].0;
-        rho[2 * i + 1] = neg_q(fwd[half + i].0);
-    }
-    let s_inv = pow_q(pow_q(2, levels as u64), Q - 2);
+    let ntt_size = 64.min(n);
+    let mut rho = vec![0u64; ntt_size];
+    rho[1] = 1;
+    ntt_forward_in_place(&mut rho, ntt_size, Q);
     MulTables {
-        levels,
-        block: n >> levels,
-        fwd,
-        inv,
+        ntt_size,
+        block: n / ntt_size,
         rho,
-        scale: (s_inv, precon(s_inv)),
     }
 }
 
@@ -154,46 +100,83 @@ fn tables(n: usize) -> Arc<MulTables> {
     TABLES.write().unwrap().entry(n).or_insert(t).clone()
 }
 
-fn forward(v: &mut [u64], tb: &MulTables) {
-    let mut len = v.len() >> 1;
-    let mut m = 1usize;
-    while m < (1usize << tb.levels) {
-        for i in 0..m {
-            let (w, wp) = tb.fwd[m + i];
-            let (xs, ys) = v[2 * len * i..2 * len * (i + 1)].split_at_mut(len);
-            for (x, y) in xs.iter_mut().zip(ys.iter_mut()) {
-                let tx = if *x >= TWO_Q { *x - TWO_Q } else { *x };
-                let u = mul_lazy(*y, w, wp);
-                *x = tx + u;
-                *y = tx + TWO_Q - u;
-            }
+fn transpose(src: &[u64], dst: &mut [u64], rows: usize, cols: usize) {
+    for r in 0..rows {
+        for (c, &v) in src[r * cols..(r + 1) * cols].iter().enumerate() {
+            dst[c * rows + r] = v;
         }
-        len >>= 1;
-        m <<= 1;
     }
 }
 
-fn inverse(v: &mut [u64], tb: &MulTables) {
-    let mut len = tb.block;
-    let mut m = 1usize << (tb.levels - 1);
-    while m > 0 {
-        for i in 0..m {
-            let (w, wp) = tb.inv[m + i];
-            let (xs, ys) = v[2 * len * i..2 * len * (i + 1)].split_at_mut(len);
-            for (x, y) in xs.iter_mut().zip(ys.iter_mut()) {
-                let s = *x + *y;
-                let d = *x + TWO_Q - *y;
-                *x = if s >= TWO_Q { s - TWO_Q } else { s };
-                *y = mul_lazy(d, w, wp);
+fn columns_apply(v: &mut [u64], tb: &MulTables, f: impl Fn(&mut [u64], usize, u64)) {
+    let (c, l) = (tb.ntt_size, tb.block);
+    if l == 1 {
+        f(v, c, Q);
+        return;
+    }
+    let mut cols = vec![0u64; v.len()];
+    transpose(v, &mut cols, c, l);
+    for t in 0..l {
+        f(&mut cols[t * c..(t + 1) * c], c, Q);
+    }
+    transpose(&cols, v, l, c);
+}
+
+#[cfg(target_arch = "x86_64")]
+fn mul_ifma(a0: &[u64], b0: &[u64], tb: &MulTables, out: &mut [u64]) {
+    let (c, l) = (tb.ntt_size, tb.block);
+    let n = a0.len();
+    let mut a = vec![0u64; n];
+    let mut b = vec![0u64; n];
+    transpose(a0, &mut a, c, l);
+    transpose(b0, &mut b, c, l);
+    for t in 0..l {
+        ntt_forward_in_place(&mut a[t * c..(t + 1) * c], c, Q);
+        ntt_forward_in_place(&mut b[t * c..(t + 1) * c], c, Q);
+    }
+    let mut rb = vec![0u64; n];
+    for t in 0..l {
+        eltwise_mult_mod(&mut rb[t * c..(t + 1) * c], &b[t * c..(t + 1) * c], &tb.rho, Q);
+    }
+    let mut prod = vec![0u64; n];
+    unsafe { block_products_ifma(&a, &b, &rb, l, &mut prod) };
+    for t in 0..l {
+        ntt_inverse_in_place(&mut prod[t * c..(t + 1) * c], c, Q);
+    }
+    transpose(&prod, out, l, c);
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512ifma")]
+unsafe fn block_products_ifma(a: &[u64], b: &[u64], rb: &[u64], l: usize, out: &mut [u64]) {
+    use std::arch::x86_64::*;
+    let mut lo = [0u64; 8];
+    let mut hi = [0u64; 8];
+    for base in (0..64).step_by(8) {
+        for t in 0..l {
+            let mut alo = _mm512_setzero_si512();
+            let mut ahi = _mm512_setzero_si512();
+            for i in 0..=t {
+                let va = _mm512_loadu_si512(a.as_ptr().add(i * 64 + base) as *const __m512i);
+                let vb =
+                    _mm512_loadu_si512(b.as_ptr().add((t - i) * 64 + base) as *const __m512i);
+                alo = _mm512_madd52lo_epu64(alo, va, vb);
+                ahi = _mm512_madd52hi_epu64(ahi, va, vb);
+            }
+            for i in t + 1..l {
+                let va = _mm512_loadu_si512(a.as_ptr().add(i * 64 + base) as *const __m512i);
+                let vb =
+                    _mm512_loadu_si512(rb.as_ptr().add((l + t - i) * 64 + base) as *const __m512i);
+                alo = _mm512_madd52lo_epu64(alo, va, vb);
+                ahi = _mm512_madd52hi_epu64(ahi, va, vb);
+            }
+            _mm512_storeu_si512(lo.as_mut_ptr() as *mut __m512i, alo);
+            _mm512_storeu_si512(hi.as_mut_ptr() as *mut __m512i, ahi);
+            for lane in 0..8 {
+                out[t * 64 + base + lane] =
+                    reduce_u128(lo[lane] as u128 + ((hi[lane] as u128) << 52));
             }
         }
-        len <<= 1;
-        m >>= 1;
-    }
-    let (sc, scp) = tb.scale;
-    for x in v.iter_mut() {
-        let r = mul_lazy(*x, sc, scp);
-        *x = if r >= Q { r - Q } else { r };
     }
 }
 
@@ -269,13 +252,18 @@ impl Poly {
         let n = self.n();
         debug_assert_eq!(n, other.n());
         let tb = tables(n);
+        let mut out = Poly::zero(n);
+        #[cfg(target_arch = "x86_64")]
+        if tb.ntt_size == 64 && *incomplete_rexl::cpu_features::HAS_AVX512IFMA {
+            mul_ifma(&self.coeffs, &other.coeffs, &tb, &mut out.coeffs);
+            return out;
+        }
         let mut a = self.coeffs.clone();
         let mut b = other.coeffs.clone();
-        forward(&mut a, &tb);
-        forward(&mut b, &tb);
-        let mut out = Poly::zero(n);
+        columns_apply(&mut a, &tb, ntt_forward_in_place);
+        columns_apply(&mut b, &tb, ntt_forward_in_place);
         block_products(&a, &b, &tb, &mut out.coeffs);
-        inverse(&mut out.coeffs, &tb);
+        columns_apply(&mut out.coeffs, &tb, ntt_inverse_in_place);
         out
     }
 
