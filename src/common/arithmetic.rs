@@ -51,12 +51,16 @@ pub fn pack_i64_to_i16_deg16(dst: &mut [i16], src: &[i64]) {
     debug_assert_eq!(dst.len(), src.len());
     debug_assert!(src.len() % 16 == 0);
 
-    // #[cfg(feature = "debug-decomp")]
-    // {
-    //     for &s in src.iter() {
-    //         assert!(s >= i16::MIN as i64 && s <= i16::MAX as i64);
-    //     }
-    // }
+    #[cfg(feature = "debug-decomp")]
+    {
+        for &s in src.iter() {
+            assert!(
+                s >= i16::MIN as i64 && s <= i16::MAX as i64,
+                "i16 narrowing overflow: {}",
+                s
+            );
+        }
+    }
 
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     {

@@ -127,6 +127,22 @@ Each constraint family is implemented as a sumcheck gadget named after the paper
 
 Currently, a framework for supporting different kinds of relations is not fully exposed. Yet, all of those checks have been (generally) built from composable blocks, not specific to our relation in general. 
 
+## SNARK mode
+
+Besides the PCS flow, the argument can start from the functional-sumcheck relation (paper: Ξ^sum_COM): commit a witness matrix W and prove a set of sumcheck claims
+
+```
+sum_{z in {0,1}^nu} sum_t coeff_t * prod_f factor_f(z) = value
+```
+
+where each factor is `MLE[vec(W)]`, `MLE[conj vec(W))]`, or a public MLE (a tensor-structured row, an `eq`-prefix selector, or a dense vector). The entry round (`protocol/snark.rs`) batches the claims and reduces them to the two evaluation claims that seed the regular chain; run the demo with
+
+```
+ROKOKO_MODE=snark cargo +nightly run --release --features incomplete-rexl,p-26,unsafe-sumcheck
+```
+
+SNARK witnesses are committed undecomposed (nonlinear claims do not commute with the PCS path's initial norm decomposition); when a relation needs small values, encode the decomposition checks as claims. For witness sizes between the compiled parameter sets, keep the set's height and drop column bits (`params::witness_cols_for_target`; e.g. a 2^27 target runs on `p-28` with half the columns used).
+
 ## Code ↔ paper notation
 
 | Code | Paper |

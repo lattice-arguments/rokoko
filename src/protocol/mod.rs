@@ -11,6 +11,7 @@ pub mod params;
 pub mod parties;
 pub mod project_coarse;
 pub mod project_fine;
+pub mod snark;
 pub mod sumcheck;
 pub mod sumcheck_utils;
 pub mod sumchecks;
