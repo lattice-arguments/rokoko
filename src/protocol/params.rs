@@ -57,7 +57,7 @@ fn per_config<T>(p26_value: T, p28_value: T, p30_value: T) -> T {
     p28_value
 }
 
-pub static P: LazyLock<Config> = LazyLock::new(|| {
+fn p_root_aux(nof_openings: usize) -> AuxSumcheckConfig {
     AuxSumcheckConfig {
         witness_height: per_config(
             2usize.pow(13), // p-26
@@ -72,7 +72,7 @@ pub static P: LazyLock<Config> = LazyLock::new(|| {
         projection_ratio: 1,              // no-op
         projection_height: 2usize.pow(8), // no-op,
         basic_commitment_rank: 6,
-        nof_openings: 1,
+        nof_openings,
         commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
@@ -92,8 +92,12 @@ pub static P: LazyLock<Config> = LazyLock::new(|| {
 
         next: Some(Box::new(AuxConfig::Sumcheck(P_1.clone()))),
     }
-    .generate_config()
-});
+}
+
+pub static P: LazyLock<Config> = LazyLock::new(|| p_root_aux(1).generate_config());
+
+/// SNARK-mode chain: the entry sumcheck emits two openings (z_0, z_1).
+pub static P_SNARK: LazyLock<Config> = LazyLock::new(|| p_root_aux(2).generate_config());
 
 pub static P_1: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| {
     AuxSumcheckConfig {
@@ -316,7 +320,9 @@ pub static P_6: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
     projection_recursion: AuxProjection::Fine {
         nof_batches: 2,
         recursion_constant_term: AuxRecursionConfig {
-            decomposition_base_log: 10,
+            // base 2^10 leaves no margin for the ct projection image; SNARK-mode
+            // witness profiles overflowed it (caught by debug-decomp)
+            decomposition_base_log: 11,
             decomposition_chunks: 2,
             rank: 2,
             next: None,
