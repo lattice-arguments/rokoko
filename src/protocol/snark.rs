@@ -647,6 +647,9 @@ pub fn prove_initial_claims(
     let mut polys: Vec<Polynomial<QuadraticExtension>> = vec![];
     let mut evaluation_points: Vec<RingElement> = vec![];
 
+    #[cfg(feature = "profile-sumcheck")]
+    let mut leaf_fold = std::time::Duration::ZERO;
+
     use crate::common::arithmetic::field_to_ring_element_into;
     while num_vars > 0 {
         num_vars -= 1;
@@ -661,12 +664,28 @@ pub fn prove_initial_claims(
         field_to_ring_element_into(&mut r, &f);
         r.from_homogenized_field_extensions_to_incomplete_ntt();
 
+        #[cfg(feature = "profile-sumcheck")]
+        let t_fold = std::time::Instant::now();
         for leaf in &leaves {
             leaf.partial_evaluate(&r);
+        }
+        #[cfg(feature = "profile-sumcheck")]
+        {
+            leaf_fold += t_fold.elapsed();
         }
 
         evaluation_points.push(r);
         polys.push(poly_over_field);
+    }
+
+    #[cfg(feature = "profile-sumcheck")]
+    {
+        println!(
+            "    [entry] {} leaf cells, fold {} ms",
+            leaves.len(),
+            leaf_fold.as_millis()
+        );
+        crate::protocol::sumcheck_utils::profile::print_and_reset("entry");
     }
 
     let witness_eval = witness_pool
