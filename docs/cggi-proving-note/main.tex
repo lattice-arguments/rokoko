@@ -1,0 +1,151 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1.1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+\usepackage{cleveref}
+\usepackage{booktabs}
+
+\newcommand{\ZZ}{\mathbb{Z}}
+\newcommand{\ring}{\mathcal{R}}
+\newcommand{\tring}{\mathcal{R}'}
+\newcommand{\norm}[1]{\lVert #1 \rVert}
+\newcommand{\inner}[2]{\langle #1, #2 \rangle}
+\newcommand{\MLE}{\mathrm{MLE}}
+\newcommand{\ACC}{\mathrm{ACC}}
+\newcommand{\pack}{\mathrm{pack}}
+\newtheorem{lemma}{Lemma}
+
+\title{Proving CGGI Bootstrapping with a Lattice Sumcheck Argument:\\ an Expository Note}
+\author{}
+\date{June 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This note explains, at an introductory level, how a CGGI (TFHE) programmable bootstrapping is proven correct inside a lattice-based succinct argument. The construction has three parts. First, the bootstrapping itself is instantiated natively over the prime modulus $q = 2^{50} - 2687$ of the proof system, with the parameter shape of the TFHE-rs default set ($n = 918$ blind-rotation steps, ring degree $N = 2048$); one bootstrapping then runs in $11.5$ seconds in software. Second, every polynomial of the execution trace is committed in a packed evaluation domain in which a product of TFHE-ring polynomials becomes a short convolution of products in the proof ring; this is what turns the $918$ ciphertext multiplications of a blind rotation into constraints a sumcheck can process. Third, the whole trace is expressed as a handful of functional sumcheck claims over one committed witness: linear claims for gadget recomposition and the public boundary values, copy claims that align multiplication operands, and one degree-two claim covering all multiplication steps at once. Four independent bootstrappings under one committed bootstrapping key are proven end to end through the full argument chain; the proof is $157$\,KB and verifies in under $10$ milliseconds, with the entry round dominating proving time. The note assumes no prior familiarity with either TFHE or sumcheck arguments.
+\end{abstract}
+
+\section{Introduction}
+
+Fully homomorphic encryption schemes of the CGGI family \cite{cggi} evaluate functions on encrypted data by \emph{bootstrapping}: a public-key operation that simultaneously refreshes the noise of a ciphertext and applies a lookup table to the encrypted value. A natural integrity question arises whenever an untrusted server performs bootstrappings: how can the server prove, succinctly, that the ciphertexts it returns really are the prescribed bootstrappings of the ciphertexts it received, under the key material it committed to?
+
+This note describes such a proof, built on a lattice-based succinct argument \cite{rokoko} whose native objects are committed vectors over a cyclotomic ring and whose native statements are \emph{sumcheck claims} about those vectors. The exposition is aimed at a reader who knows basic ring arithmetic but not necessarily TFHE or sumcheck protocols; every object is introduced before it is used.
+
+The contributions described here are:
+\begin{enumerate}
+  \item an implementation of CGGI bootstrapping directly over the proof system's prime modulus $q = 2^{50} - 2687$, with the parameter shape of the TFHE-rs 1.6.2 default set and noise rescaled accordingly (\cref{sec:tfhe});
+  \item a packing of TFHE-ring polynomials into proof-ring elements under which TFHE-ring multiplication becomes a length-$16$ convolution of native proof-ring multiplications (\cref{sec:packing});
+  \item an encoding of the complete blind-rotation trace, for several bootstrappings sharing one committed key, as a constant number of sumcheck claims over a single committed witness (\cref{sec:relation});
+  \item an end-to-end instantiation: four bootstrappings proven through the full argument chain, with a $157$\,KB proof verifying in under $10$\,ms (\cref{sec:results}).
+\end{enumerate}
+
+\section{Background}
+
+\subsection{CGGI bootstrapping in five objects}\label{sec:cggi}
+
+All ciphertexts live over $\ZZ_q$. We write $p$ for the plaintext modulus (here $p = 32$, encoding a $2$-bit message, a $2$-bit carry, and a padding bit) and $\Delta = \lfloor q/p \rfloor$ for the encoding scale.
+
+\paragraph{LWE.} An LWE ciphertext of a message $m$ under a binary secret $\mathbf{s} \in \{0,1\}^n$ is a pair $(\mathbf{a}, b)$ with $\mathbf{a}$ uniform in $\ZZ_q^n$ and $b = \inner{\mathbf{a}}{\mathbf{s}} + \Delta m + e$ for a small noise $e$. Decryption computes $b - \inner{\mathbf{a}}{\mathbf{s}}$ and rounds to the nearest multiple of $\Delta$.
+
+\paragraph{GLWE.} The ring variant replaces scalars by polynomials in $\tring = \ZZ_q[Y]/(Y^N + 1)$: a GLWE ciphertext under a key of $k$ binary polynomials encrypts a polynomial of messages. Throughout, $k = 1$ and $N = 2048$, so a GLWE ciphertext is a pair of degree-$2048$ polynomials.
+
+\paragraph{GGSW and the external product.} A GGSW ciphertext encrypts a single bit $s_i$ in a redundant form: $(k+1)\ell$ GLWE rows, where row $(u, j)$ carries $s_i B^j$ at slot $u$ for a gadget base $B$ and $\ell$ levels. Its purpose is the \emph{external product}: given a GLWE ciphertext $c$, decompose each of its polynomials into $\ell$ balanced base-$B$ digit polynomials, multiply each digit polynomial by the matching GGSW row, and sum. The result is a GLWE encryption of $s_i \cdot (\text{message of } c)$, with noise that grew only proportionally to $B$ rather than to $q$. The digit decomposition is the entire reason GGSW exists: multiplying $c$ directly by an encryption of $s_i$ would scale its noise by $q/2$ in the worst case.
+
+\paragraph{CMUX.} The external product gives an encrypted multiplexer:
+\[
+  \mathrm{CMUX}(\mathrm{GGSW}(s_i),\, d_0,\, d_1) \;=\; d_0 + \mathrm{GGSW}(s_i) \boxdot (d_1 - d_0),
+\]
+which equals an encryption of the message of $d_0$ when $s_i = 0$ and of $d_1$ when $s_i = 1$, without revealing $s_i$.
+
+\paragraph{Blind rotation.} Bootstrapping an LWE ciphertext $(\mathbf{a}, b)$ proceeds by encoding the lookup table as a polynomial $L \in \tring$ whose coefficient blocks repeat each table value ($N/16$ copies per value, with the block boundaries aligned so rounding errors land inside a block). The phase $b - \inner{\mathbf{a}}{\mathbf{s}}$ is brought to the exponent of $Y$: after rescaling every component to $\tilde{a}_i = \lfloor a_i \cdot 2N/q \rceil$, the accumulator starts as $\ACC \gets Y^{-\tilde b} \cdot L$ and runs, for $i = 1, \dots, n$,
+\[
+  \ACC \;\gets\; \mathrm{CMUX}\bigl(\mathrm{GGSW}(s_i),\; \ACC,\; Y^{\tilde a_i} \cdot \ACC\bigr),
+\]
+so that exactly when $s_i = 1$ the accumulator is rotated by $\tilde a_i$ positions. After all $n$ steps the constant coefficient of the accumulator holds $\Delta \cdot L[m]$ up to small noise, and a public rearrangement of coefficients (\emph{sample extraction}) turns it back into an LWE ciphertext. Steps with $\tilde a_i = 0$ are skipped; which steps survive is public, since $\mathbf{a}$ is public.
+
+The blind rotation is the entire cost and the entire content of the proof: $n = 918$ CMUX steps, each containing one digit decomposition and $(k+1)^2 \ell$ polynomial multiplications in $\tring$.
+
+\subsection{The proof system interface}\label{sec:snark}
+
+The argument system \cite{rokoko} commits to a vector $\mathbf{w}$ of elements of the proof ring $\ring = \ZZ_q[X]/(X^{128} + 1)$ and proves claims of the form
+\begin{equation}\label{eq:claim}
+  \sum_{z \in \{0,1\}^{\nu}} \;\sum_{\text{terms } t}\; \gamma_t \prod_{f \in t} f(z) \;=\; v,
+\end{equation}
+where each factor $f$ is either the multilinear extension $\MLE[\mathbf{w}]$ of the committed vector (the unique multilinear polynomial agreeing with $\mathbf{w}$ on the Boolean cube), the extension of a public vector, or the extension of a contiguous \emph{segment} of $\mathbf{w}$ identified by a binary prefix of the index space. Products of factors evaluated at the same cube point $z$ express coordinatewise relations; a degree-two term with two witness factors expresses a product of two committed values at the same position. After a sumcheck interaction, every claim reduces to evaluations of $\MLE[\mathbf{w}]$ at random points, which the argument chain then proves against the commitment while also certifying an $\ell_2$ bound on $\mathbf{w}$.
+
+Two consequences shape everything that follows. First, the claim language is \emph{coordinatewise}: it multiplies committed values at equal positions, and offers no direct way to multiply $\mathbf{w}[i]$ by $\mathbf{w}[j]$ for $i \ne j$. Second, the only smallness guarantee is an aggregate $\ell_2$ norm; no per-coordinate range is proven. Both are deliberate economy choices of the underlying argument, and \cref{sec:relation} works within them.
+
+\section{Bootstrapping over the proof modulus}\label{sec:tfhe}
+
+Standard TFHE works modulo $2^{64}$. Proving statements about mod-$2^{64}$ arithmetic inside a mod-$q$ proof system would force every equation through an encoding of wraparounds. Instead, the bootstrapping is instantiated natively modulo the proof prime $q = 2^{50} - 2687$: the same algorithms, the same parameter shape, no second modulus anywhere.
+
+Concretely, the implementation follows the TFHE-rs 1.6.2 default parameter set \texttt{PARAM\_MESSAGE\_2\_CARRY\_2} ($n = 918$, $k = 1$, $N = 2048$) with two adaptations. Noise bounds scale by $q/2^{64}$: the LWE noise is uniform on $[-2^{31}, 2^{31}]$ and the GLWE noise on $[-2^3, 2^3]$, preserving the noise-to-modulus ratios of the original set. The gadget changes from the base-$2^{23}$, one-level decomposition of TFHE-rs, which relies on power-of-two bit extraction, to an exact balanced decomposition with $B = 2^{25}$ and $\ell = 2$, natural for a prime modulus and, as it turns out, also the proof-friendly choice: an exact decomposition is a linear identity, with no rounding remainder to carry through the constraints. The modulus switch, the redundant lookup table layout, the skip of zero steps, and the key-switching follow the reference implementation.
+
+Polynomial multiplication in $\tring$ uses a partial negacyclic NTT. The $2$-adic valuation of $q - 1$ is $7$, so a full NTT at $N = 2048$ does not exist; six transform levels split $Y^{2048} + 1$ into $64$ blocks of degree $32$, multiplied blockwise with lazy modular reduction. One multiplication takes $69\,\mu$s, and a complete bootstrapping (mod switch, $918$ CMUX steps, sample extraction) runs in $11.5$\,s single-threaded. Correctness is tested end to end: all $16$ plaintexts bootstrap through a nontrivial lookup table and decrypt correctly, both after sample extraction and after key-switching back to the small key.
+
+\section{Packing the TFHE ring into the proof ring}\label{sec:packing}
+
+The proof system multiplies elements of $\ring$, of degree $128$; the trace multiplies elements of $\tring$, of degree $2048$. The bridge is a factorization both rings share. Modulo $q$, the polynomial $X^{128} + 1$ splits into $64$ quadratic factors $X^2 - \psi_j$, where the $\psi_j$ are the $64$ roots of $\psi^{64} = -1$; multiplication in $\ring$ acts independently on these $64$ quadratic residues (this is the incomplete NTT the proof system computes with). The same $\psi_j$ govern the TFHE ring:
+\[
+  \ZZ_q[Y]/(Y^{2048} + 1) \;\cong\; \prod_{j=1}^{64} \ZZ_q[Y]/(Y^{32} - \psi_j)
+  \;\cong\; \prod_{j=1}^{64} \mathbb{F}_{q^2}[Y]/(Y^{16} - x_j),
+\]
+where the second step writes each degree-$32$ residue over the quadratic extension $\mathbb{F}_{q^2} = \ZZ_q[X]/(X^2 - \psi_j)$ via $Y^{16} \mapsto X$.
+
+A polynomial $P \in \tring$ is therefore stored as $16$ elements of $\ring$: element $t$ holds, in its $j$-th quadratic slot, the $Y^t$-coordinate of the $j$-th residue of $P$. Under this packing, a product in $\tring$ becomes
+\begin{equation}\label{eq:conv}
+  (P \cdot R)_t \;=\; \sum_{t_1 + t_2 = t} P_{t_1} \odot R_{t_2} \;+\; X \odot \sum_{t_1 + t_2 = t + 16} P_{t_1} \odot R_{t_2},
+\end{equation}
+where $\odot$ is native multiplication in $\ring$ and the multiplication by the public element $X$ accounts for the wrap $Y^{16} = X$. One TFHE-ring product is thus $256$ proof-ring products arranged as a length-$16$ convolution. The packing and identity \eqref{eq:conv} are verified in code against direct multiplication in $\tring$ for $N \in \{256, 2048\}$.
+
+The point of working in this packed evaluation domain, rather than committing coefficient vectors, is that \eqref{eq:conv} contains only \emph{ring products of stored values}: the claim language of \cref{sec:snark} can express it. A coefficient-domain encoding would instead turn each polynomial product into a dense $2048 \times 2048$ linear map interleaved with products, far outside coordinatewise reach.
+
+\section{The relation}\label{sec:relation}
+
+Fix a bootstrapping and consider its surviving steps $1, \dots, S$. The committed witness contains, in the packed representation of \cref{sec:packing}:
+\begin{itemize}
+  \item the accumulator states $\ACC_0, \dots, \ACC_S$ ($k+1 = 2$ polynomials each);
+  \item for each step, the digit polynomials $D_{u,j}$ of the decomposition of $Y^{\tilde a_i}\ACC_{i-1} - \ACC_{i-1}$;
+  \item the GGSW rows $G_{u,j,v}$ of the bootstrapping key, stored once and shared by all bootstrappings in the batch;
+  \item two \emph{operand segments}, described below.
+\end{itemize}
+Packed values fill the full range of $\ZZ_q$, while the commitment is binding only for short vectors, so every stored coordinate is decomposed into four balanced chunks of $13$ bits; a value is recovered as $\sum_c 2^{13c} (\text{chunk } c)$, and all claims act on chunks through this linear recomposition. The chunk width matters: the argument chain folds the witness across $128$ columns before its own decomposition with capacity $2^{23}$ per coefficient, so committed values must sit well below the $2^{15}$ scale of the system's standard entry digits; $2^{12}$ leaves an eightfold margin.
+
+The blind-rotation step relation splits into one linear and one quadratic family.
+
+\paragraph{Recomposition and boundaries (linear).} For each step and each slot coordinate, the digits must recompose to the rotated difference:
+\[
+  \textstyle\sum_j B^j D_{u,j} \;=\; Y^{\tilde a_i} \ACC_{i-1} - \ACC_{i-1},
+\]
+where multiplication by the public monomial $Y^{\tilde a_i}$ is, in the packed domain, a public length-$16$ convolution: a linear map with known coefficients. Together with the boundary equalities, $\ACC_0 = \pack(Y^{-\tilde b} L)$ and $\ACC_S = $ the public output accumulator, these are all linear equations in the witness. They are batched into a single claim of the form \eqref{eq:claim}: a random vector $\rho$, sampled from the transcript after the commitment, weights every equation, and the per-position weights are assembled into one public vector per witness segment. The claim value collects the $\rho$-weighted public boundary data.
+
+\paragraph{Accumulation (quadratic).} Each step must satisfy
+\[
+  \ACC_i \;=\; \ACC_{i-1} + \sum_{u,j} D_{u,j} \cdot G_{u,j,v},
+\]
+with the products expanded by \eqref{eq:conv} into pairs $D_{u,j,t_1} \odot G_{u,j,v,t_2}$. These pairs multiply witness values at \emph{different} positions, which the claim language cannot do directly. The standard remedy is operand alignment: the witness carries two further segments, $\mathsf{lop}$ and $\mathsf{rop}$, listing for every needed pair its left and right operand at the \emph{same} offset. Copy claims (one per chunk plane) tie each operand list to its source: a transcript-derived random vector $\rho$ satisfies $\sum_o \rho_o\, \mathsf{lop}(o) = \sum_e \bigl(\sum_{o : \mathrm{src}(o) = e} \rho_o\bigr) D(e)$, and equality of these two random linear combinations binds the lists to the digits (respectively the key rows) up to soundness error $1/|\mathcal{C}|$ per repetition. All accumulation equations then batch into one claim whose quadratic terms are $\sum_o W(o)\, \mathsf{lop}_c(o)\, \mathsf{rop}_{c'}(o)$ over the $16$ chunk-plane pairs $(c, c')$, with the public weight vector $W$ carrying the equation weights and the $X$-twist of \eqref{eq:conv}, and whose linear terms carry the $\ACC$ sides.
+
+The replication is the price of staying coordinatewise: the operand lists repeat each key row once per step that uses it. For a batch of bootstrappings under one key the key segment itself is shared, and only the per-step operands grow with the batch.
+
+\paragraph{What the proof asserts.} The claims above, plus the $\ell_2$ bound certified by the chain, prove knowledge of accumulator states, digits, and key rows that satisfy every step equation, recompose correctly, have bounded aggregate norm, and connect the public input phase to the public output accumulator. Per-coordinate digit ranges are not proven; a prover could substitute a different valid decomposition of the same differences, trading noise growth for freedom that the $\ell_2$ budget tolerates. The statement is correspondingly \emph{knowledge of a bounded-norm execution} rather than of the canonical one; tightening it to the canonical trace would require range claims on the digits.
+
+\section{End-to-end instantiation}\label{sec:results}
+
+The complete pipeline commits the witness, runs the entry sumcheck over all claims, and hands the resulting evaluation claims to the argument chain of \cite{rokoko} as its initial openings: the two standard witness evaluations plus one opening per witness segment (thirteen segments here), padded to the next power of two. The chain then folds, projects, and recurses exactly as for its polynomial-commitment workload; no component of the chain is modified.
+
+At toy TFHE parameters ($N = 256$, $n = 8$) four independent bootstrappings under one committed key prove end to end: the entry sumcheck over the $2^{20}$-element witness takes $28$\,s, the chain adds its usual $1.5$\,s, the proof is $157$\,KB, and verification takes under $10$\,ms. The witness layout is parameter-generic; at the full parameters of \cref{sec:tfhe} a single bootstrapping needs roughly $2^{23}$ committed ring elements with the present operand replication, one parameter step above the configuration used here, and a batch of four needs either the largest shipped parameter set or a derived-oracle encoding that avoids replicating the key operands.
+
+Correctness of every layer is tested independently: the packing against direct TFHE-ring multiplication, the recorded traces against step-by-step replay, each claim family in isolation, the four-bootstrapping batch, and rejection of a tampered output accumulator.
+
+\section{Limitations}
+
+Three gaps separate this instantiation from a production verifiable-bootstrapping service. The digit ranges are bounded only in aggregate $\ell_2$ norm, as discussed in \cref{sec:relation}. The final accumulator is published in full, which reveals $N$ valid LWE ciphertexts rather than the single extracted one; this is harmless under the scheme's own security but coarser than necessary. And the security of the rescaled parameter set, while inheriting the noise ratios of the TFHE-rs original, has not been re-estimated against lattice attacks at the new modulus; the parameter-selection pass for both the FHE side and the argument side remains future work.
+
+\begin{thebibliography}{9}
+\bibitem{cggi} I.~Chillotti, N.~Gama, M.~Georgieva, M.~Izabach\`ene. TFHE: Fast Fully Homomorphic Encryption over the Torus. Journal of Cryptology, 2020. Implementation: TFHE-rs 1.6.2, \url{https://github.com/zama-ai/tfhe-rs}.
+\bibitem{rokoko} RoKoko: Lattice-based Succinct Arguments, a Committed Refinement. 2026. Implementation: \url{https://github.com/lattice-arguments/rokoko}.
+\end{thebibliography}
+
+\end{document}

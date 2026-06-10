@@ -18,14 +18,14 @@ pub struct Segment {
 
 pub struct CggiWitness {
     pub matrix: VerticallyAlignedMatrix<RingElement>,
-    pub seg_acc: Segment,
-    pub seg_dig: Segment,
-    pub seg_bsk: Segment,
+    pub seg_lin: Segment,
     pub plane_acc: usize,
     pub plane_dig: usize,
     pub plane_bsk: usize,
+    pub off_dig: usize,
+    pub off_bsk: usize,
     pub seg_lop: Vec<Segment>,
-    pub seg_rop: Vec<Segment>,
+    pub seg_rop: Vec<Vec<Segment>>,
     pub chunk_base_log: u32,
     pub chunks: usize,
     pub l_coords: usize,
@@ -90,11 +90,9 @@ fn chunk_planes(elems: &[RingElement], base_log: u32, chunks: usize) -> Vec<Vec<
 
 struct PairIndex {
     lop_src: Vec<usize>,
-    rop_src: Vec<usize>,
-    out_v: Vec<usize>,
-    out_t: Vec<usize>,
+    rop_src: Vec<Vec<usize>>,
+    eq_of_pair: Vec<Vec<usize>>,
     twisted: Vec<bool>,
-    eq_of_pair: Vec<usize>,
 }
 
 fn pair_index(
@@ -124,11 +122,9 @@ fn pair_index(
 
     let mut idx = PairIndex {
         lop_src: vec![],
-        rop_src: vec![],
-        out_v: vec![],
-        out_t: vec![],
+        rop_src: vec![vec![]; k1],
+        eq_of_pair: vec![vec![]; k1],
         twisted: vec![],
-        eq_of_pair: vec![],
     };
     let mut dig_base = 0usize;
     let mut eq_base = 0usize;
@@ -136,22 +132,19 @@ fn pair_index(
         for step in &trace.steps {
             for u in 0..k1 {
                 for j in 0..levels {
-                    for v in 0..k1 {
-                        let d_idx = dig_base + (u * levels + j) * l;
-                        let g_idx = bsk_pos[&(step.index, u, j, v)];
-                        for t1 in 0..l {
-                            for t2 in 0..l {
-                                idx.lop_src.push(d_idx + t1);
-                                idx.rop_src.push(g_idx + t2);
-                                idx.out_v.push(v);
-                                let (t, tw) = if t1 + t2 < l {
-                                    (t1 + t2, false)
-                                } else {
-                                    (t1 + t2 - l, true)
-                                };
-                                idx.out_t.push(t);
-                                idx.twisted.push(tw);
-                                idx.eq_of_pair.push(eq_base + v * l + t);
+                    let d_idx = dig_base + (u * levels + j) * l;
+                    for t1 in 0..l {
+                        for t2 in 0..l {
+                            idx.lop_src.push(d_idx + t1);
+                            let (t, tw) = if t1 + t2 < l {
+                                (t1 + t2, false)
+                            } else {
+                                (t1 + t2 - l, true)
+                            };
+                            idx.twisted.push(tw);
+                            for v in 0..k1 {
+                                idx.rop_src[v].push(bsk_pos[&(step.index, u, j, v)] + t2);
+                                idx.eq_of_pair[v].push(eq_base + v * l + t);
                             }
                         }
                     }
@@ -204,7 +197,11 @@ impl CggiWitness {
         }
 
         let lop_vals: Vec<RingElement> = pairs.lop_src.iter().map(|&i| dig_vals[i].clone()).collect();
-        let rop_vals: Vec<RingElement> = pairs.rop_src.iter().map(|&i| bsk_vals[i].clone()).collect();
+        let rop_vals: Vec<Vec<RingElement>> = pairs
+            .rop_src
+            .iter()
+            .map(|srcs| srcs.iter().map(|&i| bsk_vals[i].clone()).collect())
+            .collect();
 
         let n = height * width;
         let total_vars = n.ilog2() as usize;
@@ -229,23 +226,14 @@ impl CggiWitness {
                 len: size,
             }
         }
-        fn alloc_stacked(
-            data: &mut [RingElement],
-            cursor: &mut usize,
-            total_vars: usize,
-            vals: &[RingElement],
-            chunk_base_log: u32,
-            chunks: usize,
-        ) -> (Segment, usize) {
+        fn stack(vals: &[RingElement], chunk_base_log: u32, chunks: usize) -> (Vec<RingElement>, usize) {
             let planes = chunk_planes(vals, chunk_base_log, chunks);
             let plane_pad = vals.len().next_power_of_two().max(1);
-            let mut stacked = vec![zero(); plane_pad * chunks.next_power_of_two()];
+            let mut stacked = vec![zero(); plane_pad * chunks];
             for (c, plane) in planes.iter().enumerate() {
                 stacked[c * plane_pad..c * plane_pad + plane.len()].clone_from_slice(plane);
             }
-            let len = stacked.len();
-            let seg = place(data, cursor, total_vars, &stacked, len);
-            (seg, plane_pad)
+            (stacked, plane_pad)
         }
         fn alloc_planes(
             data: &mut [RingElement],
@@ -264,16 +252,22 @@ impl CggiWitness {
                 .collect()
         }
 
-        let (seg_acc, plane_acc) =
-            alloc_stacked(&mut data, &mut cursor, total_vars, &acc_vals, chunk_base_log, chunks);
-        let (seg_dig, plane_dig) =
-            alloc_stacked(&mut data, &mut cursor, total_vars, &dig_vals, chunk_base_log, chunks);
-        let (seg_bsk, plane_bsk) =
-            alloc_stacked(&mut data, &mut cursor, total_vars, &bsk_vals, chunk_base_log, chunks);
+        let (acc_stacked, plane_acc) = stack(&acc_vals, chunk_base_log, chunks);
+        let (dig_stacked, plane_dig) = stack(&dig_vals, chunk_base_log, chunks);
+        let (bsk_stacked, plane_bsk) = stack(&bsk_vals, chunk_base_log, chunks);
+        let off_dig = acc_stacked.len();
+        let off_bsk = off_dig + dig_stacked.len();
+        let mut lin = acc_stacked;
+        lin.extend(dig_stacked);
+        lin.extend(bsk_stacked);
+        let lin_size = lin.len().next_power_of_two();
+        let seg_lin = place(&mut data, &mut cursor, total_vars, &lin, lin_size);
         let seg_lop =
             alloc_planes(&mut data, &mut cursor, total_vars, &lop_vals, chunk_base_log, chunks);
-        let seg_rop =
-            alloc_planes(&mut data, &mut cursor, total_vars, &rop_vals, chunk_base_log, chunks);
+        let seg_rop: Vec<Vec<Segment>> = rop_vals
+            .iter()
+            .map(|vals| alloc_planes(&mut data, &mut cursor, total_vars, vals, chunk_base_log, chunks))
+            .collect();
 
         CggiWitness {
             matrix: VerticallyAlignedMatrix {
@@ -282,12 +276,12 @@ impl CggiWitness {
                 used_cols: width,
                 data,
             },
-            seg_acc,
-            seg_dig,
-            seg_bsk,
+            seg_lin,
             plane_acc,
             plane_dig,
             plane_bsk,
+            off_dig,
+            off_bsk,
             seg_lop,
             seg_rop,
             chunk_base_log,
@@ -351,7 +345,8 @@ fn neg(e: &RingElement) -> RingElement {
 
 fn copy_claim(
     dst_segs: &[Segment],
-    src_seg: &Segment,
+    lin_seg: &Segment,
+    src_off: usize,
     src_plane_pad: usize,
     src_of: &[usize],
     chunks: usize,
@@ -360,9 +355,9 @@ fn copy_claim(
     (0..chunks)
         .map(|c| {
             let rho = sample_rho(hash_wrapper, src_of.len());
-            let mut scatter = vec![zero(); src_seg.len];
+            let mut scatter = vec![zero(); lin_seg.len];
             for (o, &src) in src_of.iter().enumerate() {
-                scatter[c * src_plane_pad + src] += &rho[o];
+                scatter[src_off + c * src_plane_pad + src] += &rho[o];
             }
             SnarkClaim {
                 terms: vec![
@@ -371,8 +366,8 @@ fn copy_claim(
                         vec![pub_factor(&dst_segs[c], rho), seg_factor(&dst_segs[c])],
                     ),
                     ClaimTerm::scaled(
-                        normalized(src_seg, Q - 1),
-                        vec![pub_factor(src_seg, scatter), seg_factor(src_seg)],
+                        normalized(lin_seg, Q - 1),
+                        vec![pub_factor(lin_seg, scatter), seg_factor(lin_seg)],
                     ),
                 ],
                 value: zero(),
@@ -409,20 +404,24 @@ pub fn build_claims(
 
     claims.extend(copy_claim(
         &witness.seg_lop,
-        &witness.seg_dig,
+        &witness.seg_lin,
+        witness.off_dig,
         witness.plane_dig,
         &pairs.lop_src,
         chunks,
         hash_wrapper,
     ));
-    claims.extend(copy_claim(
-        &witness.seg_rop,
-        &witness.seg_bsk,
-        witness.plane_bsk,
-        &pairs.rop_src,
-        chunks,
-        hash_wrapper,
-    ));
+    for (v, segs) in witness.seg_rop.iter().enumerate() {
+        claims.extend(copy_claim(
+            segs,
+            &witness.seg_lin,
+            witness.off_bsk,
+            witness.plane_bsk,
+            &pairs.rop_src[v],
+            chunks,
+            hash_wrapper,
+        ));
+    }
 
     let n_lin_eqs: usize = traces
         .iter()
@@ -485,36 +484,23 @@ pub fn build_claims(
     }
     assert_eq!(eq, n_lin_eqs);
 
+    let mut lin_public = vec![zero(); witness.seg_lin.len];
+    add_stacked_public(&mut lin_public, witness.off_dig, &pub_dig, witness.plane_dig, chunks, delta);
+    add_stacked_public(&mut lin_public, 0, &pub_acc, witness.plane_acc, chunks, delta);
     claims.push(SnarkClaim {
-        terms: vec![
-            ClaimTerm::scaled(
-                normalized(&witness.seg_dig, 1),
-                vec![
-                    pub_factor(
-                        &witness.seg_dig,
-                        stacked_public(&pub_dig, witness.plane_dig, witness.seg_dig.len, chunks, delta),
-                    ),
-                    seg_factor(&witness.seg_dig),
-                ],
-            ),
-            ClaimTerm::scaled(
-                normalized(&witness.seg_acc, 1),
-                vec![
-                    pub_factor(
-                        &witness.seg_acc,
-                        stacked_public(&pub_acc, witness.plane_acc, witness.seg_acc.len, chunks, delta),
-                    ),
-                    seg_factor(&witness.seg_acc),
-                ],
-            ),
-        ],
+        terms: vec![ClaimTerm::scaled(
+            normalized(&witness.seg_lin, 1),
+            vec![
+                pub_factor(&witness.seg_lin, lin_public),
+                seg_factor(&witness.seg_lin),
+            ],
+        )],
         value,
     });
 
     let n_prod_eqs: usize = traces.iter().map(|t| t.steps.len() * k1 * l).sum();
     let rho2 = sample_rho(hash_wrapper, n_prod_eqs);
     let mut pub2_acc = vec![zero(); witness.n_acc_elems];
-    let mut weight = vec![zero(); witness.n_pairs];
 
     let mut eq_base = 0usize;
     let mut acc_base = 0usize;
@@ -531,35 +517,42 @@ pub fn build_claims(
         }
         acc_base += trace.acc_states.len() * k1 * l;
     }
-    for o in 0..witness.n_pairs {
-        let mut w = rho2[pairs.eq_of_pair[o]].clone();
-        if pairs.twisted[o] {
-            w *= &x;
-        }
-        weight[o] = neg(&w);
-    }
+    let weights: Vec<Vec<RingElement>> = (0..k1)
+        .map(|v| {
+            (0..witness.n_pairs)
+                .map(|o| {
+                    let mut w = rho2[pairs.eq_of_pair[v][o]].clone();
+                    if pairs.twisted[o] {
+                        w *= &x;
+                    }
+                    neg(&w)
+                })
+                .collect()
+        })
+        .collect();
 
+    let mut lin2_public = vec![zero(); witness.seg_lin.len];
+    add_stacked_public(&mut lin2_public, 0, &pub2_acc, witness.plane_acc, chunks, delta);
     let mut prod_terms = vec![ClaimTerm::scaled(
-        normalized(&witness.seg_acc, 1),
+        normalized(&witness.seg_lin, 1),
         vec![
-            pub_factor(
-                &witness.seg_acc,
-                stacked_public(&pub2_acc, witness.plane_acc, witness.seg_acc.len, chunks, delta),
-            ),
-            seg_factor(&witness.seg_acc),
+            pub_factor(&witness.seg_lin, lin2_public),
+            seg_factor(&witness.seg_lin),
         ],
     )];
-    for c in 0..chunks {
-        for c2 in 0..chunks {
-            let scale2 = pow_q(2, delta * (c as u64 + c2 as u64));
-            prod_terms.push(ClaimTerm::scaled(
-                normalized(&witness.seg_lop[c], scale2),
-                vec![
-                    pub_factor(&witness.seg_lop[c], weight.clone()),
-                    seg_factor(&witness.seg_lop[c]),
-                    seg_factor(&witness.seg_rop[c2]),
-                ],
-            ));
+    for v in 0..k1 {
+        for c in 0..chunks {
+            for c2 in 0..chunks {
+                let scale2 = pow_q(2, delta * (c as u64 + c2 as u64));
+                prod_terms.push(ClaimTerm::scaled(
+                    normalized(&witness.seg_lop[c], scale2),
+                    vec![
+                        pub_factor(&witness.seg_lop[c], weights[v].clone()),
+                        seg_factor(&witness.seg_lop[c]),
+                        seg_factor(&witness.seg_rop[v][c2]),
+                    ],
+                ));
+            }
         }
     }
     claims.push(SnarkClaim {
@@ -570,23 +563,22 @@ pub fn build_claims(
     claims
 }
 
-fn stacked_public(
+fn add_stacked_public(
+    out: &mut [RingElement],
+    off: usize,
     public: &[RingElement],
     plane_pad: usize,
-    seg_len: usize,
     chunks: usize,
     delta: u64,
-) -> Vec<RingElement> {
-    let mut out = vec![zero(); seg_len];
+) {
     for c in 0..chunks {
         let scale = constant(pow_q(2, delta * c as u64));
         for (e, p) in public.iter().enumerate() {
             let mut v = p.clone();
             v *= &scale;
-            out[c * plane_pad + e] = v;
+            out[off + c * plane_pad + e] += &v;
         }
     }
-    out
 }
 
 #[cfg(test)]
@@ -613,7 +605,7 @@ mod tests {
             &lut,
             params.glwe_dimension,
         );
-        let witness = CggiWitness::build(&keys.bsk, &[&trace], 13, 4, 2048, 4);
+        let witness = CggiWitness::build(&keys.bsk, &[&trace], 15, 4, 4096, 4);
         (witness, trace)
     }
 
@@ -671,7 +663,7 @@ mod tests {
             })
             .collect();
         let trace_refs: Vec<&_> = traces.iter().collect();
-        let witness = CggiWitness::build(&keys.bsk, &trace_refs, 13, 4, 4096, 8);
+        let witness = CggiWitness::build(&keys.bsk, &trace_refs, 15, 4, 8192, 8);
 
         let mut hw_p = HashWrapper::new();
         let claims_p = build_claims(&witness, &trace_refs, &mut hw_p);

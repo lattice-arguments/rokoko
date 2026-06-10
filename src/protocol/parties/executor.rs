@@ -311,8 +311,17 @@ pub fn execute_cggi() {
         _ => panic!("Expected sumcheck config at the top level."),
     };
 
-    println!("Generating CGGI instance (4 toy bootstraps, shared key)...");
-    let params = &tfhe::TOY;
+    let real = std::env::var("ROKOKO_CGGI_REAL").is_ok();
+    let (params, nof_bootstraps): (&tfhe::TfheParams, usize) = if real {
+        (&tfhe::SCALED_ZAMA_2_2, 1)
+    } else {
+        (&tfhe::TOY, 4)
+    };
+    println!(
+        "Generating CGGI instance ({} bootstraps, N={}, n={}, shared key)...",
+        nof_bootstraps, params.polynomial_size, params.lwe_dimension
+    );
+    let t_inst = std::time::Instant::now();
     let mut rng = rand::rngs::StdRng::seed_from_u64(99);
     let keys = tfhe::keygen(params, &mut rng);
     let lut = tfhe::bootstrap::generate_lut(
@@ -321,20 +330,37 @@ pub fn execute_cggi() {
         params.delta(),
         |m| (m * m) % 16,
     );
-    let traces: Vec<_> = (0..4)
+    let traces: Vec<_> = (0..nof_bootstraps)
         .map(|m| {
             let ct = tfhe::encrypt(params, &keys, m as u64, &mut rng);
             tfhe::bootstrap::blind_rotate_traced(&keys.bsk, &ct, &lut, params.glwe_dimension).1
         })
         .collect();
     let trace_refs: Vec<&_> = traces.iter().collect();
+    println!(
+        "Instance generated: {} ms ({} surviving steps total)",
+        t_inst.elapsed().as_millis(),
+        traces.iter().map(|t| t.steps.len()).sum::<usize>()
+    );
+    let t_wit = std::time::Instant::now();
     let witness = tfhe::prove::CggiWitness::build(
         &keys.bsk,
         &trace_refs,
-        13,
+        15,
         4,
         config.witness_height,
         config.witness_width,
+    );
+    println!(
+        "Witness built: {} ms; elements acc={} dig={} bsk={} pairs={} (matrix {}x{} = 2^{})",
+        t_wit.elapsed().as_millis(),
+        witness.n_acc_elems,
+        witness.n_dig_elems,
+        witness.n_bsk_elems,
+        witness.n_pairs,
+        config.witness_height,
+        config.witness_width,
+        (config.witness_height * config.witness_width).ilog2()
     );
 
     println!("Generating CRS...");
