@@ -66,6 +66,21 @@ impl AuxSumcheckConfig {
         let total_size: usize = components.iter().map(|c| c.size).sum();
         let composed_witness_length = total_size.next_power_of_two();
 
+        // a mismatch here only debug_asserts in the prover, then corrupts downstream
+        if let Some(next) = self.next.as_deref() {
+            if let AuxConfig::Sumcheck(next) = next {
+                assert_eq!(
+                    next.witness_height * next.witness_width,
+                    composed_witness_length,
+                    "level {depth}: composed witness length {composed_witness_length} (2^{}) != \
+                     next witness {}x{}; resize the next round",
+                    composed_witness_length.ilog2(),
+                    next.witness_height,
+                    next.witness_width,
+                );
+            }
+        }
+
         // Sort by size (largest to smallest)
         components.sort_by(|a, b| b.size.cmp(&a.size));
 

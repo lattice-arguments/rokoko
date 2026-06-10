@@ -99,8 +99,68 @@ pub static P: LazyLock<Config> = LazyLock::new(|| p_root_aux(1).generate_config(
 /// SNARK-mode chain: the entry sumcheck emits two openings (z_0, z_1).
 pub static P_SNARK: LazyLock<Config> = LazyLock::new(|| p_root_aux(2).generate_config());
 
-/// CGGI chain: z_0, z_1 plus the segment-oracle openings, padded to 16.
-pub static P_CGGI: LazyLock<Config> = LazyLock::new(|| p_root_aux(16).generate_config());
+/// CGGI chain: 32 openings (segment oracles), entry-round coarse projection
+/// for the strict l2 bound; witness chunked base 2^7 x8 so digits stay at the
+/// chain's standard scale (binding margin, i16 projection path).
+pub static P_CGGI: LazyLock<Config> = LazyLock::new(|| {
+    AuxSumcheckConfig {
+        projection_ratio: per_config(2usize.pow(5), 2usize.pow(6), 2usize.pow(7)),
+        // base 2^7: coarser image digits overflow the round-1 fold capacity
+        projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
+            decomposition_base_log: 7,
+            decomposition_chunks: 4,
+            rank: 2,
+            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        }),
+        next: Some(Box::new(AuxConfig::Sumcheck(CGGI_1.clone()))),
+        ..p_root_aux(32)
+    }
+    .generate_config()
+});
+
+pub static CGGI_1: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
+    witness_height: per_config(2usize.pow(14), 2usize.pow(15), 2usize.pow(16)),
+    witness_width: 2usize.pow(4),
+    next: Some(Box::new(AuxConfig::Sumcheck(CGGI_2.clone()))),
+    ..P_1.clone()
+});
+
+pub static CGGI_2: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
+    witness_height: per_config(2usize.pow(11), 2usize.pow(12), 2usize.pow(13)),
+    next: Some(Box::new(AuxConfig::Sumcheck(CGGI_3.clone()))),
+    ..P_2.clone()
+});
+
+pub static CGGI_3: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
+    witness_height: per_config(2usize.pow(9), 2usize.pow(10), 2usize.pow(10)),
+    next: Some(Box::new(AuxConfig::Sumcheck(CGGI_4.clone()))),
+    ..P_3.clone()
+});
+
+pub static CGGI_4: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
+    witness_height: 2usize.pow(10),
+    next: Some(Box::new(AuxConfig::Sumcheck(CGGI_5.clone()))),
+    ..P_4.clone()
+});
+
+pub static CGGI_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
+    witness_height: 2usize.pow(9),
+    next: Some(Box::new(AuxConfig::Sumcheck(CGGI_6.clone()))),
+    ..P_5.clone()
+});
+
+pub static CGGI_6: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
+    witness_height: 2usize.pow(8),
+    next: Some(Box::new(AuxConfig::Intermediate(CGGI_INTERMEDIATE.clone()))),
+    ..P_6.clone()
+});
+
+pub static CGGI_INTERMEDIATE: LazyLock<IntermediateConfig> =
+    LazyLock::new(|| IntermediateConfig {
+        witness_height: 2usize.pow(7),
+        witness_width: 2usize.pow(3),
+        ..P_INTERMEDIATE.clone()
+    });
 
 pub static P_1: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| {
     AuxSumcheckConfig {
@@ -449,6 +509,39 @@ pub fn witness_cols_for_target(
 
 #[cfg(test)]
 mod tests {
+    use crate::protocol::config::Config;
+
+    fn assert_chain_dims(mut config: &Config) {
+        while let Config::Sumcheck(sc) = config {
+            let Some(next) = sc.next.as_deref() else { break };
+            let (h, w) = match next {
+                Config::Sumcheck(n) => (n.witness_height, n.witness_width),
+                Config::Intermediate(n) => (n.witness_height, n.witness_width),
+                Config::Simple(n) => (n.witness_height, n.witness_width),
+            };
+            assert_eq!(
+                sc.composed_witness_length,
+                h * w,
+                "composed 2^{} != next round witness {}x{} = 2^{}",
+                sc.composed_witness_length.ilog2(),
+                h,
+                w,
+                (h * w).ilog2(),
+            );
+            config = next;
+        }
+    }
+
+    #[test]
+    fn test_p_cggi_config_generates() {
+        assert_chain_dims(&super::P_CGGI);
+    }
+
+    #[test]
+    fn test_p_snark_chain_dims() {
+        assert_chain_dims(&super::P_SNARK);
+    }
+
     #[test]
     fn test_witness_cols_for_target() {
         // p-28-shaped set: 2^13 x 2^8 ring elements = 2^28 Zq coefficients
