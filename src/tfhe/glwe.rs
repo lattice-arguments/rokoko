@@ -217,3 +217,63 @@ pub fn assert_close(a: u64, b: u64, tolerance_log2: u32) {
         tolerance_log2
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::SeedableRng;
+
+    #[test]
+    fn test_decompose_recompose_and_digit_bounds() {
+        use rand::Rng;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(3);
+        for _ in 0..1000 {
+            let v = rng.random_range(0..Q);
+            let digits = decompose_scalar(v, 25, 2);
+            let mut acc = 0i128;
+            let mut pow = 1i128;
+            for &d in &digits {
+                assert!(d.abs() <= (1 << 24) + 1, "digit {} out of range", d);
+                acc += d as i128 * pow;
+                pow <<= 25;
+            }
+            assert_eq!(acc.rem_euclid(Q as i128) as u64, v);
+        }
+    }
+
+    #[test]
+    fn test_glwe_roundtrip_external_product_cmux() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(4);
+        let (k, n) = (1, 256);
+        let delta = Q / 32;
+        let key = glwe_sample_binary_key(k, n, &mut rng);
+
+        let mut pt = Poly::zero(n);
+        pt.coeffs[0] = mul_q(5, delta);
+        pt.coeffs[3] = mul_q(11, delta);
+
+        let ct = glwe_encrypt(&key, &pt, 3, &mut rng);
+        let dec = glwe_decrypt(&key, &ct);
+        assert_close(dec.coeffs[0], pt.coeffs[0], 10);
+        assert_close(dec.coeffs[3], pt.coeffs[3], 10);
+
+        // external product by GGSW(1) preserves the plaintext, GGSW(0) kills it
+        for (bit, expect0) in [(1i64, mul_q(5, delta)), (0, 0)] {
+            let ggsw = ggsw_encrypt(&key, bit, 25, 2, 3, &mut rng);
+            let out = external_product(&ggsw, &ct);
+            let dec = glwe_decrypt(&key, &out);
+            assert_close(dec.coeffs[0], expect0, 40);
+        }
+
+        // cmux selects d0 / d1 by the encrypted bit
+        let mut pt2 = Poly::zero(n);
+        pt2.coeffs[0] = mul_q(9, delta);
+        let ct2 = glwe_encrypt(&key, &pt2, 3, &mut rng);
+        for (bit, expect) in [(0i64, mul_q(5, delta)), (1, mul_q(9, delta))] {
+            let ggsw = ggsw_encrypt(&key, bit, 25, 2, 3, &mut rng);
+            let out = cmux(&ggsw, &ct, &ct2);
+            let dec = glwe_decrypt(&key, &out);
+            assert_close(dec.coeffs[0], expect, 40);
+        }
+    }
+}
