@@ -115,7 +115,7 @@ pub static P_1: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| {
             rank: 2,
             next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
         },
-        projection_recursion: AuxProjection::Type0(AuxRecursionConfig {
+        projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
             decomposition_base_log: 10,
             decomposition_chunks: 2,
             rank: 2,
@@ -149,7 +149,7 @@ pub static P_2: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
         rank: 2,
         next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
     },
-    projection_recursion: AuxProjection::Type1 {
+    projection_recursion: AuxProjection::Fine {
         nof_batches: 2,
         recursion_constant_term: AuxRecursionConfig {
             decomposition_base_log: 10,
@@ -190,7 +190,7 @@ pub static P_3: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
         rank: 2,
         next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
     },
-    projection_recursion: AuxProjection::Type1 {
+    projection_recursion: AuxProjection::Fine {
         nof_batches: 2,
         recursion_constant_term: AuxRecursionConfig {
             decomposition_base_log: 10,
@@ -231,7 +231,7 @@ pub static P_4: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
         rank: 2,
         next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
     },
-    projection_recursion: AuxProjection::Type1 {
+    projection_recursion: AuxProjection::Fine {
         nof_batches: 2,
         recursion_constant_term: AuxRecursionConfig {
             decomposition_base_log: 10,
@@ -272,7 +272,7 @@ pub static P_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
         rank: 2,
         next: None,
     },
-    projection_recursion: AuxProjection::Type1 {
+    projection_recursion: AuxProjection::Fine {
         nof_batches: 2,
         recursion_constant_term: AuxRecursionConfig {
             decomposition_base_log: 10,
@@ -313,7 +313,7 @@ pub static P_6: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
         rank: 2,
         next: None,
     },
-    projection_recursion: AuxProjection::Type1 {
+    projection_recursion: AuxProjection::Fine {
         nof_batches: 2,
         recursion_constant_term: AuxRecursionConfig {
             decomposition_base_log: 10,

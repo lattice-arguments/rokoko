@@ -12,7 +12,7 @@ use crate::{
     protocol::{
         config::{NextRoundCommitment, Projection, SumcheckConfig, SumcheckRoundProof},
         open::evaluation_point_to_structured_row,
-        project_2::{
+        project_fine::{
             verifier_sample_projection_challenges_collectively, BatchedProjectionChallengesSuccinct,
         },
         sumcheck_utils::common::EvaluationSumcheckData,
@@ -87,16 +87,16 @@ fn batch_claims(
             0 => &config.commitment_recursion,
             1 => &config.opening_recursion,
             2 => match &config.projection_recursion {
-                Projection::Type0(proj_config) => proj_config,
-                // Projection::Type1(proj_config) => &proj_config.recursion_constant_term,
+                Projection::Coarse(proj_config) => proj_config,
+                // Projection::Fine(proj_config) => &proj_config.recursion_constant_term,
                 _ => unreachable!(),
             },
             3 => match &config.projection_recursion {
-                Projection::Type1(proj_config) => &proj_config.recursion_constant_term,
+                Projection::Fine(proj_config) => &proj_config.recursion_constant_term,
                 _ => unreachable!(),
             },
             4 => match &config.projection_recursion {
-                Projection::Type1(proj_config) => &proj_config.recursion_batched_projection,
+                Projection::Fine(proj_config) => &proj_config.recursion_batched_projection,
                 _ => unreachable!(),
             },
             _ => unreachable!(),
@@ -196,7 +196,7 @@ pub fn sumcheck_verifier(
     }
 
     let projection_matrix_flatter_structured = match config.projection_recursion {
-        Projection::Type0(_) => {
+        Projection::Coarse(_) => {
             let mut projection_matrix_flatter_base =
                 new_vec_zero_preallocated(projection_height_flat.ilog2() as usize);
             hash_wrapper
@@ -206,7 +206,7 @@ pub fn sumcheck_verifier(
                 &projection_matrix_flatter_base,
             ))
         }
-        Projection::Type1(_) => None,
+        Projection::Fine(_) => None,
         Projection::Skip => None,
     };
 

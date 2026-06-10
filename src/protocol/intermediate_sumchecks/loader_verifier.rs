@@ -3,7 +3,7 @@ use crate::common::{
     ring_arithmetic::{QuadraticExtension, Representation, RingElement},
     structured_row::StructuredRow,
 };
-use crate::protocol::project_2::BatchedProjectionChallengesSuccinct;
+use crate::protocol::project_fine::BatchedProjectionChallengesSuccinct;
 
 use super::context_verifier::IntermediateVerifierSumcheckContext;
 

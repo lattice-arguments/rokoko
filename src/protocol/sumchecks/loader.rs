@@ -10,7 +10,7 @@ use crate::{
     protocol::{
         config::SumcheckConfig,
         open::Opening,
-        project_2::BatchedProjectionChallenges,
+        project_fine::BatchedProjectionChallenges,
         sumchecks::helpers::{
             projection_flatter_1_times_matrix, split_projection_flatter, tensor_product_u64,
         },

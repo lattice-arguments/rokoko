@@ -4,7 +4,7 @@ use crate::{
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
-    protocol::{config::IntermediateConfig, project_2::BatchedProjectionChallenges},
+    protocol::{config::IntermediateConfig, project_fine::BatchedProjectionChallenges},
 };
 
 use super::context::IntermediateSumcheckContext;

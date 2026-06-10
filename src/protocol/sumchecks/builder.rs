@@ -377,7 +377,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
 
     let projection_height_flat = config.witness_height / config.projection_ratio;
     let type3sumcheck = match &config.projection_recursion {
-        Projection::Type0(projection_recursion) => {
+        Projection::Coarse(projection_recursion) => {
             let projection_selector_sumcheck =
                 sumcheck_from_prefix(&projection_recursion.prefix, total_vars);
 
@@ -496,7 +496,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     // c_0 and c_1 are u64 challenges that need to be lifted to RingElement
     // j_batched is already a Vec<RingElement>
     let type3_1_sumchecks = match &config.projection_recursion {
-        Projection::Type1(projection_recursion) => {
+        Projection::Fine(projection_recursion) => {
             // Projection combiner for decomposition (same for all batches)
             let projection_combiner_sumcheck = {
                 composition_sumcheck(
@@ -746,12 +746,12 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
 
     // if let Some(config.p
     match config.projection_recursion {
-        Projection::Type0(ref proj_config) => {
+        Projection::Coarse(ref proj_config) => {
             let most_inner_projection_recursion =
                 sumcheck_from_prefix(&proj_config.most_inner_config().prefix, total_vars);
             most_inner_commitments_selectors.push(most_inner_projection_recursion);
         }
-        Projection::Type1(ref proj_config) => {
+        Projection::Fine(ref proj_config) => {
             let most_inner_constant_term_recursion = sumcheck_from_prefix(
                 &proj_config
                     .recursion_constant_term
@@ -821,7 +821,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     ];
 
     match &config.projection_recursion {
-        Projection::Type0(recursion_config) => {
+        Projection::Coarse(recursion_config) => {
             type4sumchecks.push(build_type4_sumcheck_context(
                 crs,
                 total_vars,
@@ -829,7 +829,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                 recursion_config,
             ));
         }
-        Projection::Type1(recursion_config) => {
+        Projection::Fine(recursion_config) => {
             type4sumchecks.push(build_type4_sumcheck_context(
                 crs,
                 total_vars,

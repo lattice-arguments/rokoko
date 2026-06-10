@@ -8,7 +8,7 @@ use crate::{
     },
     protocol::{
         crs::{CK, CRS},
-        project::Signed16RingElement,
+        project_coarse::Signed16RingElement,
     },
 };
 

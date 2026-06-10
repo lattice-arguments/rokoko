@@ -10,7 +10,7 @@ use crate::{
     },
     protocol::{
         config::IntermediateConfig,
-        project_2::BatchedProjectionChallenges,
+        project_fine::BatchedProjectionChallenges,
         sumcheck_utils::{
             common::{HighOrderSumcheckData, SumcheckBaseData},
             polynomial::Polynomial,

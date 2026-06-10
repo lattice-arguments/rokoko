@@ -24,8 +24,8 @@ use crate::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
             open_at,
         },
-        project::{prepare_i16_witness, project},
-        project_2::{batch_projection_n_times, project_coefficients},
+        project_coarse::{prepare_i16_witness, project},
+        project_fine::{batch_projection_n_times, project_coefficients},
         sumcheck::{sumcheck, SumcheckContext},
         sumchecks::context::NextSumcheckContext,
     },
@@ -117,7 +117,7 @@ pub fn prover_round(
     projection_matrix.sample(&mut hash_wrapper);
 
     let rc_projection_image = match &config.projection_recursion {
-        Projection::Type0(proj_config) => {
+        Projection::Coarse(proj_config) => {
             let t2 = std::time::Instant::now();
             let witness_i16 = match &commitment_with_aux.witness_i16 {
                 Some(witness_i16) => witness_i16,
@@ -138,7 +138,7 @@ pub fn prover_round(
     };
 
     let rcs_projection_1 = match &config.projection_recursion {
-        Projection::Type1(proj_config) => {
+        Projection::Fine(proj_config) => {
             let t2 = std::time::Instant::now();
             let projection_image_ct = project_coefficients(&witness, &projection_matrix);
             println!("  project_cf: {} ms", t2.elapsed().as_millis());
@@ -217,14 +217,14 @@ pub fn prover_round(
     );
 
     match &config.projection_recursion {
-        Projection::Type0(projection_config) => {
+        Projection::Coarse(projection_config) => {
             paste_recursive_commitment(
                 &mut next_round_data,
                 &rc_projection_image.as_ref().unwrap(),
                 &projection_config,
             );
         }
-        Projection::Type1(projection_config) => {
+        Projection::Fine(projection_config) => {
             paste_recursive_commitment(
                 &mut next_round_data,
                 &rcs_projection_1.as_ref().unwrap().0,
@@ -277,12 +277,12 @@ pub fn prover_round(
             let norm_opening_data_ell_2_sq = norms::l2_norm(&opening_data).powf(2.0) as u64;
 
             let norm_projection_data_ell_2_sq = match &config.projection_recursion {
-                Projection::Type0(_) => {
+                Projection::Coarse(_) => {
                     let rc_proj = rc_projection_image.as_ref().unwrap();
                     let proj_data = &rc_proj.most_inner_commitment_with_aux().committed_data;
                     norms::l2_norm(&proj_data).powf(2.0) as u64
                 }
-                Projection::Type1(_) => {
+                Projection::Fine(_) => {
                     let (rc_ct, rc_batched, _) = rcs_projection_1.as_ref().unwrap();
                     let proj_ct_data = &rc_ct.most_inner_commitment_with_aux().committed_data;
                     let proj_batched_data =
@@ -368,7 +368,7 @@ pub fn prover_round(
             0,
         );
 
-        if let (Some(rc_projection_image), Projection::Type0(projection_config)) =
+        if let (Some(rc_projection_image), Projection::Coarse(projection_config)) =
             (&rc_projection_image, &config.projection_recursion)
         {
             debug_hardness_recursive_commitment(
@@ -381,7 +381,7 @@ pub fn prover_round(
             );
         }
 
-        if let (Some(rcs_projection_1), Projection::Type1(projection_config)) =
+        if let (Some(rcs_projection_1), Projection::Fine(projection_config)) =
             (&rcs_projection_1, &config.projection_recursion)
         {
             debug_hardness_recursive_commitment(
@@ -423,14 +423,14 @@ pub fn prover_round(
         let extracted_witness_bound = recomposed_witness_bound * T_OP_NORM_BOUND * 8.0; // factor 4 for difference in numerator and denominator in extraction and 2 for ISIS to SIS
 
         let recomposed_projection_bound = match &config.projection_recursion {
-            Projection::Type0(proj_config) => {
+            Projection::Coarse(proj_config) => {
                 recommited_ell_2_norm // we don't use rest here, as projection might live in the most inner commitment
                     * (proj_config
                         .decomposition_base_log
                         .pow((proj_config.decomposition_chunks - 1) as u32))
                         as f64
             }
-            Projection::Type1(proj_config) => {
+            Projection::Fine(proj_config) => {
                 recommited_ell_2_norm
                     * (proj_config
                         .recursion_constant_term

@@ -10,7 +10,7 @@ use crate::{
     },
     protocol::{
         config::{IntermediateConfig, IntermediateRoundProof},
-        project_2::BatchedProjectionChallengesSuccinct,
+        project_fine::BatchedProjectionChallengesSuccinct,
         sumcheck_utils::common::EvaluationSumcheckData,
     },
 };

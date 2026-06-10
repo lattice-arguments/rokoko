@@ -12,7 +12,7 @@ use crate::{
     protocol::{
         config::{Projection, SumcheckConfig},
         open::{evaluation_point_to_structured_row, Opening},
-        project_2::BatchedProjectionChallenges,
+        project_fine::BatchedProjectionChallenges,
         sumcheck::SumcheckContext,
         sumcheck_utils::{
             common::{HighOrderSumcheckData, SumcheckBaseData},
@@ -62,7 +62,7 @@ pub fn sumcheck(
 ) {
     // Removed: let mut hash_wrapper_clone = hash_wrapper.clone(); - unused
     let projection_matrix_flatter = match config.projection_recursion {
-        Projection::Type0(_) => {
+        Projection::Coarse(_) => {
             let projection_height_flat = config.witness_height / config.projection_ratio;
             let mut projection_matrix_flatter_base =
                 new_vec_zero_preallocated(projection_height_flat.ilog2() as usize);
@@ -79,7 +79,7 @@ pub fn sumcheck(
                 projection_matrix_flatter_structured,
             ))
         }
-        Projection::Type1(_) => None,
+        Projection::Fine(_) => None,
         Projection::Skip => None,
     };
 

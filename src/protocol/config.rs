@@ -13,28 +13,21 @@ use crate::{
     },
 };
 
-// 2^26 = 2^7 (DEGREE) * 2^19
-// 2^19 = 2^5 * 2^14
-
 #[derive(Clone)]
-pub enum ProjectionType {
-    Type0, // full ring elements + no batching
-    Type1, // coefficient-wise + batching + commit to constant terms + commit to batched projection
-}
-
-#[derive(Clone)]
-pub struct Type1ProjectionConfig {
+pub struct FineProjectionConfig {
     pub nof_batches: usize,
-    pub recursion_constant_term: RecursionConfig, // here we check the norm
-    pub recursion_batched_projection: RecursionConfig, // this one is for the actual projection and we need to show consistency
+    pub recursion_constant_term: RecursionConfig, // carries the norm claim
+    pub recursion_batched_projection: RecursionConfig, // carries the consistency checks
 }
 
-pub type Type0ProjectionConfig = RecursionConfig;
+pub type CoarseProjectionConfig = RecursionConfig;
 
+/// Paper: Π^proj-c (ring elements) / Π^proj-f (coefficients); `Skip` in the
+/// first round, where extraction slack is tolerable.
 #[derive(Clone)]
 pub enum Projection {
-    Type0(Type0ProjectionConfig),
-    Type1(Type1ProjectionConfig),
+    Coarse(CoarseProjectionConfig),
+    Fine(FineProjectionConfig),
     Skip,
 }
 
@@ -63,7 +56,7 @@ pub static SOMEWHAT_REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| {
             rank: 1,
             next: None,
         },
-        projection_recursion: AuxProjection::Type0(AuxRecursionConfig {
+        projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
             // 2^14 (witness_height) * 2^5 (witness_width) / 2^5 (projection_ratio) * 2^0 (decomp) = 2^14
             decomposition_base_log: 20, // no decomposition
             decomposition_chunks: 1,
@@ -98,7 +91,7 @@ pub static SOMEWHAT_REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| {
                 rank: 1,
                 next: None,
             },
-            projection_recursion: AuxProjection::Type1 {
+            projection_recursion: AuxProjection::Fine {
                 nof_batches: 2,
                 recursion_constant_term: AuxRecursionConfig {
                     decomposition_base_log: 15,
@@ -149,7 +142,7 @@ pub static TOY_CONFIG: LazyLock<Config> = LazyLock::new(|| {
             rank: 1,
             next: None,
         },
-        projection_recursion: AuxProjection::Type0(AuxRecursionConfig {
+        projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
             decomposition_base_log: 15,
             decomposition_chunks: 2,
             rank: 1,
@@ -189,7 +182,7 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
             rank: 1,
             next: None,
         },
-        projection_recursion: AuxProjection::Type1 {
+        projection_recursion: AuxProjection::Fine {
             nof_batches: 2,
             recursion_constant_term: AuxRecursionConfig {
                 decomposition_base_log: 10,

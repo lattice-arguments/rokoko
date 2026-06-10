@@ -7,7 +7,7 @@ use crate::{
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
-        project_2::BatchedProjectionChallengesSuccinct,
+        project_fine::BatchedProjectionChallengesSuccinct,
         sumchecks::helpers::{projection_flatter_1_times_matrix, split_projection_flatter},
     },
 };

@@ -39,7 +39,7 @@ static TRUE_TRUE: (bool, bool) = (true, true);
 ///
 /// # SIMD usage
 ///
-/// The AVX-512 projection kernels in [`project_2`](crate::protocol::project_2)
+/// The AVX-512 projection kernels in [`project_fine`](crate::protocol::project_fine)
 /// and [`helpers`](crate::protocol::sumchecks::helpers) load `pos_masks` and
 /// `non_zero_masks` bytes directly as `__mmask8` values, using:
 ///

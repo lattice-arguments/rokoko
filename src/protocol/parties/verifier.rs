@@ -25,7 +25,7 @@ use crate::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
             open_at,
         },
-        project_2::{
+        project_fine::{
             verifier_sample_projection_challenges_collectively, BatchedProjectionChallengesSuccinct,
         },
         sumchecks::{
