@@ -109,3 +109,13 @@ _deps
 
 
 # End of https://mrkandreev.name/snippets/gitignore-generator/#C,C++,Rust,CMake,Make/target
+
+# Profiling and benchmarking artifacts
+perf.data*
+flamegraph.svg
+trace.json
+profile.json.gz
+bench_results/
+pool_stats.txt
+report.txt
+.vscode/
