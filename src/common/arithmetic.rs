@@ -340,6 +340,24 @@ pub fn inner_product_into(r: &mut RingElement, a: &Vec<RingElement>, b: &Vec<Rin
     }
 }
 
+pub fn pow_mod(base: u64, mut exp: u64) -> u64 {
+    let q = crate::common::config::MOD_Q as u128;
+    let mut acc = 1u128;
+    let mut b = base as u128 % q;
+    while exp > 0 {
+        if exp & 1 == 1 {
+            acc = acc * b % q;
+        }
+        b = b * b % q;
+        exp >>= 1;
+    }
+    acc as u64
+}
+
+pub fn inv_mod(a: u64) -> u64 {
+    pow_mod(a, crate::common::config::MOD_Q - 2)
+}
+
 #[inline]
 pub fn field_to_ring_element(fe: &QuadraticExtension) -> RingElement {
     let mut result = RingElement::zero(Representation::HomogenizedFieldExtensions);

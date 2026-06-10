@@ -45,6 +45,81 @@ pub enum PublicFactor {
     /// WitnessSegmentShifted oracles. Arc-shared: terms reusing one vector
     /// cost a single buffer in the prover.
     DensePrefixed(usize, usize, Arc<Vec<RingElement>>),
+    /// eq-tensor with layers [1-a, a] in the quadratic extension, MSB-first;
+    /// prover expands dense per Arc, verifier evaluates in the field.
+    FieldTensor {
+        prefix_len: usize,
+        suffix_len: usize,
+        layers: Arc<Vec<QuadraticExtension>>,
+    },
+    /// Prover runs on `data` (None verifier-side); verifier calls `eval` on
+    /// the LS-first middle slice of the final point.
+    LazyPrefixed {
+        prefix_len: usize,
+        suffix_len: usize,
+        data: Option<Arc<Vec<RingElement>>>,
+        eval: LazyPublicEval,
+    },
+}
+
+pub type LazyPublicEval =
+    Arc<dyn Fn(&[RingElement], &[QuadraticExtension]) -> RingElement + Send + Sync>;
+
+pub fn qe_one_minus(a: &QuadraticExtension) -> QuadraticExtension {
+    let mut r = QuadraticExtension::one();
+    r -= a;
+    r
+}
+
+pub fn expand_field_tensor(layers: &[QuadraticExtension]) -> Vec<RingElement> {
+    use crate::common::arithmetic::field_to_ring_element_into;
+    let mut vals = vec![QuadraticExtension::one()];
+    for a in layers.iter().rev() {
+        let one_minus = qe_one_minus(a);
+        let mut next = Vec::with_capacity(vals.len() * 2);
+        let mut t = QuadraticExtension::zero();
+        for v in &vals {
+            t *= (v, &one_minus);
+            next.push(t);
+        }
+        for v in &vals {
+            t *= (v, a);
+            next.push(t);
+        }
+        vals = next;
+    }
+    vals.iter()
+        .map(|v| {
+            let mut r = RingElement::zero(Representation::IncompleteNTT);
+            field_to_ring_element_into(&mut r, v);
+            r.from_homogenized_field_extensions_to_incomplete_ntt();
+            r
+        })
+        .collect()
+}
+
+struct LazyPublicEvaluation {
+    prefix_len: usize,
+    suffix_len: usize,
+    eval: LazyPublicEval,
+    result: RingElement,
+}
+
+impl EvaluationSumcheckData for LazyPublicEvaluation {
+    type Element = RingElement;
+
+    fn evaluate(&mut self, point: &Vec<RingElement>) -> &RingElement {
+        let data_vars = point.len() - self.prefix_len - self.suffix_len;
+        let slice = &point[self.suffix_len..self.suffix_len + data_vars];
+        let qe: Vec<QuadraticExtension> = slice
+            .iter()
+            .map(|r| QuadraticExtension {
+                coeffs: [r.v[0], r.v[crate::common::config::HALF_DEGREE]],
+            })
+            .collect();
+        self.result = (self.eval)(slice, &qe);
+        &self.result
+    }
 }
 
 pub enum ClaimFactor {
@@ -438,6 +513,51 @@ pub fn prove_initial_claims(
                                 factors.push(cell.clone() as _);
                                 continue;
                             }
+                            PublicFactor::FieldTensor {
+                                prefix_len,
+                                suffix_len,
+                                layers,
+                            } => {
+                                assert_eq!(
+                                    1usize << layers.len(),
+                                    n >> (prefix_len + suffix_len)
+                                );
+                                let key =
+                                    (Arc::as_ptr(layers) as usize, *prefix_len, *suffix_len);
+                                let cell = public_pool.next(key, || {
+                                    let dense = expand_field_tensor(layers);
+                                    let mut ls = LinearSumcheck::new_with_prefixed_sufixed_data(
+                                        dense.len(),
+                                        *prefix_len,
+                                        *suffix_len,
+                                    );
+                                    ls.load_from(&dense);
+                                    ls
+                                });
+                                factors.push(cell.clone() as _);
+                                continue;
+                            }
+                            PublicFactor::LazyPrefixed {
+                                prefix_len,
+                                suffix_len,
+                                data,
+                                eval: _,
+                            } => {
+                                let v = data.as_ref().expect("prover needs dense lazy data");
+                                assert_eq!(v.len(), n >> (prefix_len + suffix_len));
+                                let key = (Arc::as_ptr(v) as usize, *prefix_len, *suffix_len);
+                                let cell = public_pool.next(key, || {
+                                    let mut ls = LinearSumcheck::new_with_prefixed_sufixed_data(
+                                        v.len(),
+                                        *prefix_len,
+                                        *suffix_len,
+                                    );
+                                    ls.load_from(v);
+                                    ls
+                                });
+                                factors.push(cell.clone() as _);
+                                continue;
+                            }
                             PublicFactor::Selector(prefix) => {
                                 let cell = ElephantCell::new(SelectorEq::new(
                                     prefix.prefix,
@@ -718,6 +838,36 @@ pub fn verify_initial_claims(
                                     factors.push(ElephantCell::new(ev) as _);
                                     continue;
                                 }
+                                PublicFactor::FieldTensor {
+                                    prefix_len,
+                                    suffix_len,
+                                    layers,
+                                } => {
+                                    let mut ev = crate::protocol::sumcheck_utils::linear::StructuredRowEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
+                                        1usize << layers.len(),
+                                        *prefix_len,
+                                        *suffix_len,
+                                    );
+                                    ev.load_from(StructuredRow {
+                                        tensor_layers: (**layers).clone(),
+                                    });
+                                    ElephantCell::new(
+                                        crate::protocol::sumcheck_utils::linear::RingToFieldWrapperEvaluation::new(
+                                            ElephantCell::new(ev) as _,
+                                        ),
+                                    ) as _
+                                }
+                                PublicFactor::LazyPrefixed {
+                                    prefix_len,
+                                    suffix_len,
+                                    data: _,
+                                    eval,
+                                } => ElephantCell::new(LazyPublicEvaluation {
+                                    prefix_len: *prefix_len,
+                                    suffix_len: *suffix_len,
+                                    eval: eval.clone(),
+                                    result: RingElement::zero(Representation::IncompleteNTT),
+                                }) as _,
                                 PublicFactor::Selector(prefix) => {
                                     factors.push(ElephantCell::new(SelectorEqEvaluation::new(
                                         prefix.prefix,
@@ -1035,6 +1185,107 @@ mod tests {
 
         // every opening, including the segment ones, must match direct
         // witness evaluation under the chain's convention
+        for j in 0..chain_p.claims.len() {
+            let direct = crate::protocol::open::claim(
+                &witness,
+                &chain_p.evaluation_points_inner[j],
+                &chain_p.evaluation_points_outer[j],
+            );
+            assert_eq!(direct, chain_p.claims[j], "opening {}", j);
+        }
+    }
+
+    fn mle_fold(data: &[RingElement], ls_first_point: &[RingElement]) -> RingElement {
+        let mut cur = data.to_vec();
+        for r in ls_first_point {
+            let mut next = Vec::with_capacity(cur.len() / 2);
+            for i in 0..cur.len() / 2 {
+                let mut diff = cur[2 * i + 1].clone();
+                diff -= &cur[2 * i];
+                diff *= r;
+                let mut lo = cur[2 * i].clone();
+                lo += &diff;
+                next.push(lo);
+            }
+            cur = next;
+        }
+        cur[0].clone()
+    }
+
+    #[test]
+    fn test_field_tensor_and_lazy_roundtrip() {
+        init_common();
+        let height = 64;
+        let width = 4;
+        let n = height * width;
+        let witness = VerticallyAlignedMatrix {
+            height,
+            width,
+            used_cols: width,
+            data: sample_random_short_vector(n, 100, Representation::IncompleteNTT),
+        };
+        let quarter = n / 4;
+        let inv4 = RingElement::constant(crate::common::arithmetic::inv_mod(4), Representation::IncompleteNTT);
+
+        let layers: Vec<QuadraticExtension> = (0..6)
+            .map(|i| QuadraticExtension {
+                coeffs: [7 + 3 * i as u64, 11 + 5 * i as u64],
+            })
+            .collect();
+        let dense1 = expand_field_tensor(&layers);
+        let value1 = inner_product_direct(&dense1, &witness.data[quarter..2 * quarter]);
+        let make_claim1 = || SnarkClaim {
+            terms: vec![ClaimTerm::scaled(
+                inv4.clone(),
+                vec![
+                    ClaimFactor::Public(PublicFactor::FieldTensor {
+                        prefix_len: 2,
+                        suffix_len: 0,
+                        layers: Arc::new(layers.clone()),
+                    }),
+                    ClaimFactor::WitnessSegment(Prefix {
+                        prefix: 1,
+                        length: 2,
+                    }),
+                ],
+            )],
+            value: value1.clone(),
+        };
+
+        let dense2 = sample_random_short_vector(quarter, 9, Representation::IncompleteNTT);
+        let value2 = inner_product_direct(&dense2, &witness.data[2 * quarter..3 * quarter]);
+        let lazy_data = dense2.clone();
+        let eval: LazyPublicEval =
+            Arc::new(move |ring_slice, _qe| mle_fold(&lazy_data, ring_slice));
+        let make_claim2 = |with_data: bool| SnarkClaim {
+            terms: vec![ClaimTerm::scaled(
+                inv4.clone(),
+                vec![
+                    ClaimFactor::Public(PublicFactor::LazyPrefixed {
+                        prefix_len: 2,
+                        suffix_len: 0,
+                        data: with_data.then(|| Arc::new(dense2.clone())),
+                        eval: eval.clone(),
+                    }),
+                    ClaimFactor::WitnessSegment(Prefix {
+                        prefix: 2,
+                        length: 2,
+                    }),
+                ],
+            )],
+            value: value2.clone(),
+        };
+
+        let mut hw_p = HashWrapper::new();
+        let claims_p = vec![make_claim1(), make_claim2(true)];
+        let (proof, chain_p) = prove_initial_claims(&witness, &claims_p, &mut hw_p);
+
+        let mut hw_v = HashWrapper::new();
+        let claims_v = vec![make_claim1(), make_claim2(false)];
+        let chain_v =
+            verify_initial_claims(witness.height, witness.width, &claims_v, &proof, &mut hw_v);
+        assert_eq!(chain_p.claims, chain_v.claims);
+
         for j in 0..chain_p.claims.len() {
             let direct = crate::protocol::open::claim(
                 &witness,
