@@ -49,7 +49,7 @@ pub fn intermediate_sumcheck_verifier(
     folded_opening_claims: &[RingElement],
     folded_batched_projection_claims: &[RingElement],
     evaluation_points_inner: &[StructuredRow],
-    challenges_batching_projection_1: &[BatchedProjectionChallengesSuccinct; NOF_BATCHES],
+    fine_proj_batching_challenges: &[BatchedProjectionChallengesSuccinct; NOF_BATCHES],
     hash_wrapper: &mut HashWrapper,
 ) -> Vec<RingElement> {
     assert_eq!(
@@ -133,7 +133,7 @@ pub fn intermediate_sumcheck_verifier(
         &proof.claim_over_witness_conjugate,
         evaluation_points_inner,
         &combination,
-        challenges_batching_projection_1,
+        fine_proj_batching_challenges,
         &qe,
     );
 

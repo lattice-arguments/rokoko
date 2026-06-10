@@ -13,7 +13,7 @@ pub fn load_intermediate_verifier_sumcheck_data(
     claim_over_witness_conjugate: &RingElement,
     evaluation_points_inner: &[StructuredRow],
     combination: &[RingElement],
-    challenges_batching_projection_1: &[BatchedProjectionChallengesSuccinct; 2],
+    fine_proj_batching_challenges: &[BatchedProjectionChallengesSuccinct; 2],
     qe: &[QuadraticExtension; HALF_DEGREE],
 ) {
     verifier_sumcheck_context
@@ -44,7 +44,7 @@ pub fn load_intermediate_verifier_sumcheck_data(
     for (fine_proj_eval, challenge) in verifier_sumcheck_context
         .fine_proj_evaluations
         .iter()
-        .zip(challenges_batching_projection_1.iter())
+        .zip(fine_proj_batching_challenges.iter())
     {
         fine_proj_eval
             .c_0_evaluation

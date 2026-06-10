@@ -229,6 +229,14 @@ pub trait ConfigBase: Any {
     fn basic_commitment_rank(&self) -> usize;
 }
 
+pub fn config_base_from_config(config: &Config) -> &dyn ConfigBase {
+    match config {
+        Config::Sumcheck(sumcheck_config) => sumcheck_config,
+        Config::Simple(simple_config) => simple_config,
+        Config::Intermediate(intermediate_config) => intermediate_config,
+    }
+}
+
 #[derive(Clone)]
 pub struct SumcheckConfig {
     pub witness_height: usize,
@@ -363,8 +371,8 @@ pub struct SumcheckRoundProof {
     pub norm_claim: RingElement,
     pub most_inner_norm_claim: RingElement,
     pub rc_opening_inner: Vec<RingElement>,
-    pub rc_projection_inner: Option<Vec<RingElement>>,
-    pub rcs_projection_1_inner: Option<(Vec<RingElement>, Vec<RingElement>)>,
+    pub rc_coarse_projection_inner: Option<Vec<RingElement>>,
+    pub rc_fine_projection_inner: Option<(Vec<RingElement>, Vec<RingElement>)>,
     pub constant_term_claims: Option<Vec<RingElement>>,
     pub next_round_commitment: Option<NextRoundCommitment>,
     pub next: Option<Box<RoundProof>>,
@@ -408,20 +416,20 @@ impl SizeableProof for SumcheckRoundProof {
             to_kb(rc_opening_inner_size)
         );
 
-        if let Some(rc_projection_inner) = &self.rc_projection_inner {
+        if let Some(rc_coarse_projection_inner) = &self.rc_coarse_projection_inner {
             let mut rc_projection_inner_size = 0;
-            for el in rc_projection_inner {
+            for el in rc_coarse_projection_inner {
                 rc_projection_inner_size += el.size_in_bits();
             }
             size += rc_projection_inner_size;
             println!(
-                "RC projection 0 inner size: {} KB, ",
+                "RC coarse projection inner size: {} KB, ",
                 to_kb(rc_projection_inner_size)
             );
         }
 
         if let Some((rcs_projection_1_inner_0, rcs_projection_1_inner_1)) =
-            &self.rcs_projection_1_inner
+            &self.rc_fine_projection_inner
         {
             let mut rcs_projection_1_inner_size = 0;
             for el in rcs_projection_1_inner_0 {
@@ -432,7 +440,7 @@ impl SizeableProof for SumcheckRoundProof {
             }
             size += rcs_projection_1_inner_size;
             println!(
-                "RCs projection 1 inner size: {} KB, ",
+                "RC fine projection inner size: {} KB, ",
                 to_kb(rcs_projection_1_inner_size)
             );
         }

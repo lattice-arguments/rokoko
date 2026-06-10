@@ -30,7 +30,7 @@ pub fn load_sumcheck_data(
     combined_witness: &Vec<RingElement>,
     conjugated_combined_witness: &Vec<RingElement>,
     folding_challenges: &Vec<RingElement>,
-    challenges_batching_projection_1: &Option<&[BatchedProjectionChallenges; NOF_BATCHES]>,
+    fine_proj_batching_challenges: &Option<&[BatchedProjectionChallenges; NOF_BATCHES]>,
     opening: &Opening,
     projection_matrix: &ProjectionMatrix,
     projection_matrix_flatter: &Option<(PreprocessedRow, StructuredRow)>,
@@ -151,7 +151,7 @@ pub fn load_sumcheck_data(
 
     // Load fine_proj_sumchecks if present (batched projections)
     if let Some(fine_proj_contexts) = &mut sumcheck_context.fine_proj_sumchecks {
-        if let Some(challenges) = challenges_batching_projection_1 {
+        if let Some(challenges) = fine_proj_batching_challenges {
             // Each batch gets its own (c_0_values, c_1_values, j_batched) tuple
             for (_batch_idx, (fine_proj_ctx, challenges)) in fine_proj_contexts
                 .sumchecks

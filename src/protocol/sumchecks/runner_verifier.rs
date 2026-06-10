@@ -27,8 +27,8 @@ fn batch_claims(
     claims: &[RingElement],
     rc_commitment_inner: &[RingElement],
     rc_opening_inner: &[RingElement],
-    rc_projection_inner: Option<&[RingElement]>,
-    rcs_projection_1_inner: Option<(&[RingElement], &[RingElement])>,
+    rc_coarse_projection_inner: Option<&[RingElement]>,
+    rc_fine_projection_inner: Option<(&[RingElement], &[RingElement])>,
     rcs_projection_1_constant_term_claims: Option<&[RingElement]>,
     norm_claim: &RingElement,
     most_inner_norm_claim: &RingElement,
@@ -51,12 +51,12 @@ fn batch_claims(
         idx += 1;
     }
 
-    if rc_projection_inner.is_some() {
+    if rc_coarse_projection_inner.is_some() {
         // CoarseProj: zero claim (difference sumcheck)
         idx += 1;
     }
 
-    if rcs_projection_1_inner.is_some() {
+    if rc_fine_projection_inner.is_some() {
         // FineProj-consistency: zero claim (difference sumcheck) + consistence between ct comm and bp comm
         for i in 0..NOF_BATCHES {
             idx += 1;
@@ -72,9 +72,9 @@ fn batch_claims(
     for (recursion_idx, rc_inner) in [
         Some(rc_commitment_inner),
         Some(rc_opening_inner),
-        rc_projection_inner,
-        rcs_projection_1_inner.map(|(rc_ct, _)| rc_ct),
-        rcs_projection_1_inner.map(|(_, rc_bp)| rc_bp),
+        rc_coarse_projection_inner,
+        rc_fine_projection_inner.map(|(rc_ct, _)| rc_ct),
+        rc_fine_projection_inner.map(|(_, rc_bp)| rc_bp),
     ]
     .iter()
     .enumerate()
@@ -147,11 +147,11 @@ pub fn sumcheck_verifier(
         ProjectionMatrix::new(config.projection_ratio, config.projection_height);
 
     projection_matrix.sample(hash_wrapper);
-    if let Some(rc_projection_inner) = &round_proof.rc_projection_inner {
-        hash_wrapper.update_with_ring_element_slice(rc_projection_inner);
+    if let Some(rc_coarse_projection_inner) = &round_proof.rc_coarse_projection_inner {
+        hash_wrapper.update_with_ring_element_slice(rc_coarse_projection_inner);
     }
     let challenges_3_1 = if let Some((rcs_projection_1_ct, rcs_projection_1_batched)) =
-        &round_proof.rcs_projection_1_inner
+        &round_proof.rc_fine_projection_inner
     {
         hash_wrapper.update_with_ring_element_slice(rcs_projection_1_ct);
         let challenges_3_1: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] =
@@ -234,9 +234,9 @@ pub fn sumcheck_verifier(
         claims,
         rc_commitment,
         &round_proof.rc_opening_inner,
-        round_proof.rc_projection_inner.as_deref(),
+        round_proof.rc_coarse_projection_inner.as_deref(),
         round_proof
-            .rcs_projection_1_inner
+            .rc_fine_projection_inner
             .as_ref()
             .map(|(a, b)| (a.as_slice(), b.as_slice())),
         round_proof.constant_term_claims.as_deref(),

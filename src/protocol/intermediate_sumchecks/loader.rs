@@ -16,7 +16,7 @@ pub fn load_intermediate_sumcheck_data(
     conjugated_combined_witness: &[RingElement],
     evaluation_points_inner: &[StructuredRow],
     combination: &[RingElement],
-    challenges_batching_projection_1: &[BatchedProjectionChallenges; NOF_BATCHES],
+    fine_proj_batching_challenges: &[BatchedProjectionChallenges; NOF_BATCHES],
     qe: &[QuadraticExtension; HALF_DEGREE],
 ) {
     let expected_witness_len = config.witness_height * config.witness_decomposition_chunks;
@@ -56,7 +56,7 @@ pub fn load_intermediate_sumcheck_data(
             .load_from(&PreprocessedRow::from_structured_row(eval_point).preprocessed_row);
     }
 
-    for (challenge, fine_proj_sc) in challenges_batching_projection_1
+    for (challenge, fine_proj_sc) in fine_proj_batching_challenges
         .iter()
         .zip(sumcheck_context.fine_proj_sumchecks.iter())
     {

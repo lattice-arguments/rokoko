@@ -1,6 +1,6 @@
 use crate::common::{config::MOD_Q, ring_arithmetic::RingElement};
 
-pub fn inf_norm(vec: &Vec<RingElement>) -> u64 {
+pub fn inf_norm(vec: &[RingElement]) -> u64 {
     vec.iter()
         .map(|el| {
             let mut el_cloned = el.clone();
@@ -23,7 +23,7 @@ pub fn inf_norm(vec: &Vec<RingElement>) -> u64 {
         .unwrap_or(0)
 }
 
-pub fn l2_norm(vec: &Vec<RingElement>) -> f64 {
+pub fn l2_norm(vec: &[RingElement]) -> f64 {
     let mut sum = 0u64;
     for el in vec {
         let mut el_cloned = el.clone();
@@ -36,7 +36,7 @@ pub fn l2_norm(vec: &Vec<RingElement>) -> f64 {
     (sum as f64).sqrt() as f64
 }
 
-pub fn l2_norm_coeffs(vec: &Vec<RingElement>) -> f64 {
+pub fn l2_norm_coeffs(vec: &[RingElement]) -> f64 {
     let mut sum = 0u64;
     for el in vec {
         for &x in el.v.map(|x| x).iter() {
