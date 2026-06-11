@@ -10,46 +10,34 @@ use tracing::Subscriber;
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::registry::{LookupSpan, SpanRef};
 
-/// Matching rule per token: `n == tok` or `n` starts with `"{tok}::"`. Empty
-/// focus = no filter.
+/// `n == tok`, or `n` starts with `"{tok}::"`.
+pub(crate) fn matches_token(n: &str, tok: &str) -> bool {
+    n == tok || n.strip_prefix(tok).is_some_and(|rest| rest.starts_with("::"))
+}
+
+/// Empty `focus` means no filter (everything matches).
 pub(crate) fn is_in_focus<S>(span: &SpanRef<'_, S>, focus: &[String]) -> bool
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    if focus.is_empty() {
-        return true;
-    }
+    focus.is_empty() || outermost_matching_ancestor(span, focus).is_some()
+}
+
+fn outermost_matching_ancestor<S>(span: &SpanRef<'_, S>, tokens: &[String]) -> Option<String>
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    let mut root = None;
     for ancestor in span.scope() {
         let n = ancestor.name();
-        for tok in focus {
-            if n == tok || n.starts_with(&format!("{tok}::")) {
-                return true;
-            }
+        if tokens.iter().any(|tok| matches_token(n, tok)) {
+            root = Some(n.to_string());
         }
     }
-    false
+    root
 }
 
 const MAX_LIVE_DEPTH: usize = 2;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Mode {
-    Tree,
-    Linear,
-}
-
-impl Mode {
-    fn from_env() -> Self {
-        match std::env::var("ROKOKO_TRACE_MODE")
-            .ok()
-            .as_deref()
-            .map(str::trim)
-        {
-            Some("linear") => Mode::Linear,
-            _ => Mode::Tree,
-        }
-    }
-}
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 struct EdgeKey {
@@ -65,28 +53,42 @@ struct EdgeAggregate {
 
 type EdgeMap = HashMap<EdgeKey, EdgeAggregate>;
 
+type LinearBuffers = HashMap<String, Vec<String>>;
+
 pub struct ConsoleLayer {
     edges: Arc<Mutex<EdgeMap>>,
+    root_order: Arc<Mutex<Vec<String>>>,
+    linear_buffers: Arc<Mutex<LinearBuffers>>,
     focus: Vec<String>,
-    mode: Mode,
+    linear_phases: Vec<String>,
 }
 
 pub struct ConsoleSummaryGuard {
     edges: Arc<Mutex<EdgeMap>>,
-    mode: Mode,
+    root_order: Arc<Mutex<Vec<String>>>,
+    linear_buffers: Arc<Mutex<LinearBuffers>>,
+    linear_phases: Vec<String>,
 }
 
 impl ConsoleLayer {
-    pub fn new(focus: Vec<String>) -> (Self, ConsoleSummaryGuard) {
+    pub fn new(focus: Vec<String>, linear_phases: Vec<String>) -> (Self, ConsoleSummaryGuard) {
         let edges = Arc::new(Mutex::new(HashMap::new()));
-        let mode = Mode::from_env();
+        let root_order = Arc::new(Mutex::new(Vec::new()));
+        let linear_buffers = Arc::new(Mutex::new(HashMap::new()));
         (
             ConsoleLayer {
                 edges: Arc::clone(&edges),
+                root_order: Arc::clone(&root_order),
+                linear_buffers: Arc::clone(&linear_buffers),
                 focus,
-                mode,
+                linear_phases: linear_phases.clone(),
             },
-            ConsoleSummaryGuard { edges, mode },
+            ConsoleSummaryGuard {
+                edges,
+                root_order,
+                linear_buffers,
+                linear_phases,
+            },
         )
     }
 }
@@ -125,6 +127,24 @@ where
             return;
         }
 
+        let phase = outermost_matching_ancestor(&span, &self.linear_phases);
+        let linear = phase.is_some();
+
+        if let (Some(phase), Some(_)) = (&phase, &parent_name) {
+            let line = format!(
+                "{name:<NAME_END$}  {elapsed}",
+                name = child_name,
+                elapsed = format_duration(elapsed),
+            );
+            self.linear_buffers
+                .lock()
+                .expect("linear_buffers lock poisoned")
+                .entry(phase.clone())
+                .or_default()
+                .push(line);
+            return;
+        }
+
         {
             let mut edges = self.edges.lock().expect("edges lock poisoned");
             let entry = edges
@@ -135,9 +155,15 @@ where
                 .or_default();
             entry.total_ns += elapsed.as_nanos();
             entry.calls += 1;
+            if parent_name.is_none() {
+                let mut order = self.root_order.lock().expect("root_order lock poisoned");
+                if !order.iter().any(|n| n == &child_name) {
+                    order.push(child_name.clone());
+                }
+            }
         }
 
-        if self.mode == Mode::Tree && depth > MAX_LIVE_DEPTH {
+        if linear || depth > MAX_LIVE_DEPTH {
             return;
         }
 
@@ -165,9 +191,6 @@ const HEADER_WIDTH: usize = NAME_END + 2 + TIME_WIDTH;
 
 impl Drop for ConsoleSummaryGuard {
     fn drop(&mut self) {
-        if self.mode == Mode::Linear {
-            return;
-        }
         let edges = self.edges.lock().expect("edges lock poisoned").clone();
         if edges.is_empty() {
             return;
@@ -175,13 +198,23 @@ impl Drop for ConsoleSummaryGuard {
         let mut out = io::stdout().lock();
         let _ = writeln!(out);
 
-        let mut roots: Vec<(String, u128)> = edges
-            .iter()
-            .filter(|(k, _)| k.parent.is_none())
-            .map(|(k, v)| (k.child.clone(), v.total_ns))
+        let root_order = self.root_order.lock().expect("root_order lock poisoned").clone();
+        let roots: Vec<(String, u128)> = root_order
+            .into_iter()
+            .filter_map(|name| {
+                edges
+                    .get(&EdgeKey {
+                        parent: None,
+                        child: name.clone(),
+                    })
+                    .map(|agg| (name, agg.total_ns))
+            })
             .collect();
-        roots.sort_by(|a, b| b.1.cmp(&a.1));
-        roots.dedup_by(|a, b| a.0 == b.0);
+
+        let mut linear_buffers = self
+            .linear_buffers
+            .lock()
+            .expect("linear_buffers lock poisoned");
 
         for (i, (root, total_ns)) in roots.iter().enumerate() {
             if i > 0 {
@@ -194,6 +227,19 @@ impl Drop for ConsoleSummaryGuard {
             let filler_count =
                 HEADER_WIDTH.saturating_sub(prefix.len() + suffix.len());
             let _ = writeln!(out, "{prefix}{}{suffix}", "=".repeat(filler_count));
+
+            let is_linear = self
+                .linear_phases
+                .iter()
+                .any(|tok| matches_token(root, tok));
+            if is_linear {
+                if let Some(lines) = linear_buffers.remove(root) {
+                    for line in lines {
+                        let _ = writeln!(out, "{line}");
+                    }
+                }
+                continue;
+            }
 
             let mut visited = HashSet::new();
             visited.insert(root.clone());

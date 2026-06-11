@@ -66,7 +66,10 @@ pub fn execute() {
     drop(_prover_span);
     let claims = claims.expect("Prover round must return claims when with_claims is true.");
     println!("==== PROVER DONE ===");
-    check_prover_claims_match_witness(&witness, &evaluation_points, &claims);
+    {
+        let _s = tracing::info_span!("verify_claims").entered();
+        check_prover_claims_match_witness(&witness, &evaluation_points, &claims);
+    }
 
     let proof_size_bits = proof.size_in_bits();
     tracing::debug!("Total proof size: {} KB", to_kb(proof_size_bits));

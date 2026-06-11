@@ -28,16 +28,21 @@ pub fn setup_tracing(
 
     // `ROKOKO_PROFILE_FOCUS=commit,sumcheck` restricts the console summary and
     // snapshot to those subtrees; Chrome JSON stays unfiltered (Perfetto scopes visually).
-    let focus: Vec<String> = std::env::var("ROKOKO_PROFILE_FOCUS")
-        .ok()
-        .map(|s| {
-            s.split(',')
-                .map(str::trim)
-                .filter(|t| !t.is_empty())
-                .map(String::from)
-                .collect()
-        })
-        .unwrap_or_default();
+    let parse_csv = |var: &str| -> Vec<String> {
+        std::env::var(var)
+            .ok()
+            .map(|s| {
+                s.split(',')
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+
+    let focus = parse_csv("ROKOKO_PROFILE_FOCUS");
+    let linear_phases = parse_csv("ROKOKO_LINEAR_PHASES");
 
     let mut layers: Vec<Box<dyn Layer<Registry> + Send + Sync>> = Vec::new();
     let mut guards: Vec<Box<dyn Any>> = Vec::new();
@@ -45,7 +50,7 @@ pub fn setup_tracing(
     layers.push(LogLayer.with_filter(filter()).boxed());
 
     if formats.contains(&TracingFormat::Default) {
-        let (console_layer, console_guard) = ConsoleLayer::new(focus.clone());
+        let (console_layer, console_guard) = ConsoleLayer::new(focus.clone(), linear_phases);
         layers.push(console_layer.with_filter(filter()).boxed());
         guards.push(Box::new(console_guard));
     }
