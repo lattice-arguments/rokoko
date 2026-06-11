@@ -220,6 +220,16 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
         self.variable_count
     }
 
+    fn dependence_window_vars(&self) -> usize {
+        if self.suffix > 0 {
+            return self.suffix - 1 + self.data.len().ilog2() as usize;
+        }
+        if self.data.len() <= 1 {
+            return 0;
+        }
+        self.data.len().ilog2() as usize - 1
+    }
+
     fn as_data_slices(&self) -> Option<(&[Self::Element], &[Self::Element])> {
         // Under LS-first, data is interleaved: even indices = val@0, odd = val@1.
         // We can't provide two contiguous halves. Return None so callers
