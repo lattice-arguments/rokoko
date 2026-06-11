@@ -1,9 +1,69 @@
-//! SNARK entry round (paper: Pi^lin on Xi^sum_COM): batches user claims
-//! sum_z sum_t coeff_t * prod_f factor_f(z) = value over MLE[vec(W)] and its
-//! conjugate, reduces them to z_0, z_1 evaluation claims that seed the PCS
-//! chain. Claims target the committed vector itself: nonlinear claims do not
-//! commute with the PCS path's initial norm decomposition, so SNARK witnesses
-//! are committed undecomposed.
+//! SNARK entry round (paper: Pi^lin on Xi^sum_COM).
+//!
+//! The argument's native statement is a batch of *sumcheck claims* about one
+//! committed witness matrix `W`: each [`SnarkClaim`] asserts
+//!
+//! ```text
+//! sum_{z in {0,1}^nu} sum_t coeff_t * prod_{f in t} factor_f(z)  =  value
+//! ```
+//!
+//! over `nu = log2(height * width)` variables, where every factor is either
+//! the multilinear extension of `vec(W)` (or of a *segment* of it, or of its
+//! conjugate) or a public oracle the verifier can evaluate on its own; see
+//! [`ClaimFactor`] and [`PublicFactor`] for the vocabulary. The claims are
+//! batched with transcript randomness into one sumcheck; after `nu` rounds
+//! everything the chain must still prove has been reduced to evaluation
+//! claims at a single random point: the two standard witness evaluations
+//! `z_0, z_1` plus one opening per distinct segment, handed over as
+//! [`ChainInputs`]. [`prove_initial_claims`] and [`verify_initial_claims`]
+//! are the two sides of this interaction; the chain
+//! ([`prover_round`](crate::protocol::parties::prover::prover_round) /
+//! [`verifier_round`](crate::protocol::parties::verifier::verifier_round))
+//! then proves the openings against the commitment and certifies an
+//! aggregate l2 bound on the committed vector.
+//!
+//! # Conventions that bite
+//!
+//! * **Witnesses commit undecomposed.** Nonlinear claims do not commute with
+//!   the PCS path's initial norm decomposition. When a relation needs small
+//!   values, commit the digits and state the recomposition as a claim; the
+//!   chain's norm certificate is what bounds them.
+//! * **Every claim runs over the full cube.** An oracle constant in a
+//!   variable contributes equally to both halves of that variable's sum, so
+//!   a claim "over a segment" picks up a factor `2^k` for the `k` variables
+//!   it ignores; cancel it in the term coefficient (the segment oracles'
+//!   conventions below assume `coeff` carries `inv(2^prefix_len)`).
+//! * **Tensor layers are MSB-first**: layer `j` of a [`PublicFactor::FieldTensor`]
+//!   multiplies index bit `j` counted from the top of the oracle's variable
+//!   block, entry `i` weighing `prod_j ((1-a_j)(1-i_j) + a_j i_j)` with public
+//!   per-index scales folded into layers (replace a layer `a` by `s*a` to
+//!   scale every index with that bit set).
+//! * **Term coefficients are ring elements**, not just scalars: a public
+//!   constant multiplying a whole term (a fixed conjugate element, a packed
+//!   monomial) rides in `coefficient` at no oracle cost.
+//! * **Claim values are ring elements** and the equality is checked as ring
+//!   elements: per-coefficient data (one value per cube position is per
+//!   *element*; positions inside one element live in its coefficients) batches
+//!   through the value, and [`SnarkClaim::ct_zero_from_proof`] supports values
+//!   that only make sense through their constant coefficient.
+//!
+//! # Choosing a public factor
+//!
+//! [`PublicFactor::FieldTensor`] whenever the weights have product structure
+//! (eq-tensors of challenges, geometric digit weights, index-bit selections);
+//! the prover expands it once, the verifier evaluates it in `O(layers)`.
+//! [`PublicFactor::DensePrefixed`] for small arbitrary weight tables (the
+//! verifier evaluation is linear in the length). [`PublicFactor::LazyPrefixed`]
+//! when the prover-side table is large but the verifier has a closed form:
+//! `data` feeds the prover (and is `None` on the verifier), `eval` receives
+//! the final point's middle slice. [`PublicFactor::Structured`] /
+//! [`PublicFactor::Selector`] are the raw forms the chain itself uses.
+//!
+//! For witness sizes between the compiled parameter sets, keep the set's
+//! height and drop column bits
+//! ([`params::witness_cols_for_target`](crate::protocol::params::witness_cols_for_target)).
+//! A worked relation lives in the `ajtai-merkle` example crate; a minimal
+//! end-to-end flow in `parties/executor.rs` (`ROKOKO_MODE=snark`).
 
 use crate::{
     common::{
@@ -122,8 +182,13 @@ impl EvaluationSumcheckData for LazyPublicEvaluation {
     }
 }
 
+/// One factor of a claim term: an oracle evaluated at the common cube point.
 pub enum ClaimFactor {
+    /// MLE of the full committed vector; its evaluation is the standard
+    /// opening z_0.
     Witness,
+    /// MLE of the conjugated vector (X -> X^{-1} per element); the standard
+    /// opening z_1.
     ConjWitness,
     /// MLE of the witness slice under a binary prefix, as its own oracle over
     /// the low variables (constant in the prefix variables). Its final
@@ -144,6 +209,9 @@ pub enum ClaimFactor {
     Public(PublicFactor),
 }
 
+/// `coefficient * prod(factors)`, summed over the cube. The coefficient is a
+/// full ring element: normalization (`inv(2^prefix)` for segment oracles),
+/// batching scalars, and fixed public elements all ride here.
 pub struct ClaimTerm {
     pub coefficient: RingElement,
     pub factors: Vec<ClaimFactor>,
@@ -166,7 +234,7 @@ impl ClaimTerm {
 }
 
 /// One functional-sumcheck claim (paper: f_sc with
-/// sum_z f_sc(MLE[w], MLE[conj w])(z) = value).
+/// `sum_z f_sc(MLE[w], MLE[conj w])(z) = value`).
 pub struct SnarkClaim {
     pub terms: Vec<ClaimTerm>,
     pub value: RingElement,
@@ -178,11 +246,11 @@ pub struct SnarkClaim {
 
 pub struct InitialSumcheckProof {
     pub polys: Vec<Polynomial<QuadraticExtension>>,
-    /// z_0 = MLE[vec(W)](c)
+    /// `z_0 = MLE[vec(W)](c)`
     pub witness_eval: RingElement,
-    /// z_1 = MLE[conj(vec(W))](c)
+    /// `z_1 = MLE[conj(vec(W))](c)`
     pub conj_witness_eval: RingElement,
-    /// MLE[segment](c-tail) per distinct WitnessSegment prefix, in order of
+    /// `MLE[segment](c-tail)` per distinct WitnessSegment prefix, in order of
     /// first appearance in the claims.
     pub segment_evals: Vec<RingElement>,
     /// Values of ct_zero_from_proof claims, in claim order.
@@ -403,6 +471,13 @@ fn chain_inputs(
     }
 }
 
+/// Runs the batched entry sumcheck over `claims` and reduces them to the
+/// evaluation claims the chain proves. The transcript must already contain
+/// the witness commitment (the claims' batching randomness is sampled from
+/// `hash_wrapper`, so everything the claims depend on must be absorbed
+/// first); claims whose value is witness-dependent
+/// ([`SnarkClaim::ct_zero_from_proof`]) are absorbed before the batching
+/// challenges and shipped in [`InitialSumcheckProof::auxiliary_values`].
 pub fn prove_initial_claims(
     witness: &VerticallyAlignedMatrix<RingElement>,
     claims: &[SnarkClaim],
@@ -780,6 +855,12 @@ pub fn prove_initial_claims(
     )
 }
 
+/// The verifier's side of [`prove_initial_claims`]: replays the batching,
+/// checks every sumcheck round, substitutes proof-carried values after
+/// checking their constant coefficient is zero, evaluates all public factors
+/// at the final point, and returns the evaluation claims the chain must
+/// prove. Panics on any mismatch; `claims` must be rebuilt exactly as the
+/// prover built them (same transcript state).
 pub fn verify_initial_claims(
     witness_height: usize,
     witness_width: usize,
