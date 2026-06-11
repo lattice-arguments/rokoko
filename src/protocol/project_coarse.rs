@@ -35,6 +35,39 @@ pub fn prepare_i16_witness(
     }
 }
 
+/// Reference projection in ring arithmetic (no i16 path), for debug checks.
+pub fn project_ring(
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    projection_matrix: &ProjectionMatrix,
+) -> VerticallyAlignedMatrix<RingElement> {
+    let mut image = VerticallyAlignedMatrix::new_zero_preallocated(
+        witness.height / projection_matrix.projection_ratio,
+        witness.width,
+    );
+    let row_len = projection_matrix.projection_ratio * projection_matrix.projection_height;
+    for col in 0..witness.width {
+        for chunk in 0..image.height / projection_matrix.projection_height {
+            for inner_row in 0..projection_matrix.projection_height {
+                let mut acc = RingElement::zero(Representation::IncompleteNTT);
+                for i in 0..row_len {
+                    let (is_positive, is_non_zero) = projection_matrix[(inner_row, i)];
+                    if !is_non_zero {
+                        continue;
+                    }
+                    let src = &witness[(chunk * row_len + i, col)];
+                    if is_positive {
+                        acc += src;
+                    } else {
+                        acc -= src;
+                    }
+                }
+                image[(chunk * projection_matrix.projection_height + inner_row, col)] = acc;
+            }
+        }
+    }
+    image
+}
+
 pub fn project(
     witness_16: &VerticallyAlignedMatrix<Signed16RingElement>,
     projection_matrix: &ProjectionMatrix,
