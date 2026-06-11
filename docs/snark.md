@@ -21,11 +21,9 @@ a batch of sumcheck claims about that vector. The flow is three steps:
    verifier side mirrors the flow: rebuild the same claims (same transcript
    state), `verify_initial_claims`, `verifier_round`.
 
-   The openings hand over in a fixed order: slot 0 is the witness evaluation,
-   slot 1 the conjugated one, then one slot per distinct segment key
-   `(prefix, length, suffix, conj)` in order of first appearance in the
-   claims, padded to a power of two by copies of slot 0 - choose
-   `p_root_aux(nof_openings)` accordingly.
+   The openings hand over in a fixed order and there are always exactly
+   two: slot 0 the witness evaluation, slot 1 the conjugated one - the
+   compiled `P_SNARK` (two openings) fits every relation.
 
 A minimal end-to-end program is `execute_snark` in `parties/executor.rs`
 (`ROKOKO_MODE=snark cargo run ...`).
@@ -41,10 +39,9 @@ sum_{z in {0,1}^nu} sum_t coeff_t * prod_{f in t} factor_f(z)  =  value
 over the full cube of `nu` variables. A term is a coefficient (a ring
 element) times a product of factors; a degree-two term multiplies two
 committed values at the same cube position. There is no other multiplication:
-the claim language is coordinatewise, and relations that multiply values at
-*different* positions must first align them on a shared cube (segments,
-`WitnessSegmentShifted`, committed copies of rearranged data tied back by
-copy claims).
+the claim language is coordinatewise, and relations that multiply values
+at *different* positions must first align them: commit copies of the
+rearranged data and tie them back with copy claims.
 
 ## Shortness is the caller's
 
@@ -69,12 +66,10 @@ Committed factors (`ClaimFactor`):
 
 | variant | reads | opening cost |
 |---|---|---|
-| `Witness` | the full vector | none beyond the standard `z_0` |
-| `ConjWitness` | the conjugated vector (`X -> X^-1` per element) | none beyond the standard `z_1` |
-| `WitnessSegment(prefix)` | the sub-vector under a binary prefix, as an oracle over the low variables | one opening per distinct prefix |
-| `WitnessSegmentShifted(prefix, k)` | the same, data variables sitting above `k` low variables in which it is constant | one opening (the point's matching slice) |
-| `ConjWitnessSegment(prefix)` | conjugate of a segment | one opening |
-| `WitnessSegmentsScaled(parts, k)` | the virtual combination `sum_i scale_i * segment_i` over a shared layout | none: derived from the parts' openings |
+| `Witness` | the full vector | the standard `z_0` |
+| `ConjWitness` | the conjugated vector (`X -> X^-1` per element) | the standard `z_1` |
+| `WitnessSegment(prefix)` | the sub-vector under a binary prefix; the term sums over its block | none (lowers to `eq(prefix, .) x Witness`) |
+| `ConjWitnessSegment(prefix)` | conjugate of a segment | none (lowers against `ConjWitness`) |
 
 Public factors (`PublicFactor`), chosen by weight structure:
 
@@ -95,16 +90,14 @@ opposite end from the MSB-first layer convention.
 
 ## Conventions
 
-- **Full-cube normalization.** Every claim sums over all `nu` variables. A
-  segment oracle is *replicated* over its prefix variables: it answers with
-  the same sub-vector for every prefix assignment. The term therefore picks
-  up a factor `2^k` for the `k` variables in which **every factor of the
-  term** is constant; cancel it in the coefficient with `inv_pow2_q(k)`.
-  For the canonical pairing - a segment against a `FieldTensor` or
-  `DensePrefixed` of the same `prefix_len` - that is
-  `inv_pow2_q(prefix_len)`. When some co-factor varies over the prefix
-  variables (a `Selector`, a full-cube `Dense` weight), there is no
-  multiplicity to cancel: normalize per term, not per factor.
+- **Segment terms are localized; nothing to normalize.** A term holding a
+  `WitnessSegment(prefix)` sums over that segment's block exactly once: the
+  segment lowers internally to `eq(prefix, .)` times the full-vector
+  oracle, so the claim `value` is the plain block sum and no power-of-two
+  bookkeeping ever appears. The lowering costs one factor of term degree
+  (a segment counts as two of the three factors a term may hold) and no
+  opening: the final evaluation reduces to the standard `z_0`/`z_1`. Two
+  factors restricted to the same block share one selector.
 - **Tensor layers are MSB-first.** Layer `j` weighs index bit `j` counted
   from the top of the oracle's variable block; entry `i` weighs
   `prod_j ((1-a_j)(1-i_j) + a_j*i_j)`. Per-index scales fold into layers:
@@ -149,7 +142,7 @@ value zero:
 let layers = sample_qe_layers(&mut hw, seg_vars);     // MSB-first
 SnarkClaim {
     terms: vec![ClaimTerm::scaled(
-        RingElement::constant(inv_pow2_q(seg.length), Representation::IncompleteNTT),
+        RingElement::constant(1, Representation::IncompleteNTT),
         vec![
             ClaimFactor::Public(PublicFactor::FieldTensor {
                 prefix_len: seg.length, suffix_len: 0, layers: Arc::new(layers),
@@ -179,7 +172,6 @@ go into `value` with the same tensor weights, accumulating
 | `weighted_layer(w)` | the pair `(1, w)` as a layer plus its coefficient scale |
 | `embed_qe(v)` | the field scalar as a ring element |
 | `qe_mul`, `qe_one_minus` | field arithmetic on challenges |
-| `inv_pow2_q(k)` | the full-cube normalization constant |
 | `expand_field_tensor(layers)` | the dense tensor, for prover-side tables |
 
 ## Parameters
