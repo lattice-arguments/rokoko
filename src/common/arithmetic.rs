@@ -51,12 +51,16 @@ pub fn pack_i64_to_i16_deg16(dst: &mut [i16], src: &[i64]) {
     debug_assert_eq!(dst.len(), src.len());
     debug_assert!(src.len() % 16 == 0);
 
-    // #[cfg(feature = "debug-decomp")]
-    // {
-    //     for &s in src.iter() {
-    //         assert!(s >= i16::MIN as i64 && s <= i16::MAX as i64);
-    //     }
-    // }
+    #[cfg(feature = "debug-decomp")]
+    {
+        for &s in src.iter() {
+            assert!(
+                s >= i16::MIN as i64 && s <= i16::MAX as i64,
+                "i16 narrowing overflow: {}",
+                s
+            );
+        }
+    }
 
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     {
@@ -334,6 +338,24 @@ pub fn inner_product_into(r: &mut RingElement, a: &Vec<RingElement>, b: &Vec<Rin
         incomplete_ntt_multiplication(&mut temp, x, y);
         *r += &temp;
     }
+}
+
+pub fn pow_mod(base: u64, mut exp: u64) -> u64 {
+    let q = crate::common::config::MOD_Q as u128;
+    let mut acc = 1u128;
+    let mut b = base as u128 % q;
+    while exp > 0 {
+        if exp & 1 == 1 {
+            acc = acc * b % q;
+        }
+        b = b * b % q;
+        exp >>= 1;
+    }
+    acc as u64
+}
+
+pub fn inv_mod(a: u64) -> u64 {
+    pow_mod(a, crate::common::config::MOD_Q - 2)
 }
 
 #[inline]

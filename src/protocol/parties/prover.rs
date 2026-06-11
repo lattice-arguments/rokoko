@@ -112,6 +112,8 @@ pub fn prover_round(
 
     projection_matrix.sample(&mut hash_wrapper);
 
+    #[cfg(feature = "debug-decomp")]
+    let mut dbg_coarse_image: Option<VerticallyAlignedMatrix<RingElement>> = None;
     let rc_coarse_projection = match &config.projection_recursion {
         Projection::Coarse(proj_config) => {
             let t2 = std::time::Instant::now();
@@ -120,6 +122,10 @@ pub fn prover_round(
                 None => &prepare_i16_witness(witness),
             };
             let projection_image = project(witness_i16, &projection_matrix);
+            #[cfg(feature = "debug-decomp")]
+            {
+                dbg_coarse_image = Some(projection_image.clone());
+            }
             println!("  project: {} ms", t2.elapsed().as_millis());
 
             let t3 = std::time::Instant::now();
@@ -190,6 +196,23 @@ pub fn prover_round(
     let t4 = std::time::Instant::now();
     let folded_witness = fold(&witness, &fold_challenge);
     println!("  fold: {} ms", t4.elapsed().as_millis());
+
+    #[cfg(feature = "debug-decomp")]
+    if let Some(image) = &dbg_coarse_image {
+        let folded_image = fold(image, &vec![fold_challenge.clone(); 1].concat());
+        let check = crate::protocol::project_coarse::project_ring(&folded_witness, &projection_matrix);
+        let mismatch = check
+            .data
+            .iter()
+            .zip(folded_image.data.iter())
+            .filter(|(a, b)| a.v != b.v)
+            .count();
+        println!(
+            "  [debug] coarse projection consistency: {} / {} mismatching rows",
+            mismatch,
+            check.data.len()
+        );
+    }
 
     let mut next_round_data = new_vec_zero_preallocated(config.composed_witness_length);
 
@@ -269,9 +292,10 @@ pub fn prover_round(
     // is bound by the transcript before any sumcheck challenge is sampled.
     let pending_commitment = config.next.as_deref().map(|next_config| {
         let base = config_base_from_config(next_config);
-        debug_assert_eq!(
+        assert_eq!(
             next_round_witness.data.len(),
-            base.witness_height() * base.witness_width()
+            base.witness_height() * base.witness_width(),
+            "composed length doesn't match the next round's witness dimensions"
         );
         let basic_commitment =
             commit_basic(&crs, &next_round_witness, base.basic_commitment_rank());

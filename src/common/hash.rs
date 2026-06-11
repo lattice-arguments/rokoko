@@ -23,6 +23,16 @@ impl Default for HashWrapper {
 
 static SEED: &[u8] = b"Smutno mi, Boze";
 impl HashWrapper {
+    #[cfg(feature = "debug-fs")]
+    fn dbg_fs(&self, tag: &str, n: usize) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static C: AtomicUsize = AtomicUsize::new(0);
+        eprintln!("FS[{}] {} n={}", C.fetch_add(1, Ordering::Relaxed), tag, n);
+    }
+    #[cfg(not(feature = "debug-fs"))]
+    #[inline(always)]
+    fn dbg_fs(&self, _tag: &str, _n: usize) {}
+
     pub fn new() -> Self {
         let mut transcript = Hasher::new();
         transcript.update(SEED);
@@ -34,6 +44,7 @@ impl HashWrapper {
 
     /// Absorb a ring element into the transcript.
     pub fn update_with_ring_element(&mut self, element: &RingElement) {
+        self.dbg_fs("update_with_ring_element", 1);
         // hack: treat the u64 slice as raw bytes (native endianness)
         let ptr = element.v.as_ptr() as *const u8;
         let len = element.v.len() * std::mem::size_of::<u64>();
@@ -42,12 +53,14 @@ impl HashWrapper {
     }
 
     pub fn update_with_ring_element_slice(&mut self, elements: &[RingElement]) {
+        self.dbg_fs("update_with_ring_element_slice", elements.len());
         for element in elements {
             self.update_with_ring_element(element);
         }
     }
 
     pub fn update_with_quadratic_extension_element(&mut self, element: &QuadraticExtension) {
+        self.dbg_fs("update_with_quadratic_extension_element", 1);
         // hack: treat the coeffs slice as raw bytes (native endianness)
         let ptr = element.coeffs.as_ptr() as *const u8;
         let len = element.coeffs.len() * std::mem::size_of::<u64>();
@@ -56,21 +69,25 @@ impl HashWrapper {
     }
 
     pub fn update_with_quadratic_extension_slice(&mut self, elements: &[QuadraticExtension]) {
+        self.dbg_fs("update_with_quadratic_extension_slice", elements.len());
         for element in elements {
             self.update_with_quadratic_extension_element(element);
         }
     }
 
     pub fn update_with_bytes(&mut self, bytes: &[u8]) {
+        self.dbg_fs("update_with_bytes", bytes.len());
         self.transcript.update(bytes);
     }
 
     pub fn update_with_u64(&mut self, value: u64) {
+        self.dbg_fs("update_with_u64", 1);
         self.transcript.update(&value.to_le_bytes());
     }
 
     /// Derive `len` bytes of pseudorandomness from the current transcript.
     pub fn sample_bytes(&mut self, len: usize) -> Vec<u8> {
+        self.dbg_fs("sample_bytes", len);
         let mut out = vec![0u8; len];
         self.fill_from_xof(b"bytes", &mut out);
         out
@@ -78,12 +95,14 @@ impl HashWrapper {
 
     /// Convenience helper to sample a u64 challenge.
     pub fn sample_u64(&mut self) -> u64 {
+        self.dbg_fs("sample_u64", 1);
         let mut buf = [0u8; 8];
         self.fill_from_xof(b"u64", &mut buf);
         u64::from_le_bytes(buf)
     }
 
     pub fn sample_u64_mod_q(&mut self) -> u64 {
+        self.dbg_fs("sample_u64_mod_q", 1);
         self.sample_u64() % MOD_Q
     }
 
@@ -139,6 +158,7 @@ impl HashWrapper {
     }
 
     pub fn sample_ring_element_into(&mut self, output: &mut RingElement) {
+        self.dbg_fs("sample_ring_element_into", 1);
         let buf = output.v.as_mut_ptr() as *mut u8;
         let len = output.v.len() * std::mem::size_of::<u64>();
         self.fill_from_xof(b"ring-element", unsafe {
@@ -155,6 +175,7 @@ impl HashWrapper {
     }
 
     pub fn sample_field_element_into(&mut self, output: &mut QuadraticExtension) {
+        self.dbg_fs("sample_field_element_into", 1);
         let buf = output.coeffs.as_mut_ptr() as *mut u8;
         let len = output.coeffs.len() * std::mem::size_of::<u64>();
         self.fill_from_xof(b"field-element", unsafe {
@@ -170,6 +191,7 @@ impl HashWrapper {
         }
     }
     pub fn sample_ring_element_vec_into(&mut self, output: &mut [RingElement]) {
+        self.dbg_fs("sample_ring_element_vec_into", output.len());
         for element in output.iter_mut() {
             self.sample_ring_element_into(element);
         }
@@ -178,6 +200,7 @@ impl HashWrapper {
     }
 
     pub fn sample_ring_element_ntt_slots_same_vec_into(&mut self, output: &mut [RingElement]) {
+        self.dbg_fs("sample_ring_element_ntt_slots_same_vec_into", output.len());
         let mut f = QuadraticExtension::zero();
         for element in output.iter_mut() {
             self.sample_field_element_into(&mut f);
@@ -187,6 +210,7 @@ impl HashWrapper {
     }
 
     pub fn sample_ring_element_ntt_slots_into(&mut self, output: &mut RingElement) {
+        self.dbg_fs("sample_ring_element_ntt_slots_into", 1);
         let mut f = QuadraticExtension::zero();
         self.sample_field_element_into(&mut f);
         field_to_ring_element_into(output, &f);
@@ -194,16 +218,19 @@ impl HashWrapper {
     }
 
     pub fn sample_biased_ternary_ring_element_vec_into(&mut self, output: &mut [RingElement]) {
+        self.dbg_fs("sample_biased_ternary_ring_element_vec_into", output.len());
         for element in output.iter_mut() {
             self.sample_biased_ternary_ring_element_into(element);
         }
     }
     pub fn sample_low_op_norm_ring_into(&mut self, output: &mut RingElement) {
+        self.dbg_fs("sample_low_op_norm_ring_into", 1);
         sample_short_challenge_into(self, output);
         // self.sample_biased_ternary_ring_element_into(output);
     }
 
     pub fn sample_low_op_norm_ring_vec_into(&mut self, output: &mut [RingElement]) {
+        self.dbg_fs("sample_low_op_norm_ring_vec_into", output.len());
         for element in output.iter_mut() {
             self.sample_low_op_norm_ring_into(element);
         }
