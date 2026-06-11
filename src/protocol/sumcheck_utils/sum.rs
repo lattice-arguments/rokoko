@@ -209,10 +209,11 @@ impl EvaluationSumcheckData for SumSumcheckEvaluation {
     type Element = RingElement;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
-        self.result += (
-            self.lhs_evaluation.borrow_mut().evaluate(&point),
-            self.rhs_evaluation.borrow_mut().evaluate(&point),
-        );
+        // Sequential borrows: both children may be the same shared cell.
+        let lhs = self.lhs_evaluation.borrow_mut().evaluate(point).clone();
+        let rhs = self.rhs_evaluation.borrow_mut().evaluate(point).clone();
+        self.result.set_from(&lhs);
+        self.result += &rhs;
         &self.result
     }
 }

@@ -136,6 +136,8 @@ fn check_prover_claims_match_witness(
 pub fn execute_snark() {
     use crate::common::{
         hash::HashWrapper,
+        ring_arithmetic::QuadraticExtension,
+        sumcheck_element::SumcheckElement,
         ring_arithmetic::{Representation, RingElement},
         sampling::sample_random_short_vector,
         structured_row::StructuredRow,
@@ -179,8 +181,8 @@ pub fn execute_snark() {
     let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness);
     println!("TOTAL Commit time: {:?} ns", start.elapsed().as_nanos());
 
-    // Demo claim set: a structured linear claim, a segment-sum claim, and a
-    // degree-2 claim, with values computed from the witness.
+    // Demo claim set: a structured linear claim, a segment-restricted
+    // degree-2 claim, and a scaled conjugate-segment claim.
     let total_vars = (config.witness_height * config.witness_width).ilog2() as usize;
     let n = config.witness_height * config.witness_width;
 
@@ -232,7 +234,56 @@ pub fn execute_snark() {
         value: t2,
     };
 
-    let claims = vec![claim_linear, claim_square];
+    let conj_seg = Prefix {
+        prefix: 2,
+        length: 2,
+    };
+    let (layer, layer_scale) = crate::protocol::snark::weighted_layer(3);
+    let seg_len = n >> conj_seg.length;
+    let seg_vars = seg_len.ilog2() as usize;
+    let mut layers = vec![QuadraticExtension::zero(); seg_vars];
+    let mut hw_pub = HashWrapper::new();
+    hw_pub.update_with_u64(7);
+    for (i, l) in layers.iter_mut().enumerate() {
+        *l = if i == 0 {
+            layer.clone()
+        } else {
+            let mut f = QuadraticExtension::zero();
+            hw_pub.sample_field_element_into(&mut f);
+            f
+        };
+    }
+    let t3 = {
+        let start_idx = conj_seg.prefix * seg_len;
+        let dense = crate::protocol::snark::expand_field_tensor(&layers);
+        let mut acc = RingElement::zero(Representation::IncompleteNTT);
+        let mut temp = RingElement::zero(Representation::IncompleteNTT);
+        for (a, w) in dense
+            .iter()
+            .zip(&witness.data[start_idx..start_idx + seg_len])
+        {
+            temp *= (a, &w.conjugate());
+            acc += &temp;
+        }
+        acc *= &RingElement::constant(layer_scale, Representation::IncompleteNTT);
+        acc
+    };
+    let claim_conj = SnarkClaim {
+        terms: vec![ClaimTerm::scaled(
+            RingElement::constant(layer_scale, Representation::IncompleteNTT),
+            vec![
+                ClaimFactor::Public(PublicFactor::FieldTensor {
+                    prefix_len: conj_seg.length,
+                    suffix_len: 0,
+                    layers: std::sync::Arc::new(layers),
+                }),
+                ClaimFactor::ConjWitnessSegment(conj_seg),
+            ],
+        )],
+        value: t3,
+    };
+
+    let claims = vec![claim_linear, claim_square, claim_conj];
 
     println!("==== SNARK PROVER STARTING ===");
     let start = std::time::Instant::now();

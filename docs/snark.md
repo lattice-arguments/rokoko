@@ -12,8 +12,7 @@ a batch of sumcheck claims about that vector. The flow is three steps:
    are batched with transcript randomness into one sumcheck; after
    `nu = log2(height * width)` rounds, everything left to prove is a set of
    evaluation claims at one random point: the two standard witness
-   evaluations plus one opening per distinct segment, returned as
-   `ChainInputs`.
+   evaluations `z_0` and `z_1`, returned as `ChainInputs`.
 3. **The chain.** `prover_round` / `verifier_round` prove those openings
    against the commitment and certify an aggregate l2 bound on the committed
    vector; pass them the same `HashWrapper` that ran the entry round (the
@@ -177,9 +176,9 @@ go into `value` with the same tensor weights, accumulating
 ## Parameters
 
 `p_root_aux(nof_openings).generate_config()` is the chain as compiled with a
-chosen opening budget (`P_SNARK` is `p_root_aux(2)`); the opening count is
-padded to a power of two, one slot per distinct segment plus the two standard
-evaluations. For witness sizes between the compiled sets, keep the compiled
+chosen opening budget; the chain requires a power-of-two opening count, and
+the entry round always emits exactly two, so `P_SNARK` (`p_root_aux(2)`)
+fits every relation. For witness sizes between the compiled sets, keep the compiled
 `height` and `width` and set `used_cols` of the witness matrix to
 `params::witness_cols_for_target(...)`, leaving the remaining columns zero;
 shrinking `width` itself changes the variable count and breaks the compiled
