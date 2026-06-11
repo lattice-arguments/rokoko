@@ -21,9 +21,9 @@ pub static HALF_WAY_MOD_Q_RING_CF: LazyLock<RingElement> =
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 use std::arch::x86_64::{
-    __m128i, __m512i, __mmask8, _mm512_add_epi16, _mm512_cmpgt_epu64_mask, _mm512_cvtepi64_epi16,
+    __m128i, __m512i, __mmask8, _mm512_cmpgt_epu64_mask, _mm512_cvtepi64_epi16,
     _mm512_load_si512, _mm512_mask_sub_epi64, _mm512_set1_epi64, _mm512_setzero_si512,
-    _mm512_store_si512, _mm512_sub_epi16, _mm_store_si128,
+    _mm512_store_si512, _mm_store_si128,
 };
 
 #[inline(always)]
@@ -161,40 +161,46 @@ pub fn project_one_row_i16_to_u64<const DEGREE: usize>(
     neg: &[u16],
     out_u64: &mut [u64; DEGREE],
 ) {
-    use crate::hexl::bindings::eltwise_reduce_mod;
-
     debug_assert!(DEGREE % 16 == 0);
 
-    unsafe {
-        for j in 0..(DEGREE / 32) {
-            let k = j * 32;
+    use std::arch::x86_64::{
+        __m256i, _mm256_loadu_si256, _mm512_add_epi32, _mm512_cvtepi16_epi32,
+        _mm512_storeu_si512, _mm512_sub_epi32,
+    };
 
-            let mut acc0 = _mm512_setzero_si512();
-            let mut acc1 = _mm512_setzero_si512();
+    // i16 storage, i32 accumulation: lanes stay exact for digit scales up to
+    // 2^15 at projection blocks of 2^16, not just the chain's base-2^7 digits
+    unsafe {
+        for j in 0..(DEGREE / 16) {
+            let k = j * 16;
+
+            let mut acc = _mm512_setzero_si512();
 
             for &i in pos {
-                let v = _mm512_load_si512(
-                    subwitness_i16[i as usize].0.as_ptr().add(k) as *const __m512i
+                let v = _mm256_loadu_si256(
+                    subwitness_i16[i as usize].0.as_ptr().add(k) as *const __m256i
                 );
-                acc0 = _mm512_add_epi16(acc0, v);
+                acc = _mm512_add_epi32(acc, _mm512_cvtepi16_epi32(v));
             }
 
             for &i in neg {
-                let v = _mm512_load_si512(
-                    subwitness_i16[i as usize].0.as_ptr().add(k) as *const __m512i
+                let v = _mm256_loadu_si256(
+                    subwitness_i16[i as usize].0.as_ptr().add(k) as *const __m256i
                 );
-                acc1 = _mm512_sub_epi16(acc1, v);
+                acc = _mm512_sub_epi32(acc, _mm512_cvtepi16_epi32(v));
             }
 
-            let acc = _mm512_add_epi16(acc0, acc1);
-            convert_i16_as_u64(out_u64.as_mut_ptr().add(k), acc);
+            let mut lanes = [0i32; 16];
+            _mm512_storeu_si512(lanes.as_mut_ptr() as *mut __m512i, acc);
+            for (t, &x) in lanes.iter().enumerate() {
+                let x = x as i64;
+                out_u64[k + t] = if x < 0 {
+                    (x + MOD_Q as i64) as u64
+                } else {
+                    x as u64
+                };
+            }
         }
-        eltwise_reduce_mod(
-            out_u64.as_mut_ptr(),
-            out_u64.as_ptr(),
-            out_u64.len() as u64,
-            MOD_Q,
-        );
     }
 }
 
@@ -295,28 +301,6 @@ pub unsafe fn sub_epi16_checked(a: __m512i, b: __m512i) -> __m512i {
     }
 }
 
-/// Unpacks the 32 × `i16` lanes of a `__m512i` into 32 consecutive `u64` values,
-/// mapping negative lanes to their canonical representative mod `Q` (by adding `Q`).
-///
-/// This is the final conversion step of [`project_one_row_i16_to_u64`]: it bridges
-/// the `i16` SIMD accumulator with the `u64` domain expected by [`eltwise_reduce_mod`].
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-#[inline(always)]
-fn convert_i16_as_u64(dst_u64: *mut u64, v16x32: __m512i) {
-    unsafe {
-        let mut tmp = [0i16; 32];
-        _mm512_store_si512(tmp.as_mut_ptr() as *mut __m512i, v16x32);
-
-        let q_i64 = MOD_Q as i64;
-        for lane in 0..32 {
-            let mut r = tmp[lane] as i64;
-            if r < 0 {
-                r += q_i64;
-            }
-            *dst_u64.add(lane) = r as u64;
-        }
-    }
-}
 
 #[inline]
 pub fn inner_product(a: &Vec<RingElement>, b: &Vec<RingElement>) -> RingElement {
