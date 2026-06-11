@@ -112,8 +112,8 @@ pub fn expand_field_tensor(layers: &[QuadraticExtension]) -> Vec<RingElement> {
         .collect()
 }
 
-/// `inv(2^k) mod q`: the coefficient that cancels the multiplicity a factor
-/// constant in `k` summed-out variables picks up over the full cube.
+/// `inv(2^k) mod q`: cancels the `2^k` multiplicity a term picks up over
+/// the `k` variables in which every one of its factors is constant.
 pub fn inv_pow2_q(k: usize) -> u64 {
     use crate::common::arithmetic::{inv_mod, pow_mod};
     inv_mod(pow_mod(2, k as u64))
@@ -175,6 +175,7 @@ pub fn weighted_layer(w: u64) -> (QuadraticExtension, u64) {
     use crate::common::arithmetic::inv_mod;
     use crate::common::config::MOD_Q;
     let scale = (1 + w as u128 % MOD_Q as u128) as u64 % MOD_Q;
+    assert_ne!(scale, 0, "weighted_layer is undefined for w = -1 mod q");
     let mut a = QuadraticExtension::zero();
     a.coeffs[0] = (w as u128 * inv_mod(scale) as u128 % MOD_Q as u128) as u64;
     (a, scale)
@@ -268,8 +269,9 @@ pub struct InitialSumcheckProof {
     pub witness_eval: RingElement,
     /// `z_1 = MLE[conj(vec(W))](c)`
     pub conj_witness_eval: RingElement,
-    /// `MLE[segment](c-tail)` per distinct WitnessSegment prefix, in order of
-    /// first appearance in the claims.
+    /// One evaluation per distinct segment key `(prefix, length, suffix,
+    /// conj)` across all segment variants, in order of first appearance in
+    /// the claims.
     pub segment_evals: Vec<RingElement>,
 }
 
@@ -495,6 +497,54 @@ fn chain_inputs(
 /// your own envelope, absorb them into the transcript before this call,
 /// and perform any structural check on them (a zero constant coefficient,
 /// say) on the verifier side yourself.
+
+/// Structural validation shared by both sides: every segment reference must
+/// fit the cube, and a term may hold at most three non-constant factors (the
+/// round polynomials carry degree three).
+fn validate_claims(claims: &[SnarkClaim], total_vars: usize) {
+    assert!(!claims.is_empty(), "no claims");
+    let check = |p: &Prefix, suffix: usize| {
+        assert!(p.length <= total_vars, "prefix length exceeds the cube");
+        assert!(
+            p.length == 0 || p.prefix < (1usize << p.length),
+            "prefix value exceeds its declared length"
+        );
+        assert!(suffix <= total_vars - p.length, "suffix exceeds the segment");
+    };
+    for claim in claims {
+        assert!(!claim.terms.is_empty(), "claim with no terms");
+        for term in &claim.terms {
+            assert!(!term.factors.is_empty(), "term with no factors");
+            let mut oracles = 0usize;
+            for f in &term.factors {
+                oracles += 1;
+                match f {
+                    ClaimFactor::WitnessSegment(p) | ClaimFactor::ConjWitnessSegment(p) => {
+                        check(p, 0)
+                    }
+                    ClaimFactor::WitnessSegmentShifted(p, s) => check(p, *s),
+                    ClaimFactor::WitnessSegmentsScaled(parts, s) => {
+                        assert!(!parts.is_empty(), "virtual combination with no parts");
+                        for (p, _) in parts {
+                            check(p, *s);
+                        }
+                        let len = parts[0].0.length;
+                        assert!(
+                            parts.iter().all(|(p, _)| p.length == len),
+                            "virtual combination parts of unequal length"
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            assert!(
+                oracles <= 3,
+                "a term holds at most three factors (round polynomials carry degree three)"
+            );
+        }
+    }
+}
+
 pub fn prove_initial_claims(
     witness: &VerticallyAlignedMatrix<RingElement>,
     claims: &[SnarkClaim],
@@ -503,6 +553,7 @@ pub fn prove_initial_claims(
     let n = witness.data.len();
     assert!(n.is_power_of_two());
     let total_vars = n.ilog2() as usize;
+    validate_claims(claims, total_vars);
 
     let mut conjugated = new_vec_zero_preallocated(n);
     witness
@@ -869,11 +920,13 @@ pub fn prove_initial_claims(
 }
 
 /// The verifier's side of [`prove_initial_claims`]: replays the batching,
-/// checks every sumcheck round, substitutes proof-carried values after
-/// checking their constant coefficient is zero, evaluates all public factors
-/// at the final point, and returns the evaluation claims the chain must
-/// prove. Panics on any mismatch; `claims` must be rebuilt exactly as the
-/// prover built them (same transcript state).
+/// checks every sumcheck round, evaluates all public factors at the final
+/// point, and returns the evaluation claims the chain must prove. Claim
+/// values are used as given: witness-dependent values travel in the
+/// caller's envelope, and any structural check on them (a zero constant
+/// coefficient, say) is the caller's, on this side. Panics on any
+/// mismatch; `claims` must be rebuilt exactly as the prover built them
+/// (same transcript state).
 pub fn verify_initial_claims(
     witness_height: usize,
     witness_width: usize,
@@ -882,7 +935,9 @@ pub fn verify_initial_claims(
     hash_wrapper: &mut HashWrapper,
 ) -> ChainInputs {
     let n = witness_height * witness_width;
+    assert!(n.is_power_of_two());
     let total_vars = n.ilog2() as usize;
+    validate_claims(claims, total_vars);
     assert_eq!(proof.polys.len(), total_vars);
 
     // Mirror of the prover's gadget tree over claimed evaluations
@@ -1082,6 +1137,12 @@ pub fn verify_initial_claims(
     let mut evaluation_points: Vec<RingElement> = vec![];
     for poly_over_field in proof.polys.iter() {
         hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
+
+        // The transcript absorbs the full coefficient array; the unused tail
+        // must be zero so the prover cannot vary it under one absorption.
+        for c in &poly_over_field.coefficients[poly_over_field.num_coefficients..] {
+            assert_eq!(c, &QuadraticExtension::zero(), "round polynomial tail nonzero");
+        }
 
         assert_eq!(
             poly_over_field.at_zero() + poly_over_field.at_one(),

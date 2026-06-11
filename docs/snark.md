@@ -16,8 +16,16 @@ a batch of sumcheck claims about that vector. The flow is three steps:
    `ChainInputs`.
 3. **The chain.** `prover_round` / `verifier_round` prove those openings
    against the commitment and certify an aggregate l2 bound on the committed
-   vector. The verifier side mirrors the flow: rebuild the same claims (same
-   transcript state), `verify_initial_claims`, `verifier_round`.
+   vector; pass them the same `HashWrapper` that ran the entry round (the
+   `Some(hash_wrapper)` argument), so the transcript continues unbroken. The
+   verifier side mirrors the flow: rebuild the same claims (same transcript
+   state), `verify_initial_claims`, `verifier_round`.
+
+   The openings hand over in a fixed order: slot 0 is the witness evaluation,
+   slot 1 the conjugated one, then one slot per distinct segment key
+   `(prefix, length, suffix, conj)` in order of first appearance in the
+   claims, padded to a power of two by copies of slot 0 - choose
+   `p_root_aux(nof_openings)` accordingly.
 
 A minimal end-to-end program is `execute_snark` in `parties/executor.rs`
 (`ROKOKO_MODE=snark cargo run ...`).
@@ -34,8 +42,9 @@ over the full cube of `nu` variables. A term is a coefficient (a ring
 element) times a product of factors; a degree-two term multiplies two
 committed values at the same cube position. There is no other multiplication:
 the claim language is coordinatewise, and relations that multiply values at
-*different* positions must first align them (segments, shifted segments,
-operand lists).
+*different* positions must first align them on a shared cube (segments,
+`WitnessSegmentShifted`, committed copies of rearranged data tied back by
+copy claims).
 
 ## Shortness is the caller's
 
@@ -72,17 +81,30 @@ Public factors (`PublicFactor`), chosen by weight structure:
 | variant | weights | prover cost | verifier cost |
 |---|---|---|---|
 | `FieldTensor { layers, .. }` | product-structured (eq-tensors, geometric scales) | one dense expansion per `Arc` | `O(layers)` |
-| `DensePrefixed(prefix, suffix, data)` | small arbitrary tables | the table itself | linear in the table |
+| `Dense(data)` | arbitrary full-cube tables (tests, small relations) | the table itself | linear in the table |
+| `DensePrefixed(prefix, suffix, data)` | small arbitrary tables over a segment | the table itself | linear in the table |
 | `LazyPrefixed { data, eval, .. }` | large tables with a closed form | `data` (set `None` on the verifier) | the `eval` closure at the final point |
-| `Structured` / `Selector` | raw tensor rows / `eq(prefix, .)` | none | `O(nu)` |
+| `Structured` | raw tensor rows over all variables | one dense expansion per use (not shared) | `O(nu)` |
+| `Selector` | `eq(prefix, .)` | none (lazy gadget) | `O(nu)` |
+
+`LazyPrefixed`'s closure has type
+`Arc<dyn Fn(&[RingElement], &[QuadraticExtension]) -> RingElement>`; it
+receives only the middle (data-variable) slice of the final point, in both
+ring and field form, and the slice is **LS-first** (round order) - the
+opposite end from the MSB-first layer convention.
 
 ## Conventions
 
 - **Full-cube normalization.** Every claim sums over all `nu` variables. A
-  factor constant in `k` of them contributes to both halves of each unused
-  variable's sum, so the term picks up `2^k`; cancel it in the coefficient
-  with `inv_pow2_q(k)` (the segment conventions assume the coefficient
-  carries `inv_pow2_q(prefix_len)`).
+  segment oracle is *replicated* over its prefix variables: it answers with
+  the same sub-vector for every prefix assignment. The term therefore picks
+  up a factor `2^k` for the `k` variables in which **every factor of the
+  term** is constant; cancel it in the coefficient with `inv_pow2_q(k)`.
+  For the canonical pairing - a segment against a `FieldTensor` or
+  `DensePrefixed` of the same `prefix_len` - that is
+  `inv_pow2_q(prefix_len)`. When some co-factor varies over the prefix
+  variables (a `Selector`, a full-cube `Dense` weight), there is no
+  multiplicity to cancel: normalize per term, not per factor.
 - **Tensor layers are MSB-first.** Layer `j` weighs index bit `j` counted
   from the top of the oracle's variable block; entry `i` weighs
   `prod_j ((1-a_j)(1-i_j) + a_j*i_j)`. Per-index scales fold into layers:
@@ -96,11 +118,15 @@ Public factors (`PublicFactor`), chosen by weight structure:
   `ct(u * conj(v)) = sum_c u_c v_c`, integer statements about coefficients
   (binariness: `sum x_c(x_c - 1) = 0`) become claims whose value the
   verifier cannot compute. The front end takes `value` as given on both
-  sides: ship such values in your own envelope, absorb them into the
-  transcript before proving and verifying, and perform the structural check
-  (a zero constant coefficient, say) on the verifier side yourself. The
-  no-wrap precondition for integer readings comes from the certified l2
-  bound.
+  sides and binds every claim value to the transcript before sampling the
+  batching randomness; what it cannot do for you is rebuild the value on
+  the verifier side (ship it in your own envelope) or check its structure
+  (a zero constant coefficient, say) - both are yours. The same goes for
+  any other prover-shipped claim component: the soundness model assumes the
+  verifier derives the claim set itself, so anything it instead receives
+  (a coefficient, a public table) must be absorbed into the transcript
+  before the prove and verify calls. The no-wrap precondition for integer
+  readings comes from the certified l2 bound.
 - **Transcript order.** Absorb the commitment before building claims (their
   batching randomness samples from the transcript). The verifier must
   rebuild claims in exactly the prover's order.
@@ -135,12 +161,13 @@ SnarkClaim {
 }
 ```
 
-A degree-two term multiplies two committed factors under a public weight; a
-recomposition (digits to value) is the same linear shape with
-`weighted_layer(base)` layers on the digit index and the scalar scales folded
-into the coefficient. Values the verifier must compute (public boundary data)
-go into `value` with the same tensor weights, e.g.
-`embed_qe(&tensor_at(&layers, i)) * public_i` summed over the public rows.
+A degree-two term multiplies two committed factors under a public weight (a
+term holds at most three non-constant factors: the round polynomials carry
+degree three). A recomposition (digits to value) is the same linear shape
+with one weighted layer per digit-index bit, `weighted_layer(base.pow(1 << l))`
+for bit `l` MSB-first, the scalar scales folded into the coefficient. Values the verifier must compute (public boundary data)
+go into `value` with the same tensor weights, accumulating
+`&embed_qe(&tensor_at(&layers, i)) * &public_i` over the public rows.
 
 ## Helpers
 
@@ -160,5 +187,8 @@ go into `value` with the same tensor weights, e.g.
 `p_root_aux(nof_openings).generate_config()` is the chain as compiled with a
 chosen opening budget (`P_SNARK` is `p_root_aux(2)`); the opening count is
 padded to a power of two, one slot per distinct segment plus the two standard
-evaluations. For witness sizes between the compiled sets, keep the set's
-height and drop column bits (`params::witness_cols_for_target`).
+evaluations. For witness sizes between the compiled sets, keep the compiled
+`height` and `width` and set `used_cols` of the witness matrix to
+`params::witness_cols_for_target(...)`, leaving the remaining columns zero;
+shrinking `width` itself changes the variable count and breaks the compiled
+chain.
