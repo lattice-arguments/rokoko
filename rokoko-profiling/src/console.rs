@@ -32,6 +32,25 @@ where
 
 const MAX_LIVE_DEPTH: usize = 2;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Tree,
+    Linear,
+}
+
+impl Mode {
+    fn from_env() -> Self {
+        match std::env::var("ROKOKO_TRACE_MODE")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+        {
+            Some("linear") => Mode::Linear,
+            _ => Mode::Tree,
+        }
+    }
+}
+
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 struct EdgeKey {
     parent: Option<String>,
@@ -49,21 +68,25 @@ type EdgeMap = HashMap<EdgeKey, EdgeAggregate>;
 pub struct ConsoleLayer {
     edges: Arc<Mutex<EdgeMap>>,
     focus: Vec<String>,
+    mode: Mode,
 }
 
 pub struct ConsoleSummaryGuard {
     edges: Arc<Mutex<EdgeMap>>,
+    mode: Mode,
 }
 
 impl ConsoleLayer {
     pub fn new(focus: Vec<String>) -> (Self, ConsoleSummaryGuard) {
         let edges = Arc::new(Mutex::new(HashMap::new()));
+        let mode = Mode::from_env();
         (
             ConsoleLayer {
                 edges: Arc::clone(&edges),
                 focus,
+                mode,
             },
-            ConsoleSummaryGuard { edges },
+            ConsoleSummaryGuard { edges, mode },
         )
     }
 }
@@ -114,7 +137,7 @@ where
             entry.calls += 1;
         }
 
-        if depth > MAX_LIVE_DEPTH {
+        if self.mode == Mode::Tree && depth > MAX_LIVE_DEPTH {
             return;
         }
 
@@ -142,6 +165,9 @@ const HEADER_WIDTH: usize = NAME_END + 2 + TIME_WIDTH;
 
 impl Drop for ConsoleSummaryGuard {
     fn drop(&mut self) {
+        if self.mode == Mode::Linear {
+            return;
+        }
         let edges = self.edges.lock().expect("edges lock poisoned").clone();
         if edges.is_empty() {
             return;
