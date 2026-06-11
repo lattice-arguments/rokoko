@@ -1,0 +1,14 @@
+[package]
+name = "ajtai-merkle"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+p-26 = ["rokoko/p-26"]
+p-28 = ["rokoko/p-28"]
+p-30 = ["rokoko/p-30"]
+unsafe-sumcheck = ["rokoko/unsafe-sumcheck"]
+debug-decomp = ["rokoko/debug-decomp"]
+
+[dependencies]
+rokoko = { path = "..", features = ["incomplete-rexl"] }
