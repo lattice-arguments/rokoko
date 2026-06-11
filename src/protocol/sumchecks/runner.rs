@@ -61,7 +61,7 @@ pub fn sumcheck(
     Option<Vec<RingElement>>,
 ) {
     let projection_matrix_flatter = match config.projection_recursion {
-        Projection::Coarse(_) => {
+        Projection::Coarse(_) | Projection::CoarseWide(_) => {
             let projection_height_flat = config.witness_height / config.projection_ratio;
             let mut projection_matrix_flatter_base =
                 new_vec_zero_preallocated(projection_height_flat.ilog2() as usize);

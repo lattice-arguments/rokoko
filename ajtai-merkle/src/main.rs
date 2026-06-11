@@ -37,8 +37,32 @@ use rokoko::protocol::sumchecks::builder_verifier::init_verifier;
 
 const IN: usize = 32;
 const OUT: usize = 2;
-const DIGITS: usize = 4;
-const BASE_LOG: u64 = 13;
+
+/// The witness rescaling. The plain variant commits 4 base-2^13 digits per
+/// element (an arity-4 tree). The projected variant commits at the chain's
+/// native digit scale, 8 base-2^7 digits (an arity-2 tree): the coarse
+/// projection accumulates packed digits in 16-bit lanes, which is exact at
+/// this scale and would wrap at 2^13.
+#[derive(Clone, Copy)]
+struct Scale {
+    digits: usize,
+    base_log: u64,
+}
+
+impl Scale {
+    fn arity(&self) -> usize {
+        IN / (OUT * self.digits)
+    }
+}
+
+const PLAIN: Scale = Scale {
+    digits: 4,
+    base_log: 13,
+};
+const PROJECTED: Scale = Scale {
+    digits: 8,
+    base_log: 7,
+};
 
 fn zero() -> RingElement {
     RingElement::zero(Representation::IncompleteNTT)
@@ -141,10 +165,16 @@ struct Tree {
     root: [RingElement; OUT],
 }
 
-fn build_tree(a: &[Vec<RingElement>], data: &[RingElement]) -> Tree {
-    assert_eq!((data.len() / 8).count_ones(), 1);
-    assert_eq!((data.len() / 8).trailing_zeros() % 2, 0, "node count must be a power of 4");
-    let mut layers = vec![decompose(data, BASE_LOG, DIGITS)];
+fn build_tree(a: &[Vec<RingElement>], data: &[RingElement], sc: Scale) -> Tree {
+    let arity = sc.arity();
+    let leaf_nodes = data.len() * sc.digits / IN;
+    assert!(leaf_nodes.is_power_of_two());
+    assert_eq!(
+        leaf_nodes.trailing_zeros() as usize % arity.trailing_zeros() as usize,
+        0,
+        "node count must be a power of the arity"
+    );
+    let mut layers = vec![decompose(data, sc.base_log, sc.digits)];
     loop {
         let inputs = layers.last().unwrap();
         let m_nodes = inputs.len() / IN;
@@ -158,15 +188,15 @@ fn build_tree(a: &[Vec<RingElement>], data: &[RingElement]) -> Tree {
                 root: [outputs[0].clone(), outputs[1].clone()],
             };
         }
-        let digits = decompose(&outputs, BASE_LOG, DIGITS);
-        // output (m, r, j) lands at preimage slot (s, r, j) of node m / 4
+        let digits = decompose(&outputs, sc.base_log, sc.digits);
+        // output (m, r, j) lands at preimage slot (s, r, j) of node m / arity
         let mut next = vec![zero(); digits.len()];
         for m in 0..m_nodes {
-            let (mn, s) = (m / 4, m % 4);
+            let (mn, s) = (m / arity, m % arity);
             for r in 0..OUT {
-                for j in 0..DIGITS {
-                    next[(mn * IN) + (s * 8) + (r * DIGITS) + j] =
-                        digits[(m * OUT + r) * DIGITS + j].clone();
+                for j in 0..sc.digits {
+                    next[(mn * IN) + (s * OUT * sc.digits) + (r * sc.digits) + j] =
+                        digits[(m * OUT + r) * sc.digits + j].clone();
                 }
             }
         }
@@ -216,6 +246,7 @@ fn build_claims(
     tree_dims: &[usize],
     root: &[RingElement; OUT],
     witness: &MerkleWitness,
+    sc: Scale,
     hw: &mut HashWrapper,
     materialize: bool,
 ) -> Vec<SnarkClaim> {
@@ -282,14 +313,20 @@ fn build_claims(
         let mut value = zero();
         if l + 1 < depth {
             // recomposition over the next layer: position (m', s, r, j) with
-            // (m', s) = m carries weight eq(alpha, m) tau_r 2^{13 j}
-            let (a1, s1) = weighted_layer(pow_mod(2, 2 * BASE_LOG));
-            let (a0, s0) = weighted_layer(pow_mod(2, BASE_LOG));
+            // (m', s) = m carries weight eq(alpha, m) tau_r base^j
+            let jb = sc.digits.ilog2() as usize;
+            let mut j_layers = vec![];
+            let mut j_scale: u128 = 1;
+            for t in (0..jb).rev() {
+                let (aj, sj) = weighted_layer(pow_mod(2, (1 << t) as u64 * sc.base_log));
+                j_layers.push(aj);
+                j_scale = j_scale * sj as u128 % Q as u128;
+            }
             let layers: Vec<QuadraticExtension> =
-                [alpha.clone(), rho.clone(), vec![a1, a0]].concat();
+                [alpha.clone(), rho.clone(), j_layers].concat();
             let pref_next = witness.segments[l + 1].length;
             let mut coeff = RingElement::constant(
-                (s1 as u128 * s0 as u128 % Q as u128) as u64,
+                j_scale as u64,
                 Representation::IncompleteNTT,
             );
             coeff *= &RingElement::constant(inv_pow2_q(pref_next), Representation::IncompleteNTT);
@@ -323,23 +360,30 @@ fn build_claims(
 
 fn main() {
     rokoko::common::init_common();
-    let with_projection = std::env::var("MERKLE_PROJECTION").is_ok();
-    let config = if with_projection {
-        &*params::P_MERKLE_PROJECTED
-    } else {
-        &*params::P_MERKLE
+    // MERKLE_PROJECTION=16: strict l2 via the i16 projection kernel, the
+    // witness rescaled to the chain's base-2^7 digits (arity-2 tree).
+    // MERKLE_PROJECTION=32: strict l2 via the wide-lane kernel, the witness
+    // staying at base-2^13 (arity-4 tree). Unset: no projection, base-2^13.
+    let mode = std::env::var("MERKLE_PROJECTION").ok();
+    let (config, sc) = match mode.as_deref() {
+        None => (&*params::P_MERKLE, PLAIN),
+        Some("16") => (&*params::P_MERKLE_PROJECTED_16, PROJECTED),
+        Some("32") => (&*params::P_MERKLE_PROJECTED_32, PLAIN),
+        Some(other) => panic!("MERKLE_PROJECTION must be 16 or 32, got {other}"),
     };
     let config = match config {
         Config::Sumcheck(config) => config,
         _ => panic!("Expected sumcheck config at the top level."),
     };
     let n = config.witness_height * config.witness_width;
-    let d = n / 8;
+    let d = n / (2 * sc.digits);
     println!(
-        "Ajtai-Merkle: d = 2^{} data elements ({} MB), projection: {}",
+        "Ajtai-Merkle: d = 2^{} data elements ({} MB), digits {}x2^{}, projection: {}",
         d.ilog2(),
         d * 2 * HALF_DEGREE * 50 / 8 / 1_000_000,
-        with_projection,
+        sc.digits,
+        sc.base_log,
+        mode.as_deref().unwrap_or("none"),
     );
 
     let a = public_matrix();
@@ -348,7 +392,7 @@ fn main() {
         .collect();
 
     let t = std::time::Instant::now();
-    let tree = build_tree(&a, &data);
+    let tree = build_tree(&a, &data, sc);
     let tree_dims: Vec<usize> = tree.layers.iter().map(|l| l.len() / IN).collect();
     println!(
         "Tree built: {} ms ({} layers, root public)",
@@ -376,7 +420,7 @@ fn main() {
             .rc_commitment_with_aux
             .most_inner_commitment(),
     );
-    let claims = build_claims(&a, &tree_dims, &tree.root, &witness, &mut hw, true);
+    let claims = build_claims(&a, &tree_dims, &tree.root, &witness, sc, &mut hw, true);
     let (proof, chain_inputs) = prove_initial_claims(&witness.matrix, &claims, &mut hw);
     println!(
         "Entry sumcheck: {} ms ({} claims, {} openings)",
@@ -400,7 +444,7 @@ fn main() {
     let t = std::time::Instant::now();
     let mut hw_v = HashWrapper::new();
     hw_v.update_with_ring_element_slice(&rc_commitment);
-    let claims_v = build_claims(&a, &tree_dims, &tree.root, &witness, &mut hw_v, false);
+    let claims_v = build_claims(&a, &tree_dims, &tree.root, &witness, sc, &mut hw_v, false);
     let inputs_v = verify_initial_claims(
         config.witness_height,
         config.witness_width,
@@ -437,23 +481,35 @@ mod params {
     pub static P_MERKLE: LazyLock<Config> =
         LazyLock::new(|| p_root_aux(16).generate_config());
 
-    /// With the coarse entry projection: a transcript-sampled random
-    /// projection of the trace is committed and checked, making the l2 bound
-    /// on the digits strict.
-    pub static P_MERKLE_PROJECTED: LazyLock<Config> = LazyLock::new(|| {
+    fn projected(nof_openings: usize, wide: bool) -> Config {
+        let recursion = AuxRecursionConfig {
+            decomposition_base_log: cfg_p30(7, 6),
+            decomposition_chunks: 4,
+            rank: 2,
+            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        };
         AuxSumcheckConfig {
             projection_ratio: per_config(2usize.pow(5), 2usize.pow(6), 2usize.pow(7)),
-            projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
-                decomposition_base_log: cfg_p30(7, 6),
-                decomposition_chunks: 4,
-                rank: 2,
-                next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
-            }),
+            projection_recursion: if wide {
+                AuxProjection::CoarseWide(recursion)
+            } else {
+                AuxProjection::Coarse(recursion)
+            },
             next: Some(Box::new(AuxConfig::Sumcheck(M_1.clone()))),
-            ..p_root_aux(16)
+            ..p_root_aux(nof_openings)
         }
         .generate_config()
-    });
+    }
+
+    /// Strict l2 with the standard i16 projection kernel: the witness must
+    /// carry base-2^7 digits, an arity-2 tree (deeper, twice the trace).
+    pub static P_MERKLE_PROJECTED_16: LazyLock<Config> =
+        LazyLock::new(|| projected(32, false));
+
+    /// Strict l2 with the wide-lane kernel: the witness keeps its base-2^13
+    /// digits at about half the kernel throughput.
+    pub static P_MERKLE_PROJECTED_32: LazyLock<Config> =
+        LazyLock::new(|| projected(16, true));
 
     // the projection image is 1/16 of the witness in committed volume, which
     // exceeds the standard interior headroom: the cascade runs enlarged, two
@@ -505,55 +561,64 @@ mod params {
 mod tests {
     use super::*;
 
-    fn tiny_instance() -> (Vec<Vec<RingElement>>, Tree, Vec<usize>, MerkleWitness) {
+    fn tiny_instance(sc: Scale) -> (Vec<Vec<RingElement>>, Tree, Vec<usize>, MerkleWitness) {
         rokoko::common::init_common();
         let a = public_matrix();
         let data: Vec<RingElement> = (0..512)
             .map(|_| RingElement::random(Representation::IncompleteNTT))
             .collect();
-        let tree = build_tree(&a, &data);
+        let tree = build_tree(&a, &data, sc);
         let dims: Vec<usize> = tree.layers.iter().map(|l| l.len() / IN).collect();
-        let witness = place_witness(&tree, 64, 64);
+        let witness = place_witness(&tree, 256, 64);
         (a, tree, dims, witness)
     }
 
-    #[test]
-    fn test_entry_roundtrip() {
-        let (a, tree, dims, witness) = tiny_instance();
+    fn roundtrip(sc: Scale) {
+        let (a, tree, dims, witness) = tiny_instance(sc);
         let mut hw = HashWrapper::new();
-        let claims = build_claims(&a, &dims, &tree.root, &witness, &mut hw, true);
+        let claims = build_claims(&a, &dims, &tree.root, &witness, sc, &mut hw, true);
         let (proof, _) = prove_initial_claims(&witness.matrix, &claims, &mut hw);
         let mut hw_v = HashWrapper::new();
-        let claims_v = build_claims(&a, &dims, &tree.root, &witness, &mut hw_v, false);
-        verify_initial_claims(64, 64, &claims_v, &proof, &mut hw_v);
+        let claims_v = build_claims(&a, &dims, &tree.root, &witness, sc, &mut hw_v, false);
+        verify_initial_claims(256, 64, &claims_v, &proof, &mut hw_v);
+    }
+
+    #[test]
+    fn test_entry_roundtrip_plain_scale() {
+        roundtrip(PLAIN);
+    }
+
+    #[test]
+    fn test_entry_roundtrip_projected_scale() {
+        roundtrip(PROJECTED);
     }
 
     #[test]
     #[should_panic]
     fn test_tampered_leaf_rejected() {
-        let (a, tree, dims, mut witness) = tiny_instance();
+        let (a, tree, dims, mut witness) = tiny_instance(PLAIN);
         let total_vars = (witness.matrix.height * witness.matrix.width).ilog2() as usize;
         let start = witness.segments[0].prefix << (total_vars - witness.segments[0].length);
         witness.matrix.data[start] += &RingElement::constant(1, Representation::IncompleteNTT);
         let mut hw = HashWrapper::new();
-        let claims = build_claims(&a, &dims, &tree.root, &witness, &mut hw, true);
+        let claims = build_claims(&a, &dims, &tree.root, &witness, PLAIN, &mut hw, true);
         let (proof, _) = prove_initial_claims(&witness.matrix, &claims, &mut hw);
         let mut hw_v = HashWrapper::new();
-        let claims_v = build_claims(&a, &dims, &tree.root, &witness, &mut hw_v, false);
-        verify_initial_claims(64, 64, &claims_v, &proof, &mut hw_v);
+        let claims_v = build_claims(&a, &dims, &tree.root, &witness, PLAIN, &mut hw_v, false);
+        verify_initial_claims(256, 64, &claims_v, &proof, &mut hw_v);
     }
 
     #[test]
     #[should_panic]
     fn test_wrong_root_rejected() {
-        let (a, tree, dims, witness) = tiny_instance();
+        let (a, tree, dims, witness) = tiny_instance(PLAIN);
         let mut root = tree.root.clone();
         root[0] += &RingElement::constant(1, Representation::IncompleteNTT);
         let mut hw = HashWrapper::new();
-        let claims = build_claims(&a, &dims, &root, &witness, &mut hw, true);
+        let claims = build_claims(&a, &dims, &root, &witness, PLAIN, &mut hw, true);
         let (proof, _) = prove_initial_claims(&witness.matrix, &claims, &mut hw);
         let mut hw_v = HashWrapper::new();
-        let claims_v = build_claims(&a, &dims, &root, &witness, &mut hw_v, false);
-        verify_initial_claims(64, 64, &claims_v, &proof, &mut hw_v);
+        let claims_v = build_claims(&a, &dims, &root, &witness, PLAIN, &mut hw_v, false);
+        verify_initial_claims(256, 64, &claims_v, &proof, &mut hw_v);
     }
 }

@@ -184,7 +184,7 @@ pub fn sumcheck_verifier(
     }
 
     let projection_matrix_flatter_structured = match config.projection_recursion {
-        Projection::Coarse(_) => {
+        Projection::Coarse(_) | Projection::CoarseWide(_) => {
             let mut projection_matrix_flatter_base =
                 new_vec_zero_preallocated(projection_height_flat.ilog2() as usize);
             hash_wrapper

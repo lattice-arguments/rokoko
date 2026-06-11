@@ -115,13 +115,14 @@ pub fn prover_round(
     #[cfg(feature = "debug-decomp")]
     let mut dbg_coarse_image: Option<VerticallyAlignedMatrix<RingElement>> = None;
     let rc_coarse_projection = match &config.projection_recursion {
-        Projection::Coarse(proj_config) => {
+        Projection::Coarse(proj_config) | Projection::CoarseWide(proj_config) => {
+            let wide = matches!(config.projection_recursion, Projection::CoarseWide(_));
             let t2 = std::time::Instant::now();
             let witness_i16 = match &commitment_with_aux.witness_i16 {
                 Some(witness_i16) => witness_i16,
                 None => &prepare_i16_witness(witness),
             };
-            let projection_image = project(witness_i16, &projection_matrix);
+            let projection_image = project(witness_i16, &projection_matrix, wide);
             #[cfg(feature = "debug-decomp")]
             {
                 dbg_coarse_image = Some(projection_image.clone());
@@ -231,7 +232,7 @@ pub fn prover_round(
     );
 
     match &config.projection_recursion {
-        Projection::Coarse(projection_config) => {
+        Projection::Coarse(projection_config) | Projection::CoarseWide(projection_config) => {
             paste_recursive_commitment(
                 &mut next_round_data,
                 &rc_coarse_projection.as_ref().unwrap(),

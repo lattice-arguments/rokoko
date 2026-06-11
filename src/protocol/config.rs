@@ -27,6 +27,10 @@ pub type CoarseProjectionConfig = RecursionConfig;
 #[derive(Clone)]
 pub enum Projection {
     Coarse(CoarseProjectionConfig),
+    /// Coarse with i32 lane accumulation in the projection kernel: same
+    /// protocol, exact for witness digits beyond the chain's base-2^7 scale
+    /// (up to 2^15) at about half the kernel throughput.
+    CoarseWide(CoarseProjectionConfig),
     Fine(FineProjectionConfig),
     Skip,
 }

@@ -14,6 +14,7 @@ pub struct AuxRecursionConfig {
 #[derive(Clone)]
 pub enum AuxProjection {
     Coarse(AuxRecursionConfig),
+    CoarseWide(AuxRecursionConfig),
     Fine {
         nof_batches: usize,
         recursion_constant_term: AuxRecursionConfig,
@@ -211,7 +212,7 @@ impl AuxSumcheckConfig {
 
         // Projection recursion
         match &self.projection_recursion {
-            AuxProjection::Coarse(config) => {
+            AuxProjection::Coarse(config) | AuxProjection::CoarseWide(config) => {
                 let base_size = self.witness_height * self.witness_width / self.projection_ratio;
                 self.collect_recursion_components(
                     config,
@@ -319,6 +320,11 @@ impl AuxSumcheckConfig {
         // Build projection recursion
         let projection_recursion = match &self.projection_recursion {
             AuxProjection::Coarse(config) => Projection::Coarse(self.build_recursion_config(
+                config,
+                assigned_prefixes,
+                &["projection_recursion".to_string()],
+            )),
+            AuxProjection::CoarseWide(config) => Projection::CoarseWide(self.build_recursion_config(
                 config,
                 assigned_prefixes,
                 &["projection_recursion".to_string()],

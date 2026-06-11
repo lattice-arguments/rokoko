@@ -424,7 +424,7 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
     // Build CoarseProj with Product of split LHS and RHS coefficients
     let coarse_proj_evaluation = {
         match &config.projection_recursion {
-            Projection::Coarse(projection_recursion) => {
+            Projection::Coarse(projection_recursion) | Projection::CoarseWide(projection_recursion) => {
                 let projection_combiner_evaluation = load_combiner_evaluation_data(
                     projection_recursion.decomposition_base_log as u64,
                     projection_recursion.decomposition_chunks,
@@ -781,7 +781,7 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
     ];
 
     match &config.projection_recursion {
-        Projection::Coarse(proj_config) => {
+        Projection::Coarse(proj_config) | Projection::CoarseWide(proj_config) => {
             com_verify_evaluations.push(build_com_verify_verifier_context(
                 crs,
                 total_vars,
@@ -828,7 +828,7 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
     most_inner_commitments_selectors.push(most_inner_opening_recursion);
 
     match &config.projection_recursion {
-        Projection::Coarse(proj_config) => {
+        Projection::Coarse(proj_config) | Projection::CoarseWide(proj_config) => {
             let most_inner_projection_recursion = selector_evaluation_from_prefix(
                 &proj_config.most_inner_config().prefix,
                 total_vars,

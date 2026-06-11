@@ -371,7 +371,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
 
     let projection_height_flat = config.witness_height / config.projection_ratio;
     let coarse_proj_sumcheck = match &config.projection_recursion {
-        Projection::Coarse(projection_recursion) => {
+        Projection::Coarse(projection_recursion) | Projection::CoarseWide(projection_recursion) => {
             let projection_selector_sumcheck =
                 sumcheck_from_prefix(&projection_recursion.prefix, total_vars);
 
@@ -739,7 +739,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     most_inner_commitments_selectors.push(most_inner_opening_recursion);
 
     match config.projection_recursion {
-        Projection::Coarse(ref proj_config) => {
+        Projection::Coarse(ref proj_config) | Projection::CoarseWide(ref proj_config) => {
             let most_inner_projection_recursion =
                 sumcheck_from_prefix(&proj_config.most_inner_config().prefix, total_vars);
             most_inner_commitments_selectors.push(most_inner_projection_recursion);
@@ -814,7 +814,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     ];
 
     match &config.projection_recursion {
-        Projection::Coarse(recursion_config) => {
+        Projection::Coarse(recursion_config) | Projection::CoarseWide(recursion_config) => {
             com_verify_sumchecks.push(build_com_verify_sumcheck_context(
                 crs,
                 total_vars,

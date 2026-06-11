@@ -71,6 +71,7 @@ pub fn project_ring(
 pub fn project(
     witness_16: &VerticallyAlignedMatrix<Signed16RingElement>,
     projection_matrix: &ProjectionMatrix,
+    wide: bool,
 ) -> VerticallyAlignedMatrix<RingElement> {
     let mut projection_image = VerticallyAlignedMatrix::new_zero_preallocated(
         witness_16.height / projection_matrix.projection_ratio,
@@ -129,7 +130,12 @@ pub fn project(
             );
 
             for inner_row in 0..projection_matrix.projection_height {
-                project_one_row_i16_to_u64::<DEGREE>(
+                let kernel = if wide {
+                    crate::common::arithmetic::project_one_row_i16_to_u64_wide::<DEGREE>
+                } else {
+                    project_one_row_i16_to_u64::<DEGREE>
+                };
+                kernel(
                     subwitness_i16,
                     &pos_by_row[inner_row],
                     &neg_by_row[inner_row],
@@ -182,7 +188,7 @@ mod tests {
         }
         let witness_i16 = prepare_i16_witness(&mut witness);
 
-        let projection_image = project(&witness_i16, &projection_matrix);
+        let projection_image = project(&witness_i16, &projection_matrix, false);
 
         debug_assert_eq!(
             projection_image[(0, 0)],
