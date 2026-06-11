@@ -32,7 +32,7 @@
 
 use std::sync::Arc;
 
-use rokoko::common::arithmetic::{inv_mod, pow_mod};
+use rokoko::common::arithmetic::pow_mod;
 use rokoko::common::config::{HALF_DEGREE, MOD_Q as Q};
 use rokoko::common::decomposition::decompose;
 use rokoko::common::hash::HashWrapper;
@@ -44,7 +44,8 @@ use rokoko::protocol::config::Config;
 use rokoko::protocol::crs::CRS;
 use rokoko::protocol::parties::{commiter::commit, prover::prover_round, verifier::verifier_round};
 use rokoko::protocol::snark::{
-    prove_initial_claims, qe_one_minus, verify_initial_claims, ClaimFactor, ClaimTerm,
+    embed_qe, eq_layers_qe, inv_pow2_q, prove_initial_claims, qe_mul, qe_one_minus,
+    sample_qe_layers, tensor_at, verify_initial_claims, weighted_layer, ClaimFactor, ClaimTerm,
     LazyPublicEval, PublicFactor, SnarkClaim,
 };
 use rokoko::protocol::sumcheck::init_sumcheck;
@@ -61,65 +62,8 @@ fn zero() -> RingElement {
     RingElement::zero(Representation::IncompleteNTT)
 }
 
-fn inv_pow2_q(k: usize) -> u64 {
-    inv_mod(pow_mod(2, k as u64))
-}
-
-fn sample_qe_layers(hw: &mut HashWrapper, n: usize) -> Vec<QuadraticExtension> {
-    (0..n)
-        .map(|_| {
-            let mut f = QuadraticExtension::zero();
-            hw.sample_field_element_into(&mut f);
-            f
-        })
-        .collect()
-}
-
-fn embed_qe(v: &QuadraticExtension) -> RingElement {
-    use rokoko::common::arithmetic::field_to_ring_element_into;
-    let mut r = RingElement::zero(Representation::IncompleteNTT);
-    field_to_ring_element_into(&mut r, v);
-    r.from_homogenized_field_extensions_to_incomplete_ntt();
-    r
-}
-
-fn qe_mul(a: &QuadraticExtension, b: &QuadraticExtension) -> QuadraticExtension {
-    let mut r = QuadraticExtension::zero();
-    r *= (a, b);
-    r
-}
-
-fn tensor_at(layers_msb: &[QuadraticExtension], index: usize) -> QuadraticExtension {
-    let mut r = QuadraticExtension::one();
-    for (j, a) in layers_msb.iter().enumerate() {
-        let bit = (index >> (layers_msb.len() - 1 - j)) & 1;
-        let f = if bit == 1 { a.clone() } else { qe_one_minus(a) };
-        r = qe_mul(&r, &f);
-    }
-    r
-}
-
 fn eq_bits(zs_msb: &[QuadraticExtension], value: usize) -> QuadraticExtension {
     tensor_at(zs_msb, value)
-}
-
-fn eq_layers_qe(a: &[QuadraticExtension], z: &[QuadraticExtension]) -> QuadraticExtension {
-    let mut r = QuadraticExtension::one();
-    for (x, y) in a.iter().zip(z.iter()) {
-        let mut t = qe_mul(x, y);
-        t += &qe_mul(&qe_one_minus(x), &qe_one_minus(y));
-        r = qe_mul(&r, &t);
-    }
-    r
-}
-
-/// The pair `(1, w)` as an eq layer `(1 + w) * (1 - a, a)`: returns the layer
-/// value and the scale to fold into the term coefficient.
-fn weighted_layer(w: u64) -> (QuadraticExtension, u64) {
-    let scale = (1 + w as u128 % Q as u128) as u64 % Q;
-    let mut a = QuadraticExtension::zero();
-    a.coeffs[0] = (w as u128 * inv_mod(scale) as u128 % Q as u128) as u64;
-    (a, scale)
 }
 
 /// The public hash matrix, derived from a domain-separated transcript.
@@ -447,29 +391,13 @@ fn main() {
 
 mod params {
     use rokoko::protocol::config::Config;
-    use rokoko::protocol::config_generator::{AuxConfig, AuxSumcheckConfig};
-    use rokoko::protocol::params::{p_root_aux, P_1};
+    use rokoko::protocol::params::p_root_aux;
     use std::sync::LazyLock;
 
-    /// The parameter set as compiled with two instance-shaped fields:
-    /// sixteen chain openings (one per tree layer plus the two standard
-    /// witness evaluations), and a one-bit-wider digit base on the first
-    /// interior handoff. The stock base-2^6 window there runs at 90-104%
-    /// utilization (measured 2082 against its 2080 cap at p-28,
-    /// transcript-dependent); base 2^7 buys 4x headroom at unchanged
-    /// composed geometry, one digit-scale notch passed downstream.
-    pub static P_MERKLE: LazyLock<Config> = LazyLock::new(|| {
-        AuxSumcheckConfig {
-            next: Some(Box::new(AuxConfig::Sumcheck(M_1.clone()))),
-            ..p_root_aux(16)
-        }
-        .generate_config()
-    });
-
-    static M_1: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
-        witness_decomposition_base_log: 7,
-        ..P_1.clone()
-    });
+    /// The parameter set as compiled, sixteen chain openings (one per tree
+    /// layer plus the two standard witness evaluations), no other change.
+    pub static P_MERKLE: LazyLock<Config> =
+        LazyLock::new(|| p_root_aux(16).generate_config());
 }
 
 #[cfg(test)]
