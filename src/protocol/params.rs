@@ -101,8 +101,16 @@ pub fn p_root_aux(nof_openings: usize) -> AuxSumcheckConfig {
 
 pub static P_INT: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| {
     AuxSumcheckConfig {
-        witness_height: cfg_p30(2usize.pow(14), 2usize.pow(14)),
-        witness_width: cfg_p26(2usize.pow(3), 2usize.pow(2)),
+        witness_height: per_config(
+            2usize.pow(14), 
+            2usize.pow(15), 
+            2usize.pow(16), 
+        ),
+        witness_width: per_config(
+            2usize.pow(3), 
+            2usize.pow(4), 
+            2usize.pow(5),
+        ),
         projection_ratio: 2usize.pow(5),
         projection_height: 2usize.pow(8),
         basic_commitment_rank: cfg_p30(6, 5),
