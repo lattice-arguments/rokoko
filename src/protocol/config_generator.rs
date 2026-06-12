@@ -66,6 +66,21 @@ impl AuxSumcheckConfig {
         let total_size: usize = components.iter().map(|c| c.size).sum();
         let composed_witness_length = total_size.next_power_of_two();
 
+        // a mismatch here only debug_asserts in the prover, then corrupts downstream
+        if let Some(next) = self.next.as_deref() {
+            if let AuxConfig::Sumcheck(next) = next {
+                assert_eq!(
+                    next.witness_height * next.witness_width,
+                    composed_witness_length,
+                    "level {depth}: composed witness length {composed_witness_length} (2^{}) != \
+                     next witness {}x{}; resize the next round",
+                    composed_witness_length.ilog2(),
+                    next.witness_height,
+                    next.witness_width,
+                );
+            }
+        }
+
         // Sort by size (largest to smallest)
         components.sort_by(|a, b| b.size.cmp(&a.size));
 
@@ -146,11 +161,16 @@ impl AuxSumcheckConfig {
             );
         }
 
-        // Calculate usage ratio
+        // The ratio must cover the highest used index: the layout can leave
+        // gaps, and downstream non_zero_end/used_cols cutoffs are prefixes.
         let used_memory = used_prefixes.len();
-        let usage_ratio = used_memory as f64 / composed_witness_length as f64;
+        let highest_used = used_prefixes.iter().max().map_or(0, |m| m + 1);
+        let usage_ratio = highest_used as f64 / composed_witness_length as f64;
         tracing::trace!("\n=== Memory Usage level {} ===", depth);
-        tracing::trace!("Used: {} / {}", used_memory, composed_witness_length);
+        tracing::trace!(
+            "Used: {} / {} (highest index {})",
+            used_memory, composed_witness_length, highest_used
+        );
         tracing::trace!("Usage ratio: {:.2}%", usage_ratio * 100.0);
 
         // Build the actual config with assigned prefixes

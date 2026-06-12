@@ -41,9 +41,20 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
 
     let mut temp = RingElement::all(0, Representation::EvenOddCoefficients);
 
+    #[cfg(feature = "debug-decomp")]
+    let mut call_max: i64 = 0;
+
     for (index, el) in input.iter().enumerate() {
         temp.set_from(el);
         temp.to_representation(Representation::EvenOddCoefficients);
+        #[cfg(feature = "debug-decomp")]
+        {
+            let q = crate::common::config::MOD_Q;
+            for &c in temp.v.iter() {
+                let s = if c > q / 2 { c as i64 - q as i64 } else { c as i64 };
+                call_max = call_max.max(s.abs());
+            }
+        }
         temp += &big_shift;
         for i in 0..radix {
             let slot = &mut decomposed[index * radix + i];
@@ -70,8 +81,48 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
                 temp_el.to_representation(Representation::IncompleteNTT);
                 temp_el
             };
-            assert_eq!(&recomposed, &el_incomplete_ntt, "Recomposition failed in decomposition. Perhaps base_log and radix are not chosen properly?");
+            if recomposed != el_incomplete_ntt {
+                let mut coeffs = el.clone();
+                coeffs.to_representation(Representation::EvenOddCoefficients);
+                let centered: Vec<i64> = coeffs
+                    .v
+                    .iter()
+                    .map(|&c| {
+                        if c > crate::common::config::MOD_Q / 2 {
+                            c as i64 - crate::common::config::MOD_Q as i64
+                        } else {
+                            c as i64
+                        }
+                    })
+                    .collect();
+                let max_abs = centered.iter().map(|c| c.abs()).max().unwrap();
+                panic!(
+                    "Recomposition failed: index={} of {} base_log={} radix={} max|coeff|={}",
+                    index,
+                    input.len(),
+                    base_log,
+                    radix,
+                    max_abs
+                );
+            }
         }
+    }
+
+    #[cfg(feature = "debug-decomp")]
+    {
+        let capacity_neg = (big_shift_val as i64).min(1 << 62);
+        let capacity_pos = ((1u64 << (base_log * radix as u64)).wrapping_sub(big_shift_val))
+            .min(1 << 62) as i64
+            - 1;
+        println!(
+            "  [debug] decompose base={} radix={} n={} max|coeff|={} window=[-{}, {}]",
+            base_log,
+            radix,
+            input.len(),
+            call_max,
+            capacity_neg,
+            capacity_pos
+        );
     }
 
     decomposed

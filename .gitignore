@@ -122,3 +122,10 @@ report.txt
 
 # macOS metadata
 .DS_Store
+
+.claude/
+
+docs/**/*.aux
+docs/**/*.xdv
+docs/**/*.out
+docs/**/*.log
