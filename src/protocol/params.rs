@@ -69,7 +69,7 @@ pub fn p_root_aux(nof_openings: usize) -> AuxSumcheckConfig {
             2usize.pow(8), // p-28
             2usize.pow(9), // p-30
         ),
-        projection_ratio: 1,              // no-op
+        projection_ratio: 2usize.pow(5),              // no-op
         projection_height: 2usize.pow(8), // no-op,
         basic_commitment_rank: 6,
         nof_openings,
@@ -85,14 +85,54 @@ pub fn p_root_aux(nof_openings: usize) -> AuxSumcheckConfig {
             rank: 2,
             next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
         },
-        projection_recursion: AuxProjection::Skip,
+        projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
+            decomposition_base_log: 8,
+            decomposition_chunks: 2,
+            rank: 2,
+            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        }),
 
         witness_decomposition_chunks: 4,
-        witness_decomposition_base_log: cfg_p30(7, 6),
+        witness_decomposition_base_log: cfg_p30(7, 4),
 
-        next: Some(Box::new(AuxConfig::Sumcheck(P_1.clone()))),
+        next: Some(Box::new(AuxConfig::Sumcheck(P_INT.clone()))),
     }
 }
+
+pub static P_INT: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| {
+    AuxSumcheckConfig {
+        witness_height: cfg_p30(2usize.pow(14), 2usize.pow(14)),
+        witness_width: cfg_p26(2usize.pow(3), 2usize.pow(2)),
+        projection_ratio: 2usize.pow(5),
+        projection_height: 2usize.pow(8),
+        basic_commitment_rank: cfg_p30(6, 5),
+        nof_openings: 2,
+        commitment_recursion: AuxRecursionConfig {
+            decomposition_base_log: 7,
+            decomposition_chunks: 8,
+            rank: cfg_p30(4, 2), // TODO: Add support for non-power-of-two ranks
+            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        },
+        opening_recursion: AuxRecursionConfig {
+            decomposition_base_log: 7,
+            decomposition_chunks: 8,
+            rank: 2,
+            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        },
+        projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
+            decomposition_base_log: 9,
+            decomposition_chunks: 2,
+            rank: 2,
+            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        }),
+
+        witness_decomposition_chunks: 2,
+        witness_decomposition_base_log: 7,
+
+        next: Some(Box::new(AuxConfig::Sumcheck(P_1.clone()))),
+        // next: None,
+    }
+});
 
 pub static P: LazyLock<Config> = LazyLock::new(|| p_root_aux(1).generate_config());
 
@@ -375,9 +415,9 @@ pub static WITNESS_CONFIG: LazyLock<InitialWitnessParams> = LazyLock::new(|| mat
     Config::Sumcheck(config) => InitialWitnessParams {
         height: config.witness_height / 2,
         width: config.witness_width,
-        decomposition_base_log: 16,
+        decomposition_base_log: 8,
         decomposition_chunks: 2,
-        initial_norm_log: 31,
+        initial_norm_log: 15,
     },
     _ => panic!("Expected sumcheck config at the top level."),
 });
