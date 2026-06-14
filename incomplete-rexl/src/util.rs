@@ -21,9 +21,6 @@ pub fn multiply_u64_hi<const BITSHIFT: usize>(x: u64, y: u64) -> u64 {
     (prod >> BITSHIFT) as u64
 }
 
-/// 128-bit Barrett reduction matching the kernel in `eltwise_mult_mod_native`.
-/// Assumes the 128-bit value `(input_hi << 64) | input_lo` is `< modulus^2`,
-/// i.e. the result of multiplying two values `< modulus`.
 #[inline(always)]
 pub fn barrett_reduce_128(input_hi: u64, input_lo: u64, modulus: u64) -> u64 {
     debug_assert!(modulus >= 4 && modulus < (1u64 << 62));
