@@ -5,6 +5,13 @@ use core::cmp::Ordering;
 pub fn hexl_unused<T>(_value: T) {}
 
 #[inline(always)]
+pub fn add_u64(operand1: u64, operand2: u64) -> (u64, u8) {
+    let sum = operand1.wrapping_add(operand2);
+    let carry = if sum < operand1 { 1 } else { 0 };
+    (sum, carry)
+}
+
+#[inline(always)]
 pub fn multiply_u64(x: u64, y: u64) -> u128 {
     (x as u128) * (y as u128)
 }
@@ -71,13 +78,6 @@ pub fn reverse_bits(mut x: u64, bit_width: u64) -> u64 {
     rev
 }
 
-#[inline(always)]
-pub fn add_u64(operand1: u64, operand2: u64) -> (u64, u8) {
-    let result = operand1.wrapping_add(operand2);
-    let carry = if result < operand1 { 1 } else { 0 };
-    (result, carry)
-}
-
 #[derive(Copy, Clone, Debug)]
 pub enum CmpInt {
     Eq,
@@ -107,19 +107,6 @@ impl CmpInt {
 
 
 pub fn cmp_u64(cmp: CmpInt, lhs: u64, rhs: u64) -> bool {
-    match cmp {
-        CmpInt::Eq => lhs == rhs,
-        CmpInt::Lt => lhs < rhs,
-        CmpInt::Le => lhs <= rhs,
-        CmpInt::False => false,
-        CmpInt::Ne => lhs != rhs,
-        CmpInt::Nlt => lhs >= rhs,
-        CmpInt::Nle => lhs > rhs,
-        CmpInt::True => true,
-    }
-}
-
-pub fn compare(cmp: CmpInt, lhs: u64, rhs: u64) -> bool {
     match cmp {
         CmpInt::Eq => lhs == rhs,
         CmpInt::Lt => lhs < rhs,

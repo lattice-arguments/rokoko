@@ -73,9 +73,6 @@ pub fn inverse_mod(input: u64, modulus: u64) -> u64 {
     x as u64
 }
 
-/// 128-bit Barrett reduction matching the kernel in `eltwise_mult_mod_native`.
-/// Assumes the 128-bit value `(input_hi << 64) | input_lo` is `< modulus^2`,
-/// i.e. the result of multiplying two values `< modulus`.
 #[inline(always)]
 pub fn barrett_reduce_128(input_hi: u64, input_lo: u64, modulus: u64) -> u64 {
     debug_assert!(modulus >= 4 && modulus < (1u64 << 62));
@@ -387,12 +384,6 @@ pub fn reduce_mod<const INPUT_MOD_FACTOR: u64>(
         return x;
     }
     panic!("Invalid InputModFactor");
-}
-
-pub fn add_uint64(operand1: u64, operand2: u64) -> (u64, u8) {
-    let sum = operand1.wrapping_add(operand2);
-    let carry = if sum < operand1 { 1 } else { 0 };
-    (sum, carry)
 }
 
 pub fn hensel_lemma_2adic_root(r: u32, q: u64) -> u64 {
