@@ -78,19 +78,6 @@ pub fn add_u64(operand1: u64, operand2: u64) -> (u64, u8) {
     (result, carry)
 }
 
-pub fn cmp_u64(cmp: CmpInt, lhs: u64, rhs: u64) -> bool {
-    match cmp {
-        CmpInt::Eq => lhs == rhs,
-        CmpInt::Lt => lhs < rhs,
-        CmpInt::Le => lhs <= rhs,
-        CmpInt::False => false,
-        CmpInt::Ne => lhs != rhs,
-        CmpInt::Nlt => lhs >= rhs,
-        CmpInt::Nle => lhs > rhs,
-        CmpInt::True => true,
-    }
-}
-
 #[derive(Copy, Clone, Debug)]
 pub enum CmpInt {
     Eq,
@@ -115,6 +102,20 @@ impl CmpInt {
             CmpInt::Nle => CmpInt::Le,
             CmpInt::True => CmpInt::False,
         }
+    }
+}
+
+
+pub fn cmp_u64(cmp: CmpInt, lhs: u64, rhs: u64) -> bool {
+    match cmp {
+        CmpInt::Eq => lhs == rhs,
+        CmpInt::Lt => lhs < rhs,
+        CmpInt::Le => lhs <= rhs,
+        CmpInt::False => false,
+        CmpInt::Ne => lhs != rhs,
+        CmpInt::Nlt => lhs >= rhs,
+        CmpInt::Nle => lhs > rhs,
+        CmpInt::True => true,
     }
 }
 
