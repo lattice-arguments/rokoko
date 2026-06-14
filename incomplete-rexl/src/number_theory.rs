@@ -2,7 +2,7 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::sync::{LazyLock, Mutex};
 
 use crate::util::{
-    barrett_reduce_128, divide_u128_u64_lo, log2_u64, msb, multiply_u64_full, multiply_u64_hi,
+    divide_u128_u64_lo, log2_u64, msb, multiply_u64_full, multiply_u64_hi,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -107,6 +107,24 @@ pub fn inverse_mod(input: u64, modulus: u64) -> u64 {
     }
 
     x as u64
+}
+
+/// 128-bit Barrett reduction matching the kernel in `eltwise_mult_mod_native`.
+/// Assumes the 128-bit value `(input_hi << 64) | input_lo` is `< modulus^2`,
+/// i.e. the result of multiplying two values `< modulus`.
+#[inline(always)]
+pub fn barrett_reduce_128(input_hi: u64, input_lo: u64, modulus: u64) -> u64 {
+    debug_assert!(modulus >= 4 && modulus < (1u64 << 62));
+
+    let ceil_log_mod = log2(modulus) + 1;
+    let prod_right_shift = ceil_log_mod - 2;
+
+    let barr_lo = divide_u128_u64_lo(1u64 << (ceil_log_mod - 2), 0, modulus);
+    let c1 = (input_lo >> prod_right_shift) | (input_hi << (64 - prod_right_shift));
+    let q_hat = multiply_u64_hi::<64>(c1, barr_lo);
+
+    let z = input_lo.wrapping_sub(q_hat.wrapping_mul(modulus));
+    if z >= modulus { z - modulus } else { z }
 }
 
 pub fn multiply_mod(x: u64, y: u64, modulus: u64) -> u64 {

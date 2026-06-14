@@ -22,21 +22,6 @@ pub fn multiply_u64_hi<const BITSHIFT: usize>(x: u64, y: u64) -> u64 {
 }
 
 #[inline(always)]
-pub fn barrett_reduce_128(input_hi: u64, input_lo: u64, modulus: u64) -> u64 {
-    debug_assert!(modulus >= 4 && modulus < (1u64 << 62));
-
-    let ceil_log_mod = log2_u64(modulus) + 1;
-    let prod_right_shift = ceil_log_mod - 2;
-
-    let barr_lo = divide_u128_u64_lo(1u64 << (ceil_log_mod - 2), 0, modulus);
-    let c1 = (input_lo >> prod_right_shift) | (input_hi << (64 - prod_right_shift));
-    let q_hat = multiply_u64_hi::<64>(c1, barr_lo);
-
-    let z = input_lo.wrapping_sub(q_hat.wrapping_mul(modulus));
-    if z >= modulus { z - modulus } else { z }
-}
-
-#[inline(always)]
 pub fn divide_u128_u64_lo(x1: u64, x0: u64, y: u64) -> u64 {
     let n = ((x1 as u128) << 64) | (x0 as u128);
     (n / y as u128) as u64
