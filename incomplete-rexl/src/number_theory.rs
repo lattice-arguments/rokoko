@@ -2,7 +2,7 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::sync::{LazyLock, Mutex};
 
 use crate::util::{
-    divide_u128_u64_lo, log2_u64, msb, multiply_u64_full, multiply_u64_hi,
+    divide_u128_u64_lo, is_power_of_two, log2, maximum_value, multiply_u64_full, multiply_u64_hi,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -38,42 +38,6 @@ impl MultiplyFactor {
     pub fn operand(&self) -> u64 {
         self.operand
     }
-}
-
-#[inline(always)]
-pub fn is_power_of_two(num: u64) -> bool {
-    num != 0 && (num & (num - 1)) == 0
-}
-
-#[inline(always)]
-pub fn is_power_of_four(num: u64) -> bool {
-    is_power_of_two(num) && (log2(num) % 2 == 0)
-}
-
-#[inline(always)]
-pub fn maximum_value(bits: u64) -> u64 {
-    if bits == 64 {
-        u64::MAX
-    } else {
-        (1u64 << bits) - 1
-    }
-}
-
-#[inline(always)]
-pub fn log2(x: u64) -> u64 {
-    msb(x)
-}
-
-pub fn reverse_bits(mut x: u64, bit_width: u64) -> u64 {
-    if bit_width == 0 {
-        return 0;
-    }
-    let mut rev = 0u64;
-    for i in (1..=bit_width).rev() {
-        rev |= (x & 1) << (i - 1);
-        x >>= 1;
-    }
-    rev
 }
 
 pub fn inverse_mod(input: u64, modulus: u64) -> u64 {
@@ -339,7 +303,7 @@ pub fn generate_primes(
     if !is_power_of_two(ntt_size as u64) {
         panic!("ntt_size is not power of two");
     }
-    if log2_u64(ntt_size as u64) >= bit_size as u64 {
+    if log2(ntt_size as u64) >= bit_size as u64 {
         panic!("log2(ntt_size) should be less than bit_size");
     }
 

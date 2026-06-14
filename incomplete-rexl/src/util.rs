@@ -36,8 +36,39 @@ pub fn msb(input: u64) -> u64 {
 }
 
 #[inline(always)]
-pub fn log2_u64(input: u64) -> u64 {
-    msb(input)
+pub fn log2(x: u64) -> u64 {
+    msb(x)
+}
+
+#[inline(always)]
+pub fn is_power_of_two(num: u64) -> bool {
+    num != 0 && (num & (num - 1)) == 0
+}
+
+#[inline(always)]
+pub fn is_power_of_four(num: u64) -> bool {
+    is_power_of_two(num) && (log2(num) % 2 == 0)
+}
+
+#[inline(always)]
+pub fn maximum_value(bits: u64) -> u64 {
+    if bits == 64 {
+        u64::MAX
+    } else {
+        (1u64 << bits) - 1
+    }
+}
+
+pub fn reverse_bits(mut x: u64, bit_width: u64) -> u64 {
+    if bit_width == 0 {
+        return 0;
+    }
+    let mut rev = 0u64;
+    for i in (1..=bit_width).rev() {
+        rev |= (x & 1) << (i - 1);
+        x >>= 1;
+    }
+    rev
 }
 
 #[inline(always)]
