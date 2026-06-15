@@ -89,7 +89,7 @@ pub fn barrett_reduce_128(input_hi: u64, input_lo: u64, modulus: u64) -> u64 {
 }
 
 pub fn multiply_mod(x: u64, y: u64, modulus: u64) -> u64 {
-    debug_assert!(modulus != 0, "modulus == 0");
+    debug_assert!(modulus >= 4 && modulus < (1u64 << 62));
     debug_assert!(x < modulus, "x must be < modulus");
     debug_assert!(y < modulus, "y must be < modulus");
     let (prod_hi, prod_lo) = multiply_u64_full(x, y);
