@@ -141,13 +141,13 @@ pub fn execute_snark() {
         structured_row::StructuredRow,
     };
     use crate::protocol::commitment::Prefix;
-    use crate::protocol::params::P_SNARK;
+    use crate::protocol::params::P_EN;
     use crate::protocol::snark::{
         prove_initial_claims, verify_initial_claims, ClaimFactor, ClaimTerm, PublicFactor,
         SnarkClaim,
     };
 
-    let config = match &*P_SNARK {
+    let config = match &*P_EN {
         Config::Sumcheck(config) => config,
         _ => panic!("Expected sumcheck config at the top level."),
     };
