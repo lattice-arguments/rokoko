@@ -83,9 +83,9 @@ variables.
 - Segment terms are localised. A term holding a `WitnessSegment(prefix)` sums
   over that segment's block exactly once, lowering to `eq(prefix, .)` times the
   full-vector oracle: it adds no opening (the final check still reduces to
-  `z_0`/`z_1`), it uses two of a term's three factor slots (the selector and
-  the oracle), and two factors over the same block share one selector (`eq` is
-  0/1 on the cube, so `eq^2 = eq`).
+  `z_0`/`z_1`), it contributes the selector to the leading variables and the
+  oracle to all of them, and two factors over the same block share one selector
+  (`eq` is 0/1 on the cube, so `eq^2 = eq`).
 - Tensor layers are MSB-first. Layer `j` weighs index bit `j` counted
   from the top of the oracle's variable block; entry `i` weighs
   `prod_j ((1-a_j)(1-i_j) + a_j*i_j)`. Per-index scales fold into layers:
@@ -143,9 +143,13 @@ SnarkClaim {
 }
 ```
 
-A degree-two term multiplies two committed factors under a public weight (a
-term holds at most three non-constant factors: the round polynomials carry
-degree three). A recomposition (digits to value) is the same linear shape
+A degree-two term multiplies two committed factors under a public weight. The
+limit is per-variable, not a raw factor count: a round polynomial's degree is
+the number of factors depending on that variable, and the round polynomials
+carry degree at most three. Factors placed on disjoint variable blocks (a node
+eq-tensor over one block, a table over another) therefore stack freely - a
+localized `[tensor, dense, WitnessSegment]` lowers to four factors yet every
+variable sees at most two. A recomposition (digits to value) is the same linear shape
 with one weighted layer per digit-index bit, `weighted_layer(base.pow(1 << l))`
 for bit `l` MSB-first, the scalar scales folded into the coefficient. Values the verifier must compute (public boundary data)
 go into `value` with the same tensor weights, accumulating
