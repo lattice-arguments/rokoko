@@ -1,9 +1,8 @@
 use crate::cpu_features::{HAS_AVX512DQ, HAS_AVX512IFMA};
+use crate::util::{log2, maximum_value, multiply_u64_full};
 use crate::number_theory::{
-    add_uint_mod, barrett_reduce64, log2, maximum_value, multiply_mod_precon, reduce_mod,
-    MultiplyFactor,
+    add_uint_mod, barrett_reduce64, multiply_mod_precon, reduce_mod, MultiplyFactor,
 };
-use crate::util::multiply_u64_full;
 
 #[cfg(target_arch = "x86_64")]
 use crate::avx512_util::{

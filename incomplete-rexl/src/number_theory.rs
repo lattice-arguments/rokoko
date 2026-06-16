@@ -2,7 +2,7 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::sync::{LazyLock, Mutex};
 
 use crate::util::{
-    barrett_reduce_128, divide_u128_u64_lo, log2_u64, msb, multiply_u64_full, multiply_u64_hi,
+    divide_u128_u64_lo, is_power_of_two, log2, maximum_value, multiply_u64_full, multiply_u64_hi,
 };
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -40,42 +40,6 @@ impl MultiplyFactor {
     }
 }
 
-#[inline(always)]
-pub fn is_power_of_two(num: u64) -> bool {
-    num != 0 && (num & (num - 1)) == 0
-}
-
-#[inline(always)]
-pub fn is_power_of_four(num: u64) -> bool {
-    is_power_of_two(num) && (log2(num) % 2 == 0)
-}
-
-#[inline(always)]
-pub fn maximum_value(bits: u64) -> u64 {
-    if bits == 64 {
-        u64::MAX
-    } else {
-        (1u64 << bits) - 1
-    }
-}
-
-#[inline(always)]
-pub fn log2(x: u64) -> u64 {
-    msb(x)
-}
-
-pub fn reverse_bits(mut x: u64, bit_width: u64) -> u64 {
-    if bit_width == 0 {
-        return 0;
-    }
-    let mut rev = 0u64;
-    for i in (1..=bit_width).rev() {
-        rev |= (x & 1) << (i - 1);
-        x >>= 1;
-    }
-    rev
-}
-
 pub fn inverse_mod(input: u64, modulus: u64) -> u64 {
     let mut a = input % modulus;
     if a == 0 {
@@ -109,8 +73,23 @@ pub fn inverse_mod(input: u64, modulus: u64) -> u64 {
     x as u64
 }
 
+#[inline(always)]
+pub fn barrett_reduce_128(input_hi: u64, input_lo: u64, modulus: u64) -> u64 {
+    debug_assert!(modulus >= 4 && modulus < (1u64 << 62));
+
+    let ceil_log_mod = log2(modulus) + 1;
+    let prod_right_shift = ceil_log_mod - 2;
+
+    let barr_lo = divide_u128_u64_lo(1u64 << (ceil_log_mod - 2), 0, modulus);
+    let c1 = (input_lo >> prod_right_shift) | (input_hi << (64 - prod_right_shift));
+    let q_hat = multiply_u64_hi::<64>(c1, barr_lo);
+
+    let z = input_lo.wrapping_sub(q_hat.wrapping_mul(modulus));
+    if z >= modulus { z - modulus } else { z }
+}
+
 pub fn multiply_mod(x: u64, y: u64, modulus: u64) -> u64 {
-    debug_assert!(modulus != 0, "modulus == 0");
+    debug_assert!(modulus >= 4 && modulus < (1u64 << 62));
     debug_assert!(x < modulus, "x must be < modulus");
     debug_assert!(y < modulus, "y must be < modulus");
     let (prod_hi, prod_lo) = multiply_u64_full(x, y);
@@ -321,7 +300,7 @@ pub fn generate_primes(
     if !is_power_of_two(ntt_size as u64) {
         panic!("ntt_size is not power of two");
     }
-    if log2_u64(ntt_size as u64) >= bit_size as u64 {
+    if log2(ntt_size as u64) >= bit_size as u64 {
         panic!("log2(ntt_size) should be less than bit_size");
     }
 
@@ -405,12 +384,6 @@ pub fn reduce_mod<const INPUT_MOD_FACTOR: u64>(
         return x;
     }
     panic!("Invalid InputModFactor");
-}
-
-pub fn add_uint64(operand1: u64, operand2: u64) -> (u64, u8) {
-    let sum = operand1.wrapping_add(operand2);
-    let carry = if sum < operand1 { 1 } else { 0 };
-    (sum, carry)
 }
 
 pub fn hensel_lemma_2adic_root(r: u32, q: u64) -> u64 {
