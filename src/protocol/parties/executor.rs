@@ -140,13 +140,13 @@ pub fn execute_snark() {
         sampling::sample_random_short_vector,
     };
     use crate::protocol::commitment::Prefix;
-    use crate::protocol::params::P_EN_2_EVALS;
+    use crate::protocol::params::P_EN_TWO_EVALS;
     use crate::protocol::snark::{
         prove_initial_claims, verify_initial_claims, ClaimFactor, ClaimTerm, PublicFactor,
         SnarkClaim,
     };
 
-    let config = match &*P_EN_2_EVALS {
+    let config = match &*P_EN_TWO_EVALS {
         Config::Sumcheck(config) => config,
         _ => panic!("Expected sumcheck config at the top level."),
     };

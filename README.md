@@ -208,6 +208,7 @@ Due to memory requirements for polynomial degree 2^30 exceeding 64 GB, the respe
 ## Features
 
 * `incomplete-rexl`: enables the pure-Rust ring arithmetic back-end
+* `snark`: runs the executor in SNARK mode; without it the executor runs the PCS chain
 * `p-26`, `p-28`, `p-30`: parameters for polynomial degrees 2^26, 2^28, and 2^30 respectively
 * `unsafe-sumcheck`: enables zero-cost borrow checking by using `UnsafeCell` instead of `RefCell` in sumcheck subprotocols
 * `debug-hardness`: verifies the hardness of underlying SIS instances (requires [Lattice Estimator](https://github.com/malb/lattice-estimator) cloned as a submodule and [SageMath](https://www.sagemath.org/) installed)

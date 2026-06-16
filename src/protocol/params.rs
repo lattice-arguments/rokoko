@@ -241,10 +241,17 @@ pub static P_EN: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
     SizeConfig::Large => P_EN_LARGE.clone(),
 });
 
-pub static P_EN_2_EVALS: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
-    SizeConfig::Small => p_exact_norm_root_aux(SizeConfig::Small, 2).generate_config(),
-    SizeConfig::Medium => p_exact_norm_root_aux(SizeConfig::Medium, 2).generate_config(),
-    SizeConfig::Large => p_exact_norm_root_aux(SizeConfig::Large, 2).generate_config(),
+pub static P_EN_2_SMALL: LazyLock<Config> =
+    LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Small, 2).generate_config());
+pub static P_EN_2_MEDIUM: LazyLock<Config> =
+    LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Medium, 2).generate_config());
+pub static P_EN_2_LARGE: LazyLock<Config> =
+    LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Large, 2).generate_config()); // never executed, OOM for 64GiB RAM
+
+pub static P_EN_TWO_EVALS: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
+    SizeConfig::Small => P_EN_2_SMALL.clone(),
+    SizeConfig::Medium => P_EN_2_MEDIUM.clone(),
+    SizeConfig::Large => P_EN_2_LARGE.clone(),
 });
 
 pub static P_SMALL: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Small, 1).generate_config());
