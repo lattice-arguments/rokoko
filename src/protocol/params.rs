@@ -241,15 +241,32 @@ pub static P_EN: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
     SizeConfig::Large => P_EN_LARGE.clone(),
 });
 
+pub static P_EN_2_EVALS: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
+    SizeConfig::Small => p_exact_norm_root_aux(SizeConfig::Small, 2).generate_config(),
+    SizeConfig::Medium => p_exact_norm_root_aux(SizeConfig::Medium, 2).generate_config(),
+    SizeConfig::Large => p_exact_norm_root_aux(SizeConfig::Large, 2).generate_config(),
+});
+
 pub static P_SMALL: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Small, 1).generate_config());
 pub static P_MEDIUM: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Medium, 1).generate_config());
 pub static P_LARGE: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Large, 1).generate_config()); 
+
+pub static P_2_SMALL: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Small, 2).generate_config());
+pub static P_2_MEDIUM: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Medium, 2).generate_config());
+pub static P_2_LARGE: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Large, 2).generate_config()); 
 
 pub static P: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
     SizeConfig::Small => P_SMALL.clone(),
     SizeConfig::Medium => P_MEDIUM.clone(),
     SizeConfig::Large => P_LARGE.clone(),
 });
+
+pub static P_TWO_EVALS: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
+    SizeConfig::Small => P_2_SMALL.clone(),
+    SizeConfig::Medium => P_2_MEDIUM.clone(),
+    SizeConfig::Large => P_2_LARGE.clone(),
+});
+
 
 pub static P_3: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
     witness_height: 2usize.pow(8),

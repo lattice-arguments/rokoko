@@ -141,13 +141,13 @@ pub fn execute_snark() {
         structured_row::StructuredRow,
     };
     use crate::protocol::commitment::Prefix;
-    use crate::protocol::params::P_EN;
+    use crate::protocol::params::P_TWO_EVALS;
     use crate::protocol::snark::{
         prove_initial_claims, verify_initial_claims, ClaimFactor, ClaimTerm, PublicFactor,
         SnarkClaim,
     };
 
-    let config = match &*P_EN {
+    let config = match &*P_TWO_EVALS {
         Config::Sumcheck(config) => config,
         _ => panic!("Expected sumcheck config at the top level."),
     };
@@ -161,15 +161,13 @@ pub fn execute_snark() {
     let mut sumcheck_context = init_sumcheck(&crs, &config);
     let mut sumcheck_context_verifier = init_verifier(&crs, &config);
 
-    // SNARK witnesses are committed undecomposed; sampled here at the same
-    // norm scale as the PCS path's decomposed digits.
     let witness = VerticallyAlignedMatrix {
         height: config.witness_height,
         width: config.witness_width,
         used_cols: config.witness_width,
         data: sample_random_short_vector(
             config.witness_height * config.witness_width,
-            2u64.pow(14),
+            2u64.pow(8),
             crate::common::ring_arithmetic::Representation::IncompleteNTT,
         ),
     };
@@ -210,7 +208,7 @@ pub fn execute_snark() {
     };
 
     let segment = Prefix {
-        prefix: 1,
+        prefix: 0b01,
         length: 2,
     };
     let mut t2 = RingElement::zero(Representation::IncompleteNTT);

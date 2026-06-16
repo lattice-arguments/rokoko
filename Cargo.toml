@@ -19,6 +19,7 @@ profile-sumcheck = []
 p-30 = []
 p-26 = []
 p-28 = []
+snark = []
 
 [dependencies]
 criterion = "0.7.0"

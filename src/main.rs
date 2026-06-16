@@ -1,6 +1,7 @@
 use rokoko::common::init_common;
 use rokoko::common::pool::{load_and_preallocate, save_access_stats};
 use rokoko::common::short_challenge::repetition_rate;
+#[cfg(not(feature = "snark"))]
 use rokoko::protocol::parties::executor::execute;
 
 fn main() {
@@ -85,10 +86,13 @@ fn main() {
 
     load_and_preallocate("pool_stats.txt").expect("Failed to load stats");
     init_common();
-    if std::env::var("ROKOKO_MODE").as_deref() == Ok("snark") {
+    #[cfg(feature = "snark")]
+    {
         println!("Running executor in SNARK mode...");
         rokoko::protocol::parties::executor::execute_snark();
-    } else {
+    }
+    #[cfg(not(feature = "snark"))]
+    {
         println!("Running executor...");
         execute();
     }
