@@ -3,7 +3,6 @@ use crate::{
         arithmetic::{field_to_ring_element_into, inner_product},
         config::NOF_BATCHES,
         hash::HashWrapper,
-        matrix::new_vec_zero_preallocated,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         structured_row::PreprocessedRow,
@@ -64,7 +63,7 @@ pub fn sumcheck(
         Projection::Coarse(_) => {
             let projection_height_flat = config.witness_height / config.projection_ratio;
             let mut projection_matrix_flatter_base =
-                new_vec_zero_preallocated(projection_height_flat.ilog2() as usize);
+                vec![RingElement::zero(Representation::IncompleteNTT); projection_height_flat.ilog2() as usize];
             hash_wrapper
                 .sample_ring_element_ntt_slots_same_vec_into(&mut projection_matrix_flatter_base);
 
@@ -82,7 +81,7 @@ pub fn sumcheck(
         Projection::Skip => None,
     };
 
-    let mut conjugated_combined_witness = new_vec_zero_preallocated(combined_witness.len());
+    let mut conjugated_combined_witness = vec![RingElement::zero(Representation::IncompleteNTT); combined_witness.len()];
     combined_witness
         .iter()
         .zip(conjugated_combined_witness.iter_mut())
@@ -135,7 +134,7 @@ pub fn sumcheck(
 
     // Sample random batching coefficients from Fiat-Shamir
     let num_sumchecks = sumcheck_context.combiner.borrow().sumchecks_count();
-    let mut combination = new_vec_zero_preallocated(num_sumchecks);
+    let mut combination = vec![RingElement::zero(Representation::IncompleteNTT); num_sumchecks];
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
 
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);

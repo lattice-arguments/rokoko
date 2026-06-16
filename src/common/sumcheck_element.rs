@@ -2,8 +2,7 @@ use std::ops::{AddAssign, MulAssign, SubAssign};
 
 use crate::common::{
     arithmetic::{ONE, ONE_QUAD, TWO, TWO_QUAD, ZERO, ZERO_QUAD},
-    matrix::new_vec_zero_preallocated,
-    ring_arithmetic::RingElement,
+    ring_arithmetic::{Representation, RingElement},
     QuadraticExtension,
 };
 
@@ -60,7 +59,7 @@ impl SumcheckElement for RingElement {
     }
 
     fn allocate_zero_vec(len: usize) -> Vec<Self> {
-        new_vec_zero_preallocated(len)
+        vec![RingElement::zero(Representation::IncompleteNTT); len]
     }
 
     fn set_from(&mut self, other: &Self) {

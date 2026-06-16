@@ -1,7 +1,7 @@
 use crate::{
     common::{
         hash::HashWrapper,
-        matrix::{new_vec_zero_preallocated, VerticallyAlignedMatrix},
+        matrix::VerticallyAlignedMatrix,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         sumcheck_element::SumcheckElement,
         structured_row::{PreprocessedRow, StructuredRow},
@@ -518,7 +518,7 @@ pub fn prove_initial_claims(
     let claims = &lowered[..];
     validate_claims(claims, total_vars);
 
-    let mut conjugated = new_vec_zero_preallocated(n);
+    let mut conjugated = vec![RingElement::zero(Representation::IncompleteNTT); n];
     witness
         .data
         .iter()
@@ -674,7 +674,7 @@ pub fn prove_initial_claims(
     for claim in claims {
         hash_wrapper.update_with_ring_element(&claim.value);
     }
-    let mut combination = new_vec_zero_preallocated(outputs.len());
+    let mut combination = vec![RingElement::zero(Representation::IncompleteNTT); outputs.len()];
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
 
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
@@ -917,7 +917,7 @@ pub fn verify_initial_claims(
     for value in &effective_values {
         hash_wrapper.update_with_ring_element(value);
     }
-    let mut combination = new_vec_zero_preallocated(outputs.len());
+    let mut combination = vec![RingElement::zero(Representation::IncompleteNTT); outputs.len()];
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
 
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
