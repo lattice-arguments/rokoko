@@ -141,13 +141,13 @@ pub fn execute_snark() {
         structured_row::StructuredRow,
     };
     use crate::protocol::commitment::Prefix;
-    use crate::protocol::params::P_TWO_EVALS;
+    use crate::protocol::params::P_EN_2_EVALS;
     use crate::protocol::snark::{
         prove_initial_claims, verify_initial_claims, ClaimFactor, ClaimTerm, PublicFactor,
         SnarkClaim,
     };
 
-    let config = match &*P_TWO_EVALS {
+    let config = match &*P_EN_2_EVALS {
         Config::Sumcheck(config) => config,
         _ => panic!("Expected sumcheck config at the top level."),
     };
@@ -167,7 +167,7 @@ pub fn execute_snark() {
         used_cols: config.witness_width,
         data: sample_random_short_vector(
             config.witness_height * config.witness_width,
-            2u64.pow(8),
+            2u64.pow(7),
             crate::common::ring_arithmetic::Representation::IncompleteNTT,
         ),
     };
