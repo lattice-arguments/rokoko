@@ -199,6 +199,8 @@ pub fn prover_round(
 
     #[cfg(feature = "debug-decomp")]
     if let Some(image) = &dbg_coarse_image {
+        use crate::common::norms;
+
         let folded_image = fold(image, &vec![fold_challenge.clone(); 1].concat());
         let check = crate::protocol::project_coarse::project_ring(&folded_witness, &projection_matrix);
         let mismatch = check
@@ -207,11 +209,16 @@ pub fn prover_round(
             .zip(folded_image.data.iter())
             .filter(|(a, b)| a.v != b.v)
             .count();
-        println!(
+        let input_norm = norms::inf_norm(&witness.data);
+        println!("  [debug] input norm: {}", input_norm);
+        assert_eq!(
+            mismatch,
+            0,
             "  [debug] coarse projection consistency: {} / {} mismatching rows",
             mismatch,
             check.data.len()
         );
+        
     }
 
     let mut next_round_data = new_vec_zero_preallocated(config.composed_witness_length);
