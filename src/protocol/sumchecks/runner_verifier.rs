@@ -235,6 +235,8 @@ pub fn sumcheck_verifier(
         &combination,
     );
 
+
+
     if let Some(constant_term_claims) = &round_proof.constant_term_claims {
         for ct_claim in constant_term_claims.iter() {
             let ct = ct_claim.constant_term_from_incomplete_ntt();
@@ -283,7 +285,10 @@ pub fn sumcheck_verifier(
 
         assert_eq!(
             poly_over_field.at_zero() + poly_over_field.at_one(),
-            batched_claim_over_field
+            batched_claim_over_field,
+            "round-poly claim mismatch at witness_height={} num_vars_left={}",
+            config.witness_height,
+            num_vars
         );
 
         let mut f = QuadraticExtension::zero();

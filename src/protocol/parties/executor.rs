@@ -130,3 +130,165 @@ fn check_prover_claims_match_witness(
     }
     println!("Prover claims match direct witness claims.");
 }
+
+/// SNARK mode: prove user-supplied sumcheck claims about a committed witness,
+/// then run the PCS chain on the resulting evaluation claims.
+pub fn execute_snark() {
+    use crate::common::{
+        hash::HashWrapper,
+        ring_arithmetic::{Representation, RingElement},
+        sampling::sample_random_short_vector,
+    };
+    use crate::protocol::commitment::Prefix;
+    use crate::protocol::params::P_EN_TWO_EVALS;
+    use crate::protocol::snark::{
+        prove_initial_claims, verify_initial_claims, ClaimFactor, ClaimTerm, PublicFactor,
+        SnarkClaim,
+    };
+
+    let config = match &*P_EN_TWO_EVALS {
+        Config::Sumcheck(config) => config,
+        _ => panic!("Expected sumcheck config at the top level."),
+    };
+
+    println!("Generating CRS...");
+    let crs = CRS::gen_crs(
+        config.composed_witness_length,
+        config.basic_commitment_rank + 2,
+    );
+
+    let mut sumcheck_context = init_sumcheck(&crs, &config);
+    let mut sumcheck_context_verifier = init_verifier(&crs, &config);
+
+    let witness = VerticallyAlignedMatrix {
+        height: config.witness_height,
+        width: config.witness_width,
+        used_cols: config.witness_width,
+        data: sample_random_short_vector(
+            config.witness_height * config.witness_width,
+            2u64.pow(7),
+            crate::common::ring_arithmetic::Representation::IncompleteNTT,
+        ),
+    };
+
+    println!("===== COMMITTING WITNESS =====");
+    let start = std::time::Instant::now();
+    let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness);
+    println!("TOTAL Commit time: {:?} ns", start.elapsed().as_nanos());
+
+    // Demo claim set: a structured linear claim, a segment-sum claim, and a
+    // degree-2 claim, with values computed from the witness.
+    let total_vars = (config.witness_height * config.witness_width).ilog2() as usize;
+    let n = config.witness_height * config.witness_width;
+
+    let structured_point: Vec<RingElement> = (0..total_vars)
+        .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 1 << 10))
+        .collect();
+    let t1 = {
+        use crate::common::structured_row::PreprocessedRow;
+        let expanded = PreprocessedRow::from_layers(&structured_point).preprocessed_row;
+        let mut acc = RingElement::zero(Representation::IncompleteNTT);
+        let mut temp = RingElement::zero(Representation::IncompleteNTT);
+        for (a, w) in expanded.iter().zip(witness.data.iter()) {
+            temp *= (a, w);
+            acc += &temp;
+        }
+        acc
+    };
+    let claim_linear = SnarkClaim {
+        terms: vec![ClaimTerm::new(vec![
+            ClaimFactor::Public(PublicFactor::tensor_ring(structured_point)),
+            ClaimFactor::Witness,
+        ])],
+        value: t1,
+    };
+
+    let segment = Prefix {
+        prefix: 0b01,
+        length: 2,
+    };
+    let mut t2 = RingElement::zero(Representation::IncompleteNTT);
+    {
+        let seg_len = n >> segment.length;
+        let start_idx = segment.prefix * seg_len;
+        let mut temp = RingElement::zero(Representation::IncompleteNTT);
+        for w in &witness.data[start_idx..start_idx + seg_len] {
+            temp *= (w, w);
+            t2 += &temp;
+        }
+    }
+    let claim_square = SnarkClaim {
+        terms: vec![ClaimTerm::new(vec![
+            ClaimFactor::Public(PublicFactor::selector(segment.prefix, segment.length)),
+            ClaimFactor::Witness,
+            ClaimFactor::Witness,
+        ])],
+        value: t2,
+    };
+
+    let claims = vec![claim_linear, claim_square];
+
+    println!("==== SNARK PROVER STARTING ===");
+    let start = std::time::Instant::now();
+
+    let mut hash_wrapper = HashWrapper::new();
+    hash_wrapper.update_with_ring_element_slice(
+        &commitment_with_aux
+            .rc_commitment_with_aux
+            .most_inner_commitment(),
+    );
+
+    let (initial_proof, chain_inputs) =
+        prove_initial_claims(&witness, &claims, &mut hash_wrapper);
+
+
+    println!(
+        "Initial claims sumcheck done: {} ms",
+        start.elapsed().as_millis()
+    );
+
+    let (proof, _) = prover_round(
+        &crs,
+        &config,
+        &commitment_with_aux,
+        &witness,
+        &chain_inputs.evaluation_points_inner,
+        &chain_inputs.evaluation_points_outer,
+        &mut sumcheck_context,
+        false,
+        Some(hash_wrapper),
+    );
+    println!("==== SNARK PROVER DONE ===");
+    println!("TOTAL Prover time: {:?} ns", start.elapsed().as_nanos());
+
+    let proof_size_bits = proof.size_in_bits();
+    println!("Total proof size: {} KB", to_kb(proof_size_bits));
+
+    println!("==== SNARK VERIFIER STARTING ===");
+    let start = std::time::Instant::now();
+
+    let mut hash_wrapper_verifier = HashWrapper::new();
+    hash_wrapper_verifier.update_with_ring_element_slice(&rc_commitment);
+
+    let chain_inputs_verifier = verify_initial_claims(
+        config.witness_height,
+        config.witness_width,
+        &claims,
+        &initial_proof,
+        &mut hash_wrapper_verifier,
+    );
+
+    verifier_round(
+        &crs,
+        &config,
+        &rc_commitment,
+        &proof,
+        &chain_inputs_verifier.evaluation_points_inner,
+        &chain_inputs_verifier.evaluation_points_outer,
+        &chain_inputs_verifier.claims,
+        &mut sumcheck_context_verifier,
+        Some(hash_wrapper_verifier),
+    );
+    println!("==== SNARK VERIFIER DONE ===");
+    println!("TOTAL Verifier time: {:?} ns", start.elapsed().as_nanos());
+}

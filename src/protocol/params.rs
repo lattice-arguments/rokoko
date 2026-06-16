@@ -176,6 +176,9 @@ pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
         }),
 
         witness_decomposition_chunks: 2,
+        // the base-2^6 window measured 2082 against its 2080 cap at p-28
+        // (transcript-dependent); base 2^7, already the p-30 value, restores
+        // margin at unchanged composed geometry
         witness_decomposition_base_log: 7,
 
         next: Some(Box::new(AuxConfig::Sumcheck(p_2(size)))),
@@ -238,15 +241,39 @@ pub static P_EN: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
     SizeConfig::Large => P_EN_LARGE.clone(),
 });
 
+pub static P_EN_2_SMALL: LazyLock<Config> =
+    LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Small, 2).generate_config());
+pub static P_EN_2_MEDIUM: LazyLock<Config> =
+    LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Medium, 2).generate_config());
+pub static P_EN_2_LARGE: LazyLock<Config> =
+    LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Large, 2).generate_config()); // never executed, OOM for 64GiB RAM
+
+pub static P_EN_TWO_EVALS: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
+    SizeConfig::Small => P_EN_2_SMALL.clone(),
+    SizeConfig::Medium => P_EN_2_MEDIUM.clone(),
+    SizeConfig::Large => P_EN_2_LARGE.clone(),
+});
+
 pub static P_SMALL: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Small, 1).generate_config());
 pub static P_MEDIUM: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Medium, 1).generate_config());
 pub static P_LARGE: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Large, 1).generate_config()); 
+
+pub static P_2_SMALL: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Small, 2).generate_config());
+pub static P_2_MEDIUM: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Medium, 2).generate_config());
+pub static P_2_LARGE: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Large, 2).generate_config()); 
 
 pub static P: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
     SizeConfig::Small => P_SMALL.clone(),
     SizeConfig::Medium => P_MEDIUM.clone(),
     SizeConfig::Large => P_LARGE.clone(),
 });
+
+pub static P_TWO_EVALS: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
+    SizeConfig::Small => P_2_SMALL.clone(),
+    SizeConfig::Medium => P_2_MEDIUM.clone(),
+    SizeConfig::Large => P_2_LARGE.clone(),
+});
+
 
 pub static P_3: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
     witness_height: 2usize.pow(8),
@@ -540,7 +567,12 @@ mod tests {
         }
     }
 
-        #[test]
+    #[test]
+    fn test_p_snark_chain_dims() {
+        assert_chain_dims(&super::P_EN_MEDIUM);
+    }
+
+    #[test]
     fn test_witness_cols_for_target() {
         // p-28-shaped set: 2^13 x 2^8 ring elements = 2^28 Zq coefficients
         assert_eq!(super::witness_cols_for_target(1 << 13, 1 << 8, 28), 1 << 8);
