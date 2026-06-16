@@ -19,8 +19,6 @@ pub static DECOMP_8_LAST_LEVEL: AuxRecursionConfig = AuxRecursionConfig {
     rank: 1,
     next: None,
 };
-
-/// Small/Medium/Large = the `p-26`/`p-28`/`p-30` parameter sets.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SizeConfig {
     Small,
@@ -453,9 +451,9 @@ pub static WITNESS_CONFIG: LazyLock<InitialWitnessParams> = LazyLock::new(|| mat
     Config::Sumcheck(config) => InitialWitnessParams {
         height: config.witness_height / 2,
         width: config.witness_width,
-        decomposition_base_log: 8,
+        decomposition_base_log: 18, // change to 8 for EN sets
         decomposition_chunks: 2,
-        initial_norm_log: 15,
+        initial_norm_log: 31, // change to 15 for EN sets
     },
     _ => panic!("Expected sumcheck config at the top level."),
 });
