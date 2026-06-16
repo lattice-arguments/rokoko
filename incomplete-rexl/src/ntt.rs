@@ -1,8 +1,9 @@
 use crate::aligned_vec::{AlignedVecF64, AlignedVecU64};
 use crate::cpu_features::{HAS_AVX512DQ, HAS_AVX512IFMA};
+use crate::util::{is_power_of_two, log2, reverse_bits};
 use crate::number_theory::{
-    add_uint_mod, inverse_mod, is_power_of_two, is_prime, log2, multiply_mod, multiply_mod_lazy,
-    reduce_mod, sub_uint_mod, MultiplyFactor,
+    add_uint_mod, inverse_mod, is_prime, multiply_mod, multiply_mod_lazy, reduce_mod, sub_uint_mod,
+    MultiplyFactor,
 };
 
 #[cfg(target_arch = "x86_64")]
@@ -347,7 +348,7 @@ impl Ntt {
         let mut prev_idx = 0u64;
 
         for i in 1..self.degree {
-            let idx = crate::number_theory::reverse_bits(i, self.degree_bits);
+            let idx = reverse_bits(i, self.degree_bits);
             root_of_unity_powers[idx as usize] = multiply_mod(
                 root_of_unity_powers[prev_idx as usize],
                 self.root_of_unity,
