@@ -44,20 +44,14 @@ rearranged data and tie them back with copy claims.
 
 ## Shortness is the caller's
 
-The witness commits as given: the front end never decomposes it
-(nonlinear claims do not commute with the chain's norm decomposition), and
-the only smallness statement the system proves is the aggregate l2 norm of
-the whole committed vector. Consequences for relation design:
+The witness commits as given: the front end never decomposes it. Consequences for relation design:
 
 - Provide the witness already short. For full-range values, commit balanced
   digits (`common::decomposition::decompose(values, base_log, radix)`) and
   state the value as the recomposition `sum_j base^j * digit_j` inside your
   claims; `weighted_layer` turns the powers of the base into tensor layers.
-- No per-coordinate range is proven. The certified bound is one l2 number for
-  the entire vector; if your relation's soundness needs per-value ranges,
-  encode them (bit decompositions tested through the conjugate constant-term
-  pattern, see below) or account for the aggregate bound in the security
-  analysis.
+- No per-coordinate range is proven. The certified bound is one L2 number for
+  the entire vector in the exact-norm mode.
 
 ## Factors
 
@@ -89,14 +83,8 @@ opposite end from the MSB-first layer convention.
 
 ## Conventions
 
-- Segment terms are localized; nothing to normalize. A term holding a
-  `WitnessSegment(prefix)` sums over that segment's block exactly once: the
-  segment lowers internally to `eq(prefix, .)` times the full-vector
-  oracle, so the claim `value` is the plain block sum and no power-of-two
-  bookkeeping ever appears. The lowering costs one factor of term degree
-  (a segment counts as two of the three factors a term may hold) and no
-  opening: the final evaluation reduces to the standard `z_0`/`z_1`. Two
-  factors restricted to the same block share one selector.
+- Segment terms are localised. A term holding a
+  `WitnessSegment(prefix)` sums over that segment's block exactly once.
 - Tensor layers are MSB-first. Layer `j` weighs index bit `j` counted
   from the top of the oracle's variable block; entry `i` weighs
   `prod_j ((1-a_j)(1-i_j) + a_j*i_j)`. Per-index scales fold into layers:
@@ -106,7 +94,7 @@ opposite end from the MSB-first layer convention.
   multiplying a whole term (a conjugate element, a packed constant) rides in
   the coefficient at no oracle cost; claim equality is checked as ring
   elements, so per-coefficient data batches through the value.
-- Witness-dependent values are yours. Using `ct(u * conj(v)) = sum_c u_c v_c`,
+- Witness-dependent Z_q values are per-user. Using `ct(u * conj(v)) = sum_c u_c v_c`,
   a claim can state an integer fact about coefficients (binariness:
   `sum x_c(x_c - 1) = 0`); its `value` then depends on the secret witness, so
   the verifier cannot recompute it. The front end only proves
