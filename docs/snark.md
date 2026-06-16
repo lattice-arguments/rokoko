@@ -83,8 +83,12 @@ opposite end from the MSB-first layer convention.
 
 ## Conventions
 
-- Segment terms are localised. A term holding a
-  `WitnessSegment(prefix)` sums over that segment's block exactly once.
+- Segment terms are localised. A term holding a `WitnessSegment(prefix)` sums
+  over that segment's block exactly once, lowering to `eq(prefix, .)` times the
+  full-vector oracle: it adds no opening (the final check still reduces to
+  `z_0`/`z_1`), it uses two of a term's three factor slots (the selector and
+  the oracle), and two factors over the same block share one selector (`eq` is
+  0/1 on the cube, so `eq^2 = eq`).
 - Tensor layers are MSB-first. Layer `j` weighs index bit `j` counted
   from the top of the oracle's variable block; entry `i` weighs
   `prod_j ((1-a_j)(1-i_j) + a_j*i_j)`. Per-index scales fold into layers:
@@ -107,9 +111,10 @@ opposite end from the MSB-first layer convention.
   before the prove and verify calls, or Fiat-Shamir is unsound. Reading a
   constant term as a true integer also needs no wraparound mod q, which the
   certified l2 bound guarantees.
-- Transcript order. Absorb the commitment before building claims (their
-  batching randomness samples from the transcript). The verifier must
-  rebuild claims in exactly the prover's order.
+- Build claims in a fixed order, after absorbing the commitment. The claim
+  batching randomness is drawn from the transcript, so the commitment must go
+  in first, and the verifier must rebuild the claims in exactly the prover's
+  order.
 
 ## Building a relation
 
