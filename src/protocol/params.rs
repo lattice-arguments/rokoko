@@ -451,7 +451,7 @@ pub static WITNESS_CONFIG: LazyLock<InitialWitnessParams> = LazyLock::new(|| mat
     Config::Sumcheck(config) => InitialWitnessParams {
         height: config.witness_height / 2,
         width: config.witness_width,
-        decomposition_base_log: 18, // change to 8 for EN sets
+        decomposition_base_log: 16, // change to 8 for EN sets
         decomposition_chunks: 2,
         initial_norm_log: 31, // change to 15 for EN sets
     },
