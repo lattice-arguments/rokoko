@@ -71,15 +71,8 @@ Public factors (`PublicFactor`), chosen by weight structure:
 | `FieldTensor { layers, .. }` | product-structured (eq-tensors, geometric scales) | one dense expansion per `Arc` | `O(layers)` |
 | `Dense(data)` | arbitrary full-cube tables (tests, small relations) | the table itself | linear in the table |
 | `DensePrefixed(prefix, suffix, data)` | small arbitrary tables over a segment | the table itself | linear in the table |
-| `LazyPrefixed { data, eval, .. }` | large tables with a closed form | `data` (set `None` on the verifier) | the `eval` closure at the final point |
 | `Structured` | raw tensor rows over all variables | one dense expansion per use (not shared) | `O(nu)` |
 | `Selector` | `eq(prefix, .)` | none (lazy gadget) | `O(nu)` |
-
-`LazyPrefixed`'s closure has type
-`Arc<dyn Fn(&[RingElement], &[QuadraticExtension]) -> RingElement + Send + Sync>`; it
-receives only the middle (data-variable) slice of the final point, in both
-ring and field form, and the slice is LS-first (round order) - the
-opposite end from the MSB-first layer convention.
 
 ## Conventions
 
