@@ -4,17 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-# Use the pure-Rust HEXL replacement (incomplete-rexl) with AVX-512 kernels.
-# When disabled, falls back to C++ Intel HEXL via FFI (requires libhexl_wrapper.so).
+default = ["unsafe-sumcheck", "incomplete-rexl"]
+
 incomplete-rexl = ["dep:incomplete-rexl"]
-# Enables zero-cost borrow checking by using UnsafeCell instead of RefCell
-# WARNING: Only safe if mutations never overlap with reads
 unsafe-sumcheck = []
 debug-hardness = []
 debug-decomp = []
 debug-fs = []
-# Prints a per-gadget breakdown of time spent in Combiner::univariate_polynomial_into
-# at the end of each sumcheck loop. Zero-cost when disabled.
 profile-sumcheck = []
 p-30 = []
 p-26 = []
