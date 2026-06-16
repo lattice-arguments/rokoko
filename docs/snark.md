@@ -64,15 +64,19 @@ Committed factors (`ClaimFactor`):
 | `WitnessSegment(prefix)` | the sub-vector under a binary prefix; the term sums over its block | none (lowers to `eq(prefix, .) x Witness`) |
 | `ConjWitnessSegment(prefix)` | conjugate of a segment | none (lowers against `ConjWitness`) |
 
-Public factors (`PublicFactor`), chosen by weight structure:
+A public factor is a `PublicFactor`: a `weights` shape and representation,
+placed on the cube with `.over_middle(prefix_len, suffix_len)` (constant on the
+top/bottom variables, varying over the middle; the full cube is the default).
 
-| variant | weights | prover cost | verifier cost |
-|---|---|---|---|
-| `FieldTensor { layers, .. }` | product-structured (eq-tensors, geometric scales) | one dense expansion per `Arc` | `O(layers)` |
-| `Dense(data)` | arbitrary full-cube tables (tests, small relations) | the table itself | linear in the table |
-| `DensePrefixed(prefix, suffix, data)` | small arbitrary tables over a segment | the table itself | linear in the table |
-| `Structured` | raw tensor rows over all variables | one dense expansion per use (not shared) | `O(nu)` |
-| `Selector` | `eq(prefix, .)` | none (lazy gadget) | `O(nu)` |
+| constructor | weights | verifier cost |
+|---|---|---|
+| `tensor_ring(layers)` / `tensor_field(layers)` | product eq-tensor, MSB-first layers | `O(layers)` |
+| `dense_ring(table)` / `dense_field(table)` | arbitrary table over the middle | linear in the table |
+| `selector(bits, length)` | `eq(bits, .)` on the leading `length` variables | `O(length)`, zero prover cost |
+
+Both `tensor_*` and `dense_*` take any placement; `_field` weights evaluate
+faster on the verifier than `_ring`. `selector` is anchored to the leading
+variables.
 
 ## Conventions
 
@@ -129,9 +133,9 @@ SnarkClaim {
     terms: vec![ClaimTerm::scaled(
         RingElement::constant(1, Representation::IncompleteNTT),
         vec![
-            ClaimFactor::Public(PublicFactor::FieldTensor {
-                prefix_len: seg.length, suffix_len: 0, layers: Arc::new(layers),
-            }),
+            ClaimFactor::Public(
+                PublicFactor::tensor_field(layers).over_middle(seg.length, 0),
+            ),
             ClaimFactor::WitnessSegment(seg.clone()),
         ],
     )],

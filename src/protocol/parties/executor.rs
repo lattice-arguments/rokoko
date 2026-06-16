@@ -197,7 +197,7 @@ pub fn execute_snark() {
     };
     let claim_linear = SnarkClaim {
         terms: vec![ClaimTerm::new(vec![
-            ClaimFactor::Public(PublicFactor::Structured(structured_point)),
+            ClaimFactor::Public(PublicFactor::tensor_ring(structured_point)),
             ClaimFactor::Witness,
         ])],
         value: t1,
@@ -219,7 +219,7 @@ pub fn execute_snark() {
     }
     let claim_square = SnarkClaim {
         terms: vec![ClaimTerm::new(vec![
-            ClaimFactor::Public(PublicFactor::Selector(segment)),
+            ClaimFactor::Public(PublicFactor::selector(segment.prefix, segment.length)),
             ClaimFactor::Witness,
             ClaimFactor::Witness,
         ])],
