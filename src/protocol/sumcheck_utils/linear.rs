@@ -64,6 +64,15 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
     /// Populate the internal buffer with the provided values.
     /// Marks the whole buffer as potentially non-zero.
     pub fn load_from(&mut self, src: &[E]) {
+        assert_eq!(
+            src.len(),
+            self.data.len(),
+            "load_from length mismatch: buffer {} (vars {}, suffix {}), source {}",
+            self.data.len(),
+            self.variable_count,
+            self.suffix,
+            src.len()
+        );
         self.data.clone_from_slice(src);
         self.non_zero_end = self.data.len();
     }
@@ -217,6 +226,16 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
 
     fn variable_count(&self) -> usize {
         self.variable_count
+    }
+
+    fn dependence_window_vars(&self) -> usize {
+        if self.suffix > 0 {
+            return self.suffix - 1 + self.data.len().ilog2() as usize;
+        }
+        if self.data.len() <= 1 {
+            return 0;
+        }
+        self.data.len().ilog2() as usize - 1
     }
 
     fn as_data_slices(&self) -> Option<(&[Self::Element], &[Self::Element])> {

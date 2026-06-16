@@ -4,11 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-# Use the pure-Rust HEXL replacement (incomplete-rexl) with AVX-512 kernels.
-# When disabled, falls back to C++ Intel HEXL via FFI (requires libhexl_wrapper.so).
+default = ["unsafe-sumcheck", "incomplete-rexl"]
+
 incomplete-rexl = ["dep:incomplete-rexl"]
-# Enables zero-cost borrow checking by using UnsafeCell instead of RefCell
-# WARNING: Only safe if mutations never overlap with reads
 unsafe-sumcheck = []
 debug-hardness = []
 debug-decomp = []
@@ -18,6 +16,7 @@ p-30 = []
 p-26 = []
 p-28 = []
 profile = ["dep:rokoko-profiling"]
+snark = []
 
 [dependencies]
 criterion = "0.7.0"

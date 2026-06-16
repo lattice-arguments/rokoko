@@ -19,56 +19,110 @@ pub static DECOMP_8_LAST_LEVEL: AuxRecursionConfig = AuxRecursionConfig {
     rank: 1,
     next: None,
 };
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SizeConfig {
+    Small,
+    Medium,
+    Large,
+}
 
-// This config is a bit special as I cannot just handle it in the first round
-// Returns `if_p30` if the "p-30" feature is enabled at runtime, otherwise `if_not_p30`.
-// I didn't manage to make it a macro that works inside expressions, so a function will do.
-#[inline(always)]
-#[allow(unused_variables, unreachable_code)]
-pub fn cfg_p30<T>(if_p30: T, if_not_p30: T) -> T {
-    #[cfg(feature = "p-30")]
-    {
-        return if_p30;
+impl SizeConfig {
+    #[inline(always)]
+    pub fn pick<T>(self, small: T, medium: T, large: T) -> T {
+        match self {
+            SizeConfig::Small => small,
+            SizeConfig::Medium => medium,
+            SizeConfig::Large => large,
+        }
     }
-    if_not_p30
 }
 
 #[inline(always)]
-#[allow(unused_variables, unreachable_code)]
-fn cfg_p26<T>(if_p26: T, if_not_p26: T) -> T {
-    #[cfg(feature = "p-26")]
-    {
-        return if_p26;
-    }
-    if_not_p26
-}
-
-#[inline(always)]
-#[allow(unused_variables, unreachable_code)]
-pub fn per_config<T>(p26_value: T, p28_value: T, p30_value: T) -> T {
+#[allow(unreachable_code)]
+pub fn compiled_size() -> SizeConfig {
     #[cfg(feature = "p-30")]
     {
-        return p30_value;
+        return SizeConfig::Large;
     }
     #[cfg(feature = "p-26")]
     {
-        return p26_value;
+        return SizeConfig::Small;
     }
-    p28_value
+    SizeConfig::Medium
 }
 
-pub fn p_root_aux(nof_openings: usize) -> AuxSumcheckConfig {
+pub fn p_exact_norm_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
     AuxSumcheckConfig {
-        witness_height: per_config(
-            2usize.pow(13), // p-26
-            2usize.pow(14), // p-28
-            2usize.pow(15), // p-30
-        ),
-        witness_width: per_config(
-            2usize.pow(7), // p-26
-            2usize.pow(8), // p-28
-            2usize.pow(9), // p-30
-        ),
+        witness_height: size.pick(2usize.pow(13), 2usize.pow(14), 2usize.pow(15)),
+        witness_width: size.pick(2usize.pow(7), 2usize.pow(8), 2usize.pow(9)),
+        projection_ratio: 2usize.pow(5),  // no-op
+        projection_height: 2usize.pow(8), // no-op
+        basic_commitment_rank: 6,
+        nof_openings,
+        commitment_recursion: AuxRecursionConfig {
+            decomposition_base_log: 7,
+            decomposition_chunks: 8,
+            rank: 2,
+            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        },
+        opening_recursion: AuxRecursionConfig {
+            decomposition_base_log: 7,
+            decomposition_chunks: 8,
+            rank: 2,
+            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        },
+        projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
+            decomposition_base_log: 8,
+            decomposition_chunks: 2,
+            rank: 2,
+            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        }),
+
+        witness_decomposition_chunks: 4,
+        witness_decomposition_base_log: size.pick(4, 4, 7),
+
+        next: Some(Box::new(AuxConfig::Sumcheck(p_int(size)))),
+    }
+}
+
+pub fn p_int(size: SizeConfig) -> AuxSumcheckConfig {
+    AuxSumcheckConfig {
+        witness_height: size.pick(2usize.pow(14), 2usize.pow(15), 2usize.pow(16)),
+        witness_width: size.pick(2usize.pow(3), 2usize.pow(4), 2usize.pow(5)),
+        projection_ratio: 2usize.pow(6),
+        projection_height: 2usize.pow(8),
+        basic_commitment_rank: size.pick(5, 5, 6),
+        nof_openings: 2,
+        commitment_recursion: AuxRecursionConfig {
+            decomposition_base_log: 7,
+            decomposition_chunks: 8,
+            rank: size.pick(2, 2, 4), // TODO: Add support for non-power-of-two ranks
+            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        },
+        opening_recursion: AuxRecursionConfig {
+            decomposition_base_log: 7,
+            decomposition_chunks: 8,
+            rank: 2,
+            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        },
+        projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
+            decomposition_base_log: 9,
+            decomposition_chunks: 2,
+            rank: 2,
+            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        }),
+
+        witness_decomposition_chunks: 2,
+        witness_decomposition_base_log: 7,
+
+        next: Some(Box::new(AuxConfig::Sumcheck(p_1(size)))),
+    }
+}
+
+pub fn p_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
+    AuxSumcheckConfig {
+        witness_height: size.pick(2usize.pow(13), 2usize.pow(14), 2usize.pow(15)),
+        witness_width: size.pick(2usize.pow(7), 2usize.pow(8), 2usize.pow(9)),
         projection_ratio: 1,              // no-op
         projection_height: 2usize.pow(8), // no-op,
         basic_commitment_rank: 6,
@@ -88,26 +142,24 @@ pub fn p_root_aux(nof_openings: usize) -> AuxSumcheckConfig {
         projection_recursion: AuxProjection::Skip,
 
         witness_decomposition_chunks: 4,
-        witness_decomposition_base_log: cfg_p30(7, 6),
+        witness_decomposition_base_log: size.pick(6, 6, 7),
 
-        next: Some(Box::new(AuxConfig::Sumcheck(P_1.clone()))),
+        next: Some(Box::new(AuxConfig::Sumcheck(p_1(size)))),
     }
 }
 
-pub static P: LazyLock<Config> = LazyLock::new(|| p_root_aux(1).generate_config());
-
-pub static P_1: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| {
+pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
     AuxSumcheckConfig {
-        witness_height: cfg_p30(2usize.pow(14), 2usize.pow(13)),
-        witness_width: cfg_p26(2usize.pow(3), 2usize.pow(4)),
+        witness_height: size.pick(2usize.pow(13), 2usize.pow(13), 2usize.pow(14)),
+        witness_width: size.pick(2usize.pow(3), 2usize.pow(4), 2usize.pow(4)),
         projection_ratio: 2usize.pow(5),
         projection_height: 2usize.pow(8),
-        basic_commitment_rank: cfg_p30(6, 5),
+        basic_commitment_rank: size.pick(5, 5, 6),
         nof_openings: 2,
         commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
-            rank: cfg_p30(4, 2), // TODO: Add support for non-power-of-two ranks
+            rank: size.pick(2, 2, 4), // TODO: Add support for non-power-of-two ranks
             next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
         },
         opening_recursion: AuxRecursionConfig {
@@ -124,53 +176,104 @@ pub static P_1: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| {
         }),
 
         witness_decomposition_chunks: 2,
+        // the base-2^6 window measured 2082 against its 2080 cap at p-28
+        // (transcript-dependent); base 2^7, already the p-30 value, restores
+        // margin at unchanged composed geometry
         witness_decomposition_base_log: 7,
 
-        next: Some(Box::new(AuxConfig::Sumcheck(P_2.clone()))),
-        // next: None,
+        next: Some(Box::new(AuxConfig::Sumcheck(p_2(size)))),
     }
-});
+}
 
-pub static P_2: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
-    witness_height: cfg_p30(2usize.pow(11), 2usize.pow(10)),
-    witness_width: 2usize.pow(5),
-    projection_ratio: cfg_p30(2usize.pow(8), 2usize.pow(5)),
-    projection_height: 2usize.pow(8),
-    basic_commitment_rank: 5,
-    nof_openings: 2,
-    commitment_recursion: AuxRecursionConfig {
-        decomposition_base_log: 7,
-        decomposition_chunks: 8,
-        rank: 2,
-        next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
-    },
-    opening_recursion: AuxRecursionConfig {
-        decomposition_base_log: 7,
-        decomposition_chunks: 8,
-        rank: 2,
-        next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
-    },
-    projection_recursion: AuxProjection::Fine {
-        nof_batches: 2,
-        recursion_constant_term: AuxRecursionConfig {
-            decomposition_base_log: 10,
-            decomposition_chunks: 2,
-            rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
-        },
-        recursion_batched_projection: AuxRecursionConfig {
+pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
+    AuxSumcheckConfig {
+        witness_height: size.pick(2usize.pow(10), 2usize.pow(10), 2usize.pow(11)),
+        witness_width: 2usize.pow(5),
+        projection_ratio: size.pick(2usize.pow(5), 2usize.pow(5), 2usize.pow(8)),
+        projection_height: 2usize.pow(8),
+        basic_commitment_rank: 5,
+        nof_openings: 2,
+        commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
             rank: 2,
             next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
         },
-    },
+        opening_recursion: AuxRecursionConfig {
+            decomposition_base_log: 7,
+            decomposition_chunks: 8,
+            rank: 2,
+            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        },
+        projection_recursion: AuxProjection::Fine {
+            nof_batches: 2,
+            recursion_constant_term: AuxRecursionConfig {
+                decomposition_base_log: 10,
+                decomposition_chunks: 2,
+                rank: 2,
+                next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            },
+            recursion_batched_projection: AuxRecursionConfig {
+                decomposition_base_log: 7,
+                decomposition_chunks: 8,
+                rank: 2,
+                next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            },
+        },
 
-    witness_decomposition_chunks: 2,
-    witness_decomposition_base_log: 8,
+        witness_decomposition_chunks: 2,
+        witness_decomposition_base_log: 8,
 
-    next: Some(Box::new(AuxConfig::Sumcheck(P_3.clone()))),
+        next: Some(Box::new(AuxConfig::Sumcheck(P_3.clone()))),
+    }
+}
+
+pub static P_EN_SMALL: LazyLock<Config> =
+    LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Small, 1).generate_config());
+pub static P_EN_MEDIUM: LazyLock<Config> =
+    LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Medium, 1).generate_config());
+pub static P_EN_LARGE: LazyLock<Config> =
+    LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Large, 1).generate_config()); // never executed, OOM for 64GiB RAM
+
+pub static P_EN: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
+    SizeConfig::Small => P_EN_SMALL.clone(),
+    SizeConfig::Medium => P_EN_MEDIUM.clone(),
+    SizeConfig::Large => P_EN_LARGE.clone(),
 });
+
+pub static P_EN_2_SMALL: LazyLock<Config> =
+    LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Small, 2).generate_config());
+pub static P_EN_2_MEDIUM: LazyLock<Config> =
+    LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Medium, 2).generate_config());
+pub static P_EN_2_LARGE: LazyLock<Config> =
+    LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Large, 2).generate_config()); // never executed, OOM for 64GiB RAM
+
+pub static P_EN_TWO_EVALS: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
+    SizeConfig::Small => P_EN_2_SMALL.clone(),
+    SizeConfig::Medium => P_EN_2_MEDIUM.clone(),
+    SizeConfig::Large => P_EN_2_LARGE.clone(),
+});
+
+pub static P_SMALL: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Small, 1).generate_config());
+pub static P_MEDIUM: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Medium, 1).generate_config());
+pub static P_LARGE: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Large, 1).generate_config()); 
+
+pub static P_2_SMALL: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Small, 2).generate_config());
+pub static P_2_MEDIUM: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Medium, 2).generate_config());
+pub static P_2_LARGE: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Large, 2).generate_config()); 
+
+pub static P: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
+    SizeConfig::Small => P_SMALL.clone(),
+    SizeConfig::Medium => P_MEDIUM.clone(),
+    SizeConfig::Large => P_LARGE.clone(),
+});
+
+pub static P_TWO_EVALS: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
+    SizeConfig::Small => P_2_SMALL.clone(),
+    SizeConfig::Medium => P_2_MEDIUM.clone(),
+    SizeConfig::Large => P_2_LARGE.clone(),
+});
+
 
 pub static P_3: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
     witness_height: 2usize.pow(8),
@@ -375,9 +478,9 @@ pub static WITNESS_CONFIG: LazyLock<InitialWitnessParams> = LazyLock::new(|| mat
     Config::Sumcheck(config) => InitialWitnessParams {
         height: config.witness_height / 2,
         width: config.witness_width,
-        decomposition_base_log: 16,
+        decomposition_base_log: 16, // change to 8 for EN sets
         decomposition_chunks: 2,
-        initial_norm_log: 31,
+        initial_norm_log: 31, // change to 15 for EN sets
     },
     _ => panic!("Expected sumcheck config at the top level."),
 });
@@ -465,7 +568,12 @@ mod tests {
         }
     }
 
-        #[test]
+    #[test]
+    fn test_p_snark_chain_dims() {
+        assert_chain_dims(&super::P_EN_MEDIUM);
+    }
+
+    #[test]
     fn test_witness_cols_for_target() {
         // p-28-shaped set: 2^13 x 2^8 ring elements = 2^28 Zq coefficients
         assert_eq!(super::witness_cols_for_target(1 << 13, 1 << 8, 28), 1 << 8);

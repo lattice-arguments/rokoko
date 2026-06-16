@@ -127,6 +127,13 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
             - 1
     }
 
+    fn dependence_window_vars(&self) -> usize {
+        self.lhs_sumcheck
+            .get_ref()
+            .dependence_window_vars()
+            .max(self.rhs_sumcheck.get_ref().dependence_window_vars())
+    }
+
     fn variable_count(&self) -> usize {
         self.lhs_sumcheck.get_ref().variable_count()
     }
@@ -352,8 +359,11 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
         polynomial.set_zero();
         polynomial.num_coefficients = 1;
 
-        let half_hypercube = 1 << (self.variable_count() - 1);
-        let (range_start, range_end) = self.non_zero_range().unwrap_or((0, half_hypercube));
+        let half_vars = self.variable_count() - 1;
+        let window = self.dependence_window_vars().min(half_vars);
+        let windowed = 1usize << window;
+        let (range_start, range_end) = self.non_zero_range().unwrap_or((0, windowed));
+        let range_end = range_end.min(windowed);
 
         // Disable per-point cache stores during the sweep: each point is
         // visited exactly once, so the cache is never hit and the stores
@@ -369,6 +379,13 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
             add_poly_in_place(polynomial, &scratch);
         }
         self.set_cache_bypass(false);
+        for _ in window..half_vars {
+            for c in 0..polynomial.num_coefficients {
+                let coeff = &mut polynomial.coefficients[c];
+                let copy = coeff.clone();
+                *coeff += &copy;
+            }
+        }
     }
 
     #[inline]

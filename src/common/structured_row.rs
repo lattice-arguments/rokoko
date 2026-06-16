@@ -56,10 +56,14 @@ pub struct PreprocessedRow<E: SumcheckElement = RingElement> {
 
 impl<E: SumcheckElement> PreprocessedRow<E> {
     pub fn from_structured_row(structured_row: &StructuredRow<E>) -> Self {
-        let mut result = Vec::with_capacity(2usize.pow(structured_row.tensor_layers.len() as u32));
+        Self::from_layers(&structured_row.tensor_layers)
+    }
+
+    pub fn from_layers(tensor_layers: &[E]) -> Self {
+        let mut result = Vec::with_capacity(2usize.pow(tensor_layers.len() as u32));
         result.push(E::one());
 
-        for layer in structured_row.tensor_layers.iter().rev() {
+        for layer in tensor_layers.iter().rev() {
             let mut new_entries: Vec<E> = Vec::with_capacity(result.len());
             for r in &mut result {
                 let mut product = E::zero();

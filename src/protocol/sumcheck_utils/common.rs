@@ -14,6 +14,14 @@ pub trait HighOrderSumcheckData {
     /// Degree + 1 of the univariate polynomial produced at each round.
     fn max_num_polynomial_coefficients(&self) -> usize;
     fn variable_count(&self) -> usize;
+    /// The round summand depends only on the low `w` bits of the hypercube
+    /// point: positions that agree on them give equal values. Prefixed and
+    /// suffixed data declare their support here, and the round loop iterates
+    /// `2^w` points and scales by the repetition count instead of sweeping
+    /// the full half-cube. The default claims no structure.
+    fn dependence_window_vars(&self) -> usize {
+        self.variable_count().saturating_sub(1)
+    }
     /// Mutable scratch polynomial to avoid allocations between rounds.
     fn get_scratch_poly(&self) -> &RefCell<Polynomial<Self::Element>>;
     // this is the univariate polynomial for the current variable with the other variables summed out
@@ -25,12 +33,12 @@ pub trait HighOrderSumcheckData {
         polynomial.set_zero();
         polynomial.num_coefficients = 1; // will be updated as we add terms
 
-        let hypercube_size = 1 << self.variable_count();
-        let half_hypercube = hypercube_size / 2;
+        let half_vars = self.variable_count() - 1;
+        let window = self.dependence_window_vars().min(half_vars);
 
-        // Enumerate over the first half of the hypercube; the polynomial at the
-        // corresponding point in the second half is handled by the callee.
-        for i in 0..half_hypercube {
+        // Enumerate the dependence window; every other point repeats one of
+        // these values, accounted by doubling the result per skipped variable.
+        for i in 0..(1usize << window) {
             let constant = self
                 .constant_univariate_polynomial_at_point_available_by_ref(HypercubePoint::new(i));
 
@@ -47,6 +55,15 @@ pub trait HighOrderSumcheckData {
                 &mut temp.borrow_mut(),
             );
             add_poly_in_place(polynomial, &temp.borrow());
+        }
+        for _ in window..half_vars {
+            for c in 0..polynomial.num_coefficients {
+                let (head, tail) = polynomial.coefficients.split_at_mut(c);
+                let _ = head;
+                let coeff = &mut tail[0];
+                let copy = coeff.clone();
+                *coeff += &copy;
+            }
         }
     }
 
