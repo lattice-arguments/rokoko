@@ -1,12 +1,5 @@
 use std::ops::{Index, IndexMut};
 
-use crate::common::{
-    pool::{
-        get_preallocated_quad_vec, get_preallocated_ring_element_vec, preallocate_ring_element_vecs,
-    },
-    ring_arithmetic::{QuadraticExtension, RingElement},
-};
-
 pub trait ZeroNew<T> {
     fn new_zero(height: usize, width: usize, zero: &T) -> Self;
 }
@@ -63,43 +56,6 @@ where
             used_cols: width,
         }
     }
-}
-
-impl VerticallyAlignedMatrix<RingElement> {
-    pub fn new_zero_preallocated(height: usize, width: usize) -> Self {
-        let data = get_preallocated_ring_element_vec(height * width);
-        VerticallyAlignedMatrix {
-            data,
-            width,
-            height,
-            used_cols: width,
-        }
-    }
-}
-
-pub fn preallocate_zero_matrices(height: usize, width: usize, count: usize) {
-    preallocate_ring_element_vecs(height * width, count);
-}
-
-impl HorizontallyAlignedMatrix<RingElement> {
-    pub fn new_zero_preallocated(height: usize, width: usize) -> Self {
-        let data = get_preallocated_ring_element_vec(height * width);
-        HorizontallyAlignedMatrix {
-            data,
-            width,
-            height,
-        }
-    }
-}
-
-#[inline]
-pub fn new_vec_zero_preallocated(count: usize) -> Vec<RingElement> {
-    get_preallocated_ring_element_vec(count)
-}
-
-#[inline]
-pub fn new_vec_zero_field_preallocated(count: usize) -> Vec<QuadraticExtension> {
-    get_preallocated_quad_vec(count)
 }
 
 impl<T> VerticallyAlignedMatrix<T> {

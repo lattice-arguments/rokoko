@@ -3,7 +3,7 @@ use crate::{
         arithmetic::precompute_structured_values_fast,
         config::{DEGREE, MOD_Q, NOF_BATCHES},
         hash::HashWrapper,
-        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
+        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         norms::l2_norm_coeffs,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
@@ -230,7 +230,7 @@ pub(crate) fn fold_matrix_claims(
         matrix.width,
         "folding_challenges length must equal matrix width"
     );
-    let mut folded_claims = new_vec_zero_preallocated(matrix.height);
+    let mut folded_claims = vec![RingElement::zero(Representation::IncompleteNTT); matrix.height];
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
 
     for row in 0..matrix.height {
@@ -261,7 +261,7 @@ pub fn verifier_round_intermediate(
 
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
 
-    let mut last_col_opening_rhs = new_vec_zero_preallocated(round_proof.opening_rhs.height);
+    let mut last_col_opening_rhs = vec![RingElement::zero(Representation::IncompleteNTT); round_proof.opening_rhs.height];
     // instead of checking if claims are consistent with opening_rhs,
     // we assume they are and recompute the last column of opening_rhs to save on communication
     for i in 0..round_proof.opening_rhs.height {
@@ -363,7 +363,7 @@ pub fn verifier_round_intermediate(
         };
     hash_wrapper.update_with_ring_element_slice(&next_round_commitment.data);
 
-    let mut folded_commitment = new_vec_zero_preallocated(config.basic_commitment_rank);
+    let mut folded_commitment = vec![RingElement::zero(Representation::IncompleteNTT); config.basic_commitment_rank];
     for row in 0..config.basic_commitment_rank {
         for col in 0..commitment.width {
             temp *= (&commitment[(row, col)], &folding_challenges[col]);
@@ -371,7 +371,7 @@ pub fn verifier_round_intermediate(
         }
     }
 
-    let mut folded_opening_claims = new_vec_zero_preallocated(round_proof.opening_rhs.height);
+    let mut folded_opening_claims = vec![RingElement::zero(Representation::IncompleteNTT); round_proof.opening_rhs.height];
     for row in 0..round_proof.opening_rhs.height {
         for col in 0..round_proof.opening_rhs.width - 1 {
             temp *= (
@@ -521,7 +521,7 @@ pub fn verifier_round_simple(
     );
 
     let mut folded_commitment =
-        HorizontallyAlignedMatrix::new_zero_preallocated(config.basic_commitment_rank, 1);
+        HorizontallyAlignedMatrix { data: vec![RingElement::zero(Representation::IncompleteNTT); config.basic_commitment_rank * 1], width: 1, height: config.basic_commitment_rank };
 
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
 
@@ -549,9 +549,9 @@ pub fn verifier_round_simple(
     );
 
     let mut folded_opening =
-        HorizontallyAlignedMatrix::new_zero_preallocated(round_proof.opening_rhs.height, 1);
+        HorizontallyAlignedMatrix { data: vec![RingElement::zero(Representation::IncompleteNTT); round_proof.opening_rhs.height * 1], width: 1, height: round_proof.opening_rhs.height };
 
-    let mut last_col_opening_rhs = new_vec_zero_preallocated(round_proof.opening_rhs.height);
+    let mut last_col_opening_rhs = vec![RingElement::zero(Representation::IncompleteNTT); round_proof.opening_rhs.height];
     // instead of checking if claims are consistent with opening_rhs,
     // we assume they are and recompute the last column of opening_rhs to save on communication
     for i in 0..round_proof.opening_rhs.height {
@@ -587,10 +587,7 @@ pub fn verifier_round_simple(
 
     assert_eq!(opening_to_folded_witness.rhs, folded_opening);
 
-    let mut batched_projection_of_folded_witness = VerticallyAlignedMatrix::new_zero_preallocated(
-        round_proof.batched_projection_image.height,
-        1,
-    );
+    let mut batched_projection_of_folded_witness = VerticallyAlignedMatrix { data: vec![RingElement::zero(Representation::IncompleteNTT); round_proof.batched_projection_image.height * 1], width: 1, height: round_proof.batched_projection_image.height, used_cols: 1 };
 
     for i in 0..round_proof.batched_projection_image.height {
         let j_batched = &challenges[i].j_batched;
@@ -600,10 +597,7 @@ pub fn verifier_round_simple(
         }
     }
 
-    let mut folded_batched_projection_image = VerticallyAlignedMatrix::new_zero_preallocated(
-        round_proof.batched_projection_image.height,
-        1,
-    );
+    let mut folded_batched_projection_image = VerticallyAlignedMatrix { data: vec![RingElement::zero(Representation::IncompleteNTT); round_proof.batched_projection_image.height * 1], width: 1, height: round_proof.batched_projection_image.height, used_cols: 1 };
 
     for i in 0..round_proof.batched_projection_image.height {
         for j in 0..commitment.width {
@@ -656,7 +650,7 @@ pub fn verifier_round_simple(
         }
     }
 
-    let mut witness_even_odd = new_vec_zero_preallocated(round_proof.folded_witness.height);
+    let mut witness_even_odd = vec![RingElement::zero(Representation::IncompleteNTT); round_proof.folded_witness.height];
     witness_even_odd.clone_from_slice(&round_proof.folded_witness.data);
 
     for w in witness_even_odd.iter_mut() {
