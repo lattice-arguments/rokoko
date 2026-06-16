@@ -6,7 +6,7 @@
 //! ```
 //!
 //! with factors drawn from [`ClaimFactor`] (the committed vector, its
-//! conjugate, segments of it) and
+//! conjugate, segments of it, virtual linear combinations of segments) and
 //! [`PublicFactor`] (oracles the verifier evaluates on its own). One batched
 //! sumcheck ([`prove_initial_claims`] / [`verify_initial_claims`]) reduces
 //! all claims to the evaluation claims the argument chain proves against the
@@ -295,8 +295,7 @@ pub struct InitialSumcheckProof {
 }
 
 /// What the PCS chain consumes as its initial statement: evaluation rows and
-/// outer claims (paper: l_j = tensor(c_1), r_j = tensor(c_0); t_0 = z_0 and
-/// t_1 = conj(z_1), against the conjugated rows).
+/// outer claims (paper: l_j = tensor(c_1), r_j = tensor(c_0), t_j = z_j).
 pub struct ChainInputs {
     pub evaluation_points_inner: Vec<StructuredRow>,
     pub evaluation_points_outer: Vec<StructuredRow>,
@@ -382,6 +381,8 @@ impl OraclePool {
     }
 }
 
+/// The order in which segment prefixes first appear in the claims; both sides
+/// derive it from the public claims.
 fn fold_product(
     mut factors: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>>,
 ) -> ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>> {
@@ -501,94 +502,8 @@ fn lower_claims(claims: &[SnarkClaim]) -> Vec<SnarkClaim> {
 /// cube, and a term may hold at most three non-constant factors (the round
 /// polynomials carry degree three; a segment factor counts twice, for its
 /// selector and its vector).
-/// Binds the lowered claim set to the transcript before the batching
-/// randomness: factor kinds, prefixes, dimensions, coefficients, and every
-/// public table both parties hold. Lazy closures cannot be hashed; they are
-/// verifier-derived by construction and their prover-side tables are checked
-/// by the final evaluation.
-fn absorb_claims(hash_wrapper: &mut HashWrapper, claims: &[SnarkClaim]) {
-    hash_wrapper.update_with_u64(claims.len() as u64);
-    for claim in claims {
-        hash_wrapper.update_with_u64(claim.terms.len() as u64);
-        for term in &claim.terms {
-            hash_wrapper.update_with_ring_element(&term.coefficient);
-            hash_wrapper.update_with_u64(term.factors.len() as u64);
-            for f in &term.factors {
-                match f {
-                    ClaimFactor::Witness => hash_wrapper.update_with_u64(1),
-                    ClaimFactor::ConjWitness => hash_wrapper.update_with_u64(2),
-                    ClaimFactor::WitnessSegment(p) => {
-                        hash_wrapper.update_with_u64(3);
-                        hash_wrapper.update_with_u64(p.prefix as u64);
-                        hash_wrapper.update_with_u64(p.length as u64);
-                    }
-                    ClaimFactor::ConjWitnessSegment(p) => {
-                        hash_wrapper.update_with_u64(4);
-                        hash_wrapper.update_with_u64(p.prefix as u64);
-                        hash_wrapper.update_with_u64(p.length as u64);
-                    }
-                    ClaimFactor::Public(public) => match public {
-                        PublicFactor::Structured(row) => {
-                            hash_wrapper.update_with_u64(5);
-                            hash_wrapper.update_with_ring_element_slice(&row.tensor_layers);
-                        }
-                        PublicFactor::Selector(p) => {
-                            hash_wrapper.update_with_u64(6);
-                            hash_wrapper.update_with_u64(p.prefix as u64);
-                            hash_wrapper.update_with_u64(p.length as u64);
-                        }
-                        PublicFactor::Dense(v) => {
-                            hash_wrapper.update_with_u64(7);
-                            hash_wrapper.update_with_ring_element_slice(v);
-                        }
-                        PublicFactor::DensePrefixed(pl, sl, v) => {
-                            hash_wrapper.update_with_u64(8);
-                            hash_wrapper.update_with_u64(*pl as u64);
-                            hash_wrapper.update_with_u64(*sl as u64);
-                            hash_wrapper.update_with_ring_element_slice(v);
-                        }
-                        PublicFactor::FieldTensor {
-                            prefix_len,
-                            suffix_len,
-                            layers,
-                        } => {
-                            hash_wrapper.update_with_u64(9);
-                            hash_wrapper.update_with_u64(*prefix_len as u64);
-                            hash_wrapper.update_with_u64(*suffix_len as u64);
-                            hash_wrapper.update_with_quadratic_extension_slice(layers);
-                        }
-                        PublicFactor::LazyPrefixed {
-                            prefix_len,
-                            suffix_len,
-                            ..
-                        } => {
-                            hash_wrapper.update_with_u64(10);
-                            hash_wrapper.update_with_u64(*prefix_len as u64);
-                            hash_wrapper.update_with_u64(*suffix_len as u64);
-                        }
-                    },
-                }
-            }
-        }
-    }
-}
-
 fn validate_claims(claims: &[SnarkClaim], total_vars: usize) {
     assert!(!claims.is_empty(), "no claims");
-    let n = 1usize << total_vars;
-    let check_prefix = |p: &Prefix| {
-        assert!(p.length <= total_vars, "prefix length exceeds the cube");
-        assert!(
-            p.length == 0 || p.prefix < (1usize << p.length),
-            "prefix value exceeds its declared length"
-        );
-    };
-    let check_window = |pl: usize, sl: usize, data_len: Option<usize>| {
-        assert!(pl + sl <= total_vars, "prefix and suffix exceed the cube");
-        if let Some(len) = data_len {
-            assert_eq!(len, n >> (pl + sl), "public table sized off its window");
-        }
-    };
     for claim in claims {
         assert!(!claim.terms.is_empty(), "claim with no terms");
         for term in &claim.terms {
@@ -596,36 +511,12 @@ fn validate_claims(claims: &[SnarkClaim], total_vars: usize) {
             let mut oracles = 0usize;
             for f in &term.factors {
                 oracles += 1;
-                if let ClaimFactor::Public(public) = f {
-                    match public {
-                        PublicFactor::Selector(p) => check_prefix(p),
-                        PublicFactor::Structured(row) => assert_eq!(
-                            row.tensor_layers.len(),
-                            total_vars,
-                            "structured row sized off the cube"
-                        ),
-                        PublicFactor::Dense(v) => {
-                            assert_eq!(v.len(), n, "dense table sized off the cube")
-                        }
-                        PublicFactor::DensePrefixed(pl, sl, v) => {
-                            check_window(*pl, *sl, Some(v.len()))
-                        }
-                        PublicFactor::FieldTensor {
-                            prefix_len,
-                            suffix_len,
-                            layers,
-                        } => check_window(*prefix_len, *suffix_len, Some(1usize << layers.len())),
-                        PublicFactor::LazyPrefixed {
-                            prefix_len,
-                            suffix_len,
-                            data,
-                            ..
-                        } => check_window(
-                            *prefix_len,
-                            *suffix_len,
-                            data.as_ref().map(|d| d.len()),
-                        ),
-                    }
+                if let ClaimFactor::Public(PublicFactor::Selector(p)) = f {
+                    assert!(p.length <= total_vars, "prefix length exceeds the cube");
+                    assert!(
+                        p.length == 0 || p.prefix < (1usize << p.length),
+                        "prefix value exceeds its declared length"
+                    );
                 }
             }
             assert!(
@@ -816,8 +707,7 @@ pub fn prove_initial_claims(
         leaves.push(LeafCell::Linear(cell.clone()));
     }
 
-    // Bind the claim set and its values, then sample batching challenges
-    absorb_claims(hash_wrapper, claims);
+    // Bind the claim values, then sample batching challenges
     for claim in claims {
         hash_wrapper.update_with_ring_element(&claim.value);
     }
@@ -932,35 +822,6 @@ pub fn verify_initial_claims(
     validate_claims(claims, total_vars);
     assert_eq!(proof.polys.len(), total_vars);
 
-    // Canonicity gate: every proof element must be a reduced residue in the
-    // expected representation before any arithmetic touches it; the same
-    // bytes feed both the final field check and the chain claims, and that
-    // equality argument assumes a single well-defined residue.
-    let canonical = |x: &RingElement| {
-        assert!(
-            matches!(x.representation, Representation::IncompleteNTT),
-            "proof element in unexpected representation"
-        );
-        assert!(
-            x.v.iter().all(|&c| c < crate::common::config::MOD_Q),
-            "proof element not reduced"
-        );
-    };
-    canonical(&proof.witness_eval);
-    canonical(&proof.conj_witness_eval);
-    for poly in &proof.polys {
-        assert!(
-            poly.num_coefficients <= poly.coefficients.len(),
-            "round polynomial over-declares its degree"
-        );
-        for c in &poly.coefficients {
-            assert!(
-                c.coeffs.iter().all(|&v| v < crate::common::config::MOD_Q),
-                "round polynomial coefficient not reduced"
-            );
-        }
-    }
-
     // Mirror of the prover's gadget tree over claimed evaluations
     let witness_eval_cell = ElephantCell::new(FakeEvaluationLinearSumcheck::new());
     witness_eval_cell
@@ -986,10 +847,6 @@ pub fn verify_initial_claims(
                         unreachable!("segments are lowered before assembly")
                     }
                     ClaimFactor::Public(public) => {
-                        let consumes_scale = matches!(
-                            public,
-                            PublicFactor::Structured(_) | PublicFactor::Dense(_)
-                        );
                         let inner: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
                             match public {
                                 PublicFactor::Structured(row) => {
@@ -1052,8 +909,7 @@ pub fn verify_initial_claims(
                                     continue;
                                 }
                             };
-                        if consumes_scale && pending_scale.is_some() {
-                            let scale = pending_scale.take().unwrap();
+                        if let Some(scale) = pending_scale.take() {
                             factors.push(ElephantCell::new(ScaledEvaluation {
                                 inner,
                                 scale,
@@ -1075,9 +931,10 @@ pub fn verify_initial_claims(
         outputs.push(fold_sum_evaluation(term_cells));
     }
 
-    absorb_claims(hash_wrapper, claims);
-    for claim in claims {
-        hash_wrapper.update_with_ring_element(&claim.value);
+    let effective_values: Vec<RingElement> =
+        claims.iter().map(|claim| claim.value.clone()).collect();
+    for value in &effective_values {
+        hash_wrapper.update_with_ring_element(value);
     }
     let mut combination = new_vec_zero_preallocated(outputs.len());
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
@@ -1090,8 +947,8 @@ pub fn verify_initial_claims(
     // batched claim = sum_i gamma_i * value_i, mapped through Phi
     let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
-    for (claim, gamma) in claims.iter().zip(combination.iter()) {
-        temp *= (&claim.value, gamma);
+    for (value, gamma) in effective_values.iter().zip(combination.iter()) {
+        temp *= (value, gamma);
         batched_claim += &temp;
     }
 

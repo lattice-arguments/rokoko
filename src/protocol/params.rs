@@ -127,6 +127,9 @@ pub static P_1: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| {
         }),
 
         witness_decomposition_chunks: 2,
+        // the base-2^6 window measured 2082 against its 2080 cap at p-28
+        // (transcript-dependent); base 2^7, already the p-30 value, restores
+        // margin at unchanged composed geometry
         witness_decomposition_base_log: 7,
 
         next: Some(Box::new(AuxConfig::Sumcheck(P_2.clone()))),
@@ -471,7 +474,7 @@ mod tests {
     fn test_p_snark_chain_dims() {
         assert_chain_dims(&super::P_SNARK);
     }
-  
+
     #[test]
     fn test_witness_cols_for_target() {
         // p-28-shaped set: 2^13 x 2^8 ring elements = 2^28 Zq coefficients
