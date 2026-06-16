@@ -138,7 +138,6 @@ pub fn execute_snark() {
         hash::HashWrapper,
         ring_arithmetic::{Representation, RingElement},
         sampling::sample_random_short_vector,
-        structured_row::StructuredRow,
     };
     use crate::protocol::commitment::Prefix;
     use crate::protocol::params::P_EN_2_EVALS;
@@ -185,12 +184,9 @@ pub fn execute_snark() {
     let structured_point: Vec<RingElement> = (0..total_vars)
         .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 1 << 10))
         .collect();
-    let structured_row = StructuredRow {
-        tensor_layers: structured_point,
-    };
     let t1 = {
         use crate::common::structured_row::PreprocessedRow;
-        let expanded = PreprocessedRow::from_structured_row(&structured_row).preprocessed_row;
+        let expanded = PreprocessedRow::from_layers(&structured_point).preprocessed_row;
         let mut acc = RingElement::zero(Representation::IncompleteNTT);
         let mut temp = RingElement::zero(Representation::IncompleteNTT);
         for (a, w) in expanded.iter().zip(witness.data.iter()) {
@@ -201,7 +197,7 @@ pub fn execute_snark() {
     };
     let claim_linear = SnarkClaim {
         terms: vec![ClaimTerm::new(vec![
-            ClaimFactor::Public(PublicFactor::Structured(structured_row)),
+            ClaimFactor::Public(PublicFactor::Structured(structured_point)),
             ClaimFactor::Witness,
         ])],
         value: t1,

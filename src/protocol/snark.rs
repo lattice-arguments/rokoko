@@ -1,29 +1,3 @@
-//! SNARK entry round (paper: Pi^lin on Xi^sum_COM): commit a witness matrix
-//! and prove a batch of sumcheck claims about it,
-//!
-//! ```text
-//! sum_{z in {0,1}^nu} sum_t coeff_t * prod_{f in t} factor_f(z)  =  value,
-//! ```
-//!
-//! with factors drawn from [`ClaimFactor`] (the committed vector, its
-//! conjugate, segments of it, virtual linear combinations of segments) and
-//! [`PublicFactor`] (oracles the verifier evaluates on its own). One batched
-//! sumcheck ([`prove_initial_claims`] / [`verify_initial_claims`]) reduces
-//! all claims to the evaluation claims the argument chain proves against the
-//! commitment, handed over as [`ChainInputs`].
-//!
-//! A term holding a segment factor sums over that segment's block only
-//! (internally the segment becomes `eq(prefix, .)` times the full-vector
-//! oracle, so it adds one to the term's degree and nothing to the opening
-//! count: the chain always receives exactly the two standard evaluations).
-//!
-//! The witness commits as given: the front end never decomposes it, and the
-//! chain certifies one aggregate l2 norm. Providing a short witness, and
-//! encoding any full-range values through committed digits and recomposition
-//! claims, is the caller's side of the contract.
-//!
-//! Usage, conventions, and a worked relation: `docs/snark.md`.
-
 use crate::{
     common::{
         hash::HashWrapper,
@@ -53,7 +27,7 @@ use std::sync::Arc;
 
 pub enum PublicFactor {
     /// Tensor row over all sumcheck variables; succinct verifier evaluation.
-    Structured(StructuredRow),
+    Structured(Vec<RingElement>),
     /// eq(prefix, .) on the leading variables.
     Selector(Prefix),
     /// Arbitrary public vector of full hypercube length; verifier evaluation
@@ -585,8 +559,8 @@ pub fn prove_initial_claims(
                     ClaimFactor::Public(public) => {
                         let mut data = match public {
                             PublicFactor::Structured(row) => {
-                                assert_eq!(row.tensor_layers.len(), total_vars);
-                                PreprocessedRow::from_structured_row(row).preprocessed_row
+                                assert_eq!(row.len(), total_vars);
+                                PreprocessedRow::from_layers(row).preprocessed_row
                             }
                             PublicFactor::Dense(v) => {
                                 assert_eq!(v.len(), n);
@@ -851,7 +825,9 @@ pub fn verify_initial_claims(
                             match public {
                                 PublicFactor::Structured(row) => {
                                     let mut ev = crate::protocol::sumcheck_utils::linear::StructuredRowEvaluationLinearSumcheck::new(n);
-                                    ev.load_from(row.clone());
+                                    ev.load_from(StructuredRow {
+                                        tensor_layers: row.clone(),
+                                    });
                                     ElephantCell::new(ev) as _
                                 }
                                 PublicFactor::Dense(v) => {
