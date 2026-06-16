@@ -452,35 +452,55 @@ fn lower_claims(claims: &[SnarkClaim]) -> Vec<SnarkClaim> {
         .collect()
 }
 
-/// Structural validation of the lowered claims: every prefix must fit the
-/// cube, and a term may hold at most three non-constant factors (the round
-/// polynomials carry degree three; a segment factor counts twice, for its
-/// selector and its vector).
+/// Structural validation of the lowered claims: every selector prefix must fit
+/// the cube, and no single variable may be multiplied by more than three
+/// factors. A round polynomial's degree is the number of factors depending on
+/// that variable, so the cap is per-variable: factors on disjoint blocks
+/// multiply without raising any round's degree past three.
 fn validate_claims(claims: &[SnarkClaim], total_vars: usize) {
     assert!(!claims.is_empty(), "no claims");
     for claim in claims {
         assert!(!claim.terms.is_empty(), "claim with no terms");
         for term in &claim.terms {
             assert!(!term.factors.is_empty(), "term with no factors");
-            let mut oracles = 0usize;
+            // degree[v] = how many factors depend on variable v
+            let mut degree = vec![0usize; total_vars];
             for f in &term.factors {
-                oracles += 1;
-                if let ClaimFactor::Public(PublicFactor {
-                    weights: Weights::Selector { bits, length },
-                    ..
-                }) = f
-                {
-                    assert!(*length <= total_vars, "prefix length exceeds the cube");
-                    assert!(
-                        *length == 0 || *bits < (1usize << *length),
-                        "prefix value exceeds its declared length"
-                    );
+                let (lo, hi) = match f {
+                    ClaimFactor::Witness | ClaimFactor::ConjWitness => (0, total_vars),
+                    ClaimFactor::WitnessSegment(_) | ClaimFactor::ConjWitnessSegment(_) => {
+                        unreachable!("segments are lowered before validation")
+                    }
+                    ClaimFactor::Public(PublicFactor {
+                        prefix_len,
+                        suffix_len,
+                        weights,
+                    }) => match weights {
+                        Weights::Selector { bits, length } => {
+                            assert!(*length <= total_vars, "prefix length exceeds the cube");
+                            assert!(
+                                *length == 0 || *bits < (1usize << *length),
+                                "prefix value exceeds its declared length"
+                            );
+                            (0, *length)
+                        }
+                        _ => {
+                            assert!(
+                                prefix_len + suffix_len <= total_vars,
+                                "weight placement exceeds the cube"
+                            );
+                            (*prefix_len, total_vars - suffix_len)
+                        }
+                    },
+                };
+                for slot in &mut degree[lo..hi] {
+                    *slot += 1;
                 }
             }
             assert!(
-                oracles <= 3,
-                "a term holds at most three factors (round polynomials carry degree \
-                 three; a segment counts as two, its selector and its vector)"
+                degree.iter().all(|&d| d <= 3),
+                "a term's round polynomials carry degree at most three; some variable \
+                 is multiplied by more than three factors"
             );
         }
     }
@@ -1158,6 +1178,85 @@ mod tests {
 
         let mut hw_v = HashWrapper::new();
         let claims_v = vec![make_claim1()];
+        let chain_v =
+            verify_initial_claims(witness.height, witness.width, &claims_v, &proof, &mut hw_v);
+        assert_eq!(chain_p.claims, chain_v.claims);
+
+        for j in 0..chain_p.claims.len() {
+            let direct = crate::protocol::open::claim(
+                &witness,
+                &chain_p.evaluation_points_inner[j],
+                &chain_p.evaluation_points_outer[j],
+            );
+            assert_eq!(direct, chain_p.claims[j], "opening {}", j);
+        }
+    }
+
+    #[test]
+    fn test_disjoint_public_factors_roundtrip() {
+        // A localized linear claim whose weight is a node eq-tensor on one
+        // block of variables times an arbitrary table on a disjoint block:
+        // [tensor, dense, WitnessSegment] lowers to four factors (tensor,
+        // dense, selector, Witness) yet every variable is multiplied by at
+        // most two, so the round polynomials stay degree two. The old
+        // factor-count cap rejected this; the per-variable cap admits it.
+        init_common();
+        let height = 64;
+        let width = 4;
+        let n = height * width; // total_vars = 8
+        let witness = VerticallyAlignedMatrix {
+            height,
+            width,
+            used_cols: width,
+            data: sample_random_short_vector(n, 100, Representation::IncompleteNTT),
+        };
+
+        let prefix = Prefix {
+            prefix: 2,
+            length: 2,
+        };
+        let (mb, in_bits) = (2usize, 4usize); // mb + in_bits = 6 = free variables
+        let start = prefix.prefix << (n.ilog2() as usize - prefix.length);
+
+        let alpha: Vec<QuadraticExtension> = (0..mb)
+            .map(|i| QuadraticExtension {
+                coeffs: [7 + 3 * i as u64, 11 + 5 * i as u64],
+            })
+            .collect();
+        let k = sample_random_short_vector(1 << in_bits, 50, Representation::IncompleteNTT);
+
+        // value = sum_{m,i} eq(alpha, m) * k[i] * w[start + m*2^in_bits + i]
+        let mut value = RingElement::zero(Representation::IncompleteNTT);
+        let mut prod = RingElement::zero(Representation::IncompleteNTT);
+        for m in 0..(1usize << mb) {
+            let em = embed_qe(&tensor_at(&alpha, m));
+            for i in 0..(1usize << in_bits) {
+                prod *= (&k[i], &witness.data[start + (m << in_bits) + i]);
+                let mut weighted = em.clone();
+                weighted *= &prod;
+                value += &weighted;
+            }
+        }
+
+        let make_claim = || SnarkClaim {
+            terms: vec![ClaimTerm::new(vec![
+                ClaimFactor::Public(
+                    PublicFactor::tensor_field(alpha.clone()).over_middle(prefix.length, in_bits),
+                ),
+                ClaimFactor::Public(
+                    PublicFactor::dense_ring(k.clone()).over_middle(prefix.length + mb, 0),
+                ),
+                ClaimFactor::WitnessSegment(prefix.clone()),
+            ])],
+            value: value.clone(),
+        };
+
+        let mut hw_p = HashWrapper::new();
+        let claims_p = vec![make_claim()];
+        let (proof, chain_p) = prove_initial_claims(&witness, &claims_p, &mut hw_p);
+
+        let mut hw_v = HashWrapper::new();
+        let claims_v = vec![make_claim()];
         let chain_v =
             verify_initial_claims(witness.height, witness.width, &claims_v, &proof, &mut hw_v);
         assert_eq!(chain_p.claims, chain_v.claims);
