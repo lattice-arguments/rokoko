@@ -1,4 +1,4 @@
-# The SNARK front end
+# The SNARK front end (EXPERIMENTAL)
 
 The argument's native object is one committed vector; its native statement is
 a batch of sumcheck claims about that vector. The flow is three steps:
