@@ -382,107 +382,84 @@ pub fn to_kb(size_in_bits: usize) -> f64 {
     size_in_bits as f64 / 8.0 / 1024.0
 }
 
+fn emit_size_table(name: &str, rows: &[(&str, usize)], total: usize) {
+    const LABEL_W: usize = 32;
+    tracing::debug!("\n{name}:");
+    for (label, bits) in rows {
+        tracing::debug!("  {:<LABEL_W$}  {:>8.2} KB", label, to_kb(*bits));
+    }
+    tracing::debug!("  {:<LABEL_W$}  {:>8.2} KB", "TOTAL", to_kb(total));
+}
+
 impl SizeableProof for SumcheckRoundProof {
     fn size_in_bits(&self) -> usize {
-        let mut size = 0;
+        let mut rows: Vec<(&str, usize)> = Vec::new();
+
+        let mut polys_size = 0;
         for poly in &self.polys {
             for coeff in &poly.coefficients[0..poly.num_coefficients] {
-                size += coeff.size_in_bits();
+                polys_size += coeff.size_in_bits();
             }
         }
-        tracing::debug!("Polys size: {} KB, ", to_kb(size));
+        rows.push(("Polys", polys_size));
 
         let mut claims_size = 0;
-        let claims = vec![
+        for claim in [
             &self.claim_over_witness,
             &self.claim_over_witness_conjugate,
             &self.norm_claim,
             &self.most_inner_norm_claim,
-        ];
-        for claim in claims {
+        ] {
             claims_size += claim.size_in_bits();
         }
-        size += claims_size;
-        tracing::debug!("Claims size: {} KB, ", to_kb(claims_size));
+        rows.push(("Claims", claims_size));
 
         let mut rc_opening_inner_size = 0;
         for el in &self.rc_opening_inner {
             rc_opening_inner_size += el.size_in_bits();
         }
-
-        size += rc_opening_inner_size;
-        tracing::debug!(
-            "RC opening inner size: {} KB, ",
-            to_kb(rc_opening_inner_size)
-        );
+        rows.push(("RC opening inner", rc_opening_inner_size));
 
         if let Some(rc_coarse_projection_inner) = &self.rc_coarse_projection_inner {
-            let mut rc_projection_inner_size = 0;
+            let mut s = 0;
             for el in rc_coarse_projection_inner {
-                rc_projection_inner_size += el.size_in_bits();
+                s += el.size_in_bits();
             }
-            size += rc_projection_inner_size;
-            tracing::debug!(
-                "RC coarse projection inner size: {} KB, ",
-                to_kb(rc_projection_inner_size)
-            );
+            rows.push(("RC coarse projection inner", s));
         }
 
-        if let Some((rcs_projection_1_inner_0, rcs_projection_1_inner_1)) =
-            &self.rc_fine_projection_inner
-        {
-            let mut rcs_projection_1_inner_size = 0;
-            for el in rcs_projection_1_inner_0 {
-                rcs_projection_1_inner_size += el.size_in_bits();
+        if let Some((p0, p1)) = &self.rc_fine_projection_inner {
+            let mut s = 0;
+            for el in p0 {
+                s += el.size_in_bits();
             }
-            for el in rcs_projection_1_inner_1 {
-                rcs_projection_1_inner_size += el.size_in_bits();
+            for el in p1 {
+                s += el.size_in_bits();
             }
-            size += rcs_projection_1_inner_size;
-            tracing::debug!(
-                "RC fine projection inner size: {} KB, ",
-                to_kb(rcs_projection_1_inner_size)
-            );
+            rows.push(("RC fine projection inner", s));
         }
 
         if let Some(constant_term_claims) = &self.constant_term_claims {
-            let mut constant_term_claims_size = 0;
+            let mut s = 0;
             for el in constant_term_claims {
-                constant_term_claims_size += el.size_in_bits();
+                s += el.size_in_bits();
             }
-            size += constant_term_claims_size;
-            tracing::debug!(
-                "Constant term claims size: {} KB, ",
-                to_kb(constant_term_claims_size)
-            );
+            rows.push(("Constant term claims", s));
         }
 
-        let next_round_size = if let Some(next_round_commitment) = &self.next_round_commitment {
-            match next_round_commitment {
-                NextRoundCommitment::Recursive(rc) => {
-                    let mut rc_size = 0;
-                    for el in rc {
-                        rc_size += el.size_in_bits();
-                    }
-                    rc_size
-                }
-                NextRoundCommitment::Simple(mat) => {
-                    let mut mat_size = 0;
-                    for el in &mat.data {
-                        mat_size += el.size_in_bits();
-                    }
-                    mat_size
-                }
+        let next_round_size = match &self.next_round_commitment {
+            Some(NextRoundCommitment::Recursive(rc)) => {
+                rc.iter().map(|el| el.size_in_bits()).sum()
             }
-        } else {
-            0
+            Some(NextRoundCommitment::Simple(mat)) => {
+                mat.data.iter().map(|el| el.size_in_bits()).sum()
+            }
+            None => 0,
         };
-        size += next_round_size;
-        tracing::debug!(
-            "Next round commitment size: {} KB, ",
-            to_kb(next_round_size)
-        );
-        tracing::debug!("Total sumcheck round proof size: {} KB", to_kb(size));
+        rows.push(("Next round commitment", next_round_size));
+
+        let size: usize = rows.iter().map(|(_, s)| s).sum();
+        emit_size_table("Sumcheck round proof", &rows, size);
 
         size + if let Some(next) = &self.next {
             match &**next {
@@ -505,40 +482,26 @@ pub struct SimpleRoundProof {
 
 impl SizeableProof for SimpleRoundProof {
     fn size_in_bits(&self) -> usize {
-        let mut size = 0;
-        for el in &self.folded_witness.data {
-            size += el.size_in_bits();
-        }
-        tracing::debug!("Folded witness size: {} KB, ", to_kb(size));
-
-        let mut projection_image_ct_size = 0;
-        for el in &self.projection_image_ct.data {
-            projection_image_ct_size += el.size_in_bits();
-        }
-        size += projection_image_ct_size;
-        tracing::debug!(
-            "Projection image ct size: {} KB, ",
-            to_kb(projection_image_ct_size)
-        );
-
-        let mut batched_projection_image_size = 0;
-        for el in &self.batched_projection_image.data {
-            batched_projection_image_size += el.size_in_bits();
-        }
-        size += batched_projection_image_size;
-        tracing::debug!(
-            "Batched projection image size: {} KB, ",
-            to_kb(batched_projection_image_size)
-        );
-
-        let mut opening_rhs_size = 0;
-        for el in &self.opening_rhs.data {
-            opening_rhs_size += el.size_in_bits();
-        }
-        size += opening_rhs_size;
-        tracing::debug!("Opening RHS size: {} KB, ", to_kb(opening_rhs_size));
-
-        tracing::debug!("Total simple round proof size: {} KB", to_kb(size));
+        let rows: Vec<(&str, usize)> = vec![
+            (
+                "Folded witness",
+                self.folded_witness.data.iter().map(|el| el.size_in_bits()).sum(),
+            ),
+            (
+                "Projection image ct",
+                self.projection_image_ct.data.iter().map(|el| el.size_in_bits()).sum(),
+            ),
+            (
+                "Batched projection image",
+                self.batched_projection_image.data.iter().map(|el| el.size_in_bits()).sum(),
+            ),
+            (
+                "Opening RHS",
+                self.opening_rhs.data.iter().map(|el| el.size_in_bits()).sum(),
+            ),
+        ];
+        let size: usize = rows.iter().map(|(_, s)| s).sum();
+        emit_size_table("Simple round proof", &rows, size);
         size
     }
 }
@@ -557,84 +520,51 @@ pub struct IntermediateRoundProof {
 
 impl SizeableProof for IntermediateRoundProof {
     fn size_in_bits(&self) -> usize {
-        let mut size = 0;
-
         let mut polys_size = 0;
         for poly in &self.polys {
             for coeff in &poly.coefficients[0..poly.num_coefficients] {
                 polys_size += coeff.size_in_bits();
             }
         }
-        size += polys_size;
-        tracing::debug!("Polys size: {} KB, ", to_kb(polys_size));
 
-        let mut claims_size = 0;
-        let claims = vec![
+        let claims_size: usize = [
             &self.claim_over_witness,
             &self.claim_over_witness_conjugate,
             &self.norm_claim,
-        ];
-        for claim in claims {
-            claims_size += claim.size_in_bits();
-        }
-        size += claims_size;
-        tracing::debug!("Claims size: {} KB, ", to_kb(claims_size));
+        ]
+        .iter()
+        .map(|c| c.size_in_bits())
+        .sum();
 
-        let mut projection_image_ct_size = 0;
-        for el in &self.projection_image_ct.data {
-            projection_image_ct_size += el.size_in_bits();
-        }
-        size += projection_image_ct_size;
-        tracing::debug!(
-            "Projection image ct size: {} KB, ",
-            to_kb(projection_image_ct_size)
-        );
-
-        let mut batched_projection_image_size = 0;
-        for el in &self.batched_projection_image.data {
-            batched_projection_image_size += el.size_in_bits();
-        }
-        size += batched_projection_image_size;
-        tracing::debug!(
-            "Batched projection image size: {} KB, ",
-            to_kb(batched_projection_image_size)
-        );
-
-        let mut opening_rhs_size = 0;
-        for el in &self.opening_rhs.data {
-            opening_rhs_size += el.size_in_bits();
-        }
-        size += opening_rhs_size;
-        tracing::debug!("Opening RHS size: {} KB, ", to_kb(opening_rhs_size));
-
-        let next_round_size = if let Some(next_round_commitment) = &self.next_round_commitment {
-            match next_round_commitment {
-                NextRoundCommitment::Recursive(_) => {
-                    unreachable!(
-                        "Intermediate round should not have recursive commitment for next round."
-                    )
-                }
-                NextRoundCommitment::Simple(mat) => {
-                    let mut mat_size = 0;
-                    for el in &mat.data {
-                        mat_size += el.size_in_bits();
-                    }
-                    mat_size
-                }
+        let next_round_size = match &self.next_round_commitment {
+            Some(NextRoundCommitment::Recursive(_)) => unreachable!(
+                "Intermediate round should not have recursive commitment for next round."
+            ),
+            Some(NextRoundCommitment::Simple(mat)) => {
+                mat.data.iter().map(|el| el.size_in_bits()).sum()
             }
-        } else {
-            0
+            None => 0,
         };
-        size += next_round_size;
-        tracing::debug!(
-            "Next round commitment size in intermediate round proof: {} KB, ",
-            to_kb(next_round_size)
-        );
 
-        tracing::debug!(
-            "Total intermediate round proof size: {} KB",
-            to_kb(size)
-        );
+        let rows: Vec<(&str, usize)> = vec![
+            ("Polys", polys_size),
+            ("Claims", claims_size),
+            (
+                "Projection image ct",
+                self.projection_image_ct.data.iter().map(|el| el.size_in_bits()).sum(),
+            ),
+            (
+                "Batched projection image",
+                self.batched_projection_image.data.iter().map(|el| el.size_in_bits()).sum(),
+            ),
+            (
+                "Opening RHS",
+                self.opening_rhs.data.iter().map(|el| el.size_in_bits()).sum(),
+            ),
+            ("Next round commitment", next_round_size),
+        ];
+        let size: usize = rows.iter().map(|(_, s)| s).sum();
+        emit_size_table("Intermediate round proof", &rows, size);
 
         size + if let Some(next) = &self.next {
             match &**next {
