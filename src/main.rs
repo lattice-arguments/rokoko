@@ -84,13 +84,11 @@ fn main() {
         challenge_set_repetition_rate
     );
 
-    #[cfg(feature = "profile")]
-    let _tracing_guards = rokoko_profiling::setup_tracing(
-        &[
-            rokoko_profiling::TracingFormat::Default,
-            rokoko_profiling::TracingFormat::Chrome,
-            rokoko_profiling::TracingFormat::Snapshot,
-        ],
+    #[cfg(any(feature = "events", feature = "profile"))]
+    let _tracing_guards = rokoko_profiling::setup(
+        cfg!(feature = "events"),
+        cfg!(feature = "profile"),
+        cfg!(feature = "debug"),
         trace_name(),
         &active_features(),
     );
@@ -110,17 +108,17 @@ fn main() {
     save_access_stats("pool_stats.txt").expect("Failed to save stats");
 }
 
-#[cfg(feature = "profile")]
+#[cfg(any(feature = "events", feature = "profile"))]
 fn trace_name() -> &'static str {
     match (cfg!(feature = "p-26"), cfg!(feature = "p-28"), cfg!(feature = "p-30")) {
         (true, _, _) => "p26",
         (_, true, _) => "p28",
         (_, _, true) => "p30",
-        _ => panic!("--features profile requires one of p-26, p-28, p-30"),
+        _ => panic!("--features events|profile requires one of p-26, p-28, p-30"),
     }
 }
 
-#[cfg(feature = "profile")]
+#[cfg(any(feature = "events", feature = "profile"))]
 fn active_features() -> String {
     [
         cfg!(feature = "p-26").then_some("p-26"),
