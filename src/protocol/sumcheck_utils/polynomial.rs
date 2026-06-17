@@ -142,7 +142,30 @@ pub fn mul_poly_into<E: SumcheckElement>(
     }
 
     if poly_0.num_coefficients == 3 && poly_1.num_coefficients == 2 {
-        panic!("Not implemented yet");
+        // First is quadratic, second is linear: mirror of the case above with
+        // the roles swapped (b = poly_0 quadratic, a = poly_1 linear).
+        let (first, rest) = result.coefficients.split_at_mut(1);
+        let (second, rest) = rest.split_at_mut(1);
+        let (third, fourth) = rest.split_at_mut(1);
+
+        // second: a0*b1 + a1*b0
+        first[0] *= (&poly_1.coefficients[0], &poly_0.coefficients[1]);
+        second[0] *= (&poly_1.coefficients[1], &poly_0.coefficients[0]);
+        second[0] += &first[0];
+
+        // third: a0*b2 + a1*b1
+        first[0] *= (&poly_1.coefficients[0], &poly_0.coefficients[2]);
+        third[0] *= (&poly_1.coefficients[1], &poly_0.coefficients[1]);
+        third[0] += &first[0];
+
+        // fourth: a1*b2
+        fourth[0] *= (&poly_1.coefficients[1], &poly_0.coefficients[2]);
+
+        // first: a0*b0
+        first[0] *= (&poly_1.coefficients[0], &poly_0.coefficients[0]);
+
+        result.num_coefficients = 4;
+        return;
     }
 
     // This works only in one poly is constant
