@@ -306,6 +306,18 @@ pub struct InitialSumcheckProof {
     pub conj_witness_eval: RingElement,
 }
 
+impl crate::protocol::config::SizeableProof for InitialSumcheckProof {
+    fn size_in_bits(&self) -> usize {
+        let mut size = self.witness_eval.size_in_bits() + self.conj_witness_eval.size_in_bits();
+        for p in &self.polys {
+            for c in &p.coefficients[..p.num_coefficients] {
+                size += c.size_in_bits();
+            }
+        }
+        size
+    }
+}
+
 /// What the PCS chain consumes as its initial statement: evaluation rows and
 /// outer claims (paper: l_j = tensor(c_1), r_j = tensor(c_0), t_j = z_j).
 pub struct ChainInputs {
