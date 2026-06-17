@@ -29,18 +29,36 @@ A minimal end-to-end program is `execute_snark` in `parties/executor.rs`
 
 ## The statement
 
-Each `SnarkClaim` asserts
+Each `SnarkClaim` is one expression `expr` and a `value`, and asserts
 
 ```text
-sum_{z in {0,1}^nu} sum_t coeff_t * prod_{f in t} factor_f(z)  =  value
+sum_{z in {0,1}^nu} expr(z)  =  value
 ```
 
-over the full cube of `nu` variables. A term is a coefficient (a ring
-element) times a product of factors; a degree-two term multiplies two
-committed values at the same cube position. There is no other multiplication:
-the claim language is coordinatewise, and relations that multiply values
-at *different* positions must first align them: commit copies of the
-rearranged data and tie them back with copy claims.
+over the full cube of `nu` variables. `expr` is a `ClaimExpr`: a tree of public
+and private (witness) leaves, closed under product, sum, difference and
+scaling. A degree-two product multiplies two committed values at the same cube
+position. There is no other multiplication: the claim language is
+coordinatewise, and relations that multiply values at *different* positions
+must first align them - commit copies of the rearranged data and tie them back
+with copy claims.
+
+## Composing claims
+
+A `ClaimExpr` is built from leaf constructors and combined with the `+ - *`
+operators (or the matching `add`/`sub`/`mul` methods):
+
+- leaves: `ClaimExpr::witness()`, `conj_witness()`, `segment(prefix)`,
+  `conj_segment(prefix)`, `public(factor)`, `constant(r)`;
+- `a * b` is a product, `a + b` a sum, `a - b` a difference; `a.scale(&c)`
+  multiplies by a ring scalar and `-a` flips the sign.
+
+These lower 1:1 to the sumcheck combinators - product to `ProductSumcheck`, sum
+to `SumSumcheck`, difference to `DiffSumcheck`. The degree-three cap is
+per-variable: a product adds the per-variable degrees of its factors, a sum or
+difference takes the max, so factors on disjoint blocks multiply freely. The
+common use of a difference is an equality constraint - with `value` zero,
+`a - b` states `a == b` as one zero-claim.
 
 ## Shortness is the caller's
 
@@ -99,7 +117,7 @@ variables.
   a claim can state an integer fact about coefficients (binariness:
   `sum x_c(x_c - 1) = 0`); its `value` then depends on the secret witness, so
   the verifier cannot recompute it. The front end only proves
-  `sum terms = value` for the `value` you supply, and hashes each value into
+  `sum_z expr = value` for the `value` you supply, and hashes each value into
   the transcript before drawing the batching randomness. Two things stay
   yours: ship the value to the verifier, and check its shape (say, a zero
   constant term) - the front end checks ring-element equality, not structure.
@@ -130,28 +148,21 @@ value zero:
 ```rust
 let layers = sample_qe_layers(&mut hw, seg_vars);     // MSB-first
 SnarkClaim {
-    terms: vec![ClaimTerm::scaled(
-        RingElement::constant(1, Representation::IncompleteNTT),
-        vec![
-            ClaimFactor::Public(
-                PublicFactor::tensor_field(layers).over_middle(seg.length, 0),
-            ),
-            ClaimFactor::WitnessSegment(seg.clone()),
-        ],
-    )],
+    expr: ClaimExpr::public(PublicFactor::tensor_field(layers).over_middle(seg.length, 0))
+        * ClaimExpr::segment(seg.clone()),
     value: RingElement::zero(Representation::IncompleteNTT),
 }
 ```
 
-A degree-two term multiplies two committed factors under a public weight. The
+A degree-two product multiplies two committed factors under a public weight. The
 limit is per-variable, not a raw factor count: a round polynomial's degree is
 the number of factors depending on that variable, and the round polynomials
 carry degree at most three. Factors placed on disjoint variable blocks (a node
 eq-tensor over one block, a table over another) therefore stack freely - a
-localized `[tensor, dense, WitnessSegment]` lowers to four factors yet every
-variable sees at most two. A recomposition (digits to value) is the same linear shape
+localized `tensor * dense * segment` lowers to four factors yet every variable
+sees at most two. A recomposition (digits to value) is the same linear shape
 with one weighted layer per digit-index bit, `weighted_layer(base.pow(1 << l))`
-for bit `l` MSB-first, the scalar scales folded into the coefficient. Values the verifier must compute (public boundary data)
+for bit `l` MSB-first, the scalar scales folded into a constant. Values the verifier must compute (public boundary data)
 go into `value` with the same tensor weights, accumulating
 `&embed_qe(&tensor_at(&layers, i)) * &public_i` over the public rows.
 

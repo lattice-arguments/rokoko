@@ -12,6 +12,7 @@ use crate::{
         sumcheck_utils::{
             combiner::{Combiner, CombinerEvaluation},
             common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
+            diff::{DiffSumcheck, DiffSumcheckEvaluation},
             elephant_cell::ElephantCell,
             linear::{BasicEvaluationLinearSumcheck, FakeEvaluationLinearSumcheck, LinearSumcheck},
             polynomial::Polynomial,
@@ -205,34 +206,95 @@ pub enum ClaimFactor {
     Public(PublicFactor),
 }
 
-/// `coefficient * prod(factors)`, summed over the cube (a segment factor
-/// restricts the term's sum to its block). The coefficient is a full ring
-/// element: batching scalars and fixed public elements ride here.
-pub struct ClaimTerm {
-    pub coefficient: RingElement,
-    pub factors: Vec<ClaimFactor>,
+/// A claim expression: a high-order combination of public and private
+/// (witness) leaves, closed under product, sum, difference and scaling. It
+/// lowers 1:1 to the sumcheck combinators - `Product` to `ProductSumcheck`,
+/// `Sum` to `SumSumcheck`, `Diff` to `DiffSumcheck`. Build it from the leaf
+/// constructors with the `+ - *` operators or the matching `add`/`sub`/`mul`
+/// methods; `scale` multiplies by a ring scalar and `neg` flips the sign.
+pub enum ClaimExpr {
+    /// A single oracle or public-weight leaf.
+    Factor(ClaimFactor),
+    /// A ring scalar, constant over the cube.
+    Constant(RingElement),
+    /// Pointwise product of the two sub-expressions.
+    Product(Box<ClaimExpr>, Box<ClaimExpr>),
+    /// Sum of the two sub-expressions.
+    Sum(Box<ClaimExpr>, Box<ClaimExpr>),
+    /// Difference `lhs - rhs`.
+    Diff(Box<ClaimExpr>, Box<ClaimExpr>),
+    /// Scale a sub-expression by a ring scalar.
+    Scale(RingElement, Box<ClaimExpr>),
 }
 
-impl ClaimTerm {
-    pub fn new(factors: Vec<ClaimFactor>) -> Self {
-        ClaimTerm {
-            coefficient: RingElement::constant(1, Representation::IncompleteNTT),
-            factors,
-        }
+impl ClaimExpr {
+    pub fn witness() -> ClaimExpr {
+        ClaimExpr::Factor(ClaimFactor::Witness)
+    }
+    pub fn conj_witness() -> ClaimExpr {
+        ClaimExpr::Factor(ClaimFactor::ConjWitness)
+    }
+    pub fn segment(prefix: Prefix) -> ClaimExpr {
+        ClaimExpr::Factor(ClaimFactor::WitnessSegment(prefix))
+    }
+    pub fn conj_segment(prefix: Prefix) -> ClaimExpr {
+        ClaimExpr::Factor(ClaimFactor::ConjWitnessSegment(prefix))
+    }
+    pub fn public(factor: PublicFactor) -> ClaimExpr {
+        ClaimExpr::Factor(ClaimFactor::Public(factor))
+    }
+    pub fn constant(value: RingElement) -> ClaimExpr {
+        ClaimExpr::Constant(value)
     }
 
-    pub fn scaled(coefficient: RingElement, factors: Vec<ClaimFactor>) -> Self {
-        ClaimTerm {
-            coefficient,
-            factors,
-        }
+    pub fn mul(self, rhs: ClaimExpr) -> ClaimExpr {
+        ClaimExpr::Product(Box::new(self), Box::new(rhs))
+    }
+    pub fn add(self, rhs: ClaimExpr) -> ClaimExpr {
+        ClaimExpr::Sum(Box::new(self), Box::new(rhs))
+    }
+    pub fn sub(self, rhs: ClaimExpr) -> ClaimExpr {
+        ClaimExpr::Diff(Box::new(self), Box::new(rhs))
+    }
+    pub fn scale(self, scale: &RingElement) -> ClaimExpr {
+        ClaimExpr::Scale(scale.clone(), Box::new(self))
+    }
+    pub fn neg(self) -> ClaimExpr {
+        self.scale(&RingElement::constant(
+            crate::common::config::MOD_Q - 1,
+            Representation::IncompleteNTT,
+        ))
     }
 }
 
-/// One functional-sumcheck claim (paper: f_sc with
-/// `sum_z f_sc(MLE[w], MLE[conj w])(z) = value`).
+impl std::ops::Mul for ClaimExpr {
+    type Output = ClaimExpr;
+    fn mul(self, rhs: ClaimExpr) -> ClaimExpr {
+        ClaimExpr::mul(self, rhs)
+    }
+}
+impl std::ops::Add for ClaimExpr {
+    type Output = ClaimExpr;
+    fn add(self, rhs: ClaimExpr) -> ClaimExpr {
+        ClaimExpr::add(self, rhs)
+    }
+}
+impl std::ops::Sub for ClaimExpr {
+    type Output = ClaimExpr;
+    fn sub(self, rhs: ClaimExpr) -> ClaimExpr {
+        ClaimExpr::sub(self, rhs)
+    }
+}
+impl std::ops::Neg for ClaimExpr {
+    type Output = ClaimExpr;
+    fn neg(self) -> ClaimExpr {
+        ClaimExpr::neg(self)
+    }
+}
+
+/// One functional-sumcheck claim: `sum_z expr(z) = value`.
 pub struct SnarkClaim {
-    pub terms: Vec<ClaimTerm>,
+    pub expr: ClaimExpr,
     pub value: RingElement,
 }
 
@@ -270,25 +332,9 @@ impl LeafCell {
     }
 }
 
-/// Verifier-side wrapper scaling an inner evaluation by a public constant.
-struct ScaledEvaluation {
-    inner: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
-    scale: RingElement,
-    result: RingElement,
-}
-
-impl EvaluationSumcheckData for ScaledEvaluation {
-    type Element = RingElement;
-
-    fn evaluate(&mut self, point: &Vec<RingElement>) -> &RingElement {
-        self.result.set_from(self.inner.borrow_mut().evaluate(point));
-        self.result *= &self.scale;
-        &self.result
-    }
-}
-
-/// Oracle pool keyed by segment; distinct cell per use within one term (a
-/// RefCell cannot appear twice in one product), reused across terms.
+/// Oracle pool keyed by leaf identity: distinct cell per use within one product
+/// region (a cell cannot be aliased inside one product), reused across additive
+/// branches and claims so a shared oracle folds once.
 struct OraclePool {
     pools: std::collections::HashMap<(usize, usize, usize, bool), (Vec<ElephantCell<LinearSumcheck<RingElement>>>, usize)>,
 }
@@ -331,46 +377,299 @@ impl OraclePool {
     }
 }
 
-/// The order in which segment prefixes first appear in the claims; both sides
-/// derive it from the public claims.
-fn fold_product(
-    mut factors: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>>,
-) -> ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>> {
-    let mut acc = factors.pop().expect("term must have at least one factor");
-    while let Some(f) = factors.pop() {
-        acc = ElephantCell::new(ProductSumcheck::new(f, acc));
-    }
-    acc
+type HighOrderCell = ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>;
+type EvalCell = ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>;
+
+/// Prover-side lowering of a canonical [`ClaimExpr`] to the gadget tree. A
+/// product region is entered from an additive context (`in_product == false`),
+/// where the pools reset so a shared oracle folds once and is reused across
+/// additive branches; inside one region the pools keep advancing so each leaf
+/// occurrence gets its own cell.
+struct ProverAssembler<'a> {
+    witness: &'a [RingElement],
+    conjugated: &'a [RingElement],
+    n: usize,
+    total_vars: usize,
+    witness_pool: OraclePool,
+    conj_pool: OraclePool,
+    public_pool: OraclePool,
+    leaves: Vec<LeafCell>,
 }
 
-fn fold_sum(
-    mut outputs: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>>,
-) -> ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>> {
-    let mut acc = outputs.pop().expect("claim must have at least one term");
-    while let Some(o) = outputs.pop() {
-        acc = ElephantCell::new(SumSumcheck::new(o, acc));
+impl<'a> ProverAssembler<'a> {
+    fn reset(&mut self) {
+        self.witness_pool.reset_term();
+        self.conj_pool.reset_term();
+        self.public_pool.reset_term();
     }
-    acc
+
+    fn build(&mut self, expr: &ClaimExpr, in_product: bool) -> HighOrderCell {
+        match expr {
+            ClaimExpr::Sum(a, b) => {
+                let l = self.build(a, in_product);
+                let r = self.build(b, in_product);
+                ElephantCell::new(SumSumcheck::new(l, r)) as _
+            }
+            ClaimExpr::Diff(a, b) => {
+                let l = self.build(a, in_product);
+                let r = self.build(b, in_product);
+                ElephantCell::new(DiffSumcheck::new(l, r)) as _
+            }
+            _ => {
+                if !in_product {
+                    self.reset();
+                }
+                self.build_mult(expr)
+            }
+        }
+    }
+
+    fn build_mult(&mut self, expr: &ClaimExpr) -> HighOrderCell {
+        match expr {
+            ClaimExpr::Product(a, b) => {
+                let l = self.build_mult(a);
+                let r = self.build_mult(b);
+                ElephantCell::new(ProductSumcheck::new(l, r)) as _
+            }
+            ClaimExpr::Sum(_, _) | ClaimExpr::Diff(_, _) => self.build(expr, true),
+            ClaimExpr::Factor(f) => self.leaf(f),
+            ClaimExpr::Constant(c) => self.constant_leaf(c),
+            ClaimExpr::Scale(_, _) => unreachable!("scale is folded into a constant by canon"),
+        }
+    }
+
+    fn constant_leaf(&mut self, value: &RingElement) -> HighOrderCell {
+        let mut ls = LinearSumcheck::new_with_prefixed_sufixed_data(1, self.total_vars, 0);
+        ls.load_from(std::slice::from_ref(value));
+        let cell = ElephantCell::new(ls);
+        self.leaves.push(LeafCell::Linear(cell.clone()));
+        cell as _
+    }
+
+    fn full_ring_leaf(&mut self, data: Vec<RingElement>) -> HighOrderCell {
+        let mut ls = LinearSumcheck::new(self.n);
+        ls.load_from(&data);
+        let cell = ElephantCell::new(ls);
+        self.leaves.push(LeafCell::Linear(cell.clone()));
+        cell as _
+    }
+
+    fn pooled_leaf(
+        &mut self,
+        ptr: usize,
+        prefix_len: usize,
+        suffix_len: usize,
+        data: Vec<RingElement>,
+    ) -> HighOrderCell {
+        let cell = self.public_pool.next((ptr, prefix_len, suffix_len, false), move || {
+            let mut ls =
+                LinearSumcheck::new_with_prefixed_sufixed_data(data.len(), prefix_len, suffix_len);
+            ls.load_from(&data);
+            ls
+        });
+        cell as _
+    }
+
+    fn leaf(&mut self, factor: &ClaimFactor) -> HighOrderCell {
+        match factor {
+            ClaimFactor::Witness => {
+                let data = self.witness;
+                let cell = self.witness_pool.next(FULL_WITNESS_KEY, move || {
+                    let mut ls = LinearSumcheck::new(data.len());
+                    ls.load_from(data);
+                    ls
+                });
+                cell as _
+            }
+            ClaimFactor::ConjWitness => {
+                let data = self.conjugated;
+                let cell = self.conj_pool.next(FULL_WITNESS_KEY, move || {
+                    let mut ls = LinearSumcheck::new(data.len());
+                    ls.load_from(data);
+                    ls
+                });
+                cell as _
+            }
+            ClaimFactor::WitnessSegment(_) | ClaimFactor::ConjWitnessSegment(_) => {
+                unreachable!("segments are lowered by canon")
+            }
+            ClaimFactor::Public(public) => {
+                let PublicFactor {
+                    prefix_len,
+                    suffix_len,
+                    weights,
+                } = public;
+                let prefix_len = *prefix_len;
+                let suffix_len = *suffix_len;
+                let placed = prefix_len != 0 || suffix_len != 0;
+                let middle_len = self.n >> (prefix_len + suffix_len);
+                match weights {
+                    Weights::Selector { bits, length } => {
+                        let cell =
+                            ElephantCell::new(SelectorEq::new(*bits, *length, self.total_vars));
+                        self.leaves.push(LeafCell::Selector(cell.clone()));
+                        cell as _
+                    }
+                    Weights::Tensor(Coeffs::Ring(layers)) if !placed => {
+                        assert_eq!(layers.len(), self.total_vars);
+                        self.full_ring_leaf(
+                            PreprocessedRow::from_layers(&layers[..]).preprocessed_row,
+                        )
+                    }
+                    Weights::Dense(Coeffs::Ring(v)) if !placed => {
+                        assert_eq!(v.len(), self.n);
+                        self.full_ring_leaf((**v).clone())
+                    }
+                    Weights::Tensor(Coeffs::Ring(layers)) => {
+                        assert_eq!(1usize << layers.len(), middle_len);
+                        self.pooled_leaf(
+                            Arc::as_ptr(layers) as *const () as usize,
+                            prefix_len,
+                            suffix_len,
+                            PreprocessedRow::from_layers(&layers[..]).preprocessed_row,
+                        )
+                    }
+                    Weights::Tensor(Coeffs::Field(layers)) => {
+                        assert_eq!(1usize << layers.len(), middle_len);
+                        self.pooled_leaf(
+                            Arc::as_ptr(layers) as *const () as usize,
+                            prefix_len,
+                            suffix_len,
+                            expand_field_tensor(&layers[..]),
+                        )
+                    }
+                    Weights::Dense(Coeffs::Ring(v)) => {
+                        assert_eq!(v.len(), middle_len);
+                        self.pooled_leaf(
+                            Arc::as_ptr(v) as *const () as usize,
+                            prefix_len,
+                            suffix_len,
+                            (**v).clone(),
+                        )
+                    }
+                    Weights::Dense(Coeffs::Field(v)) => {
+                        assert_eq!(v.len(), middle_len);
+                        self.pooled_leaf(
+                            Arc::as_ptr(v) as *const () as usize,
+                            prefix_len,
+                            suffix_len,
+                            v.iter().map(embed_qe).collect::<Vec<_>>(),
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
-fn fold_product_evaluation(
-    mut factors: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
-) -> ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> {
-    let mut acc = factors.pop().expect("term must have at least one factor");
-    while let Some(f) = factors.pop() {
-        acc = ElephantCell::new(ProductSumcheckEvaluation::new(f, acc));
-    }
-    acc
+/// Verifier-side mirror: lowers the same canonical [`ClaimExpr`] to evaluation
+/// gadgets at the final point. The witness and conjugate evaluations are shared
+/// cells; public factors and constants build fresh.
+struct VerifierAssembler {
+    witness_eval: EvalCell,
+    conj_eval: EvalCell,
+    n: usize,
+    total_vars: usize,
 }
 
-fn fold_sum_evaluation(
-    mut outputs: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
-) -> ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> {
-    let mut acc = outputs.pop().expect("claim must have at least one term");
-    while let Some(o) = outputs.pop() {
-        acc = ElephantCell::new(SumSumcheckEvaluation::new(o, acc));
+impl VerifierAssembler {
+    fn build(&self, expr: &ClaimExpr) -> EvalCell {
+        match expr {
+            ClaimExpr::Sum(a, b) => {
+                ElephantCell::new(SumSumcheckEvaluation::new(self.build(a), self.build(b))) as _
+            }
+            ClaimExpr::Diff(a, b) => {
+                ElephantCell::new(DiffSumcheckEvaluation::new(self.build(a), self.build(b))) as _
+            }
+            ClaimExpr::Product(a, b) => {
+                ElephantCell::new(ProductSumcheckEvaluation::new(self.build(a), self.build(b))) as _
+            }
+            ClaimExpr::Factor(ClaimFactor::Witness) => self.witness_eval.clone(),
+            ClaimExpr::Factor(ClaimFactor::ConjWitness) => self.conj_eval.clone(),
+            ClaimExpr::Factor(ClaimFactor::WitnessSegment(_))
+            | ClaimExpr::Factor(ClaimFactor::ConjWitnessSegment(_)) => {
+                unreachable!("segments are lowered by canon")
+            }
+            ClaimExpr::Factor(ClaimFactor::Public(pf)) => self.public(pf),
+            ClaimExpr::Constant(value) => {
+                let cell = ElephantCell::new(FakeEvaluationLinearSumcheck::new());
+                cell.borrow_mut().set_result(value.clone());
+                cell as _
+            }
+            ClaimExpr::Scale(_, _) => unreachable!("scale is folded into a constant by canon"),
+        }
     }
-    acc
+
+    fn public(&self, pf: &PublicFactor) -> EvalCell {
+        use crate::protocol::sumcheck_utils::linear::{
+            RingToFieldWrapperEvaluation, StructuredRowEvaluationLinearSumcheck,
+        };
+        let PublicFactor {
+            prefix_len,
+            suffix_len,
+            weights,
+        } = pf;
+        let prefix_len = *prefix_len;
+        let suffix_len = *suffix_len;
+        let placed = prefix_len != 0 || suffix_len != 0;
+        match weights {
+            Weights::Selector { bits, length } => {
+                ElephantCell::new(SelectorEqEvaluation::new(*bits, *length, self.total_vars)) as _
+            }
+            Weights::Tensor(Coeffs::Ring(layers)) if !placed => {
+                let mut ev = StructuredRowEvaluationLinearSumcheck::new(self.n);
+                ev.load_from(StructuredRow {
+                    tensor_layers: (**layers).clone(),
+                });
+                ElephantCell::new(ev) as _
+            }
+            Weights::Dense(Coeffs::Ring(v)) if !placed => {
+                let mut ev = BasicEvaluationLinearSumcheck::new(self.n);
+                ev.load_from(&v[..]);
+                ElephantCell::new(ev) as _
+            }
+            Weights::Tensor(Coeffs::Ring(layers)) => {
+                let mut ev = StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
+                    1usize << layers.len(),
+                    prefix_len,
+                    suffix_len,
+                );
+                ev.load_from(StructuredRow {
+                    tensor_layers: (**layers).clone(),
+                });
+                ElephantCell::new(ev) as _
+            }
+            Weights::Tensor(Coeffs::Field(layers)) => {
+                let mut ev = StructuredRowEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
+                    1usize << layers.len(),
+                    prefix_len,
+                    suffix_len,
+                );
+                ev.load_from(StructuredRow {
+                    tensor_layers: (**layers).clone(),
+                });
+                ElephantCell::new(RingToFieldWrapperEvaluation::new(ElephantCell::new(ev) as _)) as _
+            }
+            Weights::Dense(Coeffs::Ring(v)) => {
+                let mut ev = BasicEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
+                    v.len(),
+                    prefix_len,
+                    suffix_len,
+                );
+                ev.load_from(&v[..]);
+                ElephantCell::new(ev) as _
+            }
+            Weights::Dense(Coeffs::Field(v)) => {
+                let mut ev = BasicEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
+                    v.len(),
+                    prefix_len,
+                    suffix_len,
+                );
+                ev.load_from(&v[..]);
+                ElephantCell::new(RingToFieldWrapperEvaluation::new(ElephantCell::new(ev) as _)) as _
+            }
+        }
+    }
 }
 
 fn chain_inputs(
@@ -393,115 +692,175 @@ fn chain_inputs(
         claims: vec![witness_eval.clone(), conj_witness_eval.conjugate()],
     }
 }
-fn lower_claims(claims: &[SnarkClaim]) -> Vec<SnarkClaim> {
-    claims
-        .iter()
-        .map(|claim| SnarkClaim {
-            value: claim.value.clone(),
-            terms: claim
-                .terms
-                .iter()
-                .map(|term| {
-                    let mut factors = Vec::with_capacity(term.factors.len() + 1);
-                    for f in &term.factors {
-                        match f {
-                            ClaimFactor::WitnessSegment(p) => {
-                                factors.push(ClaimFactor::Public(PublicFactor::selector(
-                                    p.prefix, p.length,
-                                )));
-                                factors.push(ClaimFactor::Witness);
-                            }
-                            ClaimFactor::ConjWitnessSegment(p) => {
-                                factors.push(ClaimFactor::Public(PublicFactor::selector(
-                                    p.prefix, p.length,
-                                )));
-                                factors.push(ClaimFactor::ConjWitness);
-                            }
-                            ClaimFactor::Witness => factors.push(ClaimFactor::Witness),
-                            ClaimFactor::ConjWitness => factors.push(ClaimFactor::ConjWitness),
-                            ClaimFactor::Public(p) => {
-                                factors.push(ClaimFactor::Public(p.clone()))
-                            }
-                        }
-                    }
-                    // two factors restricted to the same block need only one
-                    // selector: on the cube eq is 0/1, so eq^2 = eq there,
-                    // and the claim is a statement about the cube sum
-                    let mut seen: Vec<(usize, usize)> = vec![];
-                    factors.retain(|f| {
-                        if let ClaimFactor::Public(PublicFactor {
-                            weights: Weights::Selector { bits, length },
-                            ..
-                        }) = f
-                        {
-                            let key = (*bits, *length);
-                            if seen.contains(&key) {
-                                return false;
-                            }
-                            seen.push(key);
-                        }
-                        true
-                    });
-                    ClaimTerm {
-                        coefficient: term.coefficient.clone(),
-                        factors,
-                    }
-                })
-                .collect(),
-        })
-        .collect()
+/// Canonicalize a claim: lower segments to `selector x witness`, fold scales
+/// into a single constant per product, and collapse duplicate selectors within
+/// a product (eq is 0/1 on the cube, so eq^2 = eq and the sum is unchanged).
+/// The result's leaves are `Witness`/`ConjWitness`/`Public`/`Constant` only;
+/// both prover and verifier consume it, so their trees match exactly.
+fn canonicalize(claim: &SnarkClaim) -> SnarkClaim {
+    SnarkClaim {
+        expr: canon(&claim.expr),
+        value: claim.value.clone(),
+    }
 }
 
-/// Structural validation of the lowered claims: every selector prefix must fit
-/// the cube, and no single variable may be multiplied by more than three
-/// factors. A round polynomial's degree is the number of factors depending on
-/// that variable, so the cap is per-variable: factors on disjoint blocks
-/// multiply without raising any round's degree past three.
+fn canon(expr: &ClaimExpr) -> ClaimExpr {
+    match expr {
+        ClaimExpr::Sum(a, b) => ClaimExpr::Sum(Box::new(canon(a)), Box::new(canon(b))),
+        ClaimExpr::Diff(a, b) => ClaimExpr::Diff(Box::new(canon(a)), Box::new(canon(b))),
+        _ => canon_product(expr),
+    }
+}
+
+fn canon_product(expr: &ClaimExpr) -> ClaimExpr {
+    let mut const_acc = RingElement::constant(1, Representation::IncompleteNTT);
+    let mut have_const = false;
+    let mut selectors: Vec<(usize, usize)> = vec![];
+    let mut members: Vec<ClaimExpr> = vec![];
+    gather_product(
+        expr,
+        &mut const_acc,
+        &mut have_const,
+        &mut selectors,
+        &mut members,
+    );
+
+    let mut parts: Vec<ClaimExpr> = vec![];
+    if have_const && !is_unit(&const_acc) {
+        parts.push(ClaimExpr::Constant(const_acc.clone()));
+    }
+    for (bits, length) in selectors {
+        parts.push(ClaimExpr::public(PublicFactor::selector(bits, length)));
+    }
+    parts.extend(members);
+
+    let mut parts = parts.into_iter();
+    let mut acc = match parts.next() {
+        Some(first) => first,
+        None => return ClaimExpr::Constant(const_acc),
+    };
+    for p in parts {
+        acc = ClaimExpr::Product(Box::new(acc), Box::new(p));
+    }
+    acc
+}
+
+fn push_selector(selectors: &mut Vec<(usize, usize)>, bits: usize, length: usize) {
+    if !selectors.contains(&(bits, length)) {
+        selectors.push((bits, length));
+    }
+}
+
+fn gather_product(
+    expr: &ClaimExpr,
+    const_acc: &mut RingElement,
+    have_const: &mut bool,
+    selectors: &mut Vec<(usize, usize)>,
+    members: &mut Vec<ClaimExpr>,
+) {
+    match expr {
+        ClaimExpr::Scale(c, x) => {
+            *const_acc *= c;
+            *have_const = true;
+            gather_product(x, const_acc, have_const, selectors, members);
+        }
+        ClaimExpr::Constant(c) => {
+            *const_acc *= c;
+            *have_const = true;
+        }
+        ClaimExpr::Product(a, b) => {
+            gather_product(a, const_acc, have_const, selectors, members);
+            gather_product(b, const_acc, have_const, selectors, members);
+        }
+        ClaimExpr::Sum(_, _) | ClaimExpr::Diff(_, _) => members.push(canon(expr)),
+        ClaimExpr::Factor(ClaimFactor::WitnessSegment(p)) => {
+            push_selector(selectors, p.prefix, p.length);
+            members.push(ClaimExpr::witness());
+        }
+        ClaimExpr::Factor(ClaimFactor::ConjWitnessSegment(p)) => {
+            push_selector(selectors, p.prefix, p.length);
+            members.push(ClaimExpr::conj_witness());
+        }
+        ClaimExpr::Factor(ClaimFactor::Public(pf)) => {
+            if let Weights::Selector { bits, length } = &pf.weights {
+                push_selector(selectors, *bits, *length);
+            } else {
+                members.push(ClaimExpr::public(pf.clone()));
+            }
+        }
+        ClaimExpr::Factor(ClaimFactor::Witness) => members.push(ClaimExpr::witness()),
+        ClaimExpr::Factor(ClaimFactor::ConjWitness) => members.push(ClaimExpr::conj_witness()),
+    }
+}
+
+/// Structural validation of a canonical claim. A round polynomial's degree at a
+/// variable is the number of factors depending on it, so `Product` adds the
+/// per-variable degrees and `Sum`/`Diff` take the max; the cap is per-variable
+/// (factors on disjoint blocks multiply freely) and at most three.
 fn validate_claims(claims: &[SnarkClaim], total_vars: usize) {
     assert!(!claims.is_empty(), "no claims");
     for claim in claims {
-        assert!(!claim.terms.is_empty(), "claim with no terms");
-        for term in &claim.terms {
-            assert!(!term.factors.is_empty(), "term with no factors");
-            // degree[v] = how many factors depend on variable v
-            let mut degree = vec![0usize; total_vars];
-            for f in &term.factors {
-                let (lo, hi) = match f {
-                    ClaimFactor::Witness | ClaimFactor::ConjWitness => (0, total_vars),
-                    ClaimFactor::WitnessSegment(_) | ClaimFactor::ConjWitnessSegment(_) => {
-                        unreachable!("segments are lowered before validation")
-                    }
-                    ClaimFactor::Public(PublicFactor {
-                        prefix_len,
-                        suffix_len,
-                        weights,
-                    }) => match weights {
-                        Weights::Selector { bits, length } => {
-                            assert!(*length <= total_vars, "prefix length exceeds the cube");
-                            assert!(
-                                *length == 0 || *bits < (1usize << *length),
-                                "prefix value exceeds its declared length"
-                            );
-                            (0, *length)
-                        }
-                        _ => {
-                            assert!(
-                                prefix_len + suffix_len <= total_vars,
-                                "weight placement exceeds the cube"
-                            );
-                            (*prefix_len, total_vars - suffix_len)
-                        }
-                    },
-                };
-                for slot in &mut degree[lo..hi] {
-                    *slot += 1;
-                }
+        let degree = expr_degree(&claim.expr, total_vars);
+        assert!(
+            degree.iter().all(|&d| d <= 3),
+            "a term's round polynomials carry degree at most three; some variable \
+             is multiplied by more than three factors"
+        );
+    }
+}
+
+fn expr_degree(expr: &ClaimExpr, total_vars: usize) -> Vec<usize> {
+    match expr {
+        ClaimExpr::Factor(ClaimFactor::Witness) | ClaimExpr::Factor(ClaimFactor::ConjWitness) => {
+            vec![1; total_vars]
+        }
+        ClaimExpr::Factor(ClaimFactor::WitnessSegment(_))
+        | ClaimExpr::Factor(ClaimFactor::ConjWitnessSegment(_)) => {
+            unreachable!("segments are lowered by canon")
+        }
+        ClaimExpr::Factor(ClaimFactor::Public(pf)) => {
+            let (lo, hi) = public_support(pf, total_vars);
+            let mut d = vec![0usize; total_vars];
+            for slot in &mut d[lo..hi] {
+                *slot = 1;
             }
+            d
+        }
+        ClaimExpr::Constant(_) => vec![0usize; total_vars],
+        ClaimExpr::Product(a, b) => {
+            let mut da = expr_degree(a, total_vars);
+            for (x, y) in da.iter_mut().zip(expr_degree(b, total_vars)) {
+                *x += y;
+            }
+            da
+        }
+        ClaimExpr::Sum(a, b) | ClaimExpr::Diff(a, b) => {
+            let mut da = expr_degree(a, total_vars);
+            for (x, y) in da.iter_mut().zip(expr_degree(b, total_vars)) {
+                *x = (*x).max(y);
+            }
+            da
+        }
+        ClaimExpr::Scale(_, x) => expr_degree(x, total_vars),
+    }
+}
+
+fn public_support(pf: &PublicFactor, total_vars: usize) -> (usize, usize) {
+    match &pf.weights {
+        Weights::Selector { bits, length } => {
+            assert!(*length <= total_vars, "prefix length exceeds the cube");
             assert!(
-                degree.iter().all(|&d| d <= 3),
-                "a term's round polynomials carry degree at most three; some variable \
-                 is multiplied by more than three factors"
+                *length == 0 || *bits < (1usize << *length),
+                "prefix value exceeds its declared length"
             );
+            (0, *length)
+        }
+        _ => {
+            assert!(
+                pf.prefix_len + pf.suffix_len <= total_vars,
+                "weight placement exceeds the cube"
+            );
+            (pf.prefix_len, total_vars - pf.suffix_len)
         }
     }
 }
@@ -514,8 +873,8 @@ pub fn prove_initial_claims(
     let n = witness.data.len();
     assert!(n.is_power_of_two());
     let total_vars = n.ilog2() as usize;
-    let lowered = lower_claims(claims);
-    let claims = &lowered[..];
+    let canon: Vec<SnarkClaim> = claims.iter().map(canonicalize).collect();
+    let claims = &canon[..];
     validate_claims(claims, total_vars);
 
     let mut conjugated = vec![RingElement::zero(Representation::IncompleteNTT); n];
@@ -525,149 +884,40 @@ pub fn prove_initial_claims(
         .zip(conjugated.iter_mut())
         .for_each(|(orig, conj)| orig.conjugate_into(conj));
 
-    let mut witness_pool = OraclePool::new();
-    let mut conj_pool = OraclePool::new();
-    let mut public_pool = OraclePool::new();
-    let mut leaves: Vec<LeafCell> = vec![];
-
-    let make_full = |data: &[RingElement]| {
-        let mut ls = LinearSumcheck::new(data.len());
-        ls.load_from(data);
-        ls
+    let mut asm = ProverAssembler {
+        witness: &witness.data,
+        conjugated: &conjugated,
+        n,
+        total_vars,
+        witness_pool: OraclePool::new(),
+        conj_pool: OraclePool::new(),
+        public_pool: OraclePool::new(),
+        leaves: vec![],
     };
 
-    let mut outputs: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>> = vec![];
+    let mut outputs: Vec<HighOrderCell> = vec![];
     for claim in claims {
-        let mut term_cells = vec![];
-        for term in &claim.terms {
-            witness_pool.reset_term();
-            conj_pool.reset_term();
-            public_pool.reset_term();
-            let mut factors: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>> =
-                vec![];
-            // the term coefficient is folded into the first scalable public factor
-            let mut pending_scale = (!is_unit(&term.coefficient)).then(|| term.coefficient.clone());
-            for factor in &term.factors {
-                match factor {
-                    ClaimFactor::Witness => {
-                        let cell = witness_pool.next(FULL_WITNESS_KEY, || make_full(&witness.data));
-                        factors.push(cell.clone() as _);
-                    }
-                    ClaimFactor::ConjWitness => {
-                        let cell = conj_pool.next(FULL_WITNESS_KEY, || make_full(&conjugated));
-                        factors.push(cell.clone() as _);
-                    }
-                    ClaimFactor::WitnessSegment(_) | ClaimFactor::ConjWitnessSegment(_) => {
-                        unreachable!("segments are lowered before assembly")
-                    }
-                    ClaimFactor::Public(public) => {
-                        let PublicFactor {
-                            prefix_len,
-                            suffix_len,
-                            weights,
-                        } = public;
-                        let prefix_len = *prefix_len;
-                        let suffix_len = *suffix_len;
-                        let placed = prefix_len != 0 || suffix_len != 0;
-                        let middle_len = n >> (prefix_len + suffix_len);
-                        // Pool a ring middle-table leaf, keyed by its Arc identity.
-                        macro_rules! pooled {
-                            ($ptr:expr, $middle:expr) => {{
-                                let middle = $middle;
-                                let key = ($ptr, prefix_len, suffix_len, false);
-                                let cell = public_pool.next(key, || {
-                                    let mut ls = LinearSumcheck::new_with_prefixed_sufixed_data(
-                                        middle.len(),
-                                        prefix_len,
-                                        suffix_len,
-                                    );
-                                    ls.load_from(&middle);
-                                    ls
-                                });
-                                factors.push(cell.clone() as _);
-                                continue;
-                            }};
-                        }
-                        let mut data = match weights {
-                            Weights::Selector { bits, length } => {
-                                let cell =
-                                    ElephantCell::new(SelectorEq::new(*bits, *length, total_vars));
-                                leaves.push(LeafCell::Selector(cell.clone()));
-                                factors.push(cell as _);
-                                continue;
-                            }
-                            Weights::Tensor(Coeffs::Ring(layers)) if !placed => {
-                                assert_eq!(layers.len(), total_vars);
-                                PreprocessedRow::from_layers(&layers[..]).preprocessed_row
-                            }
-                            Weights::Dense(Coeffs::Ring(v)) if !placed => {
-                                assert_eq!(v.len(), n);
-                                (**v).clone()
-                            }
-                            Weights::Tensor(Coeffs::Ring(layers)) => {
-                                assert_eq!(1usize << layers.len(), middle_len);
-                                pooled!(
-                                    Arc::as_ptr(layers) as *const () as usize,
-                                    PreprocessedRow::from_layers(&layers[..]).preprocessed_row
-                                );
-                            }
-                            Weights::Tensor(Coeffs::Field(layers)) => {
-                                assert_eq!(1usize << layers.len(), middle_len);
-                                pooled!(
-                                    Arc::as_ptr(layers) as *const () as usize,
-                                    expand_field_tensor(&layers[..])
-                                );
-                            }
-                            Weights::Dense(Coeffs::Ring(v)) => {
-                                assert_eq!(v.len(), middle_len);
-                                pooled!(Arc::as_ptr(v) as *const () as usize, (**v).clone());
-                            }
-                            Weights::Dense(Coeffs::Field(v)) => {
-                                assert_eq!(v.len(), middle_len);
-                                pooled!(
-                                    Arc::as_ptr(v) as *const () as usize,
-                                    v.iter().map(embed_qe).collect::<Vec<_>>()
-                                );
-                            }
-                        };
-                        if let Some(scale) = pending_scale.take() {
-                            for d in data.iter_mut() {
-                                *d *= &scale;
-                            }
-                        }
-                        let mut ls = LinearSumcheck::new(n);
-                        ls.load_from(&data);
-                        let cell = ElephantCell::new(ls);
-                        leaves.push(LeafCell::Linear(cell.clone()));
-                        factors.push(cell as _);
-                    }
-                }
-            }
-            if let Some(scale) = pending_scale.take() {
-                // constant factor: one element repeated across all variables
-                let mut ls = LinearSumcheck::new_with_prefixed_sufixed_data(1, total_vars, 0);
-                ls.load_from(std::slice::from_ref(&scale));
-                let cell = ElephantCell::new(ls);
-                leaves.push(LeafCell::Linear(cell.clone()));
-                factors.push(cell as _);
-            }
-            term_cells.push(fold_product(factors));
-        }
-        outputs.push(fold_sum(term_cells));
+        outputs.push(asm.build(&claim.expr, false));
     }
 
     // ensure the full-witness oracle exists: z_0 always seeds the chain
-    if witness_pool.first_cell(&FULL_WITNESS_KEY).is_none() {
-        let _ = witness_pool.next(FULL_WITNESS_KEY, || make_full(&witness.data));
+    if asm.witness_pool.first_cell(&FULL_WITNESS_KEY).is_none() {
+        let data = asm.witness;
+        asm.witness_pool.next(FULL_WITNESS_KEY, move || {
+            let mut ls = LinearSumcheck::new(data.len());
+            ls.load_from(data);
+            ls
+        });
     }
-    for cell in witness_pool.all_cells() {
-        leaves.push(LeafCell::Linear(cell.clone()));
-    }
-    for cell in conj_pool.all_cells() {
-        leaves.push(LeafCell::Linear(cell.clone()));
-    }
-    for cell in public_pool.all_cells() {
-        leaves.push(LeafCell::Linear(cell.clone()));
+    let pooled: Vec<ElephantCell<LinearSumcheck<RingElement>>> = asm
+        .witness_pool
+        .all_cells()
+        .chain(asm.conj_pool.all_cells())
+        .chain(asm.public_pool.all_cells())
+        .cloned()
+        .collect();
+    for cell in pooled {
+        asm.leaves.push(LeafCell::Linear(cell));
     }
 
     // Bind the claim values, then sample batching challenges
@@ -706,7 +956,7 @@ pub fn prove_initial_claims(
         field_to_ring_element_into(&mut r, &f);
         r.from_homogenized_field_extensions_to_incomplete_ntt();
 
-        for leaf in &leaves {
+        for leaf in &asm.leaves {
             leaf.partial_evaluate(&r);
         }
         evaluation_points.push(r);
@@ -715,24 +965,23 @@ pub fn prove_initial_claims(
     #[cfg(feature = "profile-sumcheck")]
     crate::protocol::sumcheck_utils::profile::print_and_reset("entry");
 
-
-    let witness_eval = witness_pool
+    let witness_eval = asm
+        .witness_pool
         .first_cell(&FULL_WITNESS_KEY)
         .unwrap()
         .borrow()
         .final_evaluations()
         .clone();
-    let conj_witness_eval = if conj_pool.first_cell(&FULL_WITNESS_KEY).is_none() {
-        // derive without a dedicated oracle: MLE[conj w](c) = conj(MLE[w](conj c)),
-        // but we have no second run; instead evaluate by loading on demand.
+    let conj_witness_eval = if asm.conj_pool.first_cell(&FULL_WITNESS_KEY).is_none() {
+        // no conjugate oracle was used: evaluate one on demand at the final point
         let mut ls = LinearSumcheck::new(n);
-        ls.load_from(&conjugated);
+        ls.load_from(asm.conjugated);
         for r in &evaluation_points {
             ls.partial_evaluate(r);
         }
         ls.final_evaluations().clone()
     } else {
-        conj_pool
+        asm.conj_pool
             .first_cell(&FULL_WITNESS_KEY)
             .unwrap()
             .borrow()
@@ -780,12 +1029,12 @@ pub fn verify_initial_claims(
     let n = witness_height * witness_width;
     assert!(n.is_power_of_two());
     let total_vars = n.ilog2() as usize;
-    let lowered = lower_claims(claims);
-    let claims = &lowered[..];
+    let canon: Vec<SnarkClaim> = claims.iter().map(canonicalize).collect();
+    let claims = &canon[..];
     validate_claims(claims, total_vars);
     assert_eq!(proof.polys.len(), total_vars);
 
-    // Mirror of the prover's gadget tree over claimed evaluations
+    // Mirror of the prover's gadget tree over the claimed evaluations
     let witness_eval_cell = ElephantCell::new(FakeEvaluationLinearSumcheck::new());
     witness_eval_cell
         .borrow_mut()
@@ -795,121 +1044,16 @@ pub fn verify_initial_claims(
         .borrow_mut()
         .set_result(proof.conj_witness_eval.clone());
 
-    let mut outputs: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>> = vec![];
+    let asm = VerifierAssembler {
+        witness_eval: witness_eval_cell as _,
+        conj_eval: conj_eval_cell as _,
+        n,
+        total_vars,
+    };
+
+    let mut outputs: Vec<EvalCell> = vec![];
     for claim in claims {
-        let mut term_cells = vec![];
-        for term in &claim.terms {
-            let mut factors: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>> =
-                vec![];
-            let mut pending_scale = (!is_unit(&term.coefficient)).then(|| term.coefficient.clone());
-            for factor in &term.factors {
-                match factor {
-                    ClaimFactor::Witness => factors.push(witness_eval_cell.clone() as _),
-                    ClaimFactor::ConjWitness => factors.push(conj_eval_cell.clone() as _),
-                    ClaimFactor::WitnessSegment(_) | ClaimFactor::ConjWitnessSegment(_) => {
-                        unreachable!("segments are lowered before assembly")
-                    }
-                    ClaimFactor::Public(public) => {
-                        let PublicFactor {
-                            prefix_len,
-                            suffix_len,
-                            weights,
-                        } = public;
-                        let prefix_len = *prefix_len;
-                        let suffix_len = *suffix_len;
-                        let placed = prefix_len != 0 || suffix_len != 0;
-                        use crate::protocol::sumcheck_utils::linear::{
-                            RingToFieldWrapperEvaluation, StructuredRowEvaluationLinearSumcheck,
-                        };
-                        let inner: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
-                            match weights {
-                                Weights::Selector { bits, length } => {
-                                    factors.push(ElephantCell::new(SelectorEqEvaluation::new(
-                                        *bits, *length, total_vars,
-                                    )) as _);
-                                    continue;
-                                }
-                                Weights::Tensor(Coeffs::Ring(layers)) if !placed => {
-                                    let mut ev = StructuredRowEvaluationLinearSumcheck::new(n);
-                                    ev.load_from(StructuredRow {
-                                        tensor_layers: (**layers).clone(),
-                                    });
-                                    ElephantCell::new(ev) as _
-                                }
-                                Weights::Dense(Coeffs::Ring(v)) if !placed => {
-                                    let mut ev = BasicEvaluationLinearSumcheck::new(n);
-                                    ev.load_from(&v[..]);
-                                    ElephantCell::new(ev) as _
-                                }
-                                Weights::Tensor(Coeffs::Ring(layers)) => {
-                                    let mut ev = StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
-                                        1usize << layers.len(),
-                                        prefix_len,
-                                        suffix_len,
-                                    );
-                                    ev.load_from(StructuredRow {
-                                        tensor_layers: (**layers).clone(),
-                                    });
-                                    factors.push(ElephantCell::new(ev) as _);
-                                    continue;
-                                }
-                                Weights::Tensor(Coeffs::Field(layers)) => {
-                                    let mut ev = StructuredRowEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
-                                        1usize << layers.len(),
-                                        prefix_len,
-                                        suffix_len,
-                                    );
-                                    ev.load_from(StructuredRow {
-                                        tensor_layers: (**layers).clone(),
-                                    });
-                                    factors.push(ElephantCell::new(RingToFieldWrapperEvaluation::new(
-                                        ElephantCell::new(ev) as _,
-                                    )) as _);
-                                    continue;
-                                }
-                                Weights::Dense(Coeffs::Ring(v)) => {
-                                    let mut ev = BasicEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
-                                        v.len(),
-                                        prefix_len,
-                                        suffix_len,
-                                    );
-                                    ev.load_from(&v[..]);
-                                    factors.push(ElephantCell::new(ev) as _);
-                                    continue;
-                                }
-                                Weights::Dense(Coeffs::Field(v)) => {
-                                    let mut ev = BasicEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
-                                        v.len(),
-                                        prefix_len,
-                                        suffix_len,
-                                    );
-                                    ev.load_from(&v[..]);
-                                    factors.push(ElephantCell::new(RingToFieldWrapperEvaluation::new(
-                                        ElephantCell::new(ev) as _,
-                                    )) as _);
-                                    continue;
-                                }
-                            };
-                        if let Some(scale) = pending_scale.take() {
-                            factors.push(ElephantCell::new(ScaledEvaluation {
-                                inner,
-                                scale,
-                                result: RingElement::zero(Representation::IncompleteNTT),
-                            }) as _);
-                        } else {
-                            factors.push(inner);
-                        }
-                    }
-                }
-            }
-            if let Some(scale) = pending_scale.take() {
-                let constant = ElephantCell::new(FakeEvaluationLinearSumcheck::new());
-                constant.borrow_mut().set_result(scale);
-                factors.push(constant as _);
-            }
-            term_cells.push(fold_product_evaluation(factors));
-        }
-        outputs.push(fold_sum_evaluation(term_cells));
+        outputs.push(asm.build(&claim.expr));
     }
 
     let effective_values: Vec<RingElement> =
@@ -1027,10 +1171,7 @@ mod tests {
         let a = sample_random_short_vector(n, 50, Representation::IncompleteNTT);
         let t1 = inner_product_direct(&a, &witness.data);
         let claim1 = SnarkClaim {
-            terms: vec![ClaimTerm::new(vec![
-                ClaimFactor::Public(PublicFactor::dense_ring(a.clone())),
-                ClaimFactor::Witness,
-            ])],
+            expr: ClaimExpr::public(PublicFactor::dense_ring(a.clone())) * ClaimExpr::witness(),
             value: t1,
         };
 
@@ -1043,11 +1184,9 @@ mod tests {
         }
         let t2 = inner_product_direct(&b, &sq);
         let claim2 = SnarkClaim {
-            terms: vec![ClaimTerm::new(vec![
-                ClaimFactor::Public(PublicFactor::dense_ring(b)),
-                ClaimFactor::Witness,
-                ClaimFactor::Witness,
-            ])],
+            expr: ClaimExpr::public(PublicFactor::dense_ring(b))
+                * ClaimExpr::witness()
+                * ClaimExpr::witness(),
             value: t2,
         };
 
@@ -1061,39 +1200,21 @@ mod tests {
             t3 += w;
         }
         let claim3 = SnarkClaim {
-            terms: vec![ClaimTerm::new(vec![
-                ClaimFactor::Public(PublicFactor::selector(prefix.prefix, prefix.length)),
-                ClaimFactor::Witness,
-            ])],
+            expr: ClaimExpr::public(PublicFactor::selector(prefix.prefix, prefix.length))
+                * ClaimExpr::witness(),
             value: t3,
         };
 
-        // scaled two-term claim: 7*<a, w> - <a, conj(w)> = t
+        // scaled difference of expressions: 7*<a, w> - <a, conj(w)> = t
         let seven = RingElement::constant(7, Representation::IncompleteNTT);
-        let minus_one = RingElement::constant(crate::common::config::MOD_Q - 1, Representation::IncompleteNTT);
         let conj: Vec<RingElement> = witness.data.iter().map(|w| w.conjugate()).collect();
         let mut t4 = inner_product_direct(&a, &witness.data);
         t4 *= &seven;
-        let mut t4b = inner_product_direct(&a, &conj);
-        t4b *= &minus_one;
-        t4 += &t4b;
+        t4 -= &inner_product_direct(&a, &conj);
         let claim4 = SnarkClaim {
-            terms: vec![
-                ClaimTerm::scaled(
-                    seven,
-                    vec![
-                        ClaimFactor::Public(PublicFactor::dense_ring(a.clone())),
-                        ClaimFactor::Witness,
-                    ],
-                ),
-                ClaimTerm::scaled(
-                    minus_one,
-                    vec![
-                        ClaimFactor::Public(PublicFactor::dense_ring(a)),
-                        ClaimFactor::ConjWitness,
-                    ],
-                ),
-            ],
+            expr: (ClaimExpr::public(PublicFactor::dense_ring(a.clone())) * ClaimExpr::witness())
+                .scale(&seven)
+                - (ClaimExpr::public(PublicFactor::dense_ring(a)) * ClaimExpr::conj_witness()),
             value: t4,
         };
 
@@ -1158,17 +1279,11 @@ mod tests {
         let dense1 = expand_field_tensor(&layers);
         let value1 = inner_product_direct(&dense1, &witness.data[quarter..2 * quarter]);
         let make_claim1 = || SnarkClaim {
-            terms: vec![ClaimTerm::new(
-                vec![
-                    ClaimFactor::Public(
-                        PublicFactor::tensor_field(layers.clone()).over_middle(2, 0),
-                    ),
-                    ClaimFactor::WitnessSegment(Prefix {
-                        prefix: 1,
-                        length: 2,
-                    }),
-                ],
-            )],
+            expr: ClaimExpr::public(PublicFactor::tensor_field(layers.clone()).over_middle(2, 0))
+                * ClaimExpr::segment(Prefix {
+                    prefix: 1,
+                    length: 2,
+                }),
             value: value1.clone(),
         };
 
@@ -1196,10 +1311,9 @@ mod tests {
     fn test_disjoint_public_factors_roundtrip() {
         // A localized linear claim whose weight is a node eq-tensor on one
         // block of variables times an arbitrary table on a disjoint block:
-        // [tensor, dense, WitnessSegment] lowers to four factors (tensor,
-        // dense, selector, Witness) yet every variable is multiplied by at
-        // most two, so the round polynomials stay degree two. The old
-        // factor-count cap rejected this; the per-variable cap admits it.
+        // tensor * dense * segment lowers to four factors (tensor, dense,
+        // selector, Witness) yet every variable is multiplied by at most two,
+        // so the round polynomials stay degree two - the per-variable cap.
         init_common();
         let height = 64;
         let width = 4;
@@ -1239,15 +1353,11 @@ mod tests {
         }
 
         let make_claim = || SnarkClaim {
-            terms: vec![ClaimTerm::new(vec![
-                ClaimFactor::Public(
-                    PublicFactor::tensor_field(alpha.clone()).over_middle(prefix.length, in_bits),
-                ),
-                ClaimFactor::Public(
-                    PublicFactor::dense_ring(k.clone()).over_middle(prefix.length + mb, 0),
-                ),
-                ClaimFactor::WitnessSegment(prefix.clone()),
-            ])],
+            expr: ClaimExpr::public(
+                PublicFactor::tensor_field(alpha.clone()).over_middle(prefix.length, in_bits),
+            ) * ClaimExpr::public(
+                PublicFactor::dense_ring(k.clone()).over_middle(prefix.length + mb, 0),
+            ) * ClaimExpr::segment(prefix.clone()),
             value: value.clone(),
         };
 
@@ -1304,27 +1414,19 @@ mod tests {
         let make_claims = || {
             vec![
                 SnarkClaim {
-                    terms: vec![ClaimTerm::new(vec![
-                        ClaimFactor::Public(
-                            PublicFactor::dense_field(table.clone()).over_middle(2, 0),
-                        ),
-                        ClaimFactor::WitnessSegment(Prefix {
+                    expr: ClaimExpr::public(PublicFactor::dense_field(table.clone()).over_middle(2, 0))
+                        * ClaimExpr::segment(Prefix {
                             prefix: 1,
                             length: 2,
                         }),
-                    ])],
                     value: value_a.clone(),
                 },
                 SnarkClaim {
-                    terms: vec![ClaimTerm::new(vec![
-                        ClaimFactor::Public(
-                            PublicFactor::tensor_ring(layers.clone()).over_middle(2, 0),
-                        ),
-                        ClaimFactor::WitnessSegment(Prefix {
+                    expr: ClaimExpr::public(PublicFactor::tensor_ring(layers.clone()).over_middle(2, 0))
+                        * ClaimExpr::segment(Prefix {
                             prefix: 2,
                             length: 2,
                         }),
-                    ])],
                     value: value_b.clone(),
                 },
             ]
@@ -1379,10 +1481,6 @@ mod tests {
             e.from_even_odd_coefficients_to_incomplete_ntt_representation();
             e
         };
-        let minus_one = RingElement::constant(
-            crate::common::config::MOD_Q - 1,
-            Representation::IncompleteNTT,
-        );
         let p = Prefix {
             prefix: 1,
             length: 2,
@@ -1393,27 +1491,14 @@ mod tests {
             tmp *= (w, &w.conjugate());
             value += &tmp;
             tmp *= (w, &ones.conjugate());
-            let mut neg = tmp.clone();
-            neg *= &RingElement::constant(crate::common::config::MOD_Q - 1, Representation::IncompleteNTT);
-            value += &neg;
+            value -= &tmp;
         }
+        // sum_seg w*conj(w) - ones_conj*w = 0 iff each coefficient is binary
         let claims = vec![SnarkClaim {
-            terms: vec![
-                ClaimTerm::new(vec![
-                    ClaimFactor::WitnessSegment(p.clone()),
-                    ClaimFactor::ConjWitnessSegment(p.clone()),
-                ]),
-                ClaimTerm::scaled(
-                    minus_one,
-                    vec![
-                        ClaimFactor::Public(
-                            PublicFactor::dense_ring(vec![ones.conjugate(); quarter])
-                                .over_middle(2, 0),
-                        ),
-                        ClaimFactor::WitnessSegment(p),
-                    ],
-                ),
-            ],
+            expr: (ClaimExpr::segment(p.clone()) * ClaimExpr::conj_segment(p.clone()))
+                - (ClaimExpr::public(
+                    PublicFactor::dense_ring(vec![ones.conjugate(); quarter]).over_middle(2, 0),
+                ) * ClaimExpr::segment(p)),
             value,
         }];
         (witness, claims)
@@ -1482,5 +1567,140 @@ mod tests {
             &proof,
             &mut hw_verifier,
         );
+    }
+
+    /// Prove and verify `make()` (rebuilt for each side), then check the
+    /// emitted chain claims agree and match direct witness openings.
+    fn roundtrip(
+        witness: &VerticallyAlignedMatrix<RingElement>,
+        make: impl Fn() -> Vec<SnarkClaim>,
+    ) {
+        let mut hw_p = HashWrapper::new();
+        let (proof, chain_p) = prove_initial_claims(witness, &make(), &mut hw_p);
+        let mut hw_v = HashWrapper::new();
+        let chain_v =
+            verify_initial_claims(witness.height, witness.width, &make(), &proof, &mut hw_v);
+        assert_eq!(chain_p.claims, chain_v.claims);
+        for j in 0..chain_p.claims.len() {
+            let direct = crate::protocol::open::claim(
+                witness,
+                &chain_p.evaluation_points_inner[j],
+                &chain_p.evaluation_points_outer[j],
+            );
+            assert_eq!(direct, chain_p.claims[j], "opening {}", j);
+        }
+    }
+
+    /// 64x4 witness with two public weight vectors for `<a, w>` and `<b, w>`.
+    fn combine_setup() -> (
+        VerticallyAlignedMatrix<RingElement>,
+        Vec<RingElement>,
+        Vec<RingElement>,
+    ) {
+        let height = 64;
+        let width = 4;
+        let n = height * width;
+        let witness = VerticallyAlignedMatrix {
+            height,
+            width,
+            used_cols: width,
+            data: sample_random_short_vector(n, 100, Representation::IncompleteNTT),
+        };
+        let a = sample_random_short_vector(n, 50, Representation::IncompleteNTT);
+        let b = sample_random_short_vector(n, 30, Representation::IncompleteNTT);
+        (witness, a, b)
+    }
+
+    fn dot(weights: &[RingElement]) -> ClaimExpr {
+        ClaimExpr::public(PublicFactor::dense_ring(weights.to_vec())) * ClaimExpr::witness()
+    }
+
+    #[test]
+    fn test_add_exprs_roundtrip() {
+        init_common();
+        let (witness, a, b) = combine_setup();
+        let t_a = inner_product_direct(&a, &witness.data);
+        let t_b = inner_product_direct(&b, &witness.data);
+        let mut value = t_a;
+        value += &t_b;
+        roundtrip(&witness, || {
+            vec![SnarkClaim {
+                expr: dot(&a) + dot(&b),
+                value: value.clone(),
+            }]
+        });
+    }
+
+    #[test]
+    fn test_sub_exprs_roundtrip() {
+        init_common();
+        let (witness, a, b) = combine_setup();
+        let t_a = inner_product_direct(&a, &witness.data);
+        let t_b = inner_product_direct(&b, &witness.data);
+        let mut value = t_a;
+        value -= &t_b;
+        roundtrip(&witness, || {
+            vec![SnarkClaim {
+                expr: dot(&a) - dot(&b),
+                value: value.clone(),
+            }]
+        });
+    }
+
+    #[test]
+    fn test_scale_then_sub_exprs_roundtrip() {
+        init_common();
+        let (witness, a, b) = combine_setup();
+        let t_a = inner_product_direct(&a, &witness.data);
+        let t_b = inner_product_direct(&b, &witness.data);
+        let seven = RingElement::constant(7, Representation::IncompleteNTT);
+        let mut value = t_a;
+        value *= &seven;
+        value -= &t_b;
+        roundtrip(&witness, || {
+            vec![SnarkClaim {
+                expr: dot(&a).scale(&seven) - dot(&b),
+                value: value.clone(),
+            }]
+        });
+    }
+
+    #[test]
+    fn test_sub_self_is_zero_expr() {
+        init_common();
+        let (witness, a, _b) = combine_setup();
+        // <a, w> - <a, w> = 0: a Diff over the same expression
+        roundtrip(&witness, || {
+            vec![SnarkClaim {
+                expr: dot(&a) - dot(&a),
+                value: RingElement::zero(Representation::IncompleteNTT),
+            }]
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "round claim mismatch")]
+    fn test_add_exprs_wrong_value_rejected() {
+        init_common();
+        let (witness, a, b) = combine_setup();
+        let t_a = inner_product_direct(&a, &witness.data);
+        let t_b = inner_product_direct(&b, &witness.data);
+        let mut value = t_a;
+        value += &t_b;
+
+        let mut hw_p = HashWrapper::new();
+        let combined = vec![SnarkClaim {
+            expr: dot(&a) + dot(&b),
+            value: value.clone(),
+        }];
+        let (proof, _) = prove_initial_claims(&witness, &combined, &mut hw_p);
+
+        value += &RingElement::constant(1, Representation::IncompleteNTT);
+        let claims_v = vec![SnarkClaim {
+            expr: dot(&a) + dot(&b),
+            value,
+        }];
+        let mut hw_v = HashWrapper::new();
+        verify_initial_claims(witness.height, witness.width, &claims_v, &proof, &mut hw_v);
     }
 }
