@@ -13,6 +13,7 @@ use crate::{
 };
 
 pub fn execute() {
+    tracing::debug!("\n==== MEMORY LAYOUT ====");
     let config = match &*CONFIG {
         Config::Sumcheck(config) => config,
         _ => panic!("Expected sumcheck config at the top level."),
@@ -20,7 +21,6 @@ pub fn execute() {
 
     let witness_config = &*WITNESS_CONFIG;
 
-    tracing::debug!("Sampling evaluation points...");
     let evaluation_points = sample_initial_evaluation_points(
         witness_config.height,
         witness_config.width,
@@ -28,18 +28,13 @@ pub fn execute() {
         witness_config.decomposition_chunks,
     );
 
-    tracing::debug!("Generating CRS...");
-
-    let crs_start = std::time::Instant::now();
     let crs = CRS::gen_crs(
         config.composed_witness_length,
         config.basic_commitment_rank + 2,
     );
-    tracing::debug!("CRS gen: {}", format_duration(crs_start.elapsed()));
 
     let mut sumcheck_context = init_sumcheck(&crs, &config);
     let mut sumcheck_context_verifier = init_verifier(&crs, &config);
-    tracing::debug!("Sumcheck contexts initialized.");
 
     let witness = witness_sampler();
 
@@ -48,7 +43,7 @@ pub fn execute() {
     let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness_decomposed);
     drop(_commit_span);
 
-    tracing::debug!("==== PROVER STARTING ===");
+    tracing::debug!("\n==== PROVER ====");
     let prover_start = std::time::Instant::now();
     let _prover_span = tracing::info_span!("prover").entered();
     let (proof, claims) = prover_round(
@@ -65,7 +60,6 @@ pub fn execute() {
     drop(_prover_span);
     let prover_elapsed = prover_start.elapsed();
     let claims = claims.expect("Prover round must return claims when with_claims is true.");
-    tracing::debug!("==== PROVER DONE ===");
     #[cfg(not(any(feature = "events", feature = "profile")))]
     println!("Prover:   {}", format_duration(prover_elapsed));
     #[cfg(any(feature = "events", feature = "profile"))]
@@ -78,6 +72,7 @@ pub fn execute() {
     let proof_size_bits = proof.size_in_bits();
     tracing::debug!("Total proof size: {} KB", to_kb(proof_size_bits));
 
+    tracing::debug!("\n==== VERIFIER ====");
     let verifier_start = std::time::Instant::now();
     let _verifier_span = tracing::info_span!("verifier").entered();
     verifier_round(
@@ -98,6 +93,7 @@ pub fn execute() {
     let _ = verifier_start;
 }
 
+#[cfg(not(any(feature = "events", feature = "profile")))]
 fn format_duration(d: std::time::Duration) -> String {
     let ns = d.as_nanos();
     if ns >= 1_000_000_000 {
@@ -136,7 +132,6 @@ fn check_prover_claims_match_witness(
             "Prover claim {i} does not match the direct witness claim."
         );
     }
-    tracing::debug!("Prover claims match direct witness claims.");
 }
 
 /// SNARK mode: prove user-supplied sumcheck claims about a committed witness,

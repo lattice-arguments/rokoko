@@ -376,15 +376,28 @@ pub struct SumcheckRoundProof {
     pub constant_term_claims: Option<Vec<RingElement>>,
     pub next_round_commitment: Option<NextRoundCommitment>,
     pub next: Option<Box<RoundProof>>,
+    /// Outer length of next round's commitment, recorded for the size-table header.
+    /// `next_round_commitment` only carries the innermost layer, so the outer length
+    /// would otherwise be unrecoverable when printing the breakdown.
+    pub next_commitment_outer_len: Option<usize>,
 }
 
 pub fn to_kb(size_in_bits: usize) -> f64 {
     size_in_bits as f64 / 8.0 / 1024.0
 }
 
-fn emit_size_table(name: &str, rows: &[(&str, usize)], total: usize) {
+fn emit_size_table(name: &str, params: &[(&str, String)], rows: &[(&str, usize)], total: usize) {
     const LABEL_W: usize = 32;
-    tracing::debug!("\n{name}:");
+    let param_str = params
+        .iter()
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if param_str.is_empty() {
+        tracing::debug!("\n=== {name} ===");
+    } else {
+        tracing::debug!("\n=== {name} === {param_str}");
+    }
     for (label, bits) in rows {
         tracing::debug!("  {:<LABEL_W$}  {:>8.2} KB", label, to_kb(*bits));
     }
@@ -395,81 +408,71 @@ impl SizeableProof for SumcheckRoundProof {
     fn size_in_bits(&self) -> usize {
         let mut rows: Vec<(&str, usize)> = Vec::new();
 
-        let mut polys_size = 0;
-        for poly in &self.polys {
-            for coeff in &poly.coefficients[0..poly.num_coefficients] {
-                polys_size += coeff.size_in_bits();
-            }
-        }
+        let polys_size: usize = self.polys.iter()
+            .flat_map(|p| &p.coefficients[0..p.num_coefficients])
+            .map(|c| c.size_in_bits())
+            .sum();
         rows.push(("Polys", polys_size));
 
-        let mut claims_size = 0;
-        for claim in [
+        let claims_size: usize = [
             &self.claim_over_witness,
             &self.claim_over_witness_conjugate,
             &self.norm_claim,
             &self.most_inner_norm_claim,
-        ] {
-            claims_size += claim.size_in_bits();
-        }
+        ].iter().map(|c| c.size_in_bits()).sum();
         rows.push(("Claims", claims_size));
 
-        let mut rc_opening_inner_size = 0;
-        for el in &self.rc_opening_inner {
-            rc_opening_inner_size += el.size_in_bits();
-        }
-        rows.push(("RC opening inner", rc_opening_inner_size));
+        rows.push((
+            "RC opening inner",
+            self.rc_opening_inner.iter().map(|el| el.size_in_bits()).sum(),
+        ));
 
-        if let Some(rc_coarse_projection_inner) = &self.rc_coarse_projection_inner {
-            let mut s = 0;
-            for el in rc_coarse_projection_inner {
-                s += el.size_in_bits();
-            }
-            rows.push(("RC coarse projection inner", s));
+        if let Some(rc_coarse) = &self.rc_coarse_projection_inner {
+            rows.push((
+                "RC coarse projection inner",
+                rc_coarse.iter().map(|el| el.size_in_bits()).sum(),
+            ));
         }
 
         if let Some((p0, p1)) = &self.rc_fine_projection_inner {
-            let mut s = 0;
-            for el in p0 {
-                s += el.size_in_bits();
-            }
-            for el in p1 {
-                s += el.size_in_bits();
-            }
-            rows.push(("RC fine projection inner", s));
+            rows.push((
+                "RC fine projection inner",
+                p0.iter().chain(p1).map(|el| el.size_in_bits()).sum(),
+            ));
         }
 
-        if let Some(constant_term_claims) = &self.constant_term_claims {
-            let mut s = 0;
-            for el in constant_term_claims {
-                s += el.size_in_bits();
-            }
-            rows.push(("Constant term claims", s));
+        if let Some(ct) = &self.constant_term_claims {
+            rows.push((
+                "Constant term claims",
+                ct.iter().map(|el| el.size_in_bits()).sum(),
+            ));
         }
 
-        let next_round_size = match &self.next_round_commitment {
-            Some(NextRoundCommitment::Recursive(rc)) => {
-                rc.iter().map(|el| el.size_in_bits()).sum()
-            }
-            Some(NextRoundCommitment::Simple(mat)) => {
-                mat.data.iter().map(|el| el.size_in_bits()).sum()
-            }
+        let next_round_size: usize = match &self.next_round_commitment {
+            Some(NextRoundCommitment::Recursive(rc)) => rc.iter().map(|el| el.size_in_bits()).sum(),
+            Some(NextRoundCommitment::Simple(mat)) => mat.data.iter().map(|el| el.size_in_bits()).sum(),
             None => 0,
         };
         rows.push(("Next round commitment", next_round_size));
 
-        let size: usize = rows.iter().map(|(_, s)| s).sum();
-        emit_size_table("Sumcheck round proof", &rows, size);
+        let local: usize = rows.iter().map(|(_, s)| s).sum();
 
-        size + if let Some(next) = &self.next {
-            match &**next {
-                RoundProof::Sumcheck(sc_next) => sc_next.size_in_bits(),
-                RoundProof::Simple(s_next) => s_next.size_in_bits(),
-                RoundProof::Intermediate(i_next) => i_next.size_in_bits(),
-            }
-        } else {
-            0
+        let vars = self.polys.len();
+        let hypercube = if vars > 0 { 1u64 << (vars - 1) } else { 0 };
+        let mut params: Vec<(&str, String)> = vec![
+            ("vars", vars.to_string()),
+            ("hypercube", hypercube.to_string()),
+        ];
+        if let Some(outer_len) = self.next_commitment_outer_len {
+            params.push(("next_commitment", outer_len.to_string()));
         }
+        emit_size_table("Sumcheck round", &params, &rows, local);
+
+        local + self.next.as_ref().map_or(0, |n| match &**n {
+            RoundProof::Sumcheck(sc_next) => sc_next.size_in_bits(),
+            RoundProof::Simple(s_next) => s_next.size_in_bits(),
+            RoundProof::Intermediate(i_next) => i_next.size_in_bits(),
+        })
     }
 }
 
@@ -500,9 +503,12 @@ impl SizeableProof for SimpleRoundProof {
                 self.opening_rhs.data.iter().map(|el| el.size_in_bits()).sum(),
             ),
         ];
-        let size: usize = rows.iter().map(|(_, s)| s).sum();
-        emit_size_table("Simple round proof", &rows, size);
-        size
+        let total: usize = rows.iter().map(|(_, s)| s).sum();
+        let params = [
+            ("opening", format!("{}x{}", self.opening_rhs.height, self.opening_rhs.width)),
+        ];
+        emit_size_table("Simple round", &params, &rows, total);
+        total
     }
 }
 
@@ -520,30 +526,28 @@ pub struct IntermediateRoundProof {
 
 impl SizeableProof for IntermediateRoundProof {
     fn size_in_bits(&self) -> usize {
-        let mut polys_size = 0;
-        for poly in &self.polys {
-            for coeff in &poly.coefficients[0..poly.num_coefficients] {
-                polys_size += coeff.size_in_bits();
-            }
-        }
+        let polys_size: usize = self.polys.iter()
+            .flat_map(|p| &p.coefficients[0..p.num_coefficients])
+            .map(|c| c.size_in_bits())
+            .sum();
 
         let claims_size: usize = [
             &self.claim_over_witness,
             &self.claim_over_witness_conjugate,
             &self.norm_claim,
-        ]
-        .iter()
-        .map(|c| c.size_in_bits())
-        .sum();
+        ].iter().map(|c| c.size_in_bits()).sum();
 
-        let next_round_size = match &self.next_round_commitment {
+        // Intermediate's `next_round_commitment` is always `Simple(mat)`, and `mat.data.len()`
+        // IS the outer length — so we can derive `next_commitment` for the header directly.
+        let (next_round_size, next_commitment_outer_len): (usize, Option<usize>) = match &self.next_round_commitment {
             Some(NextRoundCommitment::Recursive(_)) => unreachable!(
                 "Intermediate round should not have recursive commitment for next round."
             ),
-            Some(NextRoundCommitment::Simple(mat)) => {
-                mat.data.iter().map(|el| el.size_in_bits()).sum()
-            }
-            None => 0,
+            Some(NextRoundCommitment::Simple(mat)) => (
+                mat.data.iter().map(|el| el.size_in_bits()).sum(),
+                Some(mat.data.len()),
+            ),
+            None => (0, None),
         };
 
         let rows: Vec<(&str, usize)> = vec![
@@ -563,18 +567,22 @@ impl SizeableProof for IntermediateRoundProof {
             ),
             ("Next round commitment", next_round_size),
         ];
-        let size: usize = rows.iter().map(|(_, s)| s).sum();
-        emit_size_table("Intermediate round proof", &rows, size);
+        let local: usize = rows.iter().map(|(_, s)| s).sum();
 
-        size + if let Some(next) = &self.next {
-            match &**next {
-                RoundProof::Sumcheck(sc_next) => sc_next.size_in_bits(),
-                RoundProof::Simple(s_next) => s_next.size_in_bits(),
-                RoundProof::Intermediate(i_next) => i_next.size_in_bits(),
-            }
-        } else {
-            0
+        let mut params: Vec<(&str, String)> = vec![
+            ("sumcheck_vars", self.polys.len().to_string()),
+            ("opening", format!("{}x{}", self.opening_rhs.height, self.opening_rhs.width)),
+        ];
+        if let Some(outer_len) = next_commitment_outer_len {
+            params.push(("next_commitment", outer_len.to_string()));
         }
+        emit_size_table("Intermediate round", &params, &rows, local);
+
+        local + self.next.as_ref().map_or(0, |n| match &**n {
+            RoundProof::Sumcheck(sc_next) => sc_next.size_in_bits(),
+            RoundProof::Simple(s_next) => s_next.size_in_bits(),
+            RoundProof::Intermediate(i_next) => i_next.size_in_bits(),
+        })
     }
 }
 

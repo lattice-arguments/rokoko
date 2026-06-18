@@ -245,13 +245,13 @@ pub fn sumcheck_verifier(
     }
 
     let norm_ct = round_proof.norm_claim.constant_term_from_incomplete_ntt();
-    tracing::debug!("Norm claim via inner-product: {}", (norm_ct as f64).sqrt());
+    tracing::debug!("norm claim: {:.2}", (norm_ct as f64).sqrt());
 
     let most_inner_norm_ct = round_proof
         .most_inner_norm_claim
         .constant_term_from_incomplete_ntt();
     tracing::debug!(
-        "Most inner norm claim via inner-product: {}",
+        "most inner norm claim: {:.2}",
         (most_inner_norm_ct as f64).sqrt()
     );
 

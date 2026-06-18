@@ -1,10 +1,8 @@
 use std::collections::{HashMap, HashSet};
-use std::fmt::Write as _;
 use std::io::{self, Write as _};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id};
 use tracing::Subscriber;
 use tracing_subscriber::layer::{Context, Layer};
@@ -91,20 +89,16 @@ impl ConsoleLayer {
 
 struct Timing {
     start: Instant,
-    attrs: String,
 }
 
 impl<S> Layer<S> for ConsoleLayer
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+    fn on_new_span(&self, _attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
         let span = ctx.span(id).expect("span exists at on_new_span");
-        let mut buf = String::new();
-        attrs.record(&mut AttrVisitor(&mut buf));
         span.extensions_mut().insert(Timing {
             start: Instant::now(),
-            attrs: buf,
         });
     }
 
@@ -371,26 +365,6 @@ fn strip_common_prefix<'a>(name: &'a str, parent: Option<&str>) -> &'a str {
         name
     } else {
         &name[bytes_to_skip..]
-    }
-}
-
-struct AttrVisitor<'a>(&'a mut String);
-
-impl Visit for AttrVisitor<'_> {
-    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-        let _ = write!(self.0, " {}={:?}", field.name(), value);
-    }
-    fn record_str(&mut self, field: &Field, value: &str) {
-        let _ = write!(self.0, " {}={}", field.name(), value);
-    }
-    fn record_i64(&mut self, field: &Field, value: i64) {
-        let _ = write!(self.0, " {}={}", field.name(), value);
-    }
-    fn record_u64(&mut self, field: &Field, value: u64) {
-        let _ = write!(self.0, " {}={}", field.name(), value);
-    }
-    fn record_bool(&mut self, field: &Field, value: bool) {
-        let _ = write!(self.0, " {}={}", field.name(), value);
     }
 }
 

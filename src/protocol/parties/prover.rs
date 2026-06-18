@@ -193,11 +193,6 @@ pub fn prover_round(
         _ => None,
     };
 
-    if let Projection::Skip = &config.projection_recursion {
-        tracing::debug!(
-            "Skipping projection recursion as per configuration. Likely the first round"
-        );
-    }
     let mut fold_challenge = vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
 
     hash_wrapper.sample_low_op_norm_ring_vec_into(&mut fold_challenge);
@@ -326,10 +321,6 @@ pub fn prover_round(
                     &basic_commitment.data,
                 );
                 hash_wrapper.update_with_ring_element_slice(&rc.most_inner_commitment());
-                tracing::debug!(
-                    "Next round commitment created of length {}.",
-                    rc.committed_data.len()
-                );
                 PendingNextCommitment::Recursive(rc)
             }
             _ => {
@@ -364,6 +355,14 @@ pub fn prover_round(
         evaluation_points,
         constant_term_claims,
     ) = sumcheck_output;
+
+    // Read the next-round commitment's outer length while pending_commitment is still alive,
+    // for the size-table header (the proof struct only stores the innermost layer).
+    let next_commitment_outer_len: Option<usize> = match &pending_commitment {
+        None => None,
+        Some(PendingNextCommitment::Recursive(rc)) => Some(rc.committed_data.len()),
+        Some(PendingNextCommitment::Basic(basic)) => Some(basic.data.len()),
+    };
 
     // Recurse: the sumcheck evaluation point splits into (outer, inner) =
     // (c_0, c_1), which become the next round's evaluation points.
@@ -464,6 +463,7 @@ pub fn prover_round(
         }),
         constant_term_claims,
         next: next_proof.map(Box::new),
+        next_commitment_outer_len,
     };
 
     (rp, claims)
@@ -480,7 +480,6 @@ pub fn prover_round_intermediate(
     sumcheck_context: &mut IntermediateSumcheckContext,
     hash_wrapper: Option<HashWrapper>,
 ) -> IntermediateRoundProof {
-    tracing::debug!("Prover intermediate round started.");
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
 
@@ -489,15 +488,6 @@ pub fn prover_round_intermediate(
         &evaluation_points_inner,
         &evaluation_points_outer,
         true,
-    );
-    tracing::debug!(
-        "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
-        evaluation_points_inner.len(),
-        evaluation_points_outer.len()
-    );
-    tracing::debug!(
-        "int opening height: {}, width: {}",
-        opening.rhs.height, opening.rhs.width
     );
 
     hash_wrapper.update_with_ring_element_slice(&opening.rhs.data);
@@ -535,8 +525,6 @@ pub fn prover_round_intermediate(
 
     let next_config_base = config.next.as_ref().map(|c| config_base_from_config(c));
 
-    tracing::debug!("Creating next round commitment.");
-
     let next_round_config = next_config_base
         .as_ref()
         .expect("Intermediate round must have a next round config");
@@ -573,11 +561,6 @@ pub fn prover_round_intermediate(
             .unwrap(),
     );
     hash_wrapper.update_with_ring_element_slice(&next_round_commitment.data);
-
-    tracing::debug!(
-        "Next round commitment created of length {}.",
-        next_round_commitment.data.len()
-    );
 
     let (intermediate_sumcheck_proof, evaluation_points) = run_intermediate_sumcheck(
         config,
@@ -670,7 +653,6 @@ pub fn prover_round_simple(
     evaluation_points_outer: &Vec<StructuredRow>,
     hash_wrapper: Option<HashWrapper>,
 ) -> SimpleRoundProof {
-    tracing::debug!("Prover simple round started.");
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
 
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
@@ -680,15 +662,6 @@ pub fn prover_round_simple(
         &evaluation_points_inner,
         &evaluation_points_outer,
         true,
-    );
-    tracing::debug!(
-        "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
-        evaluation_points_inner.len(),
-        evaluation_points_outer.len()
-    );
-    tracing::debug!(
-        "opening height: {}, width: {}",
-        opening.rhs.height, opening.rhs.width
     );
 
     hash_wrapper.update_with_ring_element_slice(&opening.rhs.data);
