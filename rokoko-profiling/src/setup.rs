@@ -1,4 +1,5 @@
 use std::any::Any;
+use std::process::Command;
 
 use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::{prelude::*, registry::Registry, EnvFilter, Layer};
@@ -63,8 +64,9 @@ pub fn setup(
     }
 
     if profile {
-        let chrome_path = format!("bench_results/traces/{trace_name}.json");
-        let _ = std::fs::create_dir_all("bench_results/traces");
+        let run_dir = format!("profiles/{trace_name}");
+        let _ = std::fs::create_dir_all(&run_dir);
+        let chrome_path = format!("{run_dir}/trace.json");
         let (chrome_layer, chrome_guard) = ChromeLayerBuilder::new()
             .file(&chrome_path)
             .include_args(true)
@@ -83,4 +85,30 @@ pub fn setup(
     }
 
     TracingGuards(guards)
+}
+
+/// UTC `YYYYMMDD-HHMMSS` — filesystem-safe, lex-sortable.
+pub fn timestamp_for_filename() -> String {
+    Command::new("date")
+        .args(["-u", "+%Y%m%d-%H%M%S"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Print actionable next-step lines for the chrome trace just written.
+/// Call AFTER the `TracingGuards` returned by `setup()` are dropped, so the
+/// file is fully flushed before the user reads the path.
+pub fn print_artifact_paths(trace_base: &str) {
+    println!();
+    println!("Profile written to profiles/{trace_base}/");
+    println!();
+    println!("  trace.json     (Chrome trace — view in Firefox Profiler / Perfetto)");
+    println!("  snapshot.json  (per-span totals + run metadata, for multi-run analysis)");
+    println!();
+    println!("To view the trace, drag profiles/{trace_base}/trace.json into either:");
+    println!("  https://profiler.firefox.com/");
+    println!("  https://ui.perfetto.dev/");
 }

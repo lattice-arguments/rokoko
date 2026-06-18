@@ -85,11 +85,18 @@ fn main() {
     );
 
     #[cfg(any(feature = "events", feature = "profile"))]
+    let trace_base = format!(
+        "{}_{}",
+        trace_name(),
+        rokoko_profiling::timestamp_for_filename()
+    );
+
+    #[cfg(any(feature = "events", feature = "profile"))]
     let _tracing_guards = rokoko_profiling::setup(
         cfg!(feature = "events"),
         cfg!(feature = "profile"),
         cfg!(feature = "debug"),
-        trace_name(),
+        &trace_base,
         &active_features(),
     );
 
@@ -106,6 +113,12 @@ fn main() {
         execute();
     }
     save_access_stats("pool_stats.txt").expect("Failed to save stats");
+
+    // Drop guards so the chrome trace flushes before we print its path.
+    #[cfg(any(feature = "events", feature = "profile"))]
+    drop(_tracing_guards);
+    #[cfg(feature = "profile")]
+    rokoko_profiling::print_artifact_paths(&trace_base);
 }
 
 #[cfg(any(feature = "events", feature = "profile"))]

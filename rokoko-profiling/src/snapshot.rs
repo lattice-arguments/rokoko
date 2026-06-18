@@ -51,7 +51,7 @@ impl SnapshotLayer {
         focus: Vec<String>,
     ) -> (Self, SnapshotGuard) {
         let aggregates: Aggregates = Arc::new(Mutex::new(HashMap::new()));
-        let path = PathBuf::from(format!("bench_results/snapshots/{trace_name}.json"));
+        let path = PathBuf::from(format!("profiles/{trace_name}/snapshot.json"));
         let metadata = SnapshotMetadata {
             git_sha: git_sha(),
             date: now_iso8601(),

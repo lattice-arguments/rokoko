@@ -116,6 +116,7 @@ flamegraph.svg
 trace.json
 profile.json.gz
 bench_results/
+profiles/
 pool_stats.txt
 report.txt
 .vscode/

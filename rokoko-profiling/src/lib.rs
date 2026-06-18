@@ -5,5 +5,5 @@ mod snapshot;
 
 pub use console::{ConsoleLayer, ConsoleSummaryGuard};
 pub use log::LogLayer;
-pub use setup::{setup, TracingGuards};
+pub use setup::{print_artifact_paths, setup, timestamp_for_filename, TracingGuards};
 pub use snapshot::{SnapshotGuard, SnapshotLayer};
