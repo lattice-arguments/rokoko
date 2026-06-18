@@ -188,19 +188,53 @@ pub fn add_poly_into(result: &mut Polynomial, poly_0: &Polynomial, poly_1: &Poly
 #[inline]
 /// Add `poly` into `result` in place.
 pub fn add_poly_in_place<E: SumcheckElement>(result: &mut Polynomial<E>, poly: &Polynomial<E>) {
-    for i in 0..poly.num_coefficients {
+    add_poly_in_place_from(result, poly, 0);
+}
+
+/// Add `poly` into `result` in place, skipping the (dropped) constant term.
+#[inline]
+pub fn add_poly_in_place_skip_constant<E: SumcheckElement>(
+    result: &mut Polynomial<E>,
+    poly: &Polynomial<E>,
+) {
+    add_poly_in_place_from(result, poly, 1);
+}
+
+#[inline]
+fn add_poly_in_place_from<E: SumcheckElement>(
+    result: &mut Polynomial<E>,
+    poly: &Polynomial<E>,
+    start: usize,
+) {
+    for i in start..poly.num_coefficients {
         result.coefficients[i] += &poly.coefficients[i];
     }
-
     result.num_coefficients = max(result.num_coefficients, poly.num_coefficients);
 }
 
 #[inline]
 /// Subtract `poly` from `result` in place.
 pub fn sub_poly_in_place<E: SumcheckElement>(result: &mut Polynomial<E>, poly: &Polynomial<E>) {
-    for i in 0..poly.num_coefficients {
+    sub_poly_in_place_from(result, poly, 0);
+}
+
+/// Subtract `poly` from `result` in place, skipping the (dropped) constant term.
+#[inline]
+pub fn sub_poly_in_place_skip_constant<E: SumcheckElement>(
+    result: &mut Polynomial<E>,
+    poly: &Polynomial<E>,
+) {
+    sub_poly_in_place_from(result, poly, 1);
+}
+
+#[inline]
+fn sub_poly_in_place_from<E: SumcheckElement>(
+    result: &mut Polynomial<E>,
+    poly: &Polynomial<E>,
+    start: usize,
+) {
+    for i in start..poly.num_coefficients {
         result.coefficients[i] -= &poly.coefficients[i];
     }
-
     result.num_coefficients = max(result.num_coefficients, poly.num_coefficients);
 }

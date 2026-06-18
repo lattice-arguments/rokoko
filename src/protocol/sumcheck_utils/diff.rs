@@ -9,7 +9,7 @@ use crate::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
-        polynomial::{sub_poly_in_place, Polynomial},
+        polynomial::{sub_poly_in_place, sub_poly_in_place_skip_constant, Polynomial},
     },
 };
 
@@ -146,7 +146,11 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
             let _timer = super::profile::timer(rhs_ref.gadget_kind());
             rhs_ref.univariate_polynomial_into(skip_constant, &mut rhs_poly);
         }
-        sub_poly_in_place(polynomial, &rhs_poly);
+        if skip_constant {
+            sub_poly_in_place_skip_constant(polynomial, &rhs_poly);
+        } else {
+            sub_poly_in_place(polynomial, &rhs_poly);
+        }
     }
 
     #[inline]

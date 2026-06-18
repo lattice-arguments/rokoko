@@ -7,7 +7,7 @@ use crate::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
-        polynomial::{add_poly_in_place, Polynomial},
+        polynomial::{add_poly_in_place, add_poly_in_place_skip_constant, Polynomial},
     },
 };
 use std::{cell::RefCell, cmp::max};
@@ -142,7 +142,11 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SumSumcheck<E> {
         self.rhs_sumcheck
             .get_ref()
             .univariate_polynomial_into(skip_constant, &mut rhs_poly);
-        add_poly_in_place(polynomial, &rhs_poly);
+        if skip_constant {
+            add_poly_in_place_skip_constant(polynomial, &rhs_poly);
+        } else {
+            add_poly_in_place(polynomial, &rhs_poly);
+        }
     }
 
     fn univariate_polynomial_at_point_into(

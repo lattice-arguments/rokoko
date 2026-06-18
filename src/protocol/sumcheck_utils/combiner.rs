@@ -6,7 +6,7 @@ use crate::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
-        polynomial::{add_poly_in_place, Polynomial},
+        polynomial::{add_poly_in_place, add_poly_in_place_skip_constant, Polynomial},
     },
 };
 
@@ -121,7 +121,11 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
             for j in start..output_poly.num_coefficients {
                 output_poly.coefficients[j] *= challenge;
             }
-            add_poly_in_place(polynomial, &output_poly);
+            if skip_constant {
+                add_poly_in_place_skip_constant(polynomial, &output_poly);
+            } else {
+                add_poly_in_place(polynomial, &output_poly);
+            }
         }
     }
 
