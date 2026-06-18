@@ -4,7 +4,7 @@ use crate::{
         config::{DEGREE, MOD_Q, NOF_BATCHES},
         hash::HashWrapper,
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
-        norms::l2_norm_coeffs,
+        norms::{assert_norm_bounded, l2_norm_coeffs},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
@@ -391,10 +391,10 @@ pub fn verifier_round_intermediate(
         fold_matrix_claims(&round_proof.batched_projection_image, &folding_challenges);
 
     let l2_norm_proj = l2_norm_coeffs(&round_proof.projection_image_ct.data);
-
-    println!(
-        "L2 norm of projection image in intermediate verifier: {}",
-        l2_norm_proj
+    assert_norm_bounded(
+        "projection image in intermediate verifier",
+        l2_norm_proj,
+        config.projection_norm_bound,
     );
 
     let intermediate_evaluation_points = intermediate_sumcheck_verifier(
@@ -660,13 +660,15 @@ pub fn verifier_round_simple(
     let l2_norm_witness = l2_norm_coeffs(&witness_even_odd);
     let l2_norm_proj = l2_norm_coeffs(&round_proof.projection_image_ct.data);
 
-    println!(
-        "L2 norm of folded witness in simple verifier: {}",
-        l2_norm_witness
+    assert_norm_bounded(
+        "folded witness in simple verifier",
+        l2_norm_witness,
+        config.witness_norm_bound,
     );
-    println!(
-        "L2 norm of projection image in simple verifier: {}",
-        l2_norm_proj
+    assert_norm_bounded(
+        "projection image in simple verifier",
+        l2_norm_proj,
+        config.projection_norm_bound,
     );
 
     let elapsed = start.elapsed().as_nanos();

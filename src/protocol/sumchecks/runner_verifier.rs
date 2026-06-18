@@ -3,6 +3,7 @@ use crate::{
         arithmetic::field_to_ring_element,
         config::{HALF_DEGREE, NOF_BATCHES},
         hash::HashWrapper,
+        norms::assert_norm_bounded,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         structured_row::StructuredRow,
@@ -244,14 +245,19 @@ pub fn sumcheck_verifier(
     }
 
     let norm_ct = round_proof.norm_claim.constant_term_from_incomplete_ntt();
-    println!("Norm claim via inner-product: {}", (norm_ct as f64).sqrt());
+    assert_norm_bounded(
+        "norm claim via inner-product",
+        (norm_ct as f64).sqrt(),
+        config.norm_bound,
+    );
 
     let most_inner_norm_ct = round_proof
         .most_inner_norm_claim
         .constant_term_from_incomplete_ntt();
-    println!(
-        "Most inner norm claim via inner-product: {}",
-        (most_inner_norm_ct as f64).sqrt()
+    assert_norm_bounded(
+        "most inner norm claim via inner-product",
+        (most_inner_norm_ct as f64).sqrt(),
+        config.most_inner_norm_bound,
     );
 
     let mut batched_claim_over_field = {

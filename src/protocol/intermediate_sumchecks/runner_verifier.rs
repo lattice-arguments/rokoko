@@ -3,6 +3,7 @@ use crate::{
         arithmetic::field_to_ring_element,
         config::{HALF_DEGREE, NOF_BATCHES},
         hash::HashWrapper,
+        norms::assert_norm_bounded,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         structured_row::StructuredRow,
         sumcheck_element::SumcheckElement,
@@ -67,7 +68,11 @@ pub fn intermediate_sumcheck_verifier(
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
 
     let norm_ct = proof.norm_claim.constant_term_from_incomplete_ntt();
-    println!("Norm claim via inner-product: {}", (norm_ct as f64).sqrt());
+    assert_norm_bounded(
+        "norm claim via inner-product (intermediate)",
+        (norm_ct as f64).sqrt(),
+        config.norm_bound,
+    );
 
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
