@@ -28,7 +28,6 @@ pub fn compute_j_batched(
     projection_matrix: &ProjectionMatrix,
     c_1_values: &[u64],
 ) -> Vec<RingElement> {
-    use crate::common::matrix::new_vec_zero_preallocated;
 
     // The output has inner_width_ring = projection_ratio × (PROJECTION_HEIGHT / DEGREE)
     // ring elements.  Each ring element j_batched[i] accumulates:
@@ -36,7 +35,7 @@ pub fn compute_j_batched(
     // where J_embedded is the dual-embedded projection matrix.
     let inner_width_ring =
         projection_matrix.projection_ratio * (projection_matrix.projection_height / DEGREE);
-    let mut j_batched = new_vec_zero_preallocated(inner_width_ring);
+    let mut j_batched = vec![RingElement::zero(Representation::IncompleteNTT); inner_width_ring];
 
     // Initialise every coefficient to a large multiple of Q (a "halfway" value) so
     // that intermediate subtractions never underflow in unsigned arithmetic.
@@ -149,11 +148,10 @@ pub fn compute_j_batched_collectively(
     projection_matrix: &ProjectionMatrix,
     c_1_values: &[Vec<u64>; NOF_BATCHES],
 ) -> [Vec<RingElement>; NOF_BATCHES] {
-    use crate::common::matrix::new_vec_zero_preallocated;
 
     let inner_width_ring =
         projection_matrix.projection_ratio * (projection_matrix.projection_height / DEGREE);
-    let mut j_batched = std::array::from_fn(|_| new_vec_zero_preallocated(inner_width_ring));
+    let mut j_batched = std::array::from_fn(|_| vec![RingElement::zero(Representation::IncompleteNTT); inner_width_ring]);
 
     for batch in j_batched.iter_mut() {
         for el in batch.iter_mut() {
@@ -274,7 +272,7 @@ pub fn project_coefficients(
     projection_matrix: &ProjectionMatrix,
 ) -> VerticallyAlignedMatrix<RingElement> {
     let mut witness_coeff =
-        VerticallyAlignedMatrix::new_zero_preallocated(witness.height, witness.width);
+        VerticallyAlignedMatrix { data: vec![RingElement::zero(Representation::IncompleteNTT); witness.height * witness.width], width: witness.width, height: witness.height, used_cols: witness.width };
 
     witness_coeff.data.clone_from_slice(&witness.data);
 
@@ -295,10 +293,7 @@ pub fn project_coefficients(
     // Allocate the output matrix for the projected result
     // The projection reduces witness.height by projection_ratio
     // Result is in coefficient representation (will be packed into ring elements)
-    let mut image_ct = VerticallyAlignedMatrix::new_zero_preallocated(
-        witness.height / projection_matrix.projection_ratio,
-        witness.width,
-    );
+    let mut image_ct = VerticallyAlignedMatrix { data: vec![RingElement::zero(Representation::IncompleteNTT); witness.height / projection_matrix.projection_ratio * witness.width], width: witness.width, height: witness.height / projection_matrix.projection_ratio, used_cols: witness.width };
 
     for el in image_ct.data.iter_mut() {
         el.set_from(&HALF_WAY_MOD_Q_RING_CF);
@@ -629,7 +624,7 @@ pub fn batch_projection_n_times(
     [BatchedProjectionChallenges; NOF_BATCHES],
 ) {
     debug_assert_eq!(n, NOF_BATCHES, "Only n=NOF_BATCHES is expected");
-    let mut result = HorizontallyAlignedMatrix::new_zero_preallocated(n, witness.width);
+    let mut result = HorizontallyAlignedMatrix { data: vec![RingElement::zero(Representation::IncompleteNTT); n * witness.width], width: witness.width, height: n };
     let challenges = [
         batch_projection_into(
             &mut result.row_slice_mut(0),
@@ -749,7 +744,6 @@ pub fn verifier_sample_projection_challenges_collectively(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::matrix::new_vec_zero_preallocated;
     use crate::protocol::sumchecks::helpers::tensor_product_u64;
 
     #[test]
@@ -824,7 +818,7 @@ mod tests {
         let mut hash_wrapper2 = HashWrapper::new();
         projection_matrix.sample(&mut hash_wrapper2); // Consume same randomness to sync state
 
-        let mut result = new_vec_zero_preallocated(witness.width);
+        let mut result = vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
         batch_projection_into(
             &mut result,
             &witness,
@@ -869,7 +863,7 @@ mod tests {
         debug_assert_eq!(image_ct.width, 8);
 
         let mut batched_projected_witness =
-            HorizontallyAlignedMatrix::new_zero_preallocated(1, witness.width);
+            HorizontallyAlignedMatrix { data: vec![RingElement::zero(Representation::IncompleteNTT); 1 * witness.width], width: witness.width, height: 1 };
 
         let challenges = batch_projection_into(
             &mut batched_projected_witness.row_slice_mut(0),

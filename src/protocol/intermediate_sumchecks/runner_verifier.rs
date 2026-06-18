@@ -3,7 +3,6 @@ use crate::{
         arithmetic::field_to_ring_element,
         config::{HALF_DEGREE, NOF_BATCHES},
         hash::HashWrapper,
-        matrix::new_vec_zero_preallocated,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         structured_row::StructuredRow,
         sumcheck_element::SumcheckElement,
@@ -64,7 +63,7 @@ pub fn intermediate_sumcheck_verifier(
         .combiner_evaluation
         .borrow()
         .sumchecks_count();
-    let mut combination = new_vec_zero_preallocated(num_sumchecks);
+    let mut combination = vec![RingElement::zero(Representation::IncompleteNTT); num_sumchecks];
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
 
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);

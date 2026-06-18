@@ -4,10 +4,10 @@ use crate::{
     common::{
         arithmetic::HALF_WAY_MOD_Q,
         config::{HALF_DEGREE, MOD_Q},
-        matrix::new_vec_zero_field_preallocated,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
+        sumcheck_element::SumcheckElement,
     },
     hexl::bindings::{eltwise_reduce_mod, multiply_mod},
     protocol::{
@@ -176,7 +176,7 @@ pub fn projection_flatter_1_times_matrix(
     let projection_ratio = projection_matrix.projection_ratio;
     let inner_width = projection_ratio * height;
 
-    let mut result_field = new_vec_zero_field_preallocated(inner_width);
+    let mut result_field = vec![QuadraticExtension::zero(); inner_width];
     for i in 0..inner_width {
         result_field[i].coeffs.fill(*HALF_WAY_MOD_Q);
     }
@@ -293,7 +293,7 @@ pub fn projection_flatter_1_times_matrix_ref(
     let projection_ratio = projection_matrix.projection_ratio;
     let inner_width = projection_ratio * height;
 
-    let mut result_field = new_vec_zero_field_preallocated(inner_width);
+    let mut result_field = vec![QuadraticExtension::zero(); inner_width];
     for i in 0..inner_width {
         result_field[i].coeffs.fill(*HALF_WAY_MOD_Q);
     }

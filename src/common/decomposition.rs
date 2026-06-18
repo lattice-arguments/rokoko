@@ -1,5 +1,4 @@
 use crate::common::{
-    matrix::new_vec_zero_preallocated,
     ring_arithmetic::{Representation, RingElement},
 };
 
@@ -23,7 +22,7 @@ impl RingElement {
 // This ensures each decomposed part lies in the range [-2^{base_log - 1}, 2^{base_log - 1}).
 // Since k = (b/2) * Σ b^i, the recomposition is exact: Σ d_i * b^i = (x + k) - k = x, with zero offset.
 pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<RingElement> {
-    let mut decomposed = new_vec_zero_preallocated(input.len() * radix);
+    let mut decomposed = vec![RingElement::zero(Representation::IncompleteNTT); input.len() * radix];
 
     if base_log == 1 {
         decomposed.clone_from_slice(input);
@@ -163,7 +162,7 @@ pub fn compose_from_decomposed(
     base_log: u64,
     radix: usize,
 ) -> Vec<RingElement> {
-    let mut recomposed = new_vec_zero_preallocated(decomposed.len() / radix);
+    let mut recomposed = vec![RingElement::zero(Representation::IncompleteNTT); decomposed.len() / radix];
 
     for i in 0..recomposed.len() {
         recomposed[i] = RingElement::all(0, Representation::IncompleteNTT);

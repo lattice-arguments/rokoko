@@ -3,7 +3,7 @@ use crate::{
         config::NOF_BATCHES,
         decomposition::decompose,
         hash::HashWrapper,
-        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
+        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
@@ -40,7 +40,7 @@ pub fn outer_eval_claims(
     evaluation_points_outer: &Vec<StructuredRow>,
 ) -> Vec<RingElement> {
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
-    let mut result = new_vec_zero_preallocated(rhs.height);
+    let mut result = vec![RingElement::zero(Representation::IncompleteNTT); rhs.height];
     for i in 0..rhs.height {
         let preprocessed_row_outer =
             PreprocessedRow::from_structured_row(&evaluation_points_outer[i]);
@@ -226,7 +226,7 @@ pub fn prover_round(
         
     }
 
-    let mut next_round_data = new_vec_zero_preallocated(config.composed_witness_length);
+    let mut next_round_data = vec![RingElement::zero(Representation::IncompleteNTT); config.composed_witness_length];
 
     let folded_witness_decomposed = {
         let _s = tracing::info_span!("prover_round::decompose").entered();

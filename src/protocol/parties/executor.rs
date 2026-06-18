@@ -145,8 +145,7 @@ pub fn execute_snark() {
     use crate::protocol::commitment::Prefix;
     use crate::protocol::params::P_EN_TWO_EVALS;
     use crate::protocol::snark::{
-        prove_initial_claims, verify_initial_claims, ClaimFactor, ClaimTerm, PublicFactor,
-        SnarkClaim,
+        prove_initial_claims, verify_initial_claims, ClaimExpr, PublicFactor, SnarkClaim,
     };
 
     let config = match &*P_EN_TWO_EVALS {
@@ -199,10 +198,7 @@ pub fn execute_snark() {
         acc
     };
     let claim_linear = SnarkClaim {
-        terms: vec![ClaimTerm::new(vec![
-            ClaimFactor::Public(PublicFactor::tensor_ring(structured_point)),
-            ClaimFactor::Witness,
-        ])],
+        expr: ClaimExpr::public(PublicFactor::tensor_ring(structured_point)) * ClaimExpr::witness(),
         value: t1,
     };
 
@@ -221,11 +217,9 @@ pub fn execute_snark() {
         }
     }
     let claim_square = SnarkClaim {
-        terms: vec![ClaimTerm::new(vec![
-            ClaimFactor::Public(PublicFactor::selector(segment.prefix, segment.length)),
-            ClaimFactor::Witness,
-            ClaimFactor::Witness,
-        ])],
+        expr: ClaimExpr::public(PublicFactor::selector(segment.prefix, segment.length))
+            * ClaimExpr::witness()
+            * ClaimExpr::witness(),
         value: t2,
     };
 

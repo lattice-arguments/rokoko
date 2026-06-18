@@ -1,6 +1,8 @@
 use rokoko::common::init_common;
-use rokoko::common::pool::{load_and_preallocate, save_access_stats};
 use rokoko::common::short_challenge::repetition_rate;
+
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[cfg(not(feature = "snark"))]
 use rokoko::protocol::parties::executor::execute;
 
@@ -100,7 +102,6 @@ fn main() {
         &active_features(),
     );
 
-    load_and_preallocate("pool_stats.txt").expect("Failed to load stats");
     init_common();
     #[cfg(feature = "snark")]
     {
@@ -112,7 +113,6 @@ fn main() {
         println!("Running executor...");
         execute();
     }
-    save_access_stats("pool_stats.txt").expect("Failed to save stats");
 
     // Drop guards so the chrome trace flushes before we print its path.
     #[cfg(any(feature = "events", feature = "profile"))]

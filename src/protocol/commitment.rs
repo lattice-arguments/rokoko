@@ -3,7 +3,7 @@ use std::ops::IndexMut;
 use crate::{
     common::{
         decomposition::decompose,
-        matrix::{new_vec_zero_preallocated, HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
+        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         ring_arithmetic::{Representation, RingElement},
     },
     protocol::{
@@ -36,10 +36,10 @@ pub fn commit_basic_internal(
     rank: usize,
 ) -> BasicCommitment {
     if rank == 0 {
-        return HorizontallyAlignedMatrix::new_zero_preallocated(0, witness.width);
+        return HorizontallyAlignedMatrix { data: vec![RingElement::zero(Representation::IncompleteNTT); 0 * witness.width], width: witness.width, height: 0 };
     }
     let mut commitment =
-        HorizontallyAlignedMatrix::new_zero_preallocated(rank.next_power_of_two(), witness.width);
+        HorizontallyAlignedMatrix { data: vec![RingElement::zero(Representation::IncompleteNTT); rank.next_power_of_two() * witness.width], width: witness.width, height: rank.next_power_of_two() };
 
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
     for (i, row) in ck.iter().take(rank).enumerate() {
@@ -130,7 +130,7 @@ pub fn recursive_commit(
 
     let ck = crs.ck_for_wit_dim(committed_data.len());
 
-    let mut commitment = new_vec_zero_preallocated(config.rank);
+    let mut commitment = vec![RingElement::zero(Representation::IncompleteNTT); config.rank];
 
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
     for r in 0..config.rank {

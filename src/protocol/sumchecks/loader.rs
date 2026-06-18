@@ -2,7 +2,6 @@ use crate::{
     common::{
         arithmetic::{field_to_ring_element_into, precompute_structured_values_fast},
         config::{DEGREE, NOF_BATCHES},
-        matrix::new_vec_zero_preallocated,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
@@ -114,7 +113,7 @@ pub fn load_sumcheck_data(
         );
 
         let mut flatter_1_times_matrix_ring =
-            new_vec_zero_preallocated(flatter_1_times_matrix.len());
+            vec![RingElement::zero(Representation::IncompleteNTT); flatter_1_times_matrix.len()];
 
         for i in 0..flatter_1_times_matrix.len() {
             field_to_ring_element_into(
