@@ -94,7 +94,7 @@ pub fn run_intermediate_sumcheck(
         sumcheck_context
             .field_combiner
             .borrow_mut()
-            .univariate_polynomial_into(&mut poly_over_field);
+            .univariate_polynomial_into(false, &mut poly_over_field);
 
         hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
 

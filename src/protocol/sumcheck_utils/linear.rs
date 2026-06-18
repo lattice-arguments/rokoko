@@ -665,7 +665,7 @@ mod tests {
         // constant = sum of data[0]+data[2]+data[4]+data[6] = 1+3+5+7
         // linear   = sum of (data[1]-data[0])+(data[3]-data[2])+(data[5]-data[4])+(data[7]-data[6])
 
-        sumcheck.univariate_polynomial_into(&mut poly);
+        sumcheck.univariate_polynomial_into(false, &mut poly);
 
         debug_assert_eq!(
             poly.coefficients[0],
@@ -705,7 +705,7 @@ mod tests {
 
         let mut poly = Polynomial::new(0);
 
-        sumcheck.univariate_polynomial_into(&mut poly);
+        sumcheck.univariate_polynomial_into(false, &mut poly);
 
         // Round 0: data round, folding x0. Hypercube has 2^4=16 points.
         // Each pair (data[2i], data[2i+1]) appears 4 times (prefix bits give 2^2=4 aliases).
@@ -743,7 +743,7 @@ mod tests {
 
         sumcheck.partial_evaluate(&r0);
 
-        sumcheck.univariate_polynomial_into(&mut poly);
+        sumcheck.univariate_polynomial_into(false, &mut poly);
 
         // Round 1: data round, folding x1. data_size=4. variable_count=4.
         // Hypercube has 2^3=8 points. Each pair appears 4 times (prefix).
@@ -757,7 +757,7 @@ mod tests {
 
         sumcheck.partial_evaluate(&r1);
 
-        sumcheck.univariate_polynomial_into(&mut poly);
+        sumcheck.univariate_polynomial_into(false, &mut poly);
 
         // Round 2: data round, folding x2 (MSB of data). data_size=2. variable_count=3.
         // Hypercube has 2^2=4 points. Each pair appears 4 times (prefix).
@@ -771,7 +771,7 @@ mod tests {
 
         sumcheck.partial_evaluate(&r2);
 
-        sumcheck.univariate_polynomial_into(&mut poly);
+        sumcheck.univariate_polynomial_into(false, &mut poly);
 
         // Round 3: prefix dummy round. data.len()==1. Constant polynomial.
         debug_assert_eq!(poly.num_coefficients, 1);
@@ -784,7 +784,7 @@ mod tests {
 
         sumcheck.partial_evaluate(&r3);
 
-        sumcheck.univariate_polynomial_into(&mut poly);
+        sumcheck.univariate_polynomial_into(false, &mut poly);
 
         // Round 4: prefix dummy round. Constant polynomial.
         debug_assert_eq!(poly.num_coefficients, 1);
@@ -843,7 +843,7 @@ mod tests {
 
         let mut poly = Polynomial::new(0);
 
-        sumcheck.univariate_polynomial_into(&mut poly);
+        sumcheck.univariate_polynomial_into(false, &mut poly);
 
         let claim = RingElement::constant(
             (1 + 2 + 3 + 4 + 5 + 6 + 7 + 8) * 4,

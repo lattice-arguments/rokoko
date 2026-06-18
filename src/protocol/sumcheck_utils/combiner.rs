@@ -98,11 +98,12 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
     /// where the batched Karatsuba, algebraic delegation, non_zero_range
     /// skipping etc. live. Without this, the default path only ever calls
     /// univariate_polynomial_at_point_into, so those bulk overrides never fire.
-    fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<E>) {
+    fn univariate_polynomial_into(&self, skip_constant: bool, polynomial: &mut Polynomial<E>) {
         polynomial.set_zero();
         polynomial.num_coefficients = 0;
 
         let mut output_poly = self.output_poly.borrow_mut();
+        let start = usize::from(skip_constant);
 
         for (sumcheck, challenge) in self.sumchecks.iter().zip(self.challenges.iter()) {
             output_poly.set_zero();
@@ -112,11 +113,12 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
             {
                 #[cfg(feature = "profile-sumcheck")]
                 let _timer = super::profile::timer(sumcheck_ref.gadget_kind());
-                sumcheck_ref.univariate_polynomial_into(&mut output_poly);
+                // Linear in its children: the flag passes straight through.
+                sumcheck_ref.univariate_polynomial_into(skip_constant, &mut output_poly);
             }
 
             // Scale by the batching challenge and accumulate
-            for j in 0..output_poly.num_coefficients {
+            for j in start..output_poly.num_coefficients {
                 output_poly.coefficients[j] *= challenge;
             }
             add_poly_in_place(polynomial, &output_poly);
@@ -289,7 +291,7 @@ mod tests {
 
         let mut poly = Polynomial::new(0);
 
-        combiner.univariate_polynomial_into(&mut poly);
+        combiner.univariate_polynomial_into(false, &mut poly);
 
         // manually compute expected coefficients
         // 1 + 2 + ... + 8 = 36
@@ -317,7 +319,7 @@ mod tests {
         sumcheck2_ref.borrow_mut().partial_evaluate(&r0);
         sumcheck3_ref.borrow_mut().partial_evaluate(&r0);
 
-        combiner.univariate_polynomial_into(&mut poly);
+        combiner.univariate_polynomial_into(false, &mut poly);
         debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
 
         let r1 = RingElement::constant(3, Representation::IncompleteNTT);
@@ -327,7 +329,7 @@ mod tests {
         sumcheck1_ref.borrow_mut().partial_evaluate(&r1);
         sumcheck2_ref.borrow_mut().partial_evaluate(&r1);
         sumcheck3_ref.borrow_mut().partial_evaluate(&r1);
-        combiner.univariate_polynomial_into(&mut poly);
+        combiner.univariate_polynomial_into(false, &mut poly);
         debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
 
         let r2 = RingElement::constant(5, Representation::IncompleteNTT);

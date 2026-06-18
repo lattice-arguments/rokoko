@@ -197,7 +197,14 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
     /// (both are non-prefixed `LinearSumcheck`), compute the summed polynomial
     /// via batched inner products (3 dot products), eliminating all per-point
     /// vtable dispatch.
-    fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
+    fn univariate_polynomial_into(
+        &self,
+        _skip_constant: bool,
+        polynomial: &mut Polynomial<Self::Element>,
+    ) {
+        // The constant term c0 = a0*b0 is needed internally to form c1 (Karatsuba
+        // c1 = c_mid - c0 - c2), so there is no multiply to skip here; the parent
+        // combiner/runner drops c0 from the accumulation and the transcript.
         // Case 1: both children expose raw data → batched Karatsuba inner product
         let lhs_ref = self.lhs_sumcheck.get_ref();
         let rhs_ref = self.rhs_sumcheck.get_ref();
@@ -558,7 +565,7 @@ mod tests {
 
         let mut univariate_poly = Polynomial::new(0);
 
-        inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
+        inner_product_sumcheck.univariate_polynomial_into(false, &mut univariate_poly);
 
         // The polynomial evaluated at 0 and 1 should sum to the true inner product.
 
@@ -579,7 +586,7 @@ mod tests {
         sumcheck_0.borrow_mut().partial_evaluate(&r0);
         sumcheck_1.borrow_mut().partial_evaluate(&r0);
 
-        inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
+        inner_product_sumcheck.univariate_polynomial_into(false, &mut univariate_poly);
 
         debug_assert_eq!(
             &univariate_poly.at_zero() + &univariate_poly.at_one(),
@@ -594,7 +601,7 @@ mod tests {
         sumcheck_0.borrow_mut().partial_evaluate(&r1);
         sumcheck_1.borrow_mut().partial_evaluate(&r1);
 
-        inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
+        inner_product_sumcheck.univariate_polynomial_into(false, &mut univariate_poly);
 
         debug_assert_eq!(
             &univariate_poly.at_zero() + &univariate_poly.at_one(),
@@ -696,7 +703,7 @@ mod tests {
 
         let mut univariate_poly = Polynomial::new(0);
 
-        inner_product_sumcheck.univariate_polynomial_into(&mut univariate_poly);
+        inner_product_sumcheck.univariate_polynomial_into(false, &mut univariate_poly);
 
         // When both inputs are identical, the inner product collapses to a sum of squares.
         debug_assert_eq!(
@@ -755,7 +762,7 @@ mod tests {
         );
 
         let mut univariate_poly = Polynomial::new(0);
-        inner_product_sumcheck_012.univariate_polynomial_into(&mut univariate_poly);
+        inner_product_sumcheck_012.univariate_polynomial_into(false, &mut univariate_poly);
 
         // Evaluating the first-round polynomial at 0 and 1 should give the full triple product sum.
         debug_assert_eq!(
@@ -774,7 +781,7 @@ mod tests {
         sumcheck_1_ref.borrow_mut().partial_evaluate(&r0);
         sumcheck_2_ref.borrow_mut().partial_evaluate(&r0);
 
-        inner_product_sumcheck_012.univariate_polynomial_into(&mut univariate_poly);
+        inner_product_sumcheck_012.univariate_polynomial_into(false, &mut univariate_poly);
 
         // The verifier's running claim should stay consistent after folding all three vectors.
         debug_assert_eq!(
@@ -856,7 +863,7 @@ mod tests {
         for _ in 0..5 {
             product_123
                 .get_ref()
-                .univariate_polynomial_into(&mut univariate_poly);
+                .univariate_polynomial_into(false, &mut univariate_poly);
             debug_assert_eq!(
                 &univariate_poly.at_zero() + &univariate_poly.at_one(),
                 claim
@@ -875,7 +882,7 @@ mod tests {
 
         product_123
             .get_ref()
-            .univariate_polynomial_into(&mut univariate_poly);
+            .univariate_polynomial_into(false, &mut univariate_poly);
         debug_assert_eq!(
             &univariate_poly.at_zero() + &univariate_poly.at_one(),
             claim

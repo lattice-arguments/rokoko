@@ -26,7 +26,11 @@ pub trait HighOrderSumcheckData {
     fn get_scratch_poly(&self) -> &RefCell<Polynomial<Self::Element>>;
     // this is the univariate polynomial for the current variable with the other variables summed out
     // i.e. let a = f(x_0, x_1, ..., x_{n-1}) then this function returns g(x) = sum_{x_1, ..., x_{n-1}} f(x, x_1, ..., x_{n-1})
-    fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
+    fn univariate_polynomial_into(
+        &self,
+        skip_constant: bool,
+        polynomial: &mut Polynomial<Self::Element>,
+    ) {
         let temp = self.get_scratch_poly();
 
         polynomial.set_zero();
@@ -42,7 +46,10 @@ pub trait HighOrderSumcheckData {
                 .constant_univariate_polynomial_at_point_available_by_ref(HypercubePoint::new(i));
 
             if let Some(constant) = constant {
-                polynomial.coefficients[0] += constant;
+                // The constant lands entirely in the constant term; skip it.
+                if !skip_constant {
+                    polynomial.coefficients[0] += constant;
+                }
                 continue;
             }
 
@@ -64,12 +71,15 @@ pub trait HighOrderSumcheckData {
                 *coeff += &copy;
             }
         }
+        if skip_constant {
+            polynomial.coefficients[0].set_zero();
+        }
     }
 
     fn claim(&self) -> Self::Element {
         // let mut poly = self.get_scratch_poly().borrow_mut();
         let mut poly = Polynomial::new(0);
-        self.univariate_polynomial_into(&mut poly);
+        self.univariate_polynomial_into(false, &mut poly);
         let mut res = poly.at_one();
         res += &poly.at_zero();
         res
