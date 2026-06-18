@@ -9,7 +9,10 @@ use crate::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
-        polynomial::{add_poly_in_place, mul_poly_into, Polynomial},
+        polynomial::{
+            add_poly_in_place, add_poly_in_place_skip_constant, mul_poly_into,
+            mul_poly_into_skip_constant, Polynomial,
+        },
     },
 };
 
@@ -50,6 +53,9 @@ pub struct ProductSumcheck<E: SumcheckElement = RingElement> {
     // When true, skip per-point cache stores (set during univariate_polynomial_into
     // sweeps where each point is visited exactly once and the cache is never hit).
     sweeping: Cell<bool>,
+
+    // When true, this (outermost) product drops c0 from its own per-point output.
+    skip_c0: Cell<bool>,
 }
 
 impl<E: SumcheckElement> ProductSumcheck<E> {
@@ -77,6 +83,7 @@ impl<E: SumcheckElement> ProductSumcheck<E> {
             rhs_const_flag: Cell::new(false),
             const_flag_vc: Cell::new(usize::MAX),
             sweeping: Cell::new(false),
+            skip_c0: Cell::new(false),
         }
     }
 
@@ -199,12 +206,12 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
     /// vtable dispatch.
     fn univariate_polynomial_into(
         &self,
-        _skip_constant: bool,
+        skip_constant: bool,
         polynomial: &mut Polynomial<Self::Element>,
     ) {
-        // The constant term c0 = a0*b0 is needed internally to form c1 (Karatsuba
-        // c1 = c_mid - c0 - c2), so there is no multiply to skip here; the parent
-        // combiner/runner drops c0 from the accumulation and the transcript.
+        // The batched paths need c0 internally (Karatsuba c1 = c_mid - c0 - c2),
+        // so they don't skip; only the point-by-point path (Case 2) honours
+        // skip_constant.
         // Case 1: both children expose raw data → batched Karatsuba inner product
         let lhs_ref = self.lhs_sumcheck.get_ref();
         let rhs_ref = self.rhs_sumcheck.get_ref();
@@ -376,6 +383,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
         // visited exactly once, so the cache is never hit and the stores
         // are pure overhead (~50ns per store × 3 levels × thousands of points).
         self.set_cache_bypass(true);
+        self.skip_c0.set(skip_constant);
         let mut scratch = self.get_scratch_poly().borrow_mut();
         for i in range_start..range_end {
             let point = HypercubePoint::new(i);
@@ -383,11 +391,17 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
                 continue;
             }
             self.univariate_polynomial_at_point_into(point, &mut scratch);
-            add_poly_in_place(polynomial, &scratch);
+            if skip_constant {
+                add_poly_in_place_skip_constant(polynomial, &scratch);
+            } else {
+                add_poly_in_place(polynomial, &scratch);
+            }
         }
+        self.skip_c0.set(false);
         self.set_cache_bypass(false);
+        let start = usize::from(skip_constant);
         for _ in window..half_vars {
-            for c in 0..polynomial.num_coefficients {
+            for c in start..polynomial.num_coefficients {
                 let coeff = &mut polynomial.coefficients[c];
                 let copy = coeff.clone();
                 *coeff += &copy;
@@ -401,7 +415,8 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
         point: HypercubePoint,
         polynomial: &mut Polynomial<E>,
     ) {
-        // --- shared-node cache: same point + same round → reuse prior result ---
+        // --- shared-node cache: same point + same round → reuse prior result.
+        // A cached full poly is fine in skip_c0 mode: its c0 is dropped downstream.
         let vc = self.variable_count();
         if self.cache_point.get() == point.coordinates && self.cache_vc.get() == vc {
             polynomial.copy_from(&self.cache_poly.borrow());
@@ -415,23 +430,29 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
         let lhs_is_const = self.lhs_const_flag.get();
         let rhs_is_const = self.rhs_const_flag.get();
 
+        // When set, this product is the outermost node and drops c0: a constant
+        // point feeds only c0 (skip it), scaling/multiplying starts at index 1.
+        let skip = self.skip_c0.get();
+        let scale_start = usize::from(skip);
         match (lhs_is_const, rhs_is_const) {
             (true, true) => {
-                // Both children constant at every point this round.
-                let lhs_ref = self.lhs_sumcheck.get_ref();
-                let lc = lhs_ref
-                    .constant_univariate_polynomial_at_point_available_by_ref(point)
-                    .unwrap();
-                let rhs_ref = self.rhs_sumcheck.get_ref();
-                let rc = rhs_ref
-                    .constant_univariate_polynomial_at_point_available_by_ref(point)
-                    .unwrap();
-                polynomial.coefficients[0].set_from(lc);
-                polynomial.coefficients[0] *= rc;
-                polynomial.num_coefficients = 1;
+                if skip {
+                    polynomial.num_coefficients = 1;
+                } else {
+                    let lhs_ref = self.lhs_sumcheck.get_ref();
+                    let lc = lhs_ref
+                        .constant_univariate_polynomial_at_point_available_by_ref(point)
+                        .unwrap();
+                    let rhs_ref = self.rhs_sumcheck.get_ref();
+                    let rc = rhs_ref
+                        .constant_univariate_polynomial_at_point_available_by_ref(point)
+                        .unwrap();
+                    polynomial.coefficients[0].set_from(lc);
+                    polynomial.coefficients[0] *= rc;
+                    polynomial.num_coefficients = 1;
+                }
             }
             (true, false) => {
-                // LHS constant → scale RHS polynomial
                 let lhs_ref = self.lhs_sumcheck.get_ref();
                 let lc = lhs_ref
                     .constant_univariate_polynomial_at_point_available_by_ref(point)
@@ -439,12 +460,11 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
                 self.rhs_sumcheck
                     .get_ref()
                     .univariate_polynomial_at_point_into(point, polynomial);
-                for i in 0..polynomial.num_coefficients {
+                for i in scale_start..polynomial.num_coefficients {
                     polynomial.coefficients[i] *= lc;
                 }
             }
             (false, true) => {
-                // RHS constant → scale LHS polynomial
                 let rhs_ref = self.rhs_sumcheck.get_ref();
                 let rc = rhs_ref
                     .constant_univariate_polynomial_at_point_available_by_ref(point)
@@ -452,12 +472,11 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
                 self.lhs_sumcheck
                     .get_ref()
                     .univariate_polynomial_at_point_into(point, polynomial);
-                for i in 0..polynomial.num_coefficients {
+                for i in scale_start..polynomial.num_coefficients {
                     polynomial.coefficients[i] *= rc;
                 }
             }
             (false, false) => {
-                // General case: full polynomial multiplication
                 let mut lhs_eval_poly = self.lhs_eval_poly.borrow_mut();
                 let mut rhs_eval_poly = self.rhs_eval_poly.borrow_mut();
 
@@ -469,7 +488,11 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
                     .get_ref()
                     .univariate_polynomial_at_point_into(point, &mut rhs_eval_poly);
 
-                mul_poly_into(polynomial, &lhs_eval_poly, &rhs_eval_poly);
+                if skip {
+                    mul_poly_into_skip_constant(polynomial, &lhs_eval_poly, &rhs_eval_poly);
+                } else {
+                    mul_poly_into(polynomial, &lhs_eval_poly, &rhs_eval_poly);
+                }
             }
         }
 
