@@ -60,10 +60,11 @@ pub trait HighOrderSumcheckData {
         for c in 0..polynomial.num_coefficients {
             polynomial.coefficients[c] += &constant_sum;
         }
+        let mut scratch = Self::Element::zero();
         for _ in window..half_vars {
             for c in 0..polynomial.num_coefficients {
-                let copy = polynomial.coefficients[c].clone();
-                polynomial.coefficients[c] += &copy;
+                scratch.set_from(&polynomial.coefficients[c]);
+                polynomial.coefficients[c] += &scratch;
             }
         }
     }
