@@ -7,7 +7,7 @@ use crate::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
-        polynomial::{add_poly_in_place, Polynomial},
+        polynomial::{add_poly_in_place, add_poly_in_place_skip_constant, Polynomial},
     },
 };
 use std::{cell::RefCell, cmp::max};
@@ -128,17 +128,25 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SumSumcheck<E> {
     ///
     /// Avoids the per-point constant-availability tree traversal and lets
     /// each child handle its own zero-skipping internally.
-    fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
+    fn univariate_polynomial_into(
+        &self,
+        skip_constant: bool,
+        polynomial: &mut Polynomial<Self::Element>,
+    ) {
         self.lhs_sumcheck
             .get_ref()
-            .univariate_polynomial_into(polynomial);
+            .univariate_polynomial_into(skip_constant, polynomial);
 
         let mut rhs_poly = self.rhs_eval_poly.borrow_mut();
         rhs_poly.set_zero();
         self.rhs_sumcheck
             .get_ref()
-            .univariate_polynomial_into(&mut rhs_poly);
-        add_poly_in_place(polynomial, &rhs_poly);
+            .univariate_polynomial_into(skip_constant, &mut rhs_poly);
+        if skip_constant {
+            add_poly_in_place_skip_constant(polynomial, &rhs_poly);
+        } else {
+            add_poly_in_place(polynomial, &rhs_poly);
+        }
     }
 
     fn univariate_polynomial_at_point_into(
@@ -246,7 +254,7 @@ mod tests {
         let sum_sumcheck = SumSumcheck::new(sumcheck_0.clone(), sumcheck_1.clone());
 
         let mut poly = Polynomial::new(0);
-        sum_sumcheck.univariate_polynomial_into(&mut poly);
+        sum_sumcheck.univariate_polynomial_into(false, &mut poly);
 
         // Sum(data_0) + Sum(data_1) = 26 + 10 = 36
         let claim = RingElement::constant(36, Representation::IncompleteNTT);
@@ -259,7 +267,7 @@ mod tests {
         sumcheck_0.borrow_mut().partial_evaluate(&r0);
         sumcheck_1.borrow_mut().partial_evaluate(&r0);
 
-        sum_sumcheck.univariate_polynomial_into(&mut poly);
+        sum_sumcheck.univariate_polynomial_into(false, &mut poly);
 
         debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim_r0);
     }
@@ -275,7 +283,7 @@ mod tests {
         // Initial claim: each selector is 1 at 4 points, so their sum is 8.
 
         let mut poly = Polynomial::new(0);
-        sum.univariate_polynomial_into(&mut poly);
+        sum.univariate_polynomial_into(false, &mut poly);
 
         debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
     }

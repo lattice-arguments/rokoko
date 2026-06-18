@@ -177,6 +177,63 @@ pub fn mul_poly_into<E: SumcheckElement>(
     result.num_coefficients = poly_0.num_coefficients + poly_1.num_coefficients - 1;
 }
 
+/// Like `mul_poly_into` but skips the (dropped) constant term `c0 = a0*b0`.
+/// Saves a multiply except in the 2x2 case, where `c1` is formed directly
+/// at the same cost.
+pub fn mul_poly_into_skip_constant<E: SumcheckElement>(
+    result: &mut Polynomial<E>,
+    poly_0: &Polynomial<E>,
+    poly_1: &Polynomial<E>,
+) {
+    let (d0, d1) = (poly_0.num_coefficients, poly_1.num_coefficients);
+    debug_assert!(d0 + d1 - 1 <= 4);
+
+    if d0 == 2 && d1 == 2 {
+        // c1 = a0*b1 + a1*b0, c2 = a1*b1; c0 dropped.
+        let (first, rest) = result.coefficients.split_at_mut(1);
+        let (second, third) = rest.split_at_mut(1);
+        third[0] *= (&poly_0.coefficients[1], &poly_1.coefficients[1]);
+        second[0] *= (&poly_0.coefficients[0], &poly_1.coefficients[1]);
+        first[0] *= (&poly_0.coefficients[1], &poly_1.coefficients[0]);
+        second[0] += &first[0];
+        first[0].set_zero();
+        result.num_coefficients = 3;
+        return;
+    }
+
+    if (d0, d1) == (2, 3) || (d0, d1) == (3, 2) {
+        let (a, b) = if d0 == 2 { (poly_0, poly_1) } else { (poly_1, poly_0) };
+        let (first, rest) = result.coefficients.split_at_mut(1);
+        let (second, rest) = rest.split_at_mut(1);
+        let (third, fourth) = rest.split_at_mut(1);
+        // c1 = a0*b1 + a1*b0
+        first[0] *= (&a.coefficients[0], &b.coefficients[1]);
+        second[0] *= (&a.coefficients[1], &b.coefficients[0]);
+        second[0] += &first[0];
+        // c2 = a0*b2 + a1*b1
+        first[0] *= (&a.coefficients[0], &b.coefficients[2]);
+        third[0] *= (&a.coefficients[1], &b.coefficients[1]);
+        third[0] += &first[0];
+        // c3 = a1*b2 ; c0 dropped
+        fourth[0] *= (&a.coefficients[1], &b.coefficients[2]);
+        first[0].set_zero();
+        result.num_coefficients = 4;
+        return;
+    }
+
+    // One poly constant: convolution, skipping the i=j=0 term.
+    result.coefficients[0].set_zero();
+    for i in 0..d0 {
+        for j in 0..d1 {
+            if i + j == 0 {
+                continue;
+            }
+            result.coefficients[i + j] *= (&poly_0.coefficients[i], &poly_1.coefficients[j]);
+        }
+    }
+    result.num_coefficients = d0 + d1 - 1;
+}
+
 /// Add two polynomials and store the sum in `result`.
 pub fn add_poly_into(result: &mut Polynomial, poly_0: &Polynomial, poly_1: &Polynomial) {
     for i in 0..poly_0.num_coefficients {
@@ -188,19 +245,53 @@ pub fn add_poly_into(result: &mut Polynomial, poly_0: &Polynomial, poly_1: &Poly
 #[inline]
 /// Add `poly` into `result` in place.
 pub fn add_poly_in_place<E: SumcheckElement>(result: &mut Polynomial<E>, poly: &Polynomial<E>) {
-    for i in 0..poly.num_coefficients {
+    add_poly_in_place_from(result, poly, 0);
+}
+
+/// Add `poly` into `result` in place, skipping the (dropped) constant term.
+#[inline]
+pub fn add_poly_in_place_skip_constant<E: SumcheckElement>(
+    result: &mut Polynomial<E>,
+    poly: &Polynomial<E>,
+) {
+    add_poly_in_place_from(result, poly, 1);
+}
+
+#[inline]
+fn add_poly_in_place_from<E: SumcheckElement>(
+    result: &mut Polynomial<E>,
+    poly: &Polynomial<E>,
+    start: usize,
+) {
+    for i in start..poly.num_coefficients {
         result.coefficients[i] += &poly.coefficients[i];
     }
-
     result.num_coefficients = max(result.num_coefficients, poly.num_coefficients);
 }
 
 #[inline]
 /// Subtract `poly` from `result` in place.
 pub fn sub_poly_in_place<E: SumcheckElement>(result: &mut Polynomial<E>, poly: &Polynomial<E>) {
-    for i in 0..poly.num_coefficients {
+    sub_poly_in_place_from(result, poly, 0);
+}
+
+/// Subtract `poly` from `result` in place, skipping the (dropped) constant term.
+#[inline]
+pub fn sub_poly_in_place_skip_constant<E: SumcheckElement>(
+    result: &mut Polynomial<E>,
+    poly: &Polynomial<E>,
+) {
+    sub_poly_in_place_from(result, poly, 1);
+}
+
+#[inline]
+fn sub_poly_in_place_from<E: SumcheckElement>(
+    result: &mut Polynomial<E>,
+    poly: &Polynomial<E>,
+    start: usize,
+) {
+    for i in start..poly.num_coefficients {
         result.coefficients[i] -= &poly.coefficients[i];
     }
-
     result.num_coefficients = max(result.num_coefficients, poly.num_coefficients);
 }

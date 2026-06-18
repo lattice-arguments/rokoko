@@ -959,7 +959,7 @@ pub fn prove_initial_claims(
         num_vars -= 1;
 
         let mut poly_over_field = Polynomial::<QuadraticExtension>::new(0);
-        field_combiner.univariate_polynomial_into(&mut poly_over_field);
+        field_combiner.univariate_polynomial_into(false, &mut poly_over_field);
         hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
 
         let mut f = QuadraticExtension::zero();

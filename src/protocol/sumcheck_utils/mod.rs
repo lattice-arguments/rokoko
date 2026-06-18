@@ -112,7 +112,7 @@ mod tests {
         let mut poly = Polynomial::new(0);
 
         // Initial claim: the difference of inner products over the full hypercube is zero.
-        diff_sumcheck.univariate_polynomial_into(&mut poly);
+        diff_sumcheck.univariate_polynomial_into(false, &mut poly);
         debug_assert_eq!(&poly.at_zero() + &poly.at_one(), RingElement::zero(repr));
 
         // Round 1: fold highest-order variable, preserving claim consistency.
@@ -125,7 +125,7 @@ mod tests {
         lhs_selector.borrow_mut().partial_evaluate(&r0);
         rhs_selector.borrow_mut().partial_evaluate(&r0);
 
-        diff_sumcheck.univariate_polynomial_into(&mut poly);
+        diff_sumcheck.univariate_polynomial_into(false, &mut poly);
         debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim_after_r0);
 
         // Round 2: fold next variable.
@@ -138,7 +138,7 @@ mod tests {
         lhs_selector.borrow_mut().partial_evaluate(&r1);
         rhs_selector.borrow_mut().partial_evaluate(&r1);
 
-        diff_sumcheck.univariate_polynomial_into(&mut poly);
+        diff_sumcheck.univariate_polynomial_into(false, &mut poly);
         debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim_after_r1);
 
         // Round 3 (final): fold last variable.

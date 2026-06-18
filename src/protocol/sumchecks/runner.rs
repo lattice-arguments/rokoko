@@ -176,10 +176,13 @@ pub fn sumcheck(
         sumcheck_context
             .field_combiner
             .borrow_mut()
-            .univariate_polynomial_into(&mut poly_over_field);
+            .univariate_polynomial_into(true, &mut poly_over_field);
         time_poly += t1.elapsed().as_millis();
 
-        hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
+        // Constant term dropped: the verifier reconstructs it from the claim.
+        let n = poly_over_field.num_coefficients;
+        let start = if n >= 2 { 1 } else { 0 };
+        hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients[start..n]);
 
         let mut r = RingElement::zero(Representation::IncompleteNTT);
         let mut f = QuadraticExtension::zero();

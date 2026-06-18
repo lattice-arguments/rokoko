@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use crate::common::sumcheck_element::SumcheckElement;
 use crate::protocol::sumcheck_utils::{
     hypercube_point::HypercubePoint,
-    polynomial::{add_poly_in_place, Polynomial},
+    polynomial::{add_poly_in_place, add_poly_in_place_skip_constant, Polynomial},
 };
 
 /// Marker trait for data that can be consumed by the sumcheck protocol.
@@ -26,7 +26,11 @@ pub trait HighOrderSumcheckData {
     fn get_scratch_poly(&self) -> &RefCell<Polynomial<Self::Element>>;
     // this is the univariate polynomial for the current variable with the other variables summed out
     // i.e. let a = f(x_0, x_1, ..., x_{n-1}) then this function returns g(x) = sum_{x_1, ..., x_{n-1}} f(x, x_1, ..., x_{n-1})
-    fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
+    fn univariate_polynomial_into(
+        &self,
+        skip_constant: bool,
+        polynomial: &mut Polynomial<Self::Element>,
+    ) {
         let temp = self.get_scratch_poly();
 
         polynomial.set_zero();
@@ -35,6 +39,9 @@ pub trait HighOrderSumcheckData {
         let half_vars = self.variable_count() - 1;
         let window = self.dependence_window_vars().min(half_vars);
 
+        // skip_constant drops c0, so never touch coefficient 0 below.
+        let start = usize::from(skip_constant);
+
         // Enumerate the dependence window; every other point repeats one of
         // these values, accounted by doubling the result per skipped variable.
         for i in 0..(1usize << window) {
@@ -42,7 +49,9 @@ pub trait HighOrderSumcheckData {
                 .constant_univariate_polynomial_at_point_available_by_ref(HypercubePoint::new(i));
 
             if let Some(constant) = constant {
-                polynomial.coefficients[0] += constant;
+                if !skip_constant {
+                    polynomial.coefficients[0] += constant;
+                }
                 continue;
             }
 
@@ -53,15 +62,17 @@ pub trait HighOrderSumcheckData {
                 HypercubePoint::new(i),
                 &mut temp.borrow_mut(),
             );
-            add_poly_in_place(polynomial, &temp.borrow());
+            let t = temp.borrow();
+            if skip_constant {
+                add_poly_in_place_skip_constant(polynomial, &t);
+            } else {
+                add_poly_in_place(polynomial, &t);
+            }
         }
         for _ in window..half_vars {
-            for c in 0..polynomial.num_coefficients {
-                let (head, tail) = polynomial.coefficients.split_at_mut(c);
-                let _ = head;
-                let coeff = &mut tail[0];
-                let copy = coeff.clone();
-                *coeff += &copy;
+            for c in start..polynomial.num_coefficients {
+                let copy = polynomial.coefficients[c].clone();
+                polynomial.coefficients[c] += &copy;
             }
         }
     }
@@ -69,7 +80,7 @@ pub trait HighOrderSumcheckData {
     fn claim(&self) -> Self::Element {
         // let mut poly = self.get_scratch_poly().borrow_mut();
         let mut poly = Polynomial::new(0);
-        self.univariate_polynomial_into(&mut poly);
+        self.univariate_polynomial_into(false, &mut poly);
         let mut res = poly.at_one();
         res += &poly.at_zero();
         res

@@ -9,7 +9,7 @@ use crate::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
-        polynomial::{sub_poly_in_place, Polynomial},
+        polynomial::{sub_poly_in_place, sub_poly_in_place_skip_constant, Polynomial},
     },
 };
 
@@ -126,12 +126,16 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
     /// Product tree only to return `None`.  By delegating directly to each
     /// child's `univariate_polynomial_into`, we let them handle their own
     /// zero-skipping internally, eliminating redundant tree traversals.
-    fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
+    fn univariate_polynomial_into(
+        &self,
+        skip_constant: bool,
+        polynomial: &mut Polynomial<Self::Element>,
+    ) {
         let lhs_ref = self.lhs_sumcheck.get_ref();
         {
             #[cfg(feature = "profile-sumcheck")]
             let _timer = super::profile::timer(lhs_ref.gadget_kind());
-            lhs_ref.univariate_polynomial_into(polynomial);
+            lhs_ref.univariate_polynomial_into(skip_constant, polynomial);
         }
 
         let mut rhs_poly = self.rhs_eval_poly.borrow_mut();
@@ -140,9 +144,13 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
         {
             #[cfg(feature = "profile-sumcheck")]
             let _timer = super::profile::timer(rhs_ref.gadget_kind());
-            rhs_ref.univariate_polynomial_into(&mut rhs_poly);
+            rhs_ref.univariate_polynomial_into(skip_constant, &mut rhs_poly);
         }
-        sub_poly_in_place(polynomial, &rhs_poly);
+        if skip_constant {
+            sub_poly_in_place_skip_constant(polynomial, &rhs_poly);
+        } else {
+            sub_poly_in_place(polynomial, &rhs_poly);
+        }
     }
 
     #[inline]
@@ -252,7 +260,7 @@ mod tests {
         let diff_sumcheck = DiffSumcheck::new(sumcheck_0.clone(), sumcheck_1.clone());
 
         let mut poly = Polynomial::new(0);
-        diff_sumcheck.univariate_polynomial_into(&mut poly);
+        diff_sumcheck.univariate_polynomial_into(false, &mut poly);
 
         // Sum(data_0) - Sum(data_1) = 26 - 10 = 16
         let claim = RingElement::constant(16, Representation::IncompleteNTT);
@@ -265,7 +273,7 @@ mod tests {
         sumcheck_0.borrow_mut().partial_evaluate(&r0);
         sumcheck_1.borrow_mut().partial_evaluate(&r0);
 
-        diff_sumcheck.univariate_polynomial_into(&mut poly);
+        diff_sumcheck.univariate_polynomial_into(false, &mut poly);
 
         debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim_r0);
     }
@@ -282,7 +290,7 @@ mod tests {
         // Both selectors are 1 at exactly 4 points, so their difference sums to zero.
 
         let mut poly = Polynomial::new(0);
-        diff.univariate_polynomial_into(&mut poly);
+        diff.univariate_polynomial_into(false, &mut poly);
 
         debug_assert_eq!(&poly.at_zero() + &poly.at_one(), claim);
     }
