@@ -51,61 +51,105 @@ pub fn compiled_size() -> SizeConfig {
     SizeConfig::Medium
 }
 
-/// Slack over the measured maxima; bump if a future witness gets closer.
+/// Slack over each round's measured max norm; bump if a future witness gets closer.
 pub const NORM_MARGIN: f64 = 1.02;
 
-/// L2-norm ceilings the verifier enforces at the intermediate round
-/// (projection image) and the last round (folded witness, projection image).
-#[derive(Clone, Copy, Debug)]
-pub struct NormBounds {
-    pub intermediate_projection: f64,
-    pub simple_witness: f64,
-    pub simple_projection: f64,
-}
+// Per-round `[primary, secondary]` L2-norm maxima over three (deterministic)
+// runs, in chain order; `assign_norm_bounds` scales each by NORM_MARGIN onto the
+// round config. The two norms per round are (norm claim, most-inner) for a
+// sumcheck round, (norm claim, projection image) for the intermediate round, and
+// (folded witness, projection image) for the simple round. Standard chain has 9
+// rounds (root..P_6, intermediate, simple); the exact-norm chain has 10.
+const NB_P_26: [[f64; 2]; 9] = [
+    [46889.51181234456, 2242.093664412796],
+    [136249.25466218154, 2703.859463803546],
+    [88564.70651450272, 3127.9992007671613],
+    [51809.033633141626, 3129.3796509851595],
+    [35428.87688030768, 3111.4773018616092],
+    [195669.4144366973, 195560.31913197524],
+    [1602884.0647417393, 1299990.815144861],
+    [73660.94992599539, 17077273.72989793],
+    [350510.5948127674, 836487.5791151952],
+];
+const NB_P_28: [[f64; 2]; 9] = [
+    [66427.98663966867, 2160.0013888884423],
+    [181558.43011548652, 2705.682169065687],
+    [95004.44916949942, 3133.253580545309],
+    [52846.942182116836, 3145.1373578907487],
+    [35438.889895142034, 3128.613750529138],
+    [193799.4028705971, 193690.07834166416],
+    [1583993.8583391036, 1296847.5245818223],
+    [73668.6367459043, 18268958.675824028],
+    [349498.9501185948, 809458.9433127538],
+];
+const NB_P_30: [[f64; 2]; 9] = [
+    [146947.061954297, 2201.3457247783685],
+    [250426.82932745045, 3131.986111080316],
+    [59039.09997620221, 3128.7861863668472],
+    [56233.940703102075, 3119.414528401123],
+    [35479.55817086791, 3145.0324322652064],
+    [193916.4559804041, 193806.1362831425],
+    [1612935.666007792, 1308359.9714466962],
+    [73796.00136863785, 18564103.121726133],
+    [347114.5618581854, 851538.0815265985],
+];
+const NB_P_EN_26: [[f64; 2]; 10] = [
+    [160194.58070733852, 2703.3730782117364],
+    [89390.48689877463, 2704.1401590893915],
+    [124864.64003071486, 2718.6763323352784],
+    [87340.9749716592, 3136.444643222641],
+    [52061.72332914077, 3103.024008930643],
+    [35395.67282875126, 3073.2464919039603],
+    [195646.41070308446, 195537.5162468829],
+    [1590113.0789748884, 1299828.2178838095],
+    [73439.8848855307, 17699615.97419359],
+    [344384.17449412507, 850119.7508974839],
+];
+const NB_P_EN_28: [[f64; 2]; 10] = [
+    [316140.5607273448, 2688.3418681410294],
+    [147581.0541092589, 2694.3485297934267],
+    [181869.85245773967, 2697.6367435220036],
+    [95340.00619362263, 3156.4337471266526],
+    [52929.56034202438, 3134.5771644673227],
+    [35536.13603080672, 3132.0439013525975],
+    [195785.91413837718, 195676.68320727433],
+    [1580382.2873349346, 1295429.6467635748],
+    [73623.80077800927, 18362161.429342028],
+    [345853.3582228167, 836902.1092481485],
+];
 
-/// `P` (`execute`) and `P_EN` (`execute_snark`) share the tail rounds but feed
-/// different witnesses into them, so their norms are registered separately.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum NormProfile {
-    Standard,
-    ExactNorm,
-}
-
-/// Largest norm over three runs, times [`NORM_MARGIN`]. The runs are
-/// deterministic, so the literals are exact. P_EN_30 OOMs and is unmeasured.
-pub fn norm_bounds(profile: NormProfile, size: SizeConfig) -> NormBounds {
-    // (intermediate projection, simple witness, simple projection)
-    let raw = match (profile, size) {
-        // P_26
-        (NormProfile::Standard, SizeConfig::Small) => {
-            (17077273.72989793, 350510.5948127674, 836487.5791151952)
+/// Scale each round's measured maxima by [`NORM_MARGIN`] onto its config,
+/// walking the chain root-first. Rounds not covered keep their INFINITY default
+/// (e.g. P_EN_30, which OOMs and is never run).
+fn assign_norm_bounds(config: &mut Config, bounds: &[[f64; 2]]) {
+    fn rec(config: &mut Config, bounds: &[[f64; 2]], i: &mut usize) {
+        match config {
+            Config::Sumcheck(c) => {
+                c.norm_bound = bounds[*i][0] * NORM_MARGIN;
+                c.most_inner_norm_bound = bounds[*i][1] * NORM_MARGIN;
+                *i += 1;
+                if let Some(next) = c.next.as_deref_mut() {
+                    rec(next, bounds, i);
+                }
+            }
+            Config::Intermediate(c) => {
+                c.norm_bound = bounds[*i][0] * NORM_MARGIN;
+                c.projection_norm_bound = bounds[*i][1] * NORM_MARGIN;
+                *i += 1;
+                if let Some(next) = c.next.as_deref_mut() {
+                    rec(next, bounds, i);
+                }
+            }
+            Config::Simple(c) => {
+                c.witness_norm_bound = bounds[*i][0] * NORM_MARGIN;
+                c.projection_norm_bound = bounds[*i][1] * NORM_MARGIN;
+                *i += 1;
+            }
         }
-        // P_28
-        (NormProfile::Standard, SizeConfig::Medium) => {
-            (18268958.675824028, 349498.9501185948, 809458.9433127538)
-        }
-        // P_30
-        (NormProfile::Standard, SizeConfig::Large) => {
-            (18564103.121726133, 347114.5618581854, 851538.0815265985)
-        }
-        // P_EN_26
-        (NormProfile::ExactNorm, SizeConfig::Small) => {
-            (17699615.97419359, 344384.17449412507, 850119.7508974839)
-        }
-        // P_EN_28
-        (NormProfile::ExactNorm, SizeConfig::Medium) => {
-            (18362161.429342028, 345853.3582228167, 836902.1092481485)
-        }
-        // P_EN_30 exhausts memory on this machine; never measured.
-        (NormProfile::ExactNorm, SizeConfig::Large) => panic!(
-            "P_EN at Large (P_EN_30) OOMs on a 64 GiB machine; norm bounds were not measured"
-        ),
-    };
-    NormBounds {
-        intermediate_projection: raw.0 * NORM_MARGIN,
-        simple_witness: raw.1 * NORM_MARGIN,
-        simple_projection: raw.2 * NORM_MARGIN,
     }
+    let mut i = 0;
+    rec(config, bounds, &mut i);
+    assert_eq!(i, bounds.len(), "norm-bound array length must match chain length");
 }
 
 pub fn p_exact_norm_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
@@ -298,10 +342,16 @@ pub static P_EN: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
     SizeConfig::Large => P_EN_LARGE.clone(),
 });
 
-pub static P_EN_2_SMALL: LazyLock<Config> =
-    LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Small, 2).generate_config());
-pub static P_EN_2_MEDIUM: LazyLock<Config> =
-    LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Medium, 2).generate_config());
+pub static P_EN_2_SMALL: LazyLock<Config> = LazyLock::new(|| {
+    let mut c = p_exact_norm_root_aux(SizeConfig::Small, 2).generate_config();
+    assign_norm_bounds(&mut c, &NB_P_EN_26);
+    c
+});
+pub static P_EN_2_MEDIUM: LazyLock<Config> = LazyLock::new(|| {
+    let mut c = p_exact_norm_root_aux(SizeConfig::Medium, 2).generate_config();
+    assign_norm_bounds(&mut c, &NB_P_EN_28);
+    c
+});
 pub static P_EN_2_LARGE: LazyLock<Config> =
     LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Large, 2).generate_config()); // never executed, OOM for 64GiB RAM
 
@@ -311,9 +361,21 @@ pub static P_EN_TWO_EVALS: LazyLock<Config> = LazyLock::new(|| match compiled_si
     SizeConfig::Large => P_EN_2_LARGE.clone(),
 });
 
-pub static P_SMALL: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Small, 1).generate_config());
-pub static P_MEDIUM: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Medium, 1).generate_config());
-pub static P_LARGE: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Large, 1).generate_config()); 
+pub static P_SMALL: LazyLock<Config> = LazyLock::new(|| {
+    let mut c = p_root_aux(SizeConfig::Small, 1).generate_config();
+    assign_norm_bounds(&mut c, &NB_P_26);
+    c
+});
+pub static P_MEDIUM: LazyLock<Config> = LazyLock::new(|| {
+    let mut c = p_root_aux(SizeConfig::Medium, 1).generate_config();
+    assign_norm_bounds(&mut c, &NB_P_28);
+    c
+});
+pub static P_LARGE: LazyLock<Config> = LazyLock::new(|| {
+    let mut c = p_root_aux(SizeConfig::Large, 1).generate_config();
+    assign_norm_bounds(&mut c, &NB_P_30);
+    c
+});
 
 pub static P_2_SMALL: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Small, 2).generate_config());
 pub static P_2_MEDIUM: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Medium, 2).generate_config());
@@ -506,6 +568,8 @@ pub static P_INTERMEDIATE: LazyLock<IntermediateConfig> = LazyLock::new(|| Inter
     projection_nof_batches: 2,
     witness_decomposition_base_log: 11,
     witness_decomposition_chunks: 2,
+    norm_bound: f64::INFINITY,
+    projection_norm_bound: f64::INFINITY,
     next: Some(Box::new(Config::Simple(P_LAST.clone()))),
 });
 
@@ -516,6 +580,8 @@ pub static P_LAST: LazyLock<SimpleConfig> = LazyLock::new(|| SimpleConfig {
     projection_height: 2usize.pow(8),
     basic_commitment_rank: 4,
     projection_nof_batches: 2,
+    witness_norm_bound: f64::INFINITY,
+    projection_norm_bound: f64::INFINITY,
 });
 
 // 2^28 Z_q elements of norm 2^32

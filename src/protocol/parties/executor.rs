@@ -5,10 +5,7 @@ use crate::{
         crs::CRS,
         evaluation_point_sampler::{sample_initial_evaluation_points, InitialEvaluationPoints},
         open::claim,
-        params::{
-            compiled_size, decompose_witness, norm_bounds, witness_sampler, NormProfile,
-            WITNESS_CONFIG,
-        },
+        params::{decompose_witness, witness_sampler, WITNESS_CONFIG},
         parties::{commiter::commit, prover::prover_round, verifier::verifier_round},
         sumcheck::init_sumcheck,
         sumchecks::builder_verifier::init_verifier,
@@ -100,7 +97,6 @@ pub fn execute() {
         &claims,
         &mut sumcheck_context_verifier,
         None,
-        norm_bounds(NormProfile::Standard, compiled_size()),
     );
     println!("==== VERIFIER DONE ===");
     let verifier_duration = start.elapsed().as_nanos();
@@ -286,7 +282,6 @@ pub fn execute_snark() {
         &chain_inputs_verifier.claims,
         &mut sumcheck_context_verifier,
         Some(hash_wrapper_verifier),
-        norm_bounds(NormProfile::ExactNorm, compiled_size()),
     );
     println!("==== SNARK VERIFIER DONE ===");
     println!("TOTAL Verifier time: {:?} ns", start.elapsed().as_nanos());
