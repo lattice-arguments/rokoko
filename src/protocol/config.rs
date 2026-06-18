@@ -364,6 +364,16 @@ pub trait SizeableProof {
     fn size_in_bits(&self) -> usize;
 }
 
+impl SizeableProof for RoundProof {
+    fn size_in_bits(&self) -> usize {
+        match self {
+            RoundProof::Sumcheck(p) => p.size_in_bits(),
+            RoundProof::Simple(p) => p.size_in_bits(),
+            RoundProof::Intermediate(p) => p.size_in_bits(),
+        }
+    }
+}
+
 pub struct SumcheckRoundProof {
     pub polys: Vec<Polynomial<QuadraticExtension>>,
     pub claim_over_witness: RingElement,
@@ -468,11 +478,7 @@ impl SizeableProof for SumcheckRoundProof {
         }
         emit_size_table("Sumcheck round", &params, &rows, local);
 
-        local + self.next.as_ref().map_or(0, |n| match &**n {
-            RoundProof::Sumcheck(sc_next) => sc_next.size_in_bits(),
-            RoundProof::Simple(s_next) => s_next.size_in_bits(),
-            RoundProof::Intermediate(i_next) => i_next.size_in_bits(),
-        })
+        local + self.next.as_deref().map_or(0, SizeableProof::size_in_bits)
     }
 }
 
@@ -578,11 +584,7 @@ impl SizeableProof for IntermediateRoundProof {
         }
         emit_size_table("Intermediate round", &params, &rows, local);
 
-        local + self.next.as_ref().map_or(0, |n| match &**n {
-            RoundProof::Sumcheck(sc_next) => sc_next.size_in_bits(),
-            RoundProof::Simple(s_next) => s_next.size_in_bits(),
-            RoundProof::Intermediate(i_next) => i_next.size_in_bits(),
-        })
+        local + self.next.as_deref().map_or(0, SizeableProof::size_in_bits)
     }
 }
 

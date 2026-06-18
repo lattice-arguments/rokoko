@@ -358,11 +358,10 @@ pub fn prover_round(
 
     // Read the next-round commitment's outer length while pending_commitment is still alive,
     // for the size-table header (the proof struct only stores the innermost layer).
-    let next_commitment_outer_len: Option<usize> = match &pending_commitment {
-        None => None,
-        Some(PendingNextCommitment::Recursive(rc)) => Some(rc.committed_data.len()),
-        Some(PendingNextCommitment::Basic(basic)) => Some(basic.data.len()),
-    };
+    let next_commitment_outer_len = pending_commitment.as_ref().map(|c| match c {
+        PendingNextCommitment::Recursive(rc) => rc.committed_data.len(),
+        PendingNextCommitment::Basic(basic) => basic.data.len(),
+    });
 
     // Recurse: the sumcheck evaluation point splits into (outer, inner) =
     // (c_0, c_1), which become the next round's evaluation points.

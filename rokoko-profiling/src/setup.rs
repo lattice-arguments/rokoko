@@ -98,17 +98,16 @@ pub fn timestamp_for_filename() -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-/// Print actionable next-step lines for the chrome trace just written.
-/// Call AFTER the `TracingGuards` returned by `setup()` are dropped, so the
-/// file is fully flushed before the user reads the path.
 pub fn print_artifact_paths(trace_base: &str) {
-    println!();
-    println!("Profile written to profiles/{trace_base}/");
-    println!();
-    println!("  trace.json     (Chrome trace — view in Firefox Profiler / Perfetto)");
-    println!("  snapshot.json  (per-span totals + run metadata, for multi-run analysis)");
-    println!();
-    println!("To view the trace, drag profiles/{trace_base}/trace.json into either:");
-    println!("  https://profiler.firefox.com/");
-    println!("  https://ui.perfetto.dev/");
+    println!(
+        "\n\
+        Profile written to profiles/{trace_base}/\n\
+        \n  \
+        trace.json     (Chrome trace — view in Firefox Profiler / Perfetto)\n  \
+        snapshot.json  (per-span totals + run metadata, for multi-run analysis)\n\
+        \n\
+        To view the trace, drag profiles/{trace_base}/trace.json into either:\n  \
+        https://profiler.firefox.com/\n  \
+        https://ui.perfetto.dev/"
+    );
 }
