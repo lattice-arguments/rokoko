@@ -375,6 +375,8 @@ impl AuxSumcheckConfig {
             witness_decomposition_chunks: self.witness_decomposition_chunks,
             folded_witness_prefix,
             composed_witness_length,
+            norm_bound: f64::INFINITY,
+            most_inner_norm_bound: f64::INFINITY,
             next: self.next.as_ref().map(|next| {
                 Box::new(match next.as_ref() {
                     AuxConfig::Sumcheck(cfg) => cfg.generate_config_inner(depth + 1),

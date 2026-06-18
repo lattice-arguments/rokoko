@@ -207,6 +207,8 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
             projection_height: 256,
             projection_nof_batches: 2,
             basic_commitment_rank: 2,
+            witness_norm_bound: f64::INFINITY,
+            projection_norm_bound: f64::INFINITY,
         }))),
     }
     .generate_config()
@@ -256,6 +258,9 @@ pub struct SumcheckConfig {
     pub basic_commitment_rank: usize,
     pub composed_witness_length: usize,
 
+    pub norm_bound: f64,
+    pub most_inner_norm_bound: f64,
+
     pub next: Option<Box<Config>>, // for multiple rounds
 }
 
@@ -293,6 +298,9 @@ pub struct IntermediateConfig {
     pub witness_decomposition_base_log: usize,
     pub witness_decomposition_chunks: usize,
 
+    pub norm_bound: f64,
+    pub projection_norm_bound: f64,
+
     pub next: Option<Box<Config>>,
 }
 
@@ -325,6 +333,8 @@ pub struct SimpleConfig {
     pub projection_height: usize, // likely 256 unless for testing
     pub projection_nof_batches: usize,
     pub basic_commitment_rank: usize,
+    pub witness_norm_bound: f64,
+    pub projection_norm_bound: f64,
     // pub next: Option<Box<SimpleConfig>>, // for multiple rounds
 }
 
