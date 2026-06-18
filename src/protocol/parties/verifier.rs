@@ -390,7 +390,13 @@ pub fn verifier_round_intermediate(
 
     let l2_norm_proj = l2_norm_coeffs(&round_proof.projection_image_ct.data);
 
-    tracing::debug!("L2 norm projection image (intermediate): {:.2}", l2_norm_proj);
+    let norm_ct = round_proof.norm_claim.constant_term_from_incomplete_ntt();
+    tracing::debug!(
+        "\n=== Intermediate verifier === sumcheck_vars={}",
+        round_proof.polys.len()
+    );
+    tracing::debug!("  {:<32}  {:>14.2}", "norm claim", (norm_ct as f64).sqrt());
+    tracing::debug!("  {:<32}  {:>14.2}", "L2 norm projection image", l2_norm_proj);
 
     let intermediate_evaluation_points = intermediate_sumcheck_verifier(
         config,
@@ -661,6 +667,7 @@ pub fn verifier_round_simple(
     let l2_norm_witness = l2_norm_coeffs(&witness_even_odd);
     let l2_norm_proj = l2_norm_coeffs(&round_proof.projection_image_ct.data);
 
-    tracing::debug!("L2 norm folded witness (simple): {:.2}", l2_norm_witness);
-    tracing::debug!("L2 norm projection image (simple): {:.2}", l2_norm_proj);
+    tracing::debug!("\n=== Simple verifier ===");
+    tracing::debug!("  {:<32}  {:>14.2}", "L2 norm folded witness", l2_norm_witness);
+    tracing::debug!("  {:<32}  {:>14.2}", "L2 norm projection image", l2_norm_proj);
 }

@@ -67,9 +67,6 @@ pub fn intermediate_sumcheck_verifier(
     let mut combination = new_vec_zero_preallocated(num_sumchecks);
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
 
-    let norm_ct = proof.norm_claim.constant_term_from_incomplete_ntt();
-    tracing::debug!("norm claim: {:.2}", (norm_ct as f64).sqrt());
-
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
