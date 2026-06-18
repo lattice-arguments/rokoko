@@ -37,12 +37,13 @@ pub trait HighOrderSumcheckData {
 
         // Enumerate the dependence window; every other point repeats one of
         // these values, accounted by doubling the result per skipped variable.
+        let mut constant_sum = Self::Element::zero();
         for i in 0..(1usize << window) {
             let constant = self
                 .constant_univariate_polynomial_at_point_available_by_ref(HypercubePoint::new(i));
 
             if let Some(constant) = constant {
-                polynomial.coefficients[0] += constant;
+                constant_sum += constant;
                 continue;
             }
 
@@ -55,13 +56,14 @@ pub trait HighOrderSumcheckData {
             );
             add_poly_in_place(polynomial, &temp.borrow());
         }
+        // a constant raises every evaluation of the summed polynomial
+        for c in 0..polynomial.num_coefficients {
+            polynomial.coefficients[c] += &constant_sum;
+        }
         for _ in window..half_vars {
             for c in 0..polynomial.num_coefficients {
-                let (head, tail) = polynomial.coefficients.split_at_mut(c);
-                let _ = head;
-                let coeff = &mut tail[0];
-                let copy = coeff.clone();
-                *coeff += &copy;
+                let copy = polynomial.coefficients[c].clone();
+                polynomial.coefficients[c] += &copy;
             }
         }
     }

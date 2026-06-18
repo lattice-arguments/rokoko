@@ -398,6 +398,16 @@ pub static TWO_QUAD: LazyLock<QuadraticExtension> =
 pub static ZERO_QUAD: LazyLock<QuadraticExtension> =
     LazyLock::new(|| QuadraticExtension { coeffs: [0, 0] });
 
+// Lagrange denominators for evaluation-form polynomials over nodes 0..=3.
+pub static INV_TWO: LazyLock<RingElement> =
+    LazyLock::new(|| RingElement::constant(inv_mod(2), Representation::IncompleteNTT));
+pub static INV_SIX: LazyLock<RingElement> =
+    LazyLock::new(|| RingElement::constant(inv_mod(6), Representation::IncompleteNTT));
+pub static INV_TWO_QUAD: LazyLock<QuadraticExtension> =
+    LazyLock::new(|| QuadraticExtension { coeffs: [inv_mod(2), 0] });
+pub static INV_SIX_QUAD: LazyLock<QuadraticExtension> =
+    LazyLock::new(|| QuadraticExtension { coeffs: [inv_mod(6), 0] });
+
 // this is only for u64
 pub fn precompute_structured_values(layers: &[u64]) -> Vec<u64> {
     let size = 1 << layers.len();

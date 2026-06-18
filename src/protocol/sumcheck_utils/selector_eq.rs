@@ -184,13 +184,12 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SelectorEq<E> {
         let current_bit = self.selector & 1;
 
         if current_bit == 1 {
-            // f = current_claim * x
+            // f = current_claim * x → evals [0, claim]
             polynomial.coefficients[1] += &self.current_claim;
             polynomial.num_coefficients = 2;
         } else {
-            // f = current_claim * (1 - x)
+            // f = current_claim * (1 - x) → evals [claim, 0]
             polynomial.coefficients[0] += &self.current_claim;
-            polynomial.coefficients[1] -= &self.current_claim;
             polynomial.num_coefficients = 2;
         }
     }

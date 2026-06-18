@@ -1,7 +1,9 @@
 use std::ops::{AddAssign, MulAssign, SubAssign};
 
 use crate::common::{
-    arithmetic::{ONE, ONE_QUAD, TWO, TWO_QUAD, ZERO, ZERO_QUAD},
+    arithmetic::{
+        INV_SIX, INV_SIX_QUAD, INV_TWO, INV_TWO_QUAD, ONE, ONE_QUAD, TWO, TWO_QUAD, ZERO, ZERO_QUAD,
+    },
     ring_arithmetic::{Representation, RingElement},
     QuadraticExtension,
 };
@@ -9,7 +11,8 @@ use crate::common::{
 /// Minimal operations Sumcheck and Polynomial need from a field-like element.
 /// Designed to be implementable by `RingElement` now and other element types (e.g. `QuadraticExtension`) later.
 pub trait SumcheckElement:
-    Clone
+    'static
+    + Clone
     + for<'a> AddAssign<&'a Self>
     + for<'a> SubAssign<&'a Self>
     + for<'a> MulAssign<&'a Self>
@@ -21,6 +24,8 @@ pub trait SumcheckElement:
     fn one() -> Self;
     fn one_ref() -> &'static Self;
     fn two_ref() -> &'static Self;
+    fn inv_two_ref() -> &'static Self;
+    fn inv_six_ref() -> &'static Self;
     fn set_zero(&mut self);
     fn set_from(&mut self, other: &Self);
 
@@ -54,6 +59,14 @@ impl SumcheckElement for RingElement {
         &TWO
     }
 
+    fn inv_two_ref() -> &'static Self {
+        &INV_TWO
+    }
+
+    fn inv_six_ref() -> &'static Self {
+        &INV_SIX
+    }
+
     fn set_zero(&mut self) {
         RingElement::set_zero(self);
     }
@@ -82,6 +95,14 @@ impl SumcheckElement for QuadraticExtension {
 
     fn two_ref() -> &'static Self {
         &TWO_QUAD
+    }
+
+    fn inv_two_ref() -> &'static Self {
+        &INV_TWO_QUAD
+    }
+
+    fn inv_six_ref() -> &'static Self {
+        &INV_SIX_QUAD
     }
 
     fn zero_ref() -> &'static Self {

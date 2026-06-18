@@ -205,18 +205,8 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
         let rhs_data = rhs_ref.as_data_slices();
 
         if let (Some((a_lo, a_hi)), Some((b_lo, b_hi))) = (lhs_data, rhs_data) {
-            // Σ_p poly_a(p) * poly_b(p)  where poly_x(p) = [x_lo[p], x_hi[p]-x_lo[p]]
-            //
-            // Using Karatsuba on the sums:
-            //   C0   = Σ a_lo[p] * b_lo[p]
-            //   C_mid = Σ a_hi[p] * b_hi[p]
-            //   C2   = Σ (a_hi[p]-a_lo[p]) * (b_hi[p]-b_lo[p])
-            //   C1   = C_mid - C0 - C2
-            //
-            // When the high-half slices are trimmed (shorter than low-half),
-            // we split into a dense region (full Karatsuba) and a sparse
-            // tail where both high halves are zero (C2_tail = C0_tail,
-            // C_mid_tail = 0 — only 1 mul instead of 3).
+            // eval form: R(0)=Σ a_lo b_lo, R(1)=Σ a_hi b_hi,
+            // R(2)=Σ (2a_hi-a_lo)(2b_hi-b_lo); trimmed high halves read as 0.
             polynomial.set_zero();
             polynomial.num_coefficients = 3;
 
@@ -229,7 +219,6 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
             let b_hi_len = b_hi.len();
             let dense_end = a_hi_len.min(b_hi_len);
 
-            // Region 1: [0, dense_end) — both high halves present, full Karatsuba
             for p in 0..dense_end {
                 temp *= (&a_lo[p], &b_lo[p]);
                 polynomial.coefficients[0] += &temp;
@@ -238,52 +227,46 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
                 polynomial.coefficients[1] += &temp;
 
                 temp_a.set_from(&a_hi[p]);
+                temp_a += &a_hi[p];
                 temp_a -= &a_lo[p];
                 temp_b.set_from(&b_hi[p]);
+                temp_b += &b_hi[p];
                 temp_b -= &b_lo[p];
                 temp *= (&temp_a, &temp_b);
                 polynomial.coefficients[2] += &temp;
             }
 
-            // Region 2: [dense_end, max_hi) — one high half non-zero, other zero.
-            // When b_hi is zero: C_mid += a_hi*0 = 0,
-            //   C2 += (a_hi-a_lo)*(0-b_lo) so we subtract (a_hi-a_lo)*b_lo from C2.
+            // one high half zero: R(1)+=0; R(2) gets (2hi-lo)*(-lo') for the live side
             if a_hi_len > dense_end {
                 for p in dense_end..a_hi_len {
                     temp *= (&a_lo[p], &b_lo[p]);
                     polynomial.coefficients[0] += &temp;
-                    // C2 += (a_hi - a_lo) * (0 - b_lo) = -((a_hi-a_lo)*b_lo)
-                    // = a_lo*b_lo - a_hi*b_lo
-                    polynomial.coefficients[2] += &temp; // +a_lo*b_lo
-                    temp *= (&a_hi[p], &b_lo[p]);
-                    polynomial.coefficients[2] -= &temp; // -a_hi*b_lo
+                    temp_a.set_from(&a_hi[p]);
+                    temp_a += &a_hi[p];
+                    temp_a -= &a_lo[p];
+                    temp *= (&temp_a, &b_lo[p]);
+                    polynomial.coefficients[2] -= &temp;
                 }
             } else if b_hi_len > dense_end {
                 for p in dense_end..b_hi_len {
                     temp *= (&a_lo[p], &b_lo[p]);
                     polynomial.coefficients[0] += &temp;
-                    polynomial.coefficients[2] += &temp;
-                    temp *= (&a_lo[p], &b_hi[p]);
+                    temp_b.set_from(&b_hi[p]);
+                    temp_b += &b_hi[p];
+                    temp_b -= &b_lo[p];
+                    temp *= (&a_lo[p], &temp_b);
                     polynomial.coefficients[2] -= &temp;
                 }
             }
 
             let max_hi = a_hi_len.max(b_hi_len);
 
-            // Region 3: [max_hi, n) — both high halves zero.
-            // poly_a = [a_lo, -a_lo], poly_b = [b_lo, -b_lo].
-            // C0 += a_lo*b_lo, C_mid += 0, C2 += a_lo*b_lo (= C0 contribution).
+            // both high halves zero: R(0)+=a_lo b_lo, R(2)+=a_lo b_lo
             for p in max_hi..n {
                 temp *= (&a_lo[p], &b_lo[p]);
                 polynomial.coefficients[0] += &temp;
                 polynomial.coefficients[2] += &temp;
             }
-
-            // C1 = C_mid - C0 - C2 (C_mid is currently in coeff[1])
-            let (first, rest) = polynomial.coefficients.split_at_mut(1);
-            let (second, third) = rest.split_at_mut(1);
-            second[0] -= &first[0];
-            second[0] -= &third[0];
 
             return;
         }
@@ -328,27 +311,22 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
                 };
 
                 temp *= (a0, b0);
-                polynomial.coefficients[0] += &temp; // C0
+                polynomial.coefficients[0] += &temp;
 
                 temp *= (a1, b1);
-                polynomial.coefficients[1] += &temp; // C_mid
+                polynomial.coefficients[1] += &temp;
 
                 temp_a.set_from(a1);
+                temp_a += a1;
                 temp_a -= a0;
                 temp_b.set_from(b1);
+                temp_b += b1;
                 temp_b -= b0;
                 temp *= (&temp_a, &temp_b);
-                polynomial.coefficients[2] += &temp; // C2
+                polynomial.coefficients[2] += &temp;
             }
 
-            // Region 2: one side has data, other is zero — contributes nothing.
-
-            // C1 = C_mid - C0 - C2
-            let (first, rest) = polynomial.coefficients.split_at_mut(1);
-            let (second, third) = rest.split_at_mut(1);
-            second[0] -= &first[0];
-            second[0] -= &third[0];
-
+            // one side zero contributes nothing
             return;
         }
 

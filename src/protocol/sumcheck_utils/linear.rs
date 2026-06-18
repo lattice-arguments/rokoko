@@ -203,7 +203,6 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
         let idx1 = 2 * p + 1;
         polynomial.coefficients[0].set_from(&self.data[idx0]);
         polynomial.coefficients[1].set_from(&self.data[idx1]);
-        polynomial.coefficients[1] -= &self.data[idx0];
         polynomial.num_coefficients = 2;
     }
 
@@ -672,12 +671,10 @@ mod tests {
             RingElement::constant(1 + 3 + 5 + 7, Representation::IncompleteNTT)
         );
 
+        // eval form: coefficients[1] = P(1) = sum of val@1
         debug_assert_eq!(
             poly.coefficients[1],
-            RingElement::constant(
-                (2 - 1) + (4 - 3) + (6 - 5) + (8 - 7),
-                Representation::IncompleteNTT
-            )
+            RingElement::constant(2 + 4 + 6 + 8, Representation::IncompleteNTT)
         );
     }
 
@@ -717,10 +714,7 @@ mod tests {
 
         debug_assert_eq!(
             poly.coefficients[1],
-            RingElement::constant(
-                ((2 - 1) + (4 - 3) + (6 - 5) + (8 - 7)) * 4,
-                Representation::IncompleteNTT
-            )
+            RingElement::constant((2 + 4 + 6 + 8) * 4, Representation::IncompleteNTT)
         );
 
         debug_assert_eq!(poly.num_coefficients, 2);
