@@ -17,6 +17,7 @@ use crate::{
             SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof,
         },
         crs::CRS,
+        params::NormBounds,
         intermediate_sumchecks::{
             context_verifier::IntermediateVerifierSumcheckContext,
             runner_verifier::intermediate_sumcheck_verifier,
@@ -35,6 +36,15 @@ use crate::{
     },
 };
 
+/// Print and enforce a registered L2-norm ceiling (was print-only before).
+fn assert_norm_bounded(label: &str, value: f64, bound: f64) {
+    println!("L2 norm of {}: {} (bound {})", label, value, bound);
+    assert!(
+        value <= bound,
+        "L2 norm of {label} = {value} exceeds the registered bound {bound}"
+    );
+}
+
 pub fn verifier_round(
     crs: &CRS,
     config: &SumcheckConfig,
@@ -45,6 +55,7 @@ pub fn verifier_round(
     claims: &[RingElement],
     sumcheck_context_verifier: &mut VerifierSumcheckContext,
     hash_wrapper_verifier: Option<HashWrapper>,
+    norm_bounds: NormBounds,
 ) {
     let start = std::time::Instant::now();
     let mut hash_wrapper_verifier = hash_wrapper_verifier.unwrap_or_else(HashWrapper::new);
@@ -120,6 +131,7 @@ pub fn verifier_round(
                             _ => panic!("Expected Simple context for next round."),
                         },
                         Some(hash_wrapper_verifier),
+                        norm_bounds,
                     );
                 }
 
@@ -163,6 +175,7 @@ pub fn verifier_round(
                         &outer_rows,
                         &new_claims,
                         Some(hash_wrapper_verifier),
+                        norm_bounds,
                     );
                 }
                 RoundProof::Intermediate(next_intermediate_round_proof) => {
@@ -213,6 +226,7 @@ pub fn verifier_round(
                             _ => panic!("Expected Intermediate context for next round."),
                         },
                         Some(hash_wrapper_verifier),
+                        norm_bounds,
                     );
                 }
             }
@@ -253,6 +267,7 @@ pub fn verifier_round_intermediate(
     claims: &[RingElement],
     sumcheck_context_verifier: &mut IntermediateVerifierSumcheckContext,
     hash_wrapper: Option<HashWrapper>,
+    norm_bounds: NormBounds,
 ) {
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
@@ -391,10 +406,10 @@ pub fn verifier_round_intermediate(
         fold_matrix_claims(&round_proof.batched_projection_image, &folding_challenges);
 
     let l2_norm_proj = l2_norm_coeffs(&round_proof.projection_image_ct.data);
-
-    println!(
-        "L2 norm of projection image in intermediate verifier: {}",
-        l2_norm_proj
+    assert_norm_bounded(
+        "projection image in intermediate verifier",
+        l2_norm_proj,
+        norm_bounds.intermediate_projection,
     );
 
     let intermediate_evaluation_points = intermediate_sumcheck_verifier(
@@ -450,6 +465,7 @@ pub fn verifier_round_intermediate(
                 &outer_rows,
                 &new_claims,
                 Some(hash_wrapper),
+                norm_bounds,
             );
         }
         (
@@ -466,6 +482,7 @@ pub fn verifier_round_intermediate(
                 &new_claims,
                 sumcheck_context_verifier.next.as_deref_mut().unwrap(),
                 Some(hash_wrapper),
+                norm_bounds,
             );
         }
         _ => panic!("Next round proof and config type mismatch."),
@@ -481,6 +498,7 @@ pub fn verifier_round_simple(
     evaluation_points_outer: &[StructuredRow],
     claims: &[RingElement],
     hash_wrapper: Option<HashWrapper>,
+    norm_bounds: NormBounds,
 ) {
     let start = std::time::Instant::now();
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
@@ -660,13 +678,15 @@ pub fn verifier_round_simple(
     let l2_norm_witness = l2_norm_coeffs(&witness_even_odd);
     let l2_norm_proj = l2_norm_coeffs(&round_proof.projection_image_ct.data);
 
-    println!(
-        "L2 norm of folded witness in simple verifier: {}",
-        l2_norm_witness
+    assert_norm_bounded(
+        "folded witness in simple verifier",
+        l2_norm_witness,
+        norm_bounds.simple_witness,
     );
-    println!(
-        "L2 norm of projection image in simple verifier: {}",
-        l2_norm_proj
+    assert_norm_bounded(
+        "projection image in simple verifier",
+        l2_norm_proj,
+        norm_bounds.simple_projection,
     );
 
     let elapsed = start.elapsed().as_nanos();

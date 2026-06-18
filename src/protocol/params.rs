@@ -51,6 +51,63 @@ pub fn compiled_size() -> SizeConfig {
     SizeConfig::Medium
 }
 
+/// Slack over the measured maxima; bump if a future witness gets closer.
+pub const NORM_MARGIN: f64 = 1.02;
+
+/// L2-norm ceilings the verifier enforces at the intermediate round
+/// (projection image) and the last round (folded witness, projection image).
+#[derive(Clone, Copy, Debug)]
+pub struct NormBounds {
+    pub intermediate_projection: f64,
+    pub simple_witness: f64,
+    pub simple_projection: f64,
+}
+
+/// `P` (`execute`) and `P_EN` (`execute_snark`) share the tail rounds but feed
+/// different witnesses into them, so their norms are registered separately.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NormProfile {
+    Standard,
+    ExactNorm,
+}
+
+/// Largest norm over three runs, times [`NORM_MARGIN`]. The runs are
+/// deterministic, so the literals are exact. P_EN_30 OOMs and is unmeasured.
+pub fn norm_bounds(profile: NormProfile, size: SizeConfig) -> NormBounds {
+    // (intermediate projection, simple witness, simple projection)
+    let raw = match (profile, size) {
+        // P_26
+        (NormProfile::Standard, SizeConfig::Small) => {
+            (17077273.72989793, 350510.5948127674, 836487.5791151952)
+        }
+        // P_28
+        (NormProfile::Standard, SizeConfig::Medium) => {
+            (18268958.675824028, 349498.9501185948, 809458.9433127538)
+        }
+        // P_30
+        (NormProfile::Standard, SizeConfig::Large) => {
+            (18564103.121726133, 347114.5618581854, 851538.0815265985)
+        }
+        // P_EN_26
+        (NormProfile::ExactNorm, SizeConfig::Small) => {
+            (17699615.97419359, 344384.17449412507, 850119.7508974839)
+        }
+        // P_EN_28
+        (NormProfile::ExactNorm, SizeConfig::Medium) => {
+            (18362161.429342028, 345853.3582228167, 836902.1092481485)
+        }
+        // P_EN_30 exhausts memory on this machine; never measured.
+        (NormProfile::ExactNorm, SizeConfig::Large) => panic!(
+            "P_EN at Large (P_EN_30) OOMs on a 64 GiB machine; norm bounds were not measured"
+        ),
+    };
+    NormBounds {
+        intermediate_projection: raw.0 * NORM_MARGIN,
+        simple_witness: raw.1 * NORM_MARGIN,
+        simple_projection: raw.2 * NORM_MARGIN,
+    }
+}
+
 pub fn p_exact_norm_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
     AuxSumcheckConfig {
         witness_height: size.pick(2usize.pow(13), 2usize.pow(14), 2usize.pow(15)),
