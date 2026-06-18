@@ -51,15 +51,8 @@ pub fn compiled_size() -> SizeConfig {
     SizeConfig::Medium
 }
 
-/// Slack over each round's measured max norm; bump if a future witness gets closer.
 pub const NORM_MARGIN: f64 = 1.02;
 
-// Per-round `[primary, secondary]` L2-norm maxima over three (deterministic)
-// runs, in chain order; `assign_norm_bounds` scales each by NORM_MARGIN onto the
-// round config. The two norms per round are (norm claim, most-inner) for a
-// sumcheck round, (norm claim, projection image) for the intermediate round, and
-// (folded witness, projection image) for the simple round. Standard chain has 9
-// rounds (root..P_6, intermediate, simple); the exact-norm chain has 10.
 const NB_P_26: [[f64; 2]; 9] = [
     [46889.51181234456, 2242.093664412796],
     [136249.25466218154, 2703.859463803546],
@@ -118,9 +111,6 @@ const NB_P_EN_28: [[f64; 2]; 10] = [
     [345853.3582228167, 836902.1092481485],
 ];
 
-/// Scale each round's measured maxima by [`NORM_MARGIN`] onto its config,
-/// walking the chain root-first. Rounds not covered keep their INFINITY default
-/// (e.g. P_EN_30, which OOMs and is never run).
 fn assign_norm_bounds(config: &mut Config, bounds: &[[f64; 2]]) {
     fn rec(config: &mut Config, bounds: &[[f64; 2]], i: &mut usize) {
         match config {
