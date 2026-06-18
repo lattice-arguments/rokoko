@@ -433,7 +433,94 @@ pub fn project_coefficients(
                     }
                 }
 
-                #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+                #[cfg(target_arch = "aarch64")]
+                {
+                    use std::arch::aarch64::*;
+
+                    // Lookup table mapping a 2-bit nibble to a 2-lane all-ones-or-zero mask:
+                    // index 0b00 → [0, 0], 0b01 → [-1, 0], 0b10 → [0, -1], 0b11 → [-1, -1].
+                    // Used to project the 8 bits of `add_byte` / `sub_byte` (one per chunk)
+                    // into NEON vector masks at 2-lane width — the 64-bit-lane equivalent of
+                    // AVX-512's `__mmask8` masked add/sub.
+                    const MASK_LUT: [[i64; 2]; 4] = [
+                        [0, 0],
+                        [-1, 0],
+                        [0, -1],
+                        [-1, -1],
+                    ];
+
+                    let width = projection_matrix.width;
+                    let blocks_per_ring = DEGREE / 8;
+                    debug_assert!(projection_matrix.projection_width % 8 == 0);
+
+                    unsafe {
+                        let row_base = inner_row * width;
+                        let kpos_row =
+                            projection_matrix.pos_masks.data.as_ptr().add(row_base);
+                        let knz_row =
+                            projection_matrix.non_zero_masks.data.as_ptr().add(row_base);
+
+                        // Four independent accumulators, one per 2-lane pair within each
+                        // 8-column chunk. Mirrors AVX-512's two `__m512i` accumulators (each
+                        // 8 lanes) at NEON's 2-lane width, with extra unrolling for ILP.
+                        let mut acc0 = vdupq_n_s64(0);
+                        let mut acc1 = vdupq_n_s64(0);
+                        let mut acc2 = vdupq_n_s64(0);
+                        let mut acc3 = vdupq_n_s64(0);
+
+                        for chunk_idx in 0..width {
+                            let nz_byte = *knz_row.add(chunk_idx);
+                            let pos_byte = *kpos_row.add(chunk_idx);
+                            // Split into add and sub masks: bit set ⇒ that column contributes
+                            // +coeff or -coeff respectively. nz=0 ⇒ both clear ⇒ no contribution.
+                            let add_byte = nz_byte & pos_byte;
+                            let sub_byte = nz_byte & !pos_byte;
+
+                            let ring_idx = chunk_idx / blocks_per_ring;
+                            let lane_offset = (chunk_idx - ring_idx * blocks_per_ring) * 8;
+                            let coeffs_ptr = subwitness
+                                .get_unchecked(ring_idx)
+                                .v
+                                .as_ptr()
+                                .add(lane_offset)
+                                as *const i64;
+
+                            macro_rules! step {
+                                ($acc:ident, $lane_off:expr, $bit_shift:expr) => {{
+                                    let coeff = vld1q_s64(coeffs_ptr.add($lane_off));
+                                    let add_mask = vld1q_s64(
+                                        MASK_LUT[((add_byte >> $bit_shift) & 0b11) as usize]
+                                            .as_ptr(),
+                                    );
+                                    let sub_mask = vld1q_s64(
+                                        MASK_LUT[((sub_byte >> $bit_shift) & 0b11) as usize]
+                                            .as_ptr(),
+                                    );
+                                    let to_add = vandq_s64(coeff, add_mask);
+                                    let to_sub = vandq_s64(coeff, sub_mask);
+                                    $acc = vaddq_s64($acc, vsubq_s64(to_add, to_sub));
+                                }};
+                            }
+
+                            step!(acc0, 0, 0); // lanes 0-1
+                            step!(acc1, 2, 2); // lanes 2-3
+                            step!(acc2, 4, 4); // lanes 4-5
+                            step!(acc3, 6, 6); // lanes 6-7
+                        }
+
+                        // Combine accumulators and horizontal-sum into the target coefficient.
+                        let acc01 = vaddq_s64(acc0, acc1);
+                        let acc23 = vaddq_s64(acc2, acc3);
+                        let total = vaddq_s64(acc01, acc23);
+                        let sum = vaddvq_s64(total) as u64;
+                        *target = target.wrapping_add(sum);
+                    }
+                }
+
+                #[cfg(not(any(
+                    all(target_arch = "x86_64", target_feature = "avx512f"),
+                    target_arch = "aarch64",
+                )))]
                 {
                     let total_cols =
                         projection_matrix.projection_ratio * projection_matrix.projection_height;
