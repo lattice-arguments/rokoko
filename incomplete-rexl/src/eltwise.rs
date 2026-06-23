@@ -1605,6 +1605,13 @@ unsafe fn fused_incomplete_ntt_mult_neon(
 mod neon_tests {
     use super::*;
 
+    /// Both moduli we exercise are < 2^50 (the dispatch gate). The first is the
+    /// production modulus rokoko passes in (`MOD_Q`); the second is an
+    /// independent value. The float-Barrett constant `mu = (1 + eps) / p`
+    /// depends on `p`, so a kernel can be bit-exact for one modulus and misround
+    /// for another — we check both.
+    const MODULI: [u64; 2] = [1125899906839937, 1125899906826241];
+
     /// Deterministic xorshift64 data in [0, modulus). Avoids dragging in `rand`.
     fn deterministic_vec(len: usize, modulus: u64, seed: u64) -> Vec<u64> {
         let mut state = seed | 1; // xorshift requires non-zero state
@@ -1618,45 +1625,98 @@ mod neon_tests {
         v
     }
 
-    /// Direct scalar-vs-NEON bit-exactness at all bench sizes. Guards against a
-    /// dispatcher-only test (`test_fused_incomplete_ntt_mult_vs_separate`) hiding
-    /// a NEON-kernel regression behind a dispatcher misroute.
+    /// Run the scalar oracle and the NEON kernel over identical inputs and
+    /// assert bit-exactness. `n` must be even: the NEON loop strides by 2 over
+    /// each half, so an odd tail would read across the even/odd boundary.
+    fn assert_neon_matches_scalar(
+        op1: &[u64],
+        op2: &[u64],
+        shift: &[u64],
+        n: usize,
+        modulus: u64,
+        ctx: &str,
+    ) {
+        assert_eq!(n % 2, 0, "kernel requires even n ({ctx})");
+        let shift_f64: Vec<f64> = shift.iter().map(|&x| x as f64).collect();
+
+        let mut scalar_result = vec![0u64; 2 * n];
+        fused_incomplete_ntt_mult_native(&mut scalar_result, op1, op2, shift, n, modulus);
+
+        let mut neon_result = vec![0u64; 2 * n];
+        unsafe {
+            fused_incomplete_ntt_mult_neon(&mut neon_result, op1, op2, &shift_f64, n, modulus);
+        }
+
+        assert_eq!(scalar_result, neon_result, "NEON diverged from scalar ({ctx})");
+    }
+
+    /// Randomized scalar-vs-NEON bit-exactness across both moduli, all bench
+    /// sizes, and many seeds — differential testing over a wide input sample
+    /// rather than a single seed per size. Also guards against a dispatcher-only
+    /// test hiding a NEON-kernel regression behind a dispatcher misroute.
     #[test]
     fn test_fused_neon_matches_scalar() {
-        const MODULUS: u64 = 1125899906826241; // < 2^50, matches the dispatch gate.
         let sizes = [8usize, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192];
+        for &modulus in MODULI.iter() {
+            for &n in sizes.iter() {
+                for seed in 0..32u64 {
+                    let op1 = deterministic_vec(2 * n, modulus, 0x1000 + seed);
+                    let op2 = deterministic_vec(2 * n, modulus, 0x2000 + seed);
+                    let shift = deterministic_vec(n, modulus, 0x3000 + seed);
+                    assert_neon_matches_scalar(
+                        &op1,
+                        &op2,
+                        &shift,
+                        n,
+                        modulus,
+                        &format!("random m={modulus} n={n} seed={seed}"),
+                    );
+                }
+            }
+        }
+    }
 
-        for &n in sizes.iter() {
-            let op1 = deterministic_vec(2 * n, MODULUS, 0x1234567_89abcdef);
-            let op2 = deterministic_vec(2 * n, MODULUS, 0xdeadbeef_cafef00d);
-            let shift = deterministic_vec(n, MODULUS, 0xfeed_facebadc0ffe);
-            let shift_f64: Vec<f64> = shift.iter().map(|&x| x as f64).collect();
+    /// Exhaustive boundary sweep. Float-Barrett off-by-ones live where the
+    /// quotient `floor(h * mu)` lands next to an integer — i.e. at extreme
+    /// operands such as `(p-1) * (p-1)`. Each lane independently draws every
+    /// input from the edge set, so one call covers all `6^5` (a,b,c,d,s)
+    /// combinations.
+    #[test]
+    fn test_fused_neon_boundary_values() {
+        for &modulus in MODULI.iter() {
+            let edges = [0u64, 1, 2, modulus / 2, modulus - 2, modulus - 1];
+            let k = edges.len();
+            let n = k.pow(5); // 6^5 = 7776, even
 
-            let mut scalar_result = vec![0u64; 2 * n];
-            fused_incomplete_ntt_mult_native(
-                &mut scalar_result,
+            let mut op1 = vec![0u64; 2 * n]; // [a.. | b..]
+            let mut op2 = vec![0u64; 2 * n]; // [c.. | d..]
+            let mut shift = vec![0u64; n];
+
+            for i in 0..n {
+                let mut idx = i;
+                let a = edges[idx % k];
+                idx /= k;
+                let b = edges[idx % k];
+                idx /= k;
+                let c = edges[idx % k];
+                idx /= k;
+                let d = edges[idx % k];
+                idx /= k;
+                let s = edges[idx % k];
+                op1[i] = a;
+                op1[n + i] = b;
+                op2[i] = c;
+                op2[n + i] = d;
+                shift[i] = s;
+            }
+
+            assert_neon_matches_scalar(
                 &op1,
                 &op2,
                 &shift,
                 n,
-                MODULUS,
-            );
-
-            let mut neon_result = vec![0u64; 2 * n];
-            unsafe {
-                fused_incomplete_ntt_mult_neon(
-                    &mut neon_result,
-                    &op1,
-                    &op2,
-                    &shift_f64,
-                    n,
-                    MODULUS,
-                );
-            }
-
-            assert_eq!(
-                scalar_result, neon_result,
-                "NEON kernel diverged from scalar at n={n}"
+                modulus,
+                &format!("boundary m={modulus}"),
             );
         }
     }
