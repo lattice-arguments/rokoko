@@ -99,7 +99,8 @@ fn format_duration(d: std::time::Duration) -> String {
     if ns >= 1_000_000_000 {
         format!("{:.2} s", d.as_secs_f64())
     } else if ns >= 1_000_000 {
-        format!("{} ms", ns / 1_000_000)
+        let ms = ns as f64 / 1_000_000.0;
+        format!("{ms:.2} ms")
     } else if ns >= 1_000 {
         format!("{} μs", ns / 1_000)
     } else {
