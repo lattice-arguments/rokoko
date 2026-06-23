@@ -394,8 +394,6 @@ pub fn verifier_round_intermediate(
         l2_norm_proj,
         config.projection_norm_bound,
     );
-    tracing::debug!("  {:<32}  {:>14.2}", "norm claim", (norm_ct as f64).sqrt());
-    tracing::debug!("  {:<32}  {:>14.2}", "L2 norm projection image", l2_norm_proj);
 
     let intermediate_evaluation_points = intermediate_sumcheck_verifier(
         config,
@@ -671,6 +669,4 @@ pub fn verifier_round_simple(
         config.projection_norm_bound,
     );
 
-    let elapsed = start.elapsed().as_nanos();
-    println!("Simple verifier: {} ns", elapsed);
 }
