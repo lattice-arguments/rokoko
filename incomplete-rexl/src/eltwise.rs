@@ -15,6 +15,12 @@ use crate::avx512_util::{
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::*;
 
+#[cfg(target_arch = "aarch64")]
+use crate::cpu_features::HAS_NEON;
+
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::*;
+
 fn reduce_mod_input<const INPUT_MOD_FACTOR: i32>(
     x: u64,
     modulus: u64,
@@ -1314,6 +1320,23 @@ pub fn fused_incomplete_ntt_mult_inner(
         }
     }
 
+    #[cfg(target_arch = "aarch64")]
+    {
+        if HAS_NEON && modulus < (1u64 << 50) {
+            unsafe {
+                fused_incomplete_ntt_mult_neon(
+                    result,
+                    operand1,
+                    operand2,
+                    shift_factors_f64,
+                    n,
+                    modulus,
+                );
+                return;
+            }
+        }
+    }
+
     fused_incomplete_ntt_mult_native(result, operand1, operand2, shift_factors, n, modulus);
 }
 
@@ -1458,5 +1481,243 @@ unsafe fn fused_incomplete_ntt_mult_avx512_float(
         _mm512_storeu_si512(res_o.add(i) as *mut __m512i, v_ro);
 
         i += 8;
+    }
+}
+
+// ─── NEON Dekker-Barrett kernel (aarch64) ───────────────────────────────────
+//
+// 2-lane sibling of `fused_incomplete_ntt_mult_avx512_float`. Same Karatsuba
+// structure, same float-Barrett reduction.
+//
+// Hwang's chapter 9 `sqdmulh`-based integer paths (Algorithms 9.19-9.21) only
+// exist for 16/32-bit lanes — there is no `sqdmulh.2D` for 64-bit, so we rely
+// on the f64 53-bit mantissa instead. Modulus must fit (< 2^50, gated by the
+// dispatcher above), matching the AVX-512 path.
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn fmul_mod(
+    x: float64x2_t,
+    y: float64x2_t,
+    p: float64x2_t,
+    u: float64x2_t,
+    zero: float64x2_t,
+) -> float64x2_t {
+    // Dekker error-free product: h + l = x*y exactly. NEON's vfmsq_f64(c, a, b)
+    // computes c - a*b, so l_neg = h - x*y carries the negation of l. We carry
+    // l_neg and subtract in the final combine instead of negating once.
+    let h = vmulq_f64(x, y);
+    let l_neg = vfmsq_f64(h, x, y);
+
+    // Floating Barrett quotient: c = floor(h * mu), mu = (1 + eps) / p.
+    let b_quot = vmulq_f64(h, u);
+    let c = vrndmq_f64(b_quot);
+
+    // d = h - c*p (single-rounded FMA).
+    let d = vfmsq_f64(h, c, p);
+
+    // g = (h - c*p) - l_neg = (h - c*p) + l = x*y - c*p, in (-p, p).
+    let g = vsubq_f64(d, l_neg);
+
+    // Conditional add p if g < 0.
+    let mask = vcltq_f64(g, zero);
+    vbslq_f64(mask, vaddq_f64(g, p), g)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn fadd_mod(a: float64x2_t, b: float64x2_t, p: float64x2_t) -> float64x2_t {
+    let sum = vaddq_f64(a, b);
+    let mask = vcleq_f64(p, sum); // p <= sum
+    vbslq_f64(mask, vsubq_f64(sum, p), sum)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn fsub_mod(
+    a: float64x2_t,
+    b: float64x2_t,
+    p: float64x2_t,
+    zero: float64x2_t,
+) -> float64x2_t {
+    let diff = vsubq_f64(a, b);
+    let mask = vcltq_f64(diff, zero);
+    vbslq_f64(mask, vaddq_f64(diff, p), diff)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn fused_incomplete_ntt_mult_neon(
+    result: &mut [u64],
+    operand1: &[u64],
+    operand2: &[u64],
+    shift_factors_f64: &[f64],
+    n: usize,
+    modulus: u64,
+) {
+    let v_p = vdupq_n_f64(modulus as f64);
+    let v_u = vdupq_n_f64((1.0 + f64::EPSILON) / modulus as f64);
+    let v_zero = vdupq_n_f64(0.0);
+
+    let op1_e = operand1.as_ptr();
+    let op1_o = operand1.as_ptr().add(n);
+    let op2_e = operand2.as_ptr();
+    let op2_o = operand2.as_ptr().add(n);
+    let shift = shift_factors_f64.as_ptr();
+    let res_e = result.as_mut_ptr();
+    let res_o = result.as_mut_ptr().add(n);
+
+    let mut i = 0usize;
+    while i < n {
+        let f_a = vcvtq_f64_u64(vld1q_u64(op1_e.add(i)));
+        let f_b = vcvtq_f64_u64(vld1q_u64(op1_o.add(i)));
+        let f_c = vcvtq_f64_u64(vld1q_u64(op2_e.add(i)));
+        let f_d = vcvtq_f64_u64(vld1q_u64(op2_o.add(i)));
+        let f_s = vld1q_f64(shift.add(i));
+
+        // Karatsuba prep: (a+b) mod p, (c+d) mod p
+        let f_ab = fadd_mod(f_a, f_b, v_p);
+        let f_cd = fadd_mod(f_c, f_d, v_p);
+
+        // 3 independent modular multiplies (maximal ILP)
+        let ac = fmul_mod(f_a, f_c, v_p, v_u, v_zero);
+        let bd = fmul_mod(f_b, f_d, v_p, v_u, v_zero);
+        let abcd = fmul_mod(f_ab, f_cd, v_p, v_u, v_zero);
+
+        // 1 dependent multiply: s * bd
+        let sbd = fmul_mod(f_s, bd, v_p, v_u, v_zero);
+
+        // result_even = ac + s*bd
+        let f_re = fadd_mod(ac, sbd, v_p);
+
+        // result_odd = (a+b)(c+d) - ac - bd  [Karatsuba]
+        let tmp = fsub_mod(abcd, ac, v_p, v_zero);
+        let f_ro = fsub_mod(tmp, bd, v_p, v_zero);
+
+        vst1q_u64(res_e.add(i), vcvtq_u64_f64(f_re));
+        vst1q_u64(res_o.add(i), vcvtq_u64_f64(f_ro));
+
+        i += 2;
+    }
+}
+
+#[cfg(all(test, target_arch = "aarch64"))]
+mod neon_tests {
+    use super::*;
+
+    /// Both moduli we exercise are < 2^50 (the dispatch gate). The first is the
+    /// production modulus rokoko passes in (`MOD_Q`); the second is an
+    /// independent value. The float-Barrett constant `mu = (1 + eps) / p`
+    /// depends on `p`, so a kernel can be bit-exact for one modulus and misround
+    /// for another — we check both.
+    const MODULI: [u64; 2] = [1125899906839937, 1125899906826241];
+
+    /// Deterministic xorshift64 data in [0, modulus). Avoids dragging in `rand`.
+    fn deterministic_vec(len: usize, modulus: u64, seed: u64) -> Vec<u64> {
+        let mut state = seed | 1; // xorshift requires non-zero state
+        let mut v = Vec::with_capacity(len);
+        for _ in 0..len {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            v.push(state % modulus);
+        }
+        v
+    }
+
+    /// Run the scalar oracle and the NEON kernel over identical inputs and
+    /// assert bit-exactness. `n` must be even: the NEON loop strides by 2 over
+    /// each half, so an odd tail would read across the even/odd boundary.
+    fn assert_neon_matches_scalar(
+        op1: &[u64],
+        op2: &[u64],
+        shift: &[u64],
+        n: usize,
+        modulus: u64,
+        ctx: &str,
+    ) {
+        assert_eq!(n % 2, 0, "kernel requires even n ({ctx})");
+        let shift_f64: Vec<f64> = shift.iter().map(|&x| x as f64).collect();
+
+        let mut scalar_result = vec![0u64; 2 * n];
+        fused_incomplete_ntt_mult_native(&mut scalar_result, op1, op2, shift, n, modulus);
+
+        let mut neon_result = vec![0u64; 2 * n];
+        unsafe {
+            fused_incomplete_ntt_mult_neon(&mut neon_result, op1, op2, &shift_f64, n, modulus);
+        }
+
+        assert_eq!(scalar_result, neon_result, "NEON diverged from scalar ({ctx})");
+    }
+
+    /// Randomized scalar-vs-NEON bit-exactness across both moduli, all bench
+    /// sizes, and many seeds — differential testing over a wide input sample
+    /// rather than a single seed per size. Also guards against a dispatcher-only
+    /// test hiding a NEON-kernel regression behind a dispatcher misroute.
+    #[test]
+    fn test_fused_neon_matches_scalar() {
+        let sizes = [8usize, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192];
+        for &modulus in MODULI.iter() {
+            for &n in sizes.iter() {
+                for seed in 0..32u64 {
+                    let op1 = deterministic_vec(2 * n, modulus, 0x1000 + seed);
+                    let op2 = deterministic_vec(2 * n, modulus, 0x2000 + seed);
+                    let shift = deterministic_vec(n, modulus, 0x3000 + seed);
+                    assert_neon_matches_scalar(
+                        &op1,
+                        &op2,
+                        &shift,
+                        n,
+                        modulus,
+                        &format!("random m={modulus} n={n} seed={seed}"),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Exhaustive boundary sweep. Float-Barrett off-by-ones live where the
+    /// quotient `floor(h * mu)` lands next to an integer — i.e. at extreme
+    /// operands such as `(p-1) * (p-1)`. Each lane independently draws every
+    /// input from the edge set, so one call covers all `6^5` (a,b,c,d,s)
+    /// combinations.
+    #[test]
+    fn test_fused_neon_boundary_values() {
+        for &modulus in MODULI.iter() {
+            let edges = [0u64, 1, 2, modulus / 2, modulus - 2, modulus - 1];
+            let k = edges.len();
+            let n = k.pow(5); // 6^5 = 7776, even
+
+            let mut op1 = vec![0u64; 2 * n]; // [a.. | b..]
+            let mut op2 = vec![0u64; 2 * n]; // [c.. | d..]
+            let mut shift = vec![0u64; n];
+
+            for i in 0..n {
+                let mut idx = i;
+                let a = edges[idx % k];
+                idx /= k;
+                let b = edges[idx % k];
+                idx /= k;
+                let c = edges[idx % k];
+                idx /= k;
+                let d = edges[idx % k];
+                idx /= k;
+                let s = edges[idx % k];
+                op1[i] = a;
+                op1[n + i] = b;
+                op2[i] = c;
+                op2[n + i] = d;
+                shift[i] = s;
+            }
+
+            assert_neon_matches_scalar(
+                &op1,
+                &op2,
+                &shift,
+                n,
+                modulus,
+                &format!("boundary m={modulus}"),
+            );
+        }
     }
 }

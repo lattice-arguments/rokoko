@@ -53,6 +53,14 @@ pub static HAS_AVX512VBMI2: LazyLock<bool> = LazyLock::new(|| {
     }
 });
 
+/// NEON SIMD is mandatory in armv8, so no runtime check is needed — `false`
+/// on every other architecture.
+#[cfg(target_arch = "aarch64")]
+pub const HAS_NEON: bool = true;
+
+#[cfg(not(target_arch = "aarch64"))]
+pub const HAS_NEON: bool = false;
+
 pub fn print_features() {
     println!("CPU features for incomplete-rexl:");
     println!("  AVX-512DQ: {}", if *HAS_AVX512DQ { "✓" } else { "✗" });
@@ -61,4 +69,5 @@ pub fn print_features() {
         "  AVX-512VBMI2: {}",
         if *HAS_AVX512VBMI2 { "✓" } else { "✗" }
     );
+    println!("  NEON: {}", if HAS_NEON { "✓" } else { "✗" });
 }
