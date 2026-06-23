@@ -54,9 +54,8 @@ impl<E: SumcheckElement> SumSumcheck<E> {
 impl<E: SumcheckElement> HighOrderSumcheckData for SumSumcheck<E> {
     type Element = E;
 
-    #[cfg(feature = "profile-sumcheck")]
-    fn gadget_kind(&self) -> super::profile::GadgetKind {
-        super::profile::GadgetKind::Sum
+    fn gadget_span(&self) -> tracing::Span {
+        tracing::info_span!("sumcheck::gadget::sum")
     }
 
     fn get_scratch_poly(&self) -> &RefCell<Polynomial<E>> {
@@ -129,6 +128,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SumSumcheck<E> {
     /// Avoids the per-point constant-availability tree traversal and lets
     /// each child handle its own zero-skipping internally.
     fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
+        let _s = self.gadget_span().entered();
         self.lhs_sumcheck
             .get_ref()
             .univariate_polynomial_into(polynomial);
