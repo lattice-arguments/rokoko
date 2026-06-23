@@ -2,6 +2,7 @@ use std::cell::RefCell;
 
 use crate::common::sumcheck_element::SumcheckElement;
 use crate::protocol::sumcheck_utils::{
+    elephant_cell::ElephantCell,
     hypercube_point::HypercubePoint,
     polynomial::{add_poly_in_place, Polynomial},
 };
@@ -112,6 +113,32 @@ pub trait HighOrderSumcheckData {
     /// that callers can iterate only the relevant points.
     fn non_zero_range(&self) -> Option<(usize, usize)> {
         None
+    }
+
+    /// Combiner witness-factorization hook. If this gadget is a difference of
+    /// products sharing a common factor (a `FactoredDiffSumcheck`), return
+    /// `(identity, shared_cell)` so the `Combiner` can group children by the
+    /// shared factor and multiply it in once per group instead of once per
+    /// child. Default: not factorable.
+    fn factored_shared(
+        &self,
+    ) -> Option<(usize, ElephantCell<dyn HighOrderSumcheckData<Element = Self::Element>>)> {
+        None
+    }
+
+    /// Evaluate the witness-free remainder (`lhs_rest - rhs_rest`) at a point.
+    /// Only meaningful when `factored_shared()` is `Some`.
+    fn factored_diff_at_point(
+        &self,
+        point: HypercubePoint,
+        polynomial: &mut Polynomial<Self::Element>,
+    ) {
+        self.univariate_polynomial_at_point_into(point, polynomial);
+    }
+
+    /// Whether the witness-free remainder is zero at this point.
+    fn factored_diff_zero_at_point(&self, point: HypercubePoint) -> bool {
+        self.is_univariate_polynomial_zero_at_point(point)
     }
 
     /// When `bypass = true`, per-point cache stores in

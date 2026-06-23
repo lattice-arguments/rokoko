@@ -178,6 +178,47 @@ impl<E: SumcheckElement> HighOrderSumcheckData for FactoredDiffSumcheck<E> {
         mul_poly_into(polynomial, &diff_rest_poly, &shared_poly);
     }
 
+    fn factored_shared(
+        &self,
+    ) -> Option<(usize, ElephantCell<dyn HighOrderSumcheckData<Element = E>>)> {
+        Some((self.shared.id(), self.shared.clone()))
+    }
+
+    fn factored_diff_at_point(&self, point: HypercubePoint, polynomial: &mut Polynomial<E>) {
+        polynomial.set_zero();
+        let lhs_zero = self
+            .lhs_rest
+            .get_ref()
+            .is_univariate_polynomial_zero_at_point(point);
+        let rhs_zero = self
+            .rhs_rest
+            .get_ref()
+            .is_univariate_polynomial_zero_at_point(point);
+        if !lhs_zero {
+            self.lhs_rest
+                .get_ref()
+                .univariate_polynomial_at_point_into(point, polynomial);
+        }
+        if !rhs_zero {
+            let mut rhs_rest_poly = self.rhs_rest_poly.borrow_mut();
+            rhs_rest_poly.set_zero();
+            self.rhs_rest
+                .get_ref()
+                .univariate_polynomial_at_point_into(point, &mut rhs_rest_poly);
+            sub_poly_in_place(polynomial, &rhs_rest_poly);
+        }
+    }
+
+    fn factored_diff_zero_at_point(&self, point: HypercubePoint) -> bool {
+        self.lhs_rest
+            .get_ref()
+            .is_univariate_polynomial_zero_at_point(point)
+            && self
+                .rhs_rest
+                .get_ref()
+                .is_univariate_polynomial_zero_at_point(point)
+    }
+
     fn final_evaluations_test_only(&self) -> Self::Element {
         let lhs = self.lhs_rest.get_ref().final_evaluations_test_only();
         let rhs = self.rhs_rest.get_ref().final_evaluations_test_only();
