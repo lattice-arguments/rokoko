@@ -6,7 +6,7 @@ use crate::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
-        polynomial::{add_poly_in_place, Polynomial},
+        polynomial::{add_poly_in_place, mul_poly_into, Polynomial},
     },
 };
 
@@ -62,9 +62,8 @@ impl<E: SumcheckElement> Combiner<E> {
 impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
     type Element = E;
 
-    #[cfg(feature = "profile-sumcheck")]
-    fn gadget_kind(&self) -> super::profile::GadgetKind {
-        super::profile::GadgetKind::Combiner
+    fn gadget_span(&self) -> tracing::Span {
+        tracing::info_span!("sumcheck::gadget::combiner")
     }
 
     fn max_num_polynomial_coefficients(&self) -> usize {
@@ -99,27 +98,95 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
     /// skipping etc. live. Without this, the default path only ever calls
     /// univariate_polynomial_at_point_into, so those bulk overrides never fire.
     fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<E>) {
+        let _s = self.gadget_span().entered();
         polynomial.set_zero();
         polynomial.num_coefficients = 0;
 
-        let mut output_poly = self.output_poly.borrow_mut();
+        // Group children that are FactoredDiffSumchecks by their shared factor's
+        // identity. For each group of >= 2, the shared factor (the witness) is
+        // multiplied in once per point instead of once per child:
+        //   Sum_i chi_i * (diff_i * shared) = shared * Sum_i chi_i * diff_i.
+        let mut groups: Vec<(
+            usize,
+            ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
+            Vec<usize>,
+        )> = Vec::new();
+        let mut grouped = vec![false; self.sumchecks.len()];
+        for (i, child) in self.sumchecks.iter().enumerate() {
+            if let Some((id, shared)) = child.get_ref().factored_shared() {
+                if let Some(g) = groups.iter_mut().find(|(gid, _, _)| *gid == id) {
+                    g.2.push(i);
+                } else {
+                    groups.push((id, shared, vec![i]));
+                }
+            }
+        }
+        for (_, _, members) in &groups {
+            if members.len() >= 2 {
+                for &i in members {
+                    grouped[i] = true;
+                }
+            }
+        }
 
-        for (sumcheck, challenge) in self.sumchecks.iter().zip(self.challenges.iter()) {
-            output_poly.set_zero();
-            output_poly.num_coefficients = 0;
-
-            let sumcheck_ref = sumcheck.get_ref();
+        // Non-grouped children: original output-first path.
+        {
+            let mut output_poly = self.output_poly.borrow_mut();
+            for (i, (sumcheck, challenge)) in
+                self.sumchecks.iter().zip(self.challenges.iter()).enumerate()
             {
-                #[cfg(feature = "profile-sumcheck")]
-                let _timer = super::profile::timer(sumcheck_ref.gadget_kind());
-                sumcheck_ref.univariate_polynomial_into(&mut output_poly);
+                if grouped[i] {
+                    continue;
+                }
+                output_poly.set_zero();
+                output_poly.num_coefficients = 0;
+                sumcheck.get_ref().univariate_polynomial_into(&mut output_poly);
+                for j in 0..output_poly.num_coefficients {
+                    output_poly.coefficients[j] *= challenge;
+                }
+                add_poly_in_place(polynomial, &output_poly);
             }
+        }
 
-            // Scale by the batching challenge and accumulate
-            for j in 0..output_poly.num_coefficients {
-                output_poly.coefficients[j] *= challenge;
+        // Grouped children: factor the shared cell out of the per-point sum.
+        let n_points = 1usize << (self.variable_count() - 1);
+        let mut s_poly = self.temp_poly.borrow_mut();
+        let mut diff_poly = self.scratch_poly.borrow_mut();
+        let mut shared_poly = Polynomial::new(0);
+        let mut prod_poly = Polynomial::new(0);
+        for (_, shared, members) in &groups {
+            if members.len() < 2 {
+                continue;
             }
-            add_poly_in_place(polynomial, &output_poly);
+            let shared_ref = shared.get_ref();
+            for p in 0..n_points {
+                let pt = HypercubePoint::new(p);
+                s_poly.set_zero();
+                s_poly.num_coefficients = 0;
+                let mut any = false;
+                for &i in members {
+                    let child = self.sumchecks[i].get_ref();
+                    if child.factored_diff_zero_at_point(pt) {
+                        continue;
+                    }
+                    diff_poly.set_zero();
+                    diff_poly.num_coefficients = 0;
+                    child.factored_diff_at_point(pt, &mut diff_poly);
+                    for j in 0..diff_poly.num_coefficients {
+                        diff_poly.coefficients[j] *= &self.challenges[i];
+                    }
+                    add_poly_in_place(&mut s_poly, &diff_poly);
+                    any = true;
+                }
+                if !any || shared_ref.is_univariate_polynomial_zero_at_point(pt) {
+                    continue;
+                }
+                shared_poly.set_zero();
+                shared_poly.num_coefficients = 0;
+                shared_ref.univariate_polynomial_at_point_into(pt, &mut shared_poly);
+                mul_poly_into(&mut prod_poly, &s_poly, &shared_poly);
+                add_poly_in_place(polynomial, &prod_poly);
+            }
         }
     }
 

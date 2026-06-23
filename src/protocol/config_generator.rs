@@ -57,6 +57,10 @@ impl AuxSumcheckConfig {
         self.generate_config_inner(0)
     }
     pub fn generate_config_inner(&self, depth: usize) -> Config {
+        const NAME_COL: usize = 36;
+        const SIZE_COL: usize = 6;
+        const PREFIX_COL: usize = 16;
+
         let mut components = Vec::new();
 
         // Collect all components that need prefixes
@@ -84,19 +88,10 @@ impl AuxSumcheckConfig {
         // Sort by size (largest to smallest)
         components.sort_by(|a, b| b.size.cmp(&a.size));
 
-        println!("\n=== Prefix Assignment level {} ===", depth);
-        println!(
-            "Total size needed: {} -> Composed witness length: {} (compresion ratio {:.2}%)",
-            total_size,
-            composed_witness_length,
-            (composed_witness_length as f64 / (self.witness_width * self.witness_height) as f64)
-                * 100.0
-        );
-        println!("\nComponents sorted by size:");
-
         let total_bits = composed_witness_length.ilog2() as usize;
         let mut assigned_prefixes = Vec::new();
         let mut used_prefixes = std::collections::HashSet::new();
+        let mut layout_lines: Vec<String> = Vec::with_capacity(components.len());
 
         for comp in &components {
             let required_bits = comp.size.ilog2() as usize;
@@ -141,37 +136,44 @@ impl AuxSumcheckConfig {
 
             assigned_prefixes.push((comp.clone(), prefix));
 
-            let prefix_binary = format!("{:0width$b}", prefix_value, width = prefix_length);
+            let prefix_binary = format!("0b{:0width$b}", prefix_value, width = prefix_length);
             let start = prefix_value << required_bits;
             let end = start + comp.size;
 
             // Calculate indentation based on path depth
             let indent_level = comp.path.iter().filter(|s| *s == "next").count();
             let indent = "  ".repeat(indent_level + 1);
+            let name_width = NAME_COL.saturating_sub(indent.len());
+            let indices = format!("[{}, {}]", start, end - 1);
 
-            println!(
-                "{}{} (size={}): prefix=0b{} (len={}) -> indices [{}, {}]",
-                indent,
-                comp.name,
-                comp.size,
-                prefix_binary,
-                prefix_length,
-                start,
-                end - 1
-            );
+            layout_lines.push(format!(
+                "{indent}{name:<name_w$}  {size:>size_w$}  {prefix:<prefix_w$}  {indices}",
+                indent = indent,
+                name = comp.name,
+                name_w = name_width,
+                size = comp.size,
+                size_w = SIZE_COL,
+                prefix = prefix_binary,
+                prefix_w = PREFIX_COL,
+                indices = indices,
+            ));
         }
 
         // The ratio must cover the highest used index: the layout can leave
         // gaps, and downstream non_zero_end/used_cols cutoffs are prefixes.
-        let used_memory = used_prefixes.len();
         let highest_used = used_prefixes.iter().max().map_or(0, |m| m + 1);
         let usage_ratio = highest_used as f64 / composed_witness_length as f64;
-        println!("\n=== Memory Usage level {} ===", depth);
-        println!(
-            "Used: {} / {} (highest index {})",
-            used_memory, composed_witness_length, highest_used
+
+        tracing::trace!(
+            "\n=== Level {} ===   {} / {} used  ({:.1}%)",
+            depth,
+            highest_used,
+            composed_witness_length,
+            usage_ratio * 100.0
         );
-        println!("Usage ratio: {:.2}%\n", usage_ratio * 100.0);
+        for line in &layout_lines {
+            tracing::trace!("{}", line);
+        }
 
         // Build the actual config with assigned prefixes
         self.build_config_with_prefixes(
