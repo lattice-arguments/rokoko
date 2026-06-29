@@ -13,7 +13,7 @@ pub struct TracingGuards(#[allow(dead_code)] Vec<Box<dyn Any>>);
 
 /// Install a tracing subscriber stack from three orthogonal flags:
 ///
-/// - `events`: console summary (`ConsoleLayer`). Empty `ROKOKO_LINEAR_PHASES`
+/// - `events`: console summary (`ConsoleLayer`). Empty `LINEAR_PHASES`
 ///   defaults to `verifier` so the per-round verifier breakdown is on by default.
 /// - `profile`: file artifacts (`ChromeLayer` JSON + `SnapshotLayer` JSON).
 /// - `debug`: lower the level filter from `info` to `trace`, surfacing the
@@ -44,7 +44,7 @@ pub fn setup(
             .unwrap_or_default()
     };
 
-    let focus = parse_csv("ROKOKO_PROFILE_FOCUS");
+    let focus = parse_csv("PROFILE_FOCUS");
 
     let mut layers: Vec<Box<dyn Layer<Registry> + Send + Sync>> = Vec::new();
     let mut guards: Vec<Box<dyn Any>> = Vec::new();
@@ -54,7 +54,7 @@ pub fn setup(
     }
 
     if events {
-        let mut linear_phases = parse_csv("ROKOKO_LINEAR_PHASES");
+        let mut linear_phases = parse_csv("LINEAR_PHASES");
         if linear_phases.is_empty() {
             linear_phases.push("verifier".to_string());
         }
