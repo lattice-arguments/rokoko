@@ -53,8 +53,6 @@ pub static HAS_AVX512VBMI2: LazyLock<bool> = LazyLock::new(|| {
     }
 });
 
-/// NEON SIMD is mandatory in armv8, so no runtime check is needed — `false`
-/// on every other architecture.
 #[cfg(target_arch = "aarch64")]
 pub const HAS_NEON: bool = true;
 
