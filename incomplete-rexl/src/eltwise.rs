@@ -1484,15 +1484,11 @@ unsafe fn fused_incomplete_ntt_mult_avx512_float(
     }
 }
 
-// ─── NEON Dekker-Barrett kernel (aarch64) ───────────────────────────────────
-//
-// 2-lane sibling of `fused_incomplete_ntt_mult_avx512_float`. Same Karatsuba
-// structure, same float-Barrett reduction.
-//
-// Hwang's chapter 9 `sqdmulh`-based integer paths (Algorithms 9.19-9.21) only
-// exist for 16/32-bit lanes — there is no `sqdmulh.2D` for 64-bit, so we rely
-// on the f64 53-bit mantissa instead. Modulus must fit (< 2^50, gated by the
-// dispatcher above), matching the AVX-512 path.
+// NEON 2-lane sibling of `fused_incomplete_ntt_mult_avx512_float`: same Karatsuba
+// structure and float-Barrett reduction. NEON has no high-half or widening 64-bit
+// integer multiply, so we reduce via the f64 53-bit mantissa with an FMA-based
+// Dekker product, as the AVX-512 float path does. Modulus must fit (< 2^50, gated
+// by the dispatcher above).
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
