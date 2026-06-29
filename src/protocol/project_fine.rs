@@ -432,7 +432,86 @@ pub fn project_coefficients(
                     }
                 }
 
-                #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+                #[cfg(target_arch = "aarch64")]
+                {
+                    use std::arch::aarch64::*;
+
+                    // NEON has no masked add/sub; AND coefficients against these lane masks.
+                    static MASK_LUT: [[i64; 2]; 4] = [
+                        [0, 0],
+                        [-1, 0],
+                        [0, -1],
+                        [-1, -1],
+                    ];
+
+                    let width = projection_matrix.width;
+                    let blocks_per_ring = DEGREE / 8;
+                    debug_assert!(projection_matrix.projection_width % 8 == 0);
+
+                    unsafe {
+                        let row_base = inner_row * width;
+                        let kpos_row =
+                            projection_matrix.pos_masks.data.as_ptr().add(row_base);
+                        let knz_row =
+                            projection_matrix.non_zero_masks.data.as_ptr().add(row_base);
+
+                        // Four 2-lane accumulators for ILP, mirroring the AVX-512 path's two.
+                        let mut acc0 = vdupq_n_s64(0);
+                        let mut acc1 = vdupq_n_s64(0);
+                        let mut acc2 = vdupq_n_s64(0);
+                        let mut acc3 = vdupq_n_s64(0);
+
+                        for chunk_idx in 0..width {
+                            let nz_byte = *knz_row.add(chunk_idx);
+                            let pos_byte = *kpos_row.add(chunk_idx);
+                            // Split into positive-add and negative-subtract masks.
+                            let add_byte = nz_byte & pos_byte;
+                            let sub_byte = nz_byte & !pos_byte;
+
+                            let ring_idx = chunk_idx / blocks_per_ring;
+                            let lane_offset = (chunk_idx - ring_idx * blocks_per_ring) * 8;
+                            let coeffs_ptr = subwitness
+                                .get_unchecked(ring_idx)
+                                .v
+                                .as_ptr()
+                                .add(lane_offset)
+                                as *const i64;
+
+                            macro_rules! step {
+                                ($acc:ident, $lane_off:expr, $bit_shift:expr) => {{
+                                    let coeff = vld1q_s64(coeffs_ptr.add($lane_off));
+                                    let add_mask = vld1q_s64(
+                                        MASK_LUT[((add_byte >> $bit_shift) & 0b11) as usize]
+                                            .as_ptr(),
+                                    );
+                                    let sub_mask = vld1q_s64(
+                                        MASK_LUT[((sub_byte >> $bit_shift) & 0b11) as usize]
+                                            .as_ptr(),
+                                    );
+                                    let to_add = vandq_s64(coeff, add_mask);
+                                    let to_sub = vandq_s64(coeff, sub_mask);
+                                    $acc = vaddq_s64($acc, vsubq_s64(to_add, to_sub));
+                                }};
+                            }
+
+                            step!(acc0, 0, 0);
+                            step!(acc1, 2, 2);
+                            step!(acc2, 4, 4);
+                            step!(acc3, 6, 6);
+                        }
+
+                        let acc01 = vaddq_s64(acc0, acc1);
+                        let acc23 = vaddq_s64(acc2, acc3);
+                        let total = vaddq_s64(acc01, acc23);
+                        let sum = vaddvq_s64(total) as u64;
+                        *target = target.wrapping_add(sum);
+                    }
+                }
+
+                #[cfg(not(any(
+                    all(target_arch = "x86_64", target_feature = "avx512f"),
+                    target_arch = "aarch64",
+                )))]
                 {
                     let total_cols =
                         projection_matrix.projection_ratio * projection_matrix.projection_height;
