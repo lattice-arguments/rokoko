@@ -475,4 +475,93 @@ mod tests {
 
         debug_assert_eq!(combiner_eval.evaluate(&point), &expected);
     }
+
+    /// The grouped path (>=2 FactoredDiffSumcheck children sharing one factor
+    /// cell, so `shared` is multiplied in once per point) must produce the same
+    /// round polynomial as the output-first path (children with distinct factor
+    /// cells, each computed via the default per-point loop), across folds.
+    #[test]
+    fn grouped_matches_output_first() {
+        use crate::protocol::sumcheck_utils::factored_diff::FactoredDiffSumcheck;
+
+        let repr = Representation::IncompleteNTT;
+        let n: usize = 8; // 3 variables; fold twice to cover rounds 1, 2, and 3.
+
+        let w_data: Vec<RingElement> = (0..n)
+            .map(|i| RingElement::constant((3 * i + 7) as u64, repr))
+            .collect();
+        let a0: Vec<RingElement> = (0..n)
+            .map(|i| RingElement::constant((5 * i + 11) as u64, repr))
+            .collect();
+        let b0: Vec<RingElement> = (0..n)
+            .map(|i| RingElement::constant((7 * i + 2) as u64, repr))
+            .collect();
+        let a1: Vec<RingElement> = (0..n)
+            .map(|i| RingElement::constant((2 * i + 3) as u64, repr))
+            .collect();
+        let b1: Vec<RingElement> = (0..n)
+            .map(|i| RingElement::constant((9 * i + 1) as u64, repr))
+            .collect();
+
+        let make_lin = |data: &[RingElement]| {
+            let cell = ElephantCell::new(LinearSumcheck::<RingElement>::new(data.len()));
+            cell.borrow_mut().load_from(data);
+            cell
+        };
+
+        // Grouped: both children share the same witness cell.
+        let w_shared = make_lin(&w_data);
+        let g_a0 = make_lin(&a0);
+        let g_b0 = make_lin(&b0);
+        let g_a1 = make_lin(&a1);
+        let g_b1 = make_lin(&b1);
+        let g_child0 =
+            ElephantCell::new(FactoredDiffSumcheck::new(w_shared.clone(), g_a0.clone(), g_b0.clone()));
+        let g_child1 =
+            ElephantCell::new(FactoredDiffSumcheck::new(w_shared.clone(), g_a1.clone(), g_b1.clone()));
+        let mut grouped = Combiner::new(vec![g_child0, g_child1]);
+
+        // Output-first: each child holds a distinct witness cell of equal data.
+        let w0 = make_lin(&w_data);
+        let w1 = make_lin(&w_data);
+        let o_a0 = make_lin(&a0);
+        let o_b0 = make_lin(&b0);
+        let o_a1 = make_lin(&a1);
+        let o_b1 = make_lin(&b1);
+        let o_child0 =
+            ElephantCell::new(FactoredDiffSumcheck::new(w0.clone(), o_a0.clone(), o_b0.clone()));
+        let o_child1 =
+            ElephantCell::new(FactoredDiffSumcheck::new(w1.clone(), o_a1.clone(), o_b1.clone()));
+        let mut output_first = Combiner::new(vec![o_child0, o_child1]);
+
+        let challenges = vec![
+            RingElement::constant(13, repr),
+            RingElement::constant(29, repr),
+        ];
+        grouped.load_challenges_from(&challenges);
+        output_first.load_challenges_from(&challenges);
+
+        let folds = [RingElement::constant(17, repr), RingElement::constant(23, repr)];
+        let mut poly_g = Polynomial::new(0);
+        let mut poly_o = Polynomial::new(0);
+        for round in 0..=folds.len() {
+            grouped.univariate_polynomial_into(&mut poly_g);
+            output_first.univariate_polynomial_into(&mut poly_o);
+            assert_eq!(
+                poly_g.at_zero(),
+                poly_o.at_zero(),
+                "round {round} X=0 mismatch"
+            );
+            assert_eq!(poly_g.at_one(), poly_o.at_one(), "round {round} X=1 mismatch");
+            if round < folds.len() {
+                let r = &folds[round];
+                for cell in [&w_shared, &g_a0, &g_b0, &g_a1, &g_b1] {
+                    cell.borrow_mut().partial_evaluate(r);
+                }
+                for cell in [&w0, &w1, &o_a0, &o_b0, &o_a1, &o_b1] {
+                    cell.borrow_mut().partial_evaluate(r);
+                }
+            }
+        }
+    }
 }
