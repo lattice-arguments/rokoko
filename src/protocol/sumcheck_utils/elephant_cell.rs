@@ -36,6 +36,11 @@ impl<T: ?Sized> ElephantCell<T> {
     pub fn get_ref(&self) -> Ref<'_, T> {
         self.inner.borrow()
     }
+
+    #[inline(always)]
+    pub fn id(&self) -> usize {
+        Rc::as_ptr(&self.inner) as *const () as usize
+    }
 }
 
 #[cfg(not(feature = "unsafe-sumcheck"))]
@@ -80,6 +85,11 @@ impl<T: ?Sized> ElephantCell<T> {
     #[inline(always)]
     pub fn borrow(&self) -> &T {
         self.get_ref()
+    }
+
+    #[inline(always)]
+    pub fn id(&self) -> usize {
+        Rc::as_ptr(&self.inner) as *const () as usize
     }
 }
 

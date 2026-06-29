@@ -2,6 +2,7 @@ use std::cell::RefCell;
 
 use crate::common::sumcheck_element::SumcheckElement;
 use crate::protocol::sumcheck_utils::{
+    elephant_cell::ElephantCell,
     hypercube_point::HypercubePoint,
     polynomial::{add_poly_in_place, Polynomial},
 };
@@ -27,6 +28,7 @@ pub trait HighOrderSumcheckData {
     // this is the univariate polynomial for the current variable with the other variables summed out
     // i.e. let a = f(x_0, x_1, ..., x_{n-1}) then this function returns g(x) = sum_{x_1, ..., x_{n-1}} f(x, x_1, ..., x_{n-1})
     fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
+        let _s = self.gadget_span().entered();
         let temp = self.get_scratch_poly();
 
         polynomial.set_zero();
@@ -113,6 +115,32 @@ pub trait HighOrderSumcheckData {
         None
     }
 
+    /// Combiner witness-factorization hook. If this gadget is a difference of
+    /// products sharing a common factor (a `FactoredDiffSumcheck`), return
+    /// `(identity, shared_cell)` so the `Combiner` can group children by the
+    /// shared factor and multiply it in once per group instead of once per
+    /// child. Default: not factorable.
+    fn factored_shared(
+        &self,
+    ) -> Option<(usize, ElephantCell<dyn HighOrderSumcheckData<Element = Self::Element>>)> {
+        None
+    }
+
+    /// Evaluate the witness-free remainder (`lhs_rest - rhs_rest`) at a point.
+    /// Only meaningful when `factored_shared()` is `Some`.
+    fn factored_diff_at_point(
+        &self,
+        point: HypercubePoint,
+        polynomial: &mut Polynomial<Self::Element>,
+    ) {
+        self.univariate_polynomial_at_point_into(point, polynomial);
+    }
+
+    /// Whether the witness-free remainder is zero at this point.
+    fn factored_diff_zero_at_point(&self, point: HypercubePoint) -> bool {
+        self.is_univariate_polynomial_zero_at_point(point)
+    }
+
     /// When `bypass = true`, per-point cache stores in
     /// `univariate_polynomial_at_point_into` are skipped.  Used by
     /// `univariate_polynomial_into` during sweeps where each point is visited
@@ -122,12 +150,12 @@ pub trait HighOrderSumcheckData {
 
     fn final_evaluations_test_only(&self) -> Self::Element;
 
-    /// Identifies the concrete gadget type for the `profile-sumcheck` feature
-    /// to attribute time inside `Combiner::univariate_polynomial_into`.
-    /// Override with the matching [`super::profile::GadgetKind`] variant.
-    #[cfg(feature = "profile-sumcheck")]
-    fn gadget_kind(&self) -> super::profile::GadgetKind {
-        super::profile::GadgetKind::Unknown
+    /// Returns a `tracing::Span` named for this gadget's concrete kind. Each
+    /// implementor overrides this to return `info_span!("sumcheck::gadget::<kind>")`
+    /// so per-gadget timings show up in the snapshot and Chrome JSON without
+    /// any additional wiring at the call sites.
+    fn gadget_span(&self) -> tracing::Span {
+        tracing::info_span!("sumcheck::gadget::unknown")
     }
 }
 

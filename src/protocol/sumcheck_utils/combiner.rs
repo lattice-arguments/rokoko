@@ -6,7 +6,7 @@ use crate::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
-        polynomial::{add_poly_in_place, Polynomial},
+        polynomial::{add_poly_in_place, mul_poly_into, Polynomial},
     },
 };
 
@@ -31,7 +31,6 @@ pub struct Combiner<E: SumcheckElement = RingElement> {
 impl<E: SumcheckElement> Combiner<E> {
     pub fn new(sumchecks: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = E>>>) -> Self {
         let sumchecks_len = sumchecks.len();
-        // debug_assert all variables counts are the same
         let var_count = sumchecks[0].get_ref().variable_count();
         for sumcheck in &sumchecks {
             debug_assert_eq!(sumcheck.get_ref().variable_count(), var_count);
@@ -62,9 +61,8 @@ impl<E: SumcheckElement> Combiner<E> {
 impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
     type Element = E;
 
-    #[cfg(feature = "profile-sumcheck")]
-    fn gadget_kind(&self) -> super::profile::GadgetKind {
-        super::profile::GadgetKind::Combiner
+    fn gadget_span(&self) -> tracing::Span {
+        tracing::info_span!("sumcheck::gadget::combiner")
     }
 
     fn max_num_polynomial_coefficients(&self) -> usize {
@@ -87,50 +85,111 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
         &self.scratch_poly
     }
 
-    /// Instead of the default point-first loop (iterate H half-hypercube points,
-    /// and for each point iterate all N outputs with an is_zero check), we flip
-    /// the loop order: iterate outputs first, let each output compute its own
-    /// full univariate polynomial, scale by the batching challenge, accumulate.
-    ///
-    /// This matters because (a) the point-first path does N*H ~3M vtable
-    /// dispatches for is_zero alone (N=48, H=65536), and (b) flipping the order
-    /// lets each child's univariate_polynomial_into override fire -- that's
-    /// where the batched Karatsuba, algebraic delegation, non_zero_range
-    /// skipping etc. live. Without this, the default path only ever calls
-    /// univariate_polynomial_at_point_into, so those bulk overrides never fire.
+    /// Output-first batching: each child computes its own univariate polynomial
+    /// (firing its bulk override), scaled by its challenge and accumulated.
+    /// `FactoredDiffSumcheck` children sharing a factor are grouped so the
+    /// shared witness is multiplied in once per point rather than once per child.
     fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<E>) {
+        let _s = self.gadget_span().entered();
         polynomial.set_zero();
         polynomial.num_coefficients = 0;
 
-        let mut output_poly = self.output_poly.borrow_mut();
+        // Group children that are FactoredDiffSumchecks by their shared factor's
+        // identity. For each group of >= 2, the shared factor (the witness) is
+        // multiplied in once per point instead of once per child:
+        //   Sum_i chi_i * (diff_i * shared) = shared * Sum_i chi_i * diff_i.
+        let mut groups: Vec<(
+            usize,
+            ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
+            Vec<usize>,
+        )> = Vec::new();
+        let mut grouped = vec![false; self.sumchecks.len()];
+        for (i, child) in self.sumchecks.iter().enumerate() {
+            if let Some((id, shared)) = child.get_ref().factored_shared() {
+                if let Some(g) = groups.iter_mut().find(|(gid, _, _)| *gid == id) {
+                    g.2.push(i);
+                } else {
+                    groups.push((id, shared, vec![i]));
+                }
+            }
+        }
+        for (_, _, members) in &groups {
+            if members.len() >= 2 {
+                for &i in members {
+                    grouped[i] = true;
+                }
+            }
+        }
 
-        for (sumcheck, challenge) in self.sumchecks.iter().zip(self.challenges.iter()) {
-            output_poly.set_zero();
-            output_poly.num_coefficients = 0;
-
-            let sumcheck_ref = sumcheck.get_ref();
+        // Non-grouped children: original output-first path.
+        {
+            let mut output_poly = self.output_poly.borrow_mut();
+            for (i, (sumcheck, challenge)) in
+                self.sumchecks.iter().zip(self.challenges.iter()).enumerate()
             {
-                #[cfg(feature = "profile-sumcheck")]
-                let _timer = super::profile::timer(sumcheck_ref.gadget_kind());
-                sumcheck_ref.univariate_polynomial_into(&mut output_poly);
+                if grouped[i] {
+                    continue;
+                }
+                output_poly.set_zero();
+                output_poly.num_coefficients = 0;
+                sumcheck.get_ref().univariate_polynomial_into(&mut output_poly);
+                for j in 0..output_poly.num_coefficients {
+                    output_poly.coefficients[j] *= challenge;
+                }
+                add_poly_in_place(polynomial, &output_poly);
             }
+        }
 
-            // Scale by the batching challenge and accumulate
-            for j in 0..output_poly.num_coefficients {
-                output_poly.coefficients[j] *= challenge;
+        // Grouped children: factor the shared cell out of the per-point sum.
+        let n_points = 1usize << (self.variable_count() - 1);
+        let mut s_poly = self.temp_poly.borrow_mut();
+        let mut diff_poly = self.scratch_poly.borrow_mut();
+        let mut shared_poly = Polynomial::new(0);
+        let mut prod_poly = Polynomial::new(0);
+        for (_, shared, members) in &groups {
+            if members.len() < 2 {
+                continue;
             }
-            add_poly_in_place(polynomial, &output_poly);
+            let shared_ref = shared.get_ref();
+            for p in 0..n_points {
+                let pt = HypercubePoint::new(p);
+                s_poly.set_zero();
+                s_poly.num_coefficients = 0;
+                let mut any = false;
+                for &i in members {
+                    let child = self.sumchecks[i].get_ref();
+                    if child.factored_diff_zero_at_point(pt) {
+                        continue;
+                    }
+                    diff_poly.set_zero();
+                    diff_poly.num_coefficients = 0;
+                    child.factored_diff_at_point(pt, &mut diff_poly);
+                    for j in 0..diff_poly.num_coefficients {
+                        diff_poly.coefficients[j] *= &self.challenges[i];
+                    }
+                    add_poly_in_place(&mut s_poly, &diff_poly);
+                    any = true;
+                }
+                if !any || shared_ref.is_univariate_polynomial_zero_at_point(pt) {
+                    continue;
+                }
+                shared_poly.set_zero();
+                shared_poly.num_coefficients = 0;
+                shared_ref.univariate_polynomial_at_point_into(pt, &mut shared_poly);
+                mul_poly_into(&mut prod_poly, &s_poly, &shared_poly);
+                add_poly_in_place(polynomial, &prod_poly);
+            }
         }
     }
 
     #[inline]
     fn univariate_polynomial_at_point_into(
         &self,
-        point: HypercubePoint, // this is just the usize so we pass it by value
+        point: HypercubePoint,
         polynomial: &mut Polynomial<E>,
     ) {
         polynomial.set_zero();
-        polynomial.num_coefficients = 0; // will be updated as we add terms
+        polynomial.num_coefficients = 0;
 
         let mut temp_poly = self.temp_poly.borrow_mut();
         let nof_sumchecks = self.sumchecks.len();
@@ -148,11 +207,9 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
             sumcheck
                 .borrow()
                 .univariate_polynomial_at_point_into(point, &mut temp_poly);
-            // multiply temp_poly by challenge
             for j in 0..temp_poly.num_coefficients {
                 temp_poly.coefficients[j] *= challenge;
             }
-            // add to polynomial
             add_poly_in_place(polynomial, &temp_poly);
         }
     }
@@ -417,5 +474,94 @@ mod tests {
         expected += &term;
 
         debug_assert_eq!(combiner_eval.evaluate(&point), &expected);
+    }
+
+    /// The grouped path (>=2 FactoredDiffSumcheck children sharing one factor
+    /// cell, so `shared` is multiplied in once per point) must produce the same
+    /// round polynomial as the output-first path (children with distinct factor
+    /// cells, each computed via the default per-point loop), across folds.
+    #[test]
+    fn grouped_matches_output_first() {
+        use crate::protocol::sumcheck_utils::factored_diff::FactoredDiffSumcheck;
+
+        let repr = Representation::IncompleteNTT;
+        let n: usize = 8; // 3 variables; fold twice to cover rounds 1, 2, and 3.
+
+        let w_data: Vec<RingElement> = (0..n)
+            .map(|i| RingElement::constant((3 * i + 7) as u64, repr))
+            .collect();
+        let a0: Vec<RingElement> = (0..n)
+            .map(|i| RingElement::constant((5 * i + 11) as u64, repr))
+            .collect();
+        let b0: Vec<RingElement> = (0..n)
+            .map(|i| RingElement::constant((7 * i + 2) as u64, repr))
+            .collect();
+        let a1: Vec<RingElement> = (0..n)
+            .map(|i| RingElement::constant((2 * i + 3) as u64, repr))
+            .collect();
+        let b1: Vec<RingElement> = (0..n)
+            .map(|i| RingElement::constant((9 * i + 1) as u64, repr))
+            .collect();
+
+        let make_lin = |data: &[RingElement]| {
+            let cell = ElephantCell::new(LinearSumcheck::<RingElement>::new(data.len()));
+            cell.borrow_mut().load_from(data);
+            cell
+        };
+
+        // Grouped: both children share the same witness cell.
+        let w_shared = make_lin(&w_data);
+        let g_a0 = make_lin(&a0);
+        let g_b0 = make_lin(&b0);
+        let g_a1 = make_lin(&a1);
+        let g_b1 = make_lin(&b1);
+        let g_child0 =
+            ElephantCell::new(FactoredDiffSumcheck::new(w_shared.clone(), g_a0.clone(), g_b0.clone()));
+        let g_child1 =
+            ElephantCell::new(FactoredDiffSumcheck::new(w_shared.clone(), g_a1.clone(), g_b1.clone()));
+        let mut grouped = Combiner::new(vec![g_child0, g_child1]);
+
+        // Output-first: each child holds a distinct witness cell of equal data.
+        let w0 = make_lin(&w_data);
+        let w1 = make_lin(&w_data);
+        let o_a0 = make_lin(&a0);
+        let o_b0 = make_lin(&b0);
+        let o_a1 = make_lin(&a1);
+        let o_b1 = make_lin(&b1);
+        let o_child0 =
+            ElephantCell::new(FactoredDiffSumcheck::new(w0.clone(), o_a0.clone(), o_b0.clone()));
+        let o_child1 =
+            ElephantCell::new(FactoredDiffSumcheck::new(w1.clone(), o_a1.clone(), o_b1.clone()));
+        let mut output_first = Combiner::new(vec![o_child0, o_child1]);
+
+        let challenges = vec![
+            RingElement::constant(13, repr),
+            RingElement::constant(29, repr),
+        ];
+        grouped.load_challenges_from(&challenges);
+        output_first.load_challenges_from(&challenges);
+
+        let folds = [RingElement::constant(17, repr), RingElement::constant(23, repr)];
+        let mut poly_g = Polynomial::new(0);
+        let mut poly_o = Polynomial::new(0);
+        for round in 0..=folds.len() {
+            grouped.univariate_polynomial_into(&mut poly_g);
+            output_first.univariate_polynomial_into(&mut poly_o);
+            assert_eq!(
+                poly_g.at_zero(),
+                poly_o.at_zero(),
+                "round {round} X=0 mismatch"
+            );
+            assert_eq!(poly_g.at_one(), poly_o.at_one(), "round {round} X=1 mismatch");
+            if round < folds.len() {
+                let r = &folds[round];
+                for cell in [&w_shared, &g_a0, &g_b0, &g_a1, &g_b1] {
+                    cell.borrow_mut().partial_evaluate(r);
+                }
+                for cell in [&w0, &w1, &o_a0, &o_b0, &o_a1, &o_b1] {
+                    cell.borrow_mut().partial_evaluate(r);
+                }
+            }
+        }
     }
 }
