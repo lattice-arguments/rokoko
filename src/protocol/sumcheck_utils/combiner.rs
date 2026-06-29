@@ -62,9 +62,8 @@ impl<E: SumcheckElement> Combiner<E> {
 impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
     type Element = E;
 
-    #[cfg(feature = "profile-sumcheck")]
-    fn gadget_kind(&self) -> super::profile::GadgetKind {
-        super::profile::GadgetKind::Combiner
+    fn gadget_span(&self) -> tracing::Span {
+        tracing::info_span!("sumcheck::gadget::combiner")
     }
 
     fn max_num_polynomial_coefficients(&self) -> usize {
@@ -99,6 +98,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
     /// skipping etc. live. Without this, the default path only ever calls
     /// univariate_polynomial_at_point_into, so those bulk overrides never fire.
     fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<E>) {
+        let _s = self.gadget_span().entered();
         polynomial.set_zero();
         polynomial.num_coefficients = 0;
 
@@ -109,11 +109,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
             output_poly.num_coefficients = 0;
 
             let sumcheck_ref = sumcheck.get_ref();
-            {
-                #[cfg(feature = "profile-sumcheck")]
-                let _timer = super::profile::timer(sumcheck_ref.gadget_kind());
-                sumcheck_ref.univariate_polynomial_into(&mut output_poly);
-            }
+            sumcheck_ref.univariate_polynomial_into(&mut output_poly);
 
             // Scale by the batching challenge and accumulate
             for j in 0..output_poly.num_coefficients {
