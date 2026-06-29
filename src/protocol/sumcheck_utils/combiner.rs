@@ -31,7 +31,6 @@ pub struct Combiner<E: SumcheckElement = RingElement> {
 impl<E: SumcheckElement> Combiner<E> {
     pub fn new(sumchecks: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = E>>>) -> Self {
         let sumchecks_len = sumchecks.len();
-        // debug_assert all variables counts are the same
         let var_count = sumchecks[0].get_ref().variable_count();
         for sumcheck in &sumchecks {
             debug_assert_eq!(sumcheck.get_ref().variable_count(), var_count);
@@ -86,17 +85,10 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
         &self.scratch_poly
     }
 
-    /// Instead of the default point-first loop (iterate H half-hypercube points,
-    /// and for each point iterate all N outputs with an is_zero check), we flip
-    /// the loop order: iterate outputs first, let each output compute its own
-    /// full univariate polynomial, scale by the batching challenge, accumulate.
-    ///
-    /// This matters because (a) the point-first path does N*H ~3M vtable
-    /// dispatches for is_zero alone (N=48, H=65536), and (b) flipping the order
-    /// lets each child's univariate_polynomial_into override fire -- that's
-    /// where the batched Karatsuba, algebraic delegation, non_zero_range
-    /// skipping etc. live. Without this, the default path only ever calls
-    /// univariate_polynomial_at_point_into, so those bulk overrides never fire.
+    /// Output-first batching: each child computes its own univariate polynomial
+    /// (firing its bulk override), scaled by its challenge and accumulated.
+    /// `FactoredDiffSumcheck` children sharing a factor are grouped so the
+    /// shared witness is multiplied in once per point rather than once per child.
     fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<E>) {
         let _s = self.gadget_span().entered();
         polynomial.set_zero();
@@ -193,11 +185,11 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
     #[inline]
     fn univariate_polynomial_at_point_into(
         &self,
-        point: HypercubePoint, // this is just the usize so we pass it by value
+        point: HypercubePoint,
         polynomial: &mut Polynomial<E>,
     ) {
         polynomial.set_zero();
-        polynomial.num_coefficients = 0; // will be updated as we add terms
+        polynomial.num_coefficients = 0;
 
         let mut temp_poly = self.temp_poly.borrow_mut();
         let nof_sumchecks = self.sumchecks.len();
@@ -215,11 +207,9 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
             sumcheck
                 .borrow()
                 .univariate_polynomial_at_point_into(point, &mut temp_poly);
-            // multiply temp_poly by challenge
             for j in 0..temp_poly.num_coefficients {
                 temp_poly.coefficients[j] *= challenge;
             }
-            // add to polynomial
             add_poly_in_place(polynomial, &temp_poly);
         }
     }

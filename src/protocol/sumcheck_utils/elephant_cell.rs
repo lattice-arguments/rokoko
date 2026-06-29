@@ -37,7 +37,6 @@ impl<T: ?Sized> ElephantCell<T> {
         self.inner.borrow()
     }
 
-    /// Stable identity of the underlying allocation (same `Rc` ⇒ same id).
     #[inline(always)]
     pub fn id(&self) -> usize {
         Rc::as_ptr(&self.inner) as *const () as usize
@@ -88,7 +87,6 @@ impl<T: ?Sized> ElephantCell<T> {
         self.get_ref()
     }
 
-    /// Stable identity of the underlying allocation (same `Rc` ⇒ same id).
     #[inline(always)]
     pub fn id(&self) -> usize {
         Rc::as_ptr(&self.inner) as *const () as usize
