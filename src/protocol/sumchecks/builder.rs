@@ -68,17 +68,6 @@ fn build_com_verify_sumcheck_context(
 
         let data_len = 1 << (total_vars - current.prefix.length);
 
-        // data_selected_sumcheck (= selector · w) is no longer needed by the
-        // factored construction; kept as a stored field for downstream
-        // references but unused by the FactoredDiffSumcheck path. Build
-        // lhs_rest = CK · selector and rhs_rest = child_selector · combiner
-        // separately, with `w` factored out into the FactoredDiffSumcheck's
-        // shared slot.
-        let data_selected_sumcheck = ElephantCell::new(ProductSumcheck::new(
-            selector_sumcheck.clone(),
-            combined_witness_sumcheck.clone(),
-        ));
-
         let combiner_sumcheck = composition_sumcheck(
             next.decomposition_base_log as u64,
             next.decomposition_chunks,
@@ -114,7 +103,6 @@ fn build_com_verify_sumcheck_context(
             selector_sumcheck,
             child_selector_sumcheck: Some(child_selector_sumchecks),
             combiner_sumcheck: Some(combiner_sumcheck),
-            data_selected_sumcheck,
             // rhs_sumcheck: recomposed_child_sumcheck,
             commitment_sumcheck: None,
             ck_sumchecks,

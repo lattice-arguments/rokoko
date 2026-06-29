@@ -10,27 +10,10 @@ use crate::{
     },
 };
 
-/// Difference of two products that share a common factor.
-///
-/// Encodes a constraint of the form
-///
-/// ```text
-///   (lhs_rest · shared) - (rhs_rest · shared) = 0
-/// ```
-///
-/// where `shared` is a multilinear extension that appears as a factor on both
-/// sides — typically the combined witness `w`. Pointwise distributivity
-///
-/// ```text
-///   A(p, X)·w(p, X) - B(p, X)·w(p, X) = (A(p, X) - B(p, X))·w(p, X)
-/// ```
-///
-/// applied inside the half-hypercube loop saves exactly one polynomial
-/// multiplication per point relative to wrapping a [`super::diff::DiffSumcheck`]
-/// around two [`super::product::ProductSumcheck`] trees that each pre-multiply
-/// `shared` into LHS and RHS. See
-/// `notes/rokoko_notes/notes/factored_diffsumcheck.tex` for the algebraic
-/// derivation and end-to-end magnitude estimate.
+/// Difference of two products sharing a common factor: proves
+/// `(lhs_rest - rhs_rest) · shared = 0`. Distributing `shared` over the
+/// difference saves one polynomial multiplication per half-hypercube point
+/// versus pre-multiplying it into both sides.
 pub struct FactoredDiffSumcheck<E: SumcheckElement = RingElement> {
     pub shared: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
     pub lhs_rest: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,

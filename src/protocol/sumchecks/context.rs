@@ -248,12 +248,11 @@ pub struct CoarseProjSumcheckContext {
 /// Key fields:
 /// - `selector_sumcheck`, `child_selector_sumcheck`: select layer and child data slices
 /// - `ck_sumchecks`: commitment key rows (one per rank)
-/// - `outputs`: DiffSumchecks proving the constraint for each CK row
+/// - `outputs`: FactoredDiffSumchecks proving the constraint for each CK row
 pub struct ComVerifyLayerSumcheckContext {
     pub selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
     pub child_selector_sumcheck: Option<Vec<ElephantCell<SelectorEq<RingElement>>>>,
     pub combiner_sumcheck: Option<ElephantCell<LinearSumcheck<RingElement>>>,
-    pub data_selected_sumcheck: ElephantCell<ProductSumcheck<RingElement>>,
     pub commitment_sumcheck: Option<ElephantCell<LinearSumcheck<RingElement>>>,
     pub ck_sumchecks: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
     pub outputs: Vec<ElephantCell<FactoredDiffSumcheck<RingElement>>>,
