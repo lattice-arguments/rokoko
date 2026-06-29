@@ -276,8 +276,8 @@ pub fn prover_round(
         &config.commitment_recursion,
     );
 
-    let _next_witness_span =
-        tracing::info_span!("prover_round::next_witness_and_recurse").entered();
+    let next_witness_span =
+        tracing::info_span!("prover_round::next_witness_and_commit").entered();
 
     let next_config_base = config.next.as_ref().map(|c| config_base_from_config(c));
 
@@ -329,6 +329,8 @@ pub fn prover_round(
             }
         }
     });
+
+    drop(next_witness_span);
 
     let sumcheck_output = {
         let _s = tracing::info_span!("prover_round::sumcheck").entered();
