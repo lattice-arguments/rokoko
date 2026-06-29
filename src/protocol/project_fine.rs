@@ -437,12 +437,8 @@ pub fn project_coefficients(
                 {
                     use std::arch::aarch64::*;
 
-                    // Lookup table mapping a 2-bit nibble to a 2-lane all-ones-or-zero mask:
-                    // index 0b00 → [0, 0], 0b01 → [-1, 0], 0b10 → [0, -1], 0b11 → [-1, -1].
-                    // Used to project the 8 bits of `add_byte` / `sub_byte` (one per chunk)
-                    // into NEON vector masks at 2-lane width — the 64-bit-lane equivalent of
-                    // AVX-512's `__mmask8` masked add/sub.
-                    const MASK_LUT: [[i64; 2]; 4] = [
+                    // NEON has no masked add/sub; AND coefficients against these lane masks.
+                    static MASK_LUT: [[i64; 2]; 4] = [
                         [0, 0],
                         [-1, 0],
                         [0, -1],
@@ -460,9 +456,7 @@ pub fn project_coefficients(
                         let knz_row =
                             projection_matrix.non_zero_masks.data.as_ptr().add(row_base);
 
-                        // Four independent accumulators, one per 2-lane pair within each
-                        // 8-column chunk. Mirrors AVX-512's two `__m512i` accumulators (each
-                        // 8 lanes) at NEON's 2-lane width, with extra unrolling for ILP.
+                        // Four 2-lane accumulators for ILP, mirroring the AVX-512 path's two.
                         let mut acc0 = vdupq_n_s64(0);
                         let mut acc1 = vdupq_n_s64(0);
                         let mut acc2 = vdupq_n_s64(0);
@@ -471,8 +465,7 @@ pub fn project_coefficients(
                         for chunk_idx in 0..width {
                             let nz_byte = *knz_row.add(chunk_idx);
                             let pos_byte = *kpos_row.add(chunk_idx);
-                            // Split into add and sub masks: bit set ⇒ that column contributes
-                            // +coeff or -coeff respectively. nz=0 ⇒ both clear ⇒ no contribution.
+                            // Split into positive-add and negative-subtract masks.
                             let add_byte = nz_byte & pos_byte;
                             let sub_byte = nz_byte & !pos_byte;
 
@@ -502,13 +495,12 @@ pub fn project_coefficients(
                                 }};
                             }
 
-                            step!(acc0, 0, 0); // lanes 0-1
-                            step!(acc1, 2, 2); // lanes 2-3
-                            step!(acc2, 4, 4); // lanes 4-5
-                            step!(acc3, 6, 6); // lanes 6-7
+                            step!(acc0, 0, 0);
+                            step!(acc1, 2, 2);
+                            step!(acc2, 4, 4);
+                            step!(acc3, 6, 6);
                         }
 
-                        // Combine accumulators and horizontal-sum into the target coefficient.
                         let acc01 = vaddq_s64(acc0, acc1);
                         let acc23 = vaddq_s64(acc2, acc3);
                         let total = vaddq_s64(acc01, acc23);
