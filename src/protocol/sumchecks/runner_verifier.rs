@@ -286,21 +286,31 @@ pub fn sumcheck_verifier(
             .get(round_proof.polys.len() - num_vars - 1)
             .unwrap();
 
-        hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
+        let n = poly_over_field.num_coefficients;
+        let start = if n >= 2 { 1 } else { 0 };
+        hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients[start..n]);
 
-        assert_eq!(
-            poly_over_field.at_zero() + poly_over_field.at_one(),
-            batched_claim_over_field,
-            "round-poly claim mismatch at witness_height={} num_vars_left={}",
-            config.witness_height,
-            num_vars
-        );
+        // Reconstruct the dropped constant: 2*c0 + sum_{i>=1} c_i = claim.
+        let mut poly = poly_over_field.clone();
+        if n >= 2 {
+            let mut sum_rest = QuadraticExtension::zero();
+            for i in 1..n {
+                sum_rest += &poly.coefficients[i];
+            }
+            let inv2 = QuadraticExtension {
+                coeffs: [crate::common::arithmetic::inv_mod(2), 0],
+            };
+            let mut c0 = batched_claim_over_field.clone();
+            c0 -= &sum_rest;
+            c0 *= &inv2;
+            poly.coefficients[0] = c0;
+        }
 
         let mut f = QuadraticExtension::zero();
 
         hash_wrapper.sample_field_element_into(&mut f);
 
-        batched_claim_over_field = poly_over_field.at(&f);
+        batched_claim_over_field = poly.at(&f);
         evaluation_points.push(f);
     }
 

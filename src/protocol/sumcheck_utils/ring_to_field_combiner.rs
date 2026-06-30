@@ -72,7 +72,11 @@ impl HighOrderSumcheckData for RingToFieldCombiner {
     ///  2. Convert each coefficient (≤4 of them) to field.
     ///
     /// This cuts conversions from O(H) to O(1).
-    fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
+    fn univariate_polynomial_into(
+        &self,
+        skip_constant: bool,
+        polynomial: &mut Polynomial<Self::Element>,
+    ) {
         let mut ring_poly = self.temp_poly.borrow_mut();
         ring_poly.set_zero();
         ring_poly.num_coefficients = 0;
@@ -80,11 +84,12 @@ impl HighOrderSumcheckData for RingToFieldCombiner {
         // Compute the full ring-level polynomial (Combiner's output-first loop)
         self.sumcheck
             .get_ref()
-            .univariate_polynomial_into(&mut ring_poly);
+            .univariate_polynomial_into(skip_constant, &mut ring_poly);
 
         // Convert the result to field
         polynomial.set_zero();
-        for i in 0..ring_poly.num_coefficients {
+        let start = usize::from(skip_constant);
+        for i in start..ring_poly.num_coefficients {
             ring_poly.coefficients[i].from_incomplete_ntt_to_homogenized_field_extensions();
             let mut coeff = ring_poly.coefficients[i].split_into_quadratic_extensions();
             for j in 0..HALF_DEGREE {
@@ -246,7 +251,7 @@ mod tests {
 
         let mut poly = Polynomial::<QuadraticExtension>::new(0);
 
-        combiner.univariate_polynomial_into(&mut poly);
+        combiner.univariate_polynomial_into(false, &mut poly);
 
         debug_assert_eq!(
             poly.at_zero() + poly.at_one(),
@@ -266,7 +271,7 @@ mod tests {
         let claim_after_r0 = poly.at(&r0qe);
 
         sumcheck.borrow_mut().partial_evaluate(&r0);
-        combiner.univariate_polynomial_into(&mut poly);
+        combiner.univariate_polynomial_into(false, &mut poly);
 
         debug_assert_eq!(poly.at_zero() + poly.at_one(), claim_after_r0);
 
@@ -281,7 +286,7 @@ mod tests {
         let claim_after_r1 = poly.at(&r1qe);
 
         sumcheck.borrow_mut().partial_evaluate(&r1);
-        combiner.univariate_polynomial_into(&mut poly);
+        combiner.univariate_polynomial_into(false, &mut poly);
 
         debug_assert_eq!(poly.at_zero() + poly.at_one(), claim_after_r1);
 

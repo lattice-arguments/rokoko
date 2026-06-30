@@ -342,7 +342,7 @@ mod tests {
         // Full claim = 4 assignments (indices 8,9,10,11 each have value 1).
         let claim = RingElement::constant(4, Representation::IncompleteNTT);
 
-        sumcheck.univariate_polynomial_into(&mut polynomial);
+        sumcheck.univariate_polynomial_into(false, &mut polynomial);
 
         debug_assert_eq!(&polynomial.at_zero() + &polynomial.at_one(), claim);
 
@@ -363,7 +363,7 @@ mod tests {
             RingElement::constant(2, Representation::IncompleteNTT)
         );
 
-        sumcheck.univariate_polynomial_into(&mut polynomial);
+        sumcheck.univariate_polynomial_into(false, &mut polynomial);
 
         debug_assert_eq!(&polynomial.at_zero() + &polynomial.at_one(), claim_after_r0);
 
@@ -381,7 +381,7 @@ mod tests {
             RingElement::constant(1, Representation::IncompleteNTT)
         );
 
-        sumcheck.univariate_polynomial_into(&mut polynomial);
+        sumcheck.univariate_polynomial_into(false, &mut polynomial);
 
         debug_assert_eq!(&polynomial.at_zero() + &polynomial.at_one(), claim_after_r1);
 
@@ -403,7 +403,7 @@ mod tests {
             )
         );
 
-        sumcheck.univariate_polynomial_into(&mut polynomial);
+        sumcheck.univariate_polynomial_into(false, &mut polynomial);
 
         debug_assert_eq!(&polynomial.at_zero() + &polynomial.at_one(), claim_after_r2);
 
