@@ -64,7 +64,7 @@ pub fn commit_basic(
     commitment
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Prefix {
     pub prefix: usize,
     pub length: usize,
