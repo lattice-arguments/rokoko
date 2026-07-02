@@ -234,7 +234,7 @@ impl From<&[u64]> for Scalars {
 enum WeightKind {
     Eq(Scalars),
     Table(Scalars),
-    Combination(Vec<(RingElement, Scalars)>),
+    Combination(Vec<(RingElement, Vec<Weight>)>),
 }
 
 /// Public weight factor; spans the whole witness unless placed with [`Weight::on`].
@@ -256,17 +256,12 @@ pub fn table(values: impl Into<Scalars>) -> Weight {
     Weight { kind: WeightKind::Table(values.into()), placement: None, coefficient: None }
 }
 
-/// Coefficient-weighted sum of tables as one weight: the prover folds a
-/// single merged oracle, the verifier evaluates the components separately.
+/// Coefficient-weighted sum of weight products as one weight: the prover
+/// folds a single merged oracle over the union window, the verifier evaluates
+/// every component factor with its native gadget and combines the results.
 #[doc(hidden)]
-pub fn combination(parts: Vec<(RingElement, impl Into<Scalars>)>) -> Weight {
-    Weight {
-        kind: WeightKind::Combination(
-            parts.into_iter().map(|(gamma, v)| (gamma, v.into())).collect(),
-        ),
-        placement: None,
-        coefficient: None,
-    }
+pub fn combination(parts: Vec<(RingElement, Vec<Weight>)>) -> Weight {
+    Weight { kind: WeightKind::Combination(parts), placement: None, coefficient: None }
 }
 
 /// The weight `ratio^i` over `2^num_vars` entries (recomposes base-`ratio`
@@ -308,14 +303,21 @@ impl Weight {
                 1usize << at.len
             ),
             WeightKind::Combination(parts) => {
-                for (_, values) in parts {
-                    assert_eq!(
-                        values.len(),
-                        1usize << at.len,
-                        "combination component has {} entries but the block addresses {}",
-                        values.len(),
-                        1usize << at.len
-                    );
+                for (_, factors) in parts {
+                    for f in factors {
+                        match f.placement {
+                            Some(sub) => assert!(
+                                sub.total == at.total
+                                    && sub.skip >= at.skip
+                                    && sub.skip + sub.len <= at.skip + at.len,
+                                "combination component escapes its window"
+                            ),
+                            None => assert!(
+                                at.skip == 0 && at.len == at.total,
+                                "an unplaced component factor requires a full-cube combination"
+                            ),
+                        }
+                    }
                 }
             }
         }
@@ -324,34 +326,49 @@ impl Weight {
     }
 }
 
+/// Lower a weight to its `PublicFactor`; the second value is a scalar the
+/// caller must still apply (a term scale, or a fold into a combination gamma).
+fn weight_to_factor(w: Weight) -> (PublicFactor, Option<RingElement>) {
+    let (prefix_len, suffix_len) = match w.placement {
+        Some(at) => (at.skip, at.total - at.skip - at.len),
+        None => (0, 0),
+    };
+    let weights = match w.kind {
+        WeightKind::Eq(Scalars::Ring(v)) => Weights::Tensor(Coeffs::Ring(v)),
+        WeightKind::Eq(Scalars::Field(v)) => Weights::Tensor(Coeffs::Field(v)),
+        WeightKind::Table(Scalars::Ring(v)) => Weights::Dense(Coeffs::Ring(v)),
+        WeightKind::Table(Scalars::Field(v)) => Weights::Dense(Coeffs::Field(v)),
+        WeightKind::Combination(parts) => Weights::Combination(Arc::new(
+            parts
+                .into_iter()
+                .map(|(mut gamma, factors)| {
+                    let factors = factors
+                        .into_iter()
+                        .map(|f| {
+                            assert!(
+                                !matches!(f.kind, WeightKind::Combination(_)),
+                                "combination components cannot nest"
+                            );
+                            let (pf, coeff) = weight_to_factor(f);
+                            if let Some(c) = coeff {
+                                gamma *= &c;
+                            }
+                            pf
+                        })
+                        .collect::<Vec<_>>();
+                    (gamma, factors)
+                })
+                .collect(),
+        )),
+    };
+    (PublicFactor { prefix_len, suffix_len, weights }, w.coefficient)
+}
+
 impl From<Weight> for ClaimExpr {
     fn from(w: Weight) -> ClaimExpr {
-        let weights = match w.kind {
-            WeightKind::Eq(Scalars::Ring(v)) => Weights::Tensor(Coeffs::Ring(v)),
-            WeightKind::Eq(Scalars::Field(v)) => Weights::Tensor(Coeffs::Field(v)),
-            WeightKind::Table(Scalars::Ring(v)) => Weights::Dense(Coeffs::Ring(v)),
-            WeightKind::Table(Scalars::Field(v)) => Weights::Dense(Coeffs::Field(v)),
-            WeightKind::Combination(parts) => Weights::Combination(Arc::new(
-                parts
-                    .into_iter()
-                    .map(|(gamma, v)| {
-                        (
-                            gamma,
-                            match v {
-                                Scalars::Ring(v) => Coeffs::Ring(v),
-                                Scalars::Field(v) => Coeffs::Field(v),
-                            },
-                        )
-                    })
-                    .collect(),
-            )),
-        };
-        let (prefix_len, suffix_len) = match w.placement {
-            Some(at) => (at.skip, at.total - at.skip - at.len),
-            None => (0, 0),
-        };
-        let expr = ClaimExpr::public(PublicFactor { prefix_len, suffix_len, weights });
-        match w.coefficient {
+        let (factor, coefficient) = weight_to_factor(w);
+        let expr = ClaimExpr::public(factor);
+        match coefficient {
             Some(c) => expr.scale(&c),
             None => expr,
         }
@@ -504,14 +521,14 @@ fn eval_public_at(pf: &PublicFactor, index: usize, total_vars: usize) -> RingEle
         }
         Weights::Combination(parts) => {
             let mut acc = zero();
-            let mut temp = zero();
-            for (gamma, coeffs) in parts.iter() {
-                let component = match coeffs {
-                    Coeffs::Ring(v) => v[middle].clone(),
-                    Coeffs::Field(v) => lowering::embed_qe(&v[middle]),
-                };
-                temp *= (gamma, &component);
-                acc += &temp;
+            let mut value = zero();
+            for (gamma, factors) in parts.iter() {
+                value.set_from(gamma);
+                for f in factors {
+                    let fv = eval_public_at(f, index, total_vars);
+                    value *= &fv;
+                }
+                acc += &value;
             }
             acc
         }
@@ -746,25 +763,33 @@ mod tests {
         let w = layout.finish();
 
         let make = |t: &mut Transcript| {
-            let tables: Vec<Vec<u64>> = (0..3)
-                .map(|k| (0..128u64).map(|i| 7 * i + k + 1).collect())
-                .collect();
-            let parts: Vec<(RingElement, Vec<u64>)> = tables
-                .into_iter()
-                .map(|tab| {
+            let (left, right) = region.vars().split_at(4);
+            let amps: Vec<(RingElement, Vec<u64>, u64)> = (0..3u64)
+                .map(|k| {
                     let mut gamma = zero();
                     t.sample_ring_element_into(&mut gamma);
-                    (gamma, tab)
+                    let tab: Vec<u64> = (0..16u64).map(|i| 7 * i + k + 1).collect();
+                    (gamma, tab, 3 + k)
                 })
                 .collect();
 
             let mut direct = zero();
             let mut term = zero();
-            for (gamma, tab) in &parts {
-                let single = (table(tab.clone()).on(region) * witness_in(region)).sum(&w);
+            for (gamma, tab, base) in &amps {
+                let single = (table(tab.clone()).on(left)
+                    * powers(*base, right.len()).on(right)
+                    * witness_in(region))
+                .sum(&w);
                 term *= (gamma, &single);
                 direct += &term;
             }
+
+            let parts: Vec<(RingElement, Vec<Weight>)> = amps
+                .into_iter()
+                .map(|(gamma, tab, base)| {
+                    (gamma, vec![table(tab).on(left), powers(base, right.len()).on(right)])
+                })
+                .collect();
             let expr = combination(parts.clone()).on(region) * witness_in(region);
             assert_eq!(expr.sum(&w), direct);
 

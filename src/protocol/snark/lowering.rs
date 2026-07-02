@@ -53,11 +53,12 @@ pub enum Weights {
     /// `eq(bits, .)` over the leading `length` variables; zero-cost gadget that
     /// every `WitnessSegment` lowers to.
     Selector { bits: usize, length: usize },
-    /// Coefficient-weighted sum of dense tables sharing one placement: the
-    /// prover folds a single merged oracle, the verifier evaluates every
-    /// component separately (field components on the subfield path) and
-    /// combines the results.
-    Combination(Arc<Vec<(RingElement, Coeffs)>>),
+    /// Coefficient-weighted sum of weight products: the prover folds a single
+    /// merged oracle over the union window, the verifier evaluates every
+    /// component factor with its native gadget and combines the results.
+    /// Component factors must be placed `Tensor`/`Dense` weights inside the
+    /// union window.
+    Combination(Arc<Vec<(RingElement, Vec<PublicFactor>)>>),
 }
 
 pub fn qe_one_minus(a: &QuadraticExtension) -> QuadraticExtension {
@@ -93,56 +94,179 @@ pub fn expand_field_tensor(layers: &[QuadraticExtension]) -> Vec<RingElement> {
         .collect()
 }
 
-/// The merged table `sum_a gamma_a * part_a` a combination weight folds.
-/// Scalar field components take a lazy-reduction path: per coefficient, the
-/// gamma-scaled terms accumulate in u128 (each product < 2^102, so up to 32
-/// components fit) with a single reduction at the end.
-fn expand_combination(parts: &[(RingElement, Coeffs)], len: usize) -> Vec<RingElement> {
+/// A combination sub-factor expanded for indexed lookup over its own window.
+enum SubTable<'a> {
+    Scalar(Vec<u64>),
+    Field(&'a [QuadraticExtension]),
+    FieldOwned(Vec<QuadraticExtension>),
+    Ring(&'a [RingElement]),
+    RingOwned(Vec<RingElement>),
+}
+
+impl SubTable<'_> {
+    fn len(&self) -> usize {
+        match self {
+            SubTable::Scalar(v) => v.len(),
+            SubTable::Field(v) => v.len(),
+            SubTable::FieldOwned(v) => v.len(),
+            SubTable::Ring(v) => v.len(),
+            SubTable::RingOwned(v) => v.len(),
+        }
+    }
+
+    fn ring_at(&self, i: usize, out: &mut RingElement) {
+        match self {
+            SubTable::Scalar(v) => *out = RingElement::constant(v[i], Representation::IncompleteNTT),
+            SubTable::Field(v) => *out = embed_qe(&v[i]),
+            SubTable::FieldOwned(v) => *out = embed_qe(&v[i]),
+            SubTable::Ring(v) => out.set_from(&v[i]),
+            SubTable::RingOwned(v) => out.set_from(&v[i]),
+        }
+    }
+}
+
+fn scalar_dense(v: &[QuadraticExtension]) -> Option<Vec<u64>> {
+    if v.iter().any(|qe| qe.coeffs[1] != 0) {
+        return None;
+    }
+    Some(v.iter().map(|qe| qe.coeffs[0]).collect())
+}
+
+/// Mirror of [`expand_field_tensor`] staying in the field.
+fn expand_field_tensor_qe(layers: &[QuadraticExtension]) -> Vec<QuadraticExtension> {
+    let mut vals = vec![QuadraticExtension::one()];
+    for a in layers.iter().rev() {
+        let one_minus = qe_one_minus(a);
+        let mut next = Vec::with_capacity(vals.len() * 2);
+        let mut t = QuadraticExtension::zero();
+        for v in &vals {
+            t *= (v, &one_minus);
+            next.push(t);
+        }
+        for v in &vals {
+            t *= (v, a);
+            next.push(t);
+        }
+        vals = next;
+    }
+    vals
+}
+
+fn scalar_tensor_expansion(layers: &[QuadraticExtension]) -> Option<Vec<u64>> {
+    use crate::common::config::MOD_Q;
+    if layers.iter().any(|a| a.coeffs[1] != 0) {
+        return None;
+    }
+    let mut vals = vec![1u64];
+    for a in layers.iter().rev() {
+        let a0 = a.coeffs[0] % MOD_Q;
+        let one_minus = (MOD_Q + 1 - a0) % MOD_Q;
+        let mut next = Vec::with_capacity(vals.len() * 2);
+        for v in &vals {
+            next.push((*v as u128 * one_minus as u128 % MOD_Q as u128) as u64);
+        }
+        for v in &vals {
+            next.push((*v as u128 * a0 as u128 % MOD_Q as u128) as u64);
+        }
+        vals = next;
+    }
+    Some(vals)
+}
+
+fn sub_table(pf: &PublicFactor) -> SubTable<'_> {
+    match &pf.weights {
+        Weights::Dense(Coeffs::Field(v)) => match scalar_dense(v) {
+            Some(s) => SubTable::Scalar(s),
+            None => SubTable::Field(&v[..]),
+        },
+        Weights::Dense(Coeffs::Ring(v)) => SubTable::Ring(&v[..]),
+        Weights::Tensor(Coeffs::Field(layers)) => match scalar_tensor_expansion(layers) {
+            Some(s) => SubTable::Scalar(s),
+            None => SubTable::FieldOwned(expand_field_tensor_qe(layers)),
+        },
+        Weights::Tensor(Coeffs::Ring(layers)) => {
+            SubTable::RingOwned(PreprocessedRow::from_layers(&layers[..]).preprocessed_row)
+        }
+        Weights::Selector { .. } | Weights::Combination(_) => {
+            panic!("combination components must be tensor or dense weights")
+        }
+    }
+}
+
+/// The merged table `sum_a gamma_a * prod_f factor_{a,f}` a combination weight
+/// folds over its union window. All-scalar components take a lazy-reduction
+/// path: per coefficient, the gamma-scaled terms accumulate in u128 (each
+/// product < 2^102, so up to 32 components fit) with one reduction at the end.
+fn expand_combination(
+    parts: &[(RingElement, Vec<PublicFactor>)],
+    union_prefix: usize,
+    union_suffix: usize,
+    total_vars: usize,
+    len: usize,
+) -> Vec<RingElement> {
     use crate::common::config::{DEGREE, MOD_Q};
     let mut merged = vec![RingElement::zero(Representation::IncompleteNTT); len];
 
-    let scalar_tables: Option<Vec<(&RingElement, &[QuadraticExtension])>> = parts
+    struct Component<'a> {
+        gamma: &'a RingElement,
+        subs: Vec<(usize, usize, SubTable<'a>)>,
+    }
+    let components: Vec<Component> = parts
         .iter()
-        .map(|(gamma, coeffs)| match coeffs {
-            Coeffs::Field(v) if v.iter().all(|qe| qe.coeffs[1] == 0) => {
-                assert_eq!(v.len(), len, "combination component length mismatch");
-                Some((gamma, &v[..]))
-            }
-            _ => None,
+        .map(|(gamma, factors)| {
+            let subs = factors
+                .iter()
+                .map(|pf| {
+                    assert!(
+                        pf.prefix_len >= union_prefix && pf.suffix_len >= union_suffix,
+                        "combination component escapes the union window"
+                    );
+                    let width = total_vars - pf.prefix_len - pf.suffix_len;
+                    let table = sub_table(pf);
+                    assert_eq!(table.len(), 1usize << width, "combination component length mismatch");
+                    (pf.suffix_len - union_suffix, (1usize << width) - 1, table)
+                })
+                .collect();
+            Component { gamma, subs }
         })
         .collect();
 
-    if let Some(tables) = scalar_tables {
-        assert!(tables.len() <= 32, "lazy accumulation caps at 32 components");
+    let (scalar_components, general_components): (Vec<_>, Vec<_>) = components
+        .into_iter()
+        .partition(|c| c.subs.iter().all(|(_, _, t)| matches!(t, SubTable::Scalar(_))));
+
+    if !scalar_components.is_empty() {
+        assert!(scalar_components.len() <= 32, "lazy accumulation caps at 32 components");
+        let mut cs = vec![0u64; scalar_components.len()];
         for (i, m) in merged.iter_mut().enumerate() {
+            for (a, comp) in scalar_components.iter().enumerate() {
+                let mut c: u64 = 1;
+                for (shift, mask, tab) in &comp.subs {
+                    let SubTable::Scalar(v) = tab else { unreachable!() };
+                    c = (c as u128 * v[(i >> shift) & mask] as u128 % MOD_Q as u128) as u64;
+                }
+                cs[a] = c;
+            }
             for j in 0..DEGREE {
                 let mut acc: u128 = 0;
-                for (gamma, tab) in &tables {
-                    acc += tab[i].coeffs[0] as u128 * gamma.v[j] as u128;
+                for (a, comp) in scalar_components.iter().enumerate() {
+                    acc += cs[a] as u128 * comp.gamma.v[j] as u128;
                 }
                 m.v[j] = (acc % MOD_Q as u128) as u64;
             }
         }
-        return merged;
     }
 
-    let mut temp = RingElement::zero(Representation::IncompleteNTT);
-    for (gamma, coeffs) in parts {
-        match coeffs {
-            Coeffs::Field(v) => {
-                assert_eq!(v.len(), len, "combination component length mismatch");
-                for (m, qe) in merged.iter_mut().zip(v.iter()) {
-                    temp *= (&embed_qe(qe), gamma);
-                    *m += &temp;
-                }
+    let mut value = RingElement::zero(Representation::IncompleteNTT);
+    let mut sub_value = RingElement::zero(Representation::IncompleteNTT);
+    for comp in &general_components {
+        for (i, m) in merged.iter_mut().enumerate() {
+            value.set_from(comp.gamma);
+            for (shift, mask, tab) in &comp.subs {
+                tab.ring_at((i >> shift) & mask, &mut sub_value);
+                value *= &sub_value;
             }
-            Coeffs::Ring(v) => {
-                assert_eq!(v.len(), len, "combination component length mismatch");
-                for (m, r) in merged.iter_mut().zip(v.iter()) {
-                    temp *= (gamma, r);
-                    *m += &temp;
-                }
-            }
+            *m += &value;
         }
     }
     merged
@@ -605,7 +729,7 @@ impl<'a> ProverAssembler<'a> {
                         Arc::as_ptr(parts) as *const () as usize,
                         prefix_len,
                         suffix_len,
-                        expand_combination(parts, middle_len),
+                        expand_combination(parts, prefix_len, suffix_len, self.total_vars, middle_len),
                     ),
                 }
             }
@@ -720,33 +844,23 @@ impl VerifierAssembler {
                 ElephantCell::new(RingToFieldWrapperEvaluation::new(ElephantCell::new(ev) as _)) as _
             }
             Weights::Combination(parts) => {
-                let cells: Vec<(RingElement, EvalCell)> = parts
+                let cells: Vec<(RingElement, Vec<EvalCell>)> = parts
                     .iter()
-                    .map(|(gamma, coeffs)| {
-                        let cell: EvalCell = match coeffs {
-                            Coeffs::Ring(v) => {
-                                let mut ev =
-                                    BasicEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
-                                        v.len(),
-                                        prefix_len,
-                                        suffix_len,
-                                    );
-                                ev.load_from(&v[..]);
-                                ElephantCell::new(ev) as _
-                            }
-                            Coeffs::Field(v) => {
-                                let mut ev = BasicEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
-                                    v.len(),
-                                    prefix_len,
-                                    suffix_len,
+                    .map(|(gamma, factors)| {
+                        let factor_cells: Vec<EvalCell> = factors
+                            .iter()
+                            .map(|f| {
+                                assert!(
+                                    !matches!(
+                                        f.weights,
+                                        Weights::Combination(_) | Weights::Selector { .. }
+                                    ),
+                                    "combination components must be tensor or dense weights"
                                 );
-                                ev.load_from(&v[..]);
-                                ElephantCell::new(RingToFieldWrapperEvaluation::new(
-                                    ElephantCell::new(ev) as _,
-                                )) as _
-                            }
-                        };
-                        (gamma.clone(), cell)
+                                self.public(f)
+                            })
+                            .collect();
+                        (gamma.clone(), factor_cells)
                     })
                     .collect();
                 ElephantCell::new(CombinationEvaluation::new(cells)) as _
@@ -755,16 +869,16 @@ impl VerifierAssembler {
     }
 }
 
-/// Verifier-side mirror of a combination weight: evaluates every component at
-/// the final point and returns `sum_a gamma_a * eval_a`.
+/// Verifier-side mirror of a combination weight: evaluates every component's
+/// factors at the final point and returns `sum_a gamma_a * prod_f eval_{a,f}`.
 struct CombinationEvaluation {
-    parts: Vec<(RingElement, EvalCell)>,
+    parts: Vec<(RingElement, Vec<EvalCell>)>,
     result: RingElement,
     evaluated: bool,
 }
 
 impl CombinationEvaluation {
-    fn new(parts: Vec<(RingElement, EvalCell)>) -> Self {
+    fn new(parts: Vec<(RingElement, Vec<EvalCell>)>) -> Self {
         CombinationEvaluation {
             parts,
             result: RingElement::zero(Representation::IncompleteNTT),
@@ -780,10 +894,13 @@ impl EvaluationSumcheckData for CombinationEvaluation {
         if self.evaluated {
             return &self.result;
         }
-        let mut temp = RingElement::zero(Representation::IncompleteNTT);
-        for (gamma, cell) in &self.parts {
-            temp *= (gamma, cell.borrow_mut().evaluate(point));
-            self.result += &temp;
+        let mut value = RingElement::zero(Representation::IncompleteNTT);
+        for (gamma, cells) in &self.parts {
+            value.set_from(gamma);
+            for cell in cells {
+                value *= cell.borrow_mut().evaluate(point);
+            }
+            self.result += &value;
         }
         self.evaluated = true;
         &self.result
