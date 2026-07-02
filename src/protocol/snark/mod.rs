@@ -5,9 +5,7 @@ mod lowering;
 pub use crate::common::hash::HashWrapper as Transcript;
 pub use lowering::InitialSumcheckProof as ClaimsProof;
 pub use lowering::SnarkClaim as Claim;
-pub use lowering::{
-    prove_claims, prove_claims_with_conjugate, verify_claims, ChainInputs, ClaimExpr, WitnessShape,
-};
+pub use lowering::{prove_claims, verify_claims, ChainInputs, ClaimExpr, WitnessShape};
 
 use lowering::{ClaimFactor, Coeffs, PublicFactor, SnarkClaim, Weights};
 

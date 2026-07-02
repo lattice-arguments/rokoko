@@ -226,10 +226,6 @@ let energy = (witness() * witness().conjugate()).sum(&witness);
 Claim::sums_to(witness() * witness().conjugate(), energy)
 ```
 
-If you already hold the conjugated vector (say, from accumulating that value
-in one pass), hand it over instead of letting the prover recompute it:
-`prove_claims_with_conjugate(&witness, &claims, &mut transcript, &conjugated)`.
-
 **Binariness of a region's coefficients**: `sum x(x-1) = 0` per coefficient,
 stated as `witness_in(r) * witness_in(r).conjugate() - table(ones_conj).on(r)
 * witness_in(r)` summing to a shipped value whose constant coefficient the

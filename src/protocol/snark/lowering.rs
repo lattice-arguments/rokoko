@@ -854,27 +854,7 @@ fn public_support(pf: &PublicFactor, total_vars: usize) -> (usize, usize) {
 pub fn prove_claims(
     witness: &VerticallyAlignedMatrix<RingElement>,
     claims: &[SnarkClaim],
-    transcript: &mut HashWrapper,
-) -> (InitialSumcheckProof, ChainInputs) {
-    prove_claims_inner(witness, claims, transcript, None)
-}
-
-/// [`prove_claims`], reusing a conjugated witness the caller already holds
-/// (e.g. from accumulating a norm value) instead of recomputing it.
-pub fn prove_claims_with_conjugate(
-    witness: &VerticallyAlignedMatrix<RingElement>,
-    claims: &[SnarkClaim],
-    transcript: &mut HashWrapper,
-    conjugated: &[RingElement],
-) -> (InitialSumcheckProof, ChainInputs) {
-    prove_claims_inner(witness, claims, transcript, Some(conjugated))
-}
-
-fn prove_claims_inner(
-    witness: &VerticallyAlignedMatrix<RingElement>,
-    claims: &[SnarkClaim],
     hash_wrapper: &mut HashWrapper,
-    precomputed_conjugate: Option<&[RingElement]>,
 ) -> (InitialSumcheckProof, ChainInputs) {
     let n = witness.data.len();
     assert!(n.is_power_of_two());
@@ -883,27 +863,18 @@ fn prove_claims_inner(
     let claims = &canon[..];
     validate_claims(claims, total_vars);
 
-    let conjugated_storage;
-    let conjugated: &[RingElement] = match precomputed_conjugate {
-        Some(c) => {
-            assert_eq!(c.len(), n, "conjugated witness length mismatch");
-            c
-        }
-        None => {
-            let mut v = vec![RingElement::zero(Representation::IncompleteNTT); n];
-            witness
-                .data
-                .iter()
-                .zip(v.iter_mut())
-                .for_each(|(orig, conj)| orig.conjugate_into(conj));
-            conjugated_storage = v;
-            &conjugated_storage
-        }
-    };
+    // z_1 (the conjugate opening) is always part of the chain inputs, so the
+    // conjugated vector is needed whether or not any claim conjugates.
+    let mut conjugated = vec![RingElement::zero(Representation::IncompleteNTT); n];
+    witness
+        .data
+        .iter()
+        .zip(conjugated.iter_mut())
+        .for_each(|(orig, conj)| orig.conjugate_into(conj));
 
     let mut asm = ProverAssembler {
         witness: &witness.data,
-        conjugated,
+        conjugated: &conjugated,
         n,
         total_vars,
         witness_pool: OraclePool::new(),
