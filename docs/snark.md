@@ -265,23 +265,18 @@ itself breaks the compiled chain.
 The commitment is binding only for short vectors, and the front end never
 decomposes anything for you: whatever you `push` must already be short.
 
-## The lower-level API
+## Escape hatches
 
-The claim language lowers to `protocol::snark::lowering` types, which remain
-public for code that needs raw control:
+The lowering machinery is private; the handful of raw pieces that stay public
+are exactly what real relations have needed:
 
-| this guide | lowers to |
-|---|---|
-| `table(v)` / `eq(p)` | `PublicFactor::dense_ring/dense_field` / `tensor_ring/tensor_field` |
-| `.on(vars)` | `PublicFactor::over_middle(prefix_len, suffix_len)` |
-| `powers(r, k)` | `weighted_layer` per bit, scale folded into the coefficient |
-| `Region` / `witness_in` | `Prefix` / `ClaimExpr::segment` |
-| `Claim::sums_to(e, v)` | `SnarkClaim { expr, value }` |
-| `prove_claims` / `verify_claims` | `prove_initial_claims` / `verify_initial_claims` |
+- `Claim`'s `value` field. Shipped values reach the verifier out of band, so
+  the verifier assigns `claims[i].value` before calling `verify_claims`.
+- `ClaimExpr`, the expression tree every builder produces (`witness_in`,
+  weights, the operators), for code that assembles claims programmatically.
+- `expand_field_tensor(&point)`, the dense eq-tensor expansion - for folding
+  public data by challenges when *building* a weight table (as opposed to
+  `eq_weighted_sum`, which folds a claim *value*).
 
-Tensor layers are MSB-first; per-index scales fold into layers as
-`weighted_layer(w)` (an eq layer plus a scalar for the term coefficient).
-
-The old entry points - `prove_initial_claims`, `verify_initial_claims`, and
-the `PublicFactor` constructors (`tensor_*`, `dense_*`, `selector`,
-`over_middle`) - are deprecated and forward to the equivalents above.
+Weight points read MSB-first: coordinate `j` weighs index bit `j` counted
+from the top of the block.

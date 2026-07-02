@@ -55,49 +55,6 @@ pub enum Weights {
     Selector { bits: usize, length: usize },
 }
 
-impl PublicFactor {
-    fn full(weights: Weights) -> Self {
-        PublicFactor {
-            prefix_len: 0,
-            suffix_len: 0,
-            weights,
-        }
-    }
-    /// eq-tensor with ring layers, over the full cube.
-    #[deprecated(note = "use snark::eq() with ring layers")]
-    pub fn tensor_ring(layers: impl Into<Arc<Vec<RingElement>>>) -> Self {
-        Self::full(Weights::Tensor(Coeffs::Ring(layers.into())))
-    }
-    /// eq-tensor with field layers, over the full cube.
-    #[deprecated(note = "use snark::eq()")]
-    pub fn tensor_field(layers: impl Into<Arc<Vec<QuadraticExtension>>>) -> Self {
-        Self::full(Weights::Tensor(Coeffs::Field(layers.into())))
-    }
-    /// Arbitrary ring table over the full cube.
-    #[deprecated(note = "use snark::table() with ring entries")]
-    pub fn dense_ring(table: impl Into<Arc<Vec<RingElement>>>) -> Self {
-        Self::full(Weights::Dense(Coeffs::Ring(table.into())))
-    }
-    /// Arbitrary field table over the full cube.
-    #[deprecated(note = "use snark::table()")]
-    pub fn dense_field(table: impl Into<Arc<Vec<QuadraticExtension>>>) -> Self {
-        Self::full(Weights::Dense(Coeffs::Field(table.into())))
-    }
-    /// `eq(bits, .)` over the leading `length` variables.
-    #[deprecated(note = "use snark::witness_in(region) - segments lower to a selector")]
-    pub fn selector(bits: usize, length: usize) -> Self {
-        Self::full(Weights::Selector { bits, length })
-    }
-    /// Place the weights over the middle variables: constant on the top
-    /// `prefix_len` and bottom `suffix_len` variables.
-    #[deprecated(note = "use snark::Weight::on()")]
-    pub fn over_middle(mut self, prefix_len: usize, suffix_len: usize) -> Self {
-        self.prefix_len = prefix_len;
-        self.suffix_len = suffix_len;
-        self
-    }
-}
-
 pub fn qe_one_minus(a: &QuadraticExtension) -> QuadraticExtension {
     let mut r = QuadraticExtension::one();
     r -= a;
@@ -906,15 +863,6 @@ pub fn prove_claims_with_conjugate(
     prove_claims_inner(witness, claims, transcript, Some(conjugated))
 }
 
-#[deprecated(note = "renamed to prove_claims")]
-pub fn prove_initial_claims(
-    witness: &VerticallyAlignedMatrix<RingElement>,
-    claims: &[SnarkClaim],
-    hash_wrapper: &mut HashWrapper,
-) -> (InitialSumcheckProof, ChainInputs) {
-    prove_claims(witness, claims, hash_wrapper)
-}
-
 fn prove_claims_inner(
     witness: &VerticallyAlignedMatrix<RingElement>,
     claims: &[SnarkClaim],
@@ -1227,27 +1175,11 @@ pub fn verify_claims(
     )
 }
 
-#[deprecated(note = "renamed to verify_claims")]
-pub fn verify_initial_claims(
-    witness_height: usize,
-    witness_width: usize,
-    claims: &[SnarkClaim],
-    proof: &InitialSumcheckProof,
-    hash_wrapper: &mut HashWrapper,
-) -> ChainInputs {
-    verify_claims(
-        WitnessShape { height: witness_height, width: witness_width },
-        claims,
-        proof,
-        hash_wrapper,
-    )
-}
-
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::common::{init_common, sampling::sample_random_short_vector};
+    use crate::protocol::snark::{eq, table, Region};
 
     fn inner_product_direct(a: &[RingElement], b: &[RingElement]) -> RingElement {
         let mut acc = RingElement::zero(Representation::IncompleteNTT);
@@ -1274,7 +1206,7 @@ mod tests {
         let a = sample_random_short_vector(n, 50, Representation::IncompleteNTT);
         let t1 = inner_product_direct(&a, &witness.data);
         let claim1 = SnarkClaim {
-            expr: ClaimExpr::public(PublicFactor::dense_ring(a.clone())) * ClaimExpr::witness(),
+            expr: table(a.clone()) * ClaimExpr::witness(),
             value: t1,
         };
 
@@ -1287,9 +1219,7 @@ mod tests {
         }
         let t2 = inner_product_direct(&b, &sq);
         let claim2 = SnarkClaim {
-            expr: ClaimExpr::public(PublicFactor::dense_ring(b))
-                * ClaimExpr::witness()
-                * ClaimExpr::witness(),
+            expr: table(b) * ClaimExpr::witness() * ClaimExpr::witness(),
             value: t2,
         };
 
@@ -1303,8 +1233,7 @@ mod tests {
             t3 += w;
         }
         let claim3 = SnarkClaim {
-            expr: ClaimExpr::public(PublicFactor::selector(prefix.prefix, prefix.length))
-                * ClaimExpr::witness(),
+            expr: ClaimExpr::segment(prefix),
             value: t3,
         };
 
@@ -1315,9 +1244,8 @@ mod tests {
         t4 *= &seven;
         t4 -= &inner_product_direct(&a, &conj);
         let claim4 = SnarkClaim {
-            expr: (ClaimExpr::public(PublicFactor::dense_ring(a.clone())) * ClaimExpr::witness())
-                .scale(&seven)
-                - (ClaimExpr::public(PublicFactor::dense_ring(a)) * ClaimExpr::conj_witness()),
+            expr: (table(a.clone()) * ClaimExpr::witness()).scale(&seven)
+                - (table(a) * ClaimExpr::conj_witness()),
             value: t4,
         };
 
@@ -1330,12 +1258,10 @@ mod tests {
         let (witness, claims) = toy_setup();
 
         let mut hw_prover = HashWrapper::new();
-        let (proof, chain_prover) = prove_initial_claims(&witness, &claims, &mut hw_prover);
+        let (proof, chain_prover) = prove_claims(&witness, &claims, &mut hw_prover);
 
         let mut hw_verifier = HashWrapper::new();
-        let chain_verifier = verify_initial_claims(
-            witness.height,
-            witness.width,
+        let chain_verifier = verify_claims((witness.height, witness.width),
             &claims,
             &proof,
             &mut hw_verifier,
@@ -1382,7 +1308,7 @@ mod tests {
         let dense1 = expand_field_tensor(&layers);
         let value1 = inner_product_direct(&dense1, &witness.data[quarter..2 * quarter]);
         let make_claim1 = || SnarkClaim {
-            expr: ClaimExpr::public(PublicFactor::tensor_field(layers.clone()).over_middle(2, 0))
+            expr: eq(layers.clone()).on(Region::new(n / 4, n / 4, n))
                 * ClaimExpr::segment(Prefix {
                     prefix: 1,
                     length: 2,
@@ -1392,12 +1318,12 @@ mod tests {
 
         let mut hw_p = HashWrapper::new();
         let claims_p = vec![make_claim1()];
-        let (proof, chain_p) = prove_initial_claims(&witness, &claims_p, &mut hw_p);
+        let (proof, chain_p) = prove_claims(&witness, &claims_p, &mut hw_p);
 
         let mut hw_v = HashWrapper::new();
         let claims_v = vec![make_claim1()];
         let chain_v =
-            verify_initial_claims(witness.height, witness.width, &claims_v, &proof, &mut hw_v);
+            verify_claims((witness.height, witness.width), &claims_v, &proof, &mut hw_v);
         assert_eq!(chain_p.claims, chain_v.claims);
 
         for j in 0..chain_p.claims.len() {
@@ -1455,23 +1381,23 @@ mod tests {
             }
         }
 
+        let region = Region::new(start, n >> prefix.length, n);
+        let (node, slot) = region.vars().split_at(mb);
         let make_claim = || SnarkClaim {
-            expr: ClaimExpr::public(
-                PublicFactor::tensor_field(alpha.clone()).over_middle(prefix.length, in_bits),
-            ) * ClaimExpr::public(
-                PublicFactor::dense_ring(k.clone()).over_middle(prefix.length + mb, 0),
-            ) * ClaimExpr::segment(prefix.clone()),
+            expr: eq(alpha.clone()).on(node)
+                * table(k.clone()).on(slot)
+                * ClaimExpr::segment(prefix.clone()),
             value: value.clone(),
         };
 
         let mut hw_p = HashWrapper::new();
         let claims_p = vec![make_claim()];
-        let (proof, chain_p) = prove_initial_claims(&witness, &claims_p, &mut hw_p);
+        let (proof, chain_p) = prove_claims(&witness, &claims_p, &mut hw_p);
 
         let mut hw_v = HashWrapper::new();
         let claims_v = vec![make_claim()];
         let chain_v =
-            verify_initial_claims(witness.height, witness.width, &claims_v, &proof, &mut hw_v);
+            verify_claims((witness.height, witness.width), &claims_v, &proof, &mut hw_v);
         assert_eq!(chain_p.claims, chain_v.claims);
 
         for j in 0..chain_p.claims.len() {
@@ -1499,12 +1425,12 @@ mod tests {
         let quarter = n / 4;
 
         // field dense table over block 1
-        let table: Vec<QuadraticExtension> = (0..quarter)
+        let tab: Vec<QuadraticExtension> = (0..quarter)
             .map(|i| QuadraticExtension {
                 coeffs: [3 + i as u64, 5 + 2 * i as u64],
             })
             .collect();
-        let table_ring: Vec<RingElement> = table.iter().map(embed_qe).collect();
+        let table_ring: Vec<RingElement> = tab.iter().map(embed_qe).collect();
         let value_a = inner_product_direct(&table_ring, &witness.data[quarter..2 * quarter]);
 
         // ring eq-tensor over block 2
@@ -1517,7 +1443,7 @@ mod tests {
         let make_claims = || {
             vec![
                 SnarkClaim {
-                    expr: ClaimExpr::public(PublicFactor::dense_field(table.clone()).over_middle(2, 0))
+                    expr: table(tab.clone()).on(Region::new(quarter, quarter, n))
                         * ClaimExpr::segment(Prefix {
                             prefix: 1,
                             length: 2,
@@ -1525,7 +1451,7 @@ mod tests {
                     value: value_a.clone(),
                 },
                 SnarkClaim {
-                    expr: ClaimExpr::public(PublicFactor::tensor_ring(layers.clone()).over_middle(2, 0))
+                    expr: eq(layers.clone()).on(Region::new(2 * quarter, quarter, n))
                         * ClaimExpr::segment(Prefix {
                             prefix: 2,
                             length: 2,
@@ -1536,10 +1462,10 @@ mod tests {
         };
 
         let mut hw_p = HashWrapper::new();
-        let (proof, chain_p) = prove_initial_claims(&witness, &make_claims(), &mut hw_p);
+        let (proof, chain_p) = prove_claims(&witness, &make_claims(), &mut hw_p);
         let mut hw_v = HashWrapper::new();
         let chain_v =
-            verify_initial_claims(witness.height, witness.width, &make_claims(), &proof, &mut hw_v);
+            verify_claims((witness.height, witness.width), &make_claims(), &proof, &mut hw_v);
         assert_eq!(chain_p.claims, chain_v.claims);
 
         for j in 0..chain_p.claims.len() {
@@ -1599,9 +1525,8 @@ mod tests {
         // sum_seg w*conj(w) - ones_conj*w = 0 iff each coefficient is binary
         let claims = vec![SnarkClaim {
             expr: (ClaimExpr::segment(p.clone()) * ClaimExpr::conj_segment(p.clone()))
-                - (ClaimExpr::public(
-                    PublicFactor::dense_ring(vec![ones.conjugate(); quarter]).over_middle(2, 0),
-                ) * ClaimExpr::segment(p)),
+                - (table(vec![ones.conjugate(); quarter]).on(Region::new(quarter, quarter, n))
+                    * ClaimExpr::segment(p)),
             value,
         }];
         (witness, claims)
@@ -1615,7 +1540,7 @@ mod tests {
         // constant-coefficient check itself, and uses the value as is.
         let (witness, claims) = binariness_setup(false);
         let mut hw_p = HashWrapper::new();
-        let (proof, chain_p) = prove_initial_claims(&witness, &claims, &mut hw_p);
+        let (proof, chain_p) = prove_claims(&witness, &claims, &mut hw_p);
 
         let (witness_v, mut claims_v) = binariness_setup(false);
         let _ = witness_v;
@@ -1626,7 +1551,7 @@ mod tests {
         claims_v[0].value = shipped;
         let mut hw_v = HashWrapper::new();
         let chain_v =
-            verify_initial_claims(witness.height, witness.width, &claims_v, &proof, &mut hw_v);
+            verify_claims((witness.height, witness.width), &claims_v, &proof, &mut hw_v);
         assert_eq!(chain_p.claims, chain_v.claims);
         for j in 0..chain_p.claims.len() {
             let direct = crate::protocol::open::claim(
@@ -1644,7 +1569,7 @@ mod tests {
         init_common();
         let (witness, claims) = binariness_setup(true);
         let mut hw_p = HashWrapper::new();
-        let _ = prove_initial_claims(&witness, &claims, &mut hw_p);
+        let _ = prove_claims(&witness, &claims, &mut hw_p);
 
         let shipped = claims[0].value.clone();
         let mut ct = shipped;
@@ -1659,13 +1584,11 @@ mod tests {
         let (witness, mut claims) = toy_setup();
 
         let mut hw_prover = HashWrapper::new();
-        let (proof, _) = prove_initial_claims(&witness, &claims, &mut hw_prover);
+        let (proof, _) = prove_claims(&witness, &claims, &mut hw_prover);
 
         claims[0].value += &RingElement::constant(1, Representation::IncompleteNTT);
         let mut hw_verifier = HashWrapper::new();
-        verify_initial_claims(
-            witness.height,
-            witness.width,
+        verify_claims((witness.height, witness.width),
             &claims,
             &proof,
             &mut hw_verifier,
@@ -1679,10 +1602,10 @@ mod tests {
         make: impl Fn() -> Vec<SnarkClaim>,
     ) {
         let mut hw_p = HashWrapper::new();
-        let (proof, chain_p) = prove_initial_claims(witness, &make(), &mut hw_p);
+        let (proof, chain_p) = prove_claims(witness, &make(), &mut hw_p);
         let mut hw_v = HashWrapper::new();
         let chain_v =
-            verify_initial_claims(witness.height, witness.width, &make(), &proof, &mut hw_v);
+            verify_claims((witness.height, witness.width), &make(), &proof, &mut hw_v);
         assert_eq!(chain_p.claims, chain_v.claims);
         for j in 0..chain_p.claims.len() {
             let direct = crate::protocol::open::claim(
@@ -1715,7 +1638,7 @@ mod tests {
     }
 
     fn dot(weights: &[RingElement]) -> ClaimExpr {
-        ClaimExpr::public(PublicFactor::dense_ring(weights.to_vec())) * ClaimExpr::witness()
+        table(weights.to_vec()) * ClaimExpr::witness()
     }
 
     #[test]
@@ -1796,7 +1719,7 @@ mod tests {
             expr: dot(&a) + dot(&b),
             value: value.clone(),
         }];
-        let (proof, _) = prove_initial_claims(&witness, &combined, &mut hw_p);
+        let (proof, _) = prove_claims(&witness, &combined, &mut hw_p);
 
         value += &RingElement::constant(1, Representation::IncompleteNTT);
         let claims_v = vec![SnarkClaim {
@@ -1804,6 +1727,6 @@ mod tests {
             value,
         }];
         let mut hw_v = HashWrapper::new();
-        verify_initial_claims(witness.height, witness.width, &claims_v, &proof, &mut hw_v);
+        verify_claims((witness.height, witness.width), &claims_v, &proof, &mut hw_v);
     }
 }

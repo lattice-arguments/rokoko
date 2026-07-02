@@ -2,11 +2,15 @@
 
 mod lowering;
 
-pub use lowering::*;
-
 pub use crate::common::hash::HashWrapper as Transcript;
 pub use lowering::InitialSumcheckProof as ClaimsProof;
 pub use lowering::SnarkClaim as Claim;
+pub use lowering::{
+    expand_field_tensor, prove_claims, prove_claims_with_conjugate, verify_claims, ChainInputs,
+    ClaimExpr, WitnessShape,
+};
+
+use lowering::{ClaimFactor, Coeffs, PublicFactor, SnarkClaim, Weights};
 
 use crate::common::config::MOD_Q;
 use crate::common::matrix::VerticallyAlignedMatrix;
