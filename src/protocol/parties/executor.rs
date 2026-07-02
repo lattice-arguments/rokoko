@@ -203,7 +203,22 @@ pub fn execute_snark() {
     }
     let claim_square = Claim::sums_to(witness_in(segment) * witness_in(segment), t2);
 
-    let claims = vec![claim_linear, claim_square];
+    // P_EN_TWO_EVALS is compiled for two openings, so the statement must use
+    // the conjugate; the norm claim is the natural way.
+    let mut t3 = RingElement::zero(Representation::IncompleteNTT);
+    {
+        let mut temp = RingElement::zero(Representation::IncompleteNTT);
+        for w in &witness.data {
+            temp *= (w, &w.conjugate());
+            t3 += &temp;
+        }
+    }
+    let claim_norm = Claim::sums_to(
+        witness_in(everything) * witness_in(everything).conjugate(),
+        t3,
+    );
+
+    let claims = vec![claim_linear, claim_square, claim_norm];
 
     println!("==== SNARK PROVER STARTING ===");
     let start = std::time::Instant::now();

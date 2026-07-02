@@ -233,10 +233,12 @@ verifier checks is zero.
 
 ## Running the chain
 
-`prove_claims` reduces every claim to two openings of the committed vector at
-one random point (`ChainInputs`: slot 0 the witness evaluation, slot 1 the
-conjugated one). The chain proves those openings against the commitment and
-certifies an aggregate l2 bound:
+`prove_claims` reduces every claim to openings of the committed vector at one
+random point (`ChainInputs`): the witness evaluation always, plus a
+conjugated one only when some claim conjugates - a conjugate-free statement
+emits a single opening and skips the conjugate fold entirely. The chain
+proves those openings against the commitment and certifies an aggregate l2
+bound:
 
 ```rust
 let (chain_proof, _) = prover_round(&crs, &config, &commitment_with_aux, &witness,
@@ -248,10 +250,12 @@ Pass the *same* transcript that ran `prove_claims`, so it continues unbroken;
 mirror with `verify_claims` + `verifier_round`. The commitment must be
 absorbed into the transcript before any claim is built.
 
-Because there are always exactly two openings, use a `_2` parameter set:
+The compiled chain must match the opening count; the `_2` sets fit the
+two-opening (conjugate-using) statements:
 
 - Exact norm: `P_EN_2_SMALL` / `P_EN_2_MEDIUM` / `P_EN_2_LARGE`; witness
-  coefficients `<= 2^7`.
+  coefficients `<= 2^7`. Conjugate-free statements pair with the
+  single-opening sets `P_EN_SMALL` / `P_EN_MEDIUM` / `P_EN_LARGE` instead.
 - Non-exact norm: `P_2_SMALL` / `P_2_MEDIUM` / `P_2_LARGE`; coefficients
   `<= 2^15`.
 

@@ -272,13 +272,16 @@ pub struct InitialSumcheckProof {
     pub polys: Vec<Polynomial<QuadraticExtension>>,
     /// `z_0 = MLE[vec(W)](c)`
     pub witness_eval: RingElement,
-    /// `z_1 = MLE[conj(vec(W))](c)`
-    pub conj_witness_eval: RingElement,
+    /// `z_1 = MLE[conj(vec(W))](c)`; present only when some claim conjugates.
+    pub conj_witness_eval: Option<RingElement>,
 }
 
 impl crate::protocol::config::SizeableProof for InitialSumcheckProof {
     fn size_in_bits(&self) -> usize {
-        let mut size = self.witness_eval.size_in_bits() + self.conj_witness_eval.size_in_bits();
+        let mut size = self.witness_eval.size_in_bits();
+        if let Some(conj_eval) = &self.conj_witness_eval {
+            size += conj_eval.size_in_bits();
+        }
         for p in &self.polys {
             for c in &p.coefficients[..p.num_coefficients] {
                 size += c.size_in_bits();
@@ -658,20 +661,22 @@ fn chain_inputs(
     evaluation_points: &[RingElement],
     witness_width: usize,
     witness_eval: &RingElement,
-    conj_witness_eval: &RingElement,
+    conj_witness_eval: Option<&RingElement>,
 ) -> ChainInputs {
     let width_bits = witness_width.ilog2() as usize;
     let (points_outer, points_inner) = evaluation_points.split_at(width_bits);
+    let mut evaluation_points_inner = vec![evaluation_point_to_structured_row(points_inner)];
+    let mut evaluation_points_outer = vec![evaluation_point_to_structured_row(points_outer)];
+    let mut claims = vec![witness_eval.clone()];
+    if let Some(conj_eval) = conj_witness_eval {
+        evaluation_points_inner.push(evaluation_point_to_structured_row_conjugate(points_inner));
+        evaluation_points_outer.push(evaluation_point_to_structured_row_conjugate(points_outer));
+        claims.push(conj_eval.conjugate());
+    }
     ChainInputs {
-        evaluation_points_inner: vec![
-            evaluation_point_to_structured_row(points_inner),
-            evaluation_point_to_structured_row_conjugate(points_inner),
-        ],
-        evaluation_points_outer: vec![
-            evaluation_point_to_structured_row(points_outer),
-            evaluation_point_to_structured_row_conjugate(points_outer),
-        ],
-        claims: vec![witness_eval.clone(), conj_witness_eval.conjugate()],
+        evaluation_points_inner,
+        evaluation_points_outer,
+        claims,
     }
 }
 /// Canonicalize a claim: lower segments to `selector x witness`, fold scales
@@ -679,6 +684,20 @@ fn chain_inputs(
 /// a product (eq is 0/1 on the cube, so eq^2 = eq and the sum is unchanged).
 /// The result's leaves are `Witness`/`ConjWitness`/`Public`/`Constant` only;
 /// both prover and verifier consume it, so their trees match exactly.
+/// Whether any factor reads the conjugated witness; decides (identically on
+/// both sides) if the conjugate opening `z_1` exists at all.
+fn uses_conjugate(expr: &ClaimExpr) -> bool {
+    match expr {
+        ClaimExpr::Factor(ClaimFactor::ConjWitness)
+        | ClaimExpr::Factor(ClaimFactor::ConjWitnessSegment(_)) => true,
+        ClaimExpr::Factor(_) | ClaimExpr::Constant(_) => false,
+        ClaimExpr::Product(a, b) | ClaimExpr::Sum(a, b) | ClaimExpr::Diff(a, b) => {
+            uses_conjugate(a) || uses_conjugate(b)
+        }
+        ClaimExpr::Scale(_, x) => uses_conjugate(x),
+    }
+}
+
 fn canonicalize(claim: &SnarkClaim) -> SnarkClaim {
     SnarkClaim {
         expr: canon(&claim.expr),
@@ -863,14 +882,20 @@ pub fn prove_claims(
     let claims = &canon[..];
     validate_claims(claims, total_vars);
 
-    // z_1 (the conjugate opening) is always part of the chain inputs, so the
-    // conjugated vector is needed whether or not any claim conjugates.
-    let mut conjugated = vec![RingElement::zero(Representation::IncompleteNTT); n];
-    witness
-        .data
-        .iter()
-        .zip(conjugated.iter_mut())
-        .for_each(|(orig, conj)| orig.conjugate_into(conj));
+    // z_1 (the conjugate opening) ships only when some claim conjugates; a
+    // conjugate-free statement emits a single opening and skips this pass.
+    let needs_conjugate = claims.iter().any(|claim| uses_conjugate(&claim.expr));
+    let conjugated = if needs_conjugate {
+        let mut v = vec![RingElement::zero(Representation::IncompleteNTT); n];
+        witness
+            .data
+            .iter()
+            .zip(v.iter_mut())
+            .for_each(|(orig, conj)| orig.conjugate_into(conj));
+        v
+    } else {
+        vec![]
+    };
 
     let mut asm = ProverAssembler {
         witness: &witness.data,
@@ -960,25 +985,31 @@ pub fn prove_claims(
         .borrow()
         .final_evaluations()
         .clone();
-    let conj_witness_eval = if asm.conj_pool.first_cell(&FULL_WITNESS_KEY).is_none() {
+    let conj_witness_eval: Option<RingElement> = if !needs_conjugate {
+        None
+    } else if asm.conj_pool.first_cell(&FULL_WITNESS_KEY).is_none() {
         // no conjugate oracle was used: evaluate one on demand at the final point
         let mut ls = LinearSumcheck::new(n);
         ls.load_from(asm.conjugated);
         for r in &evaluation_points {
             ls.partial_evaluate(r);
         }
-        ls.final_evaluations().clone()
+        Some(ls.final_evaluations().clone())
     } else {
-        asm.conj_pool
-            .first_cell(&FULL_WITNESS_KEY)
-            .unwrap()
-            .borrow()
-            .final_evaluations()
-            .clone()
+        Some(
+            asm.conj_pool
+                .first_cell(&FULL_WITNESS_KEY)
+                .unwrap()
+                .borrow()
+                .final_evaluations()
+                .clone(),
+        )
     };
 
     hash_wrapper.update_with_ring_element(&witness_eval);
-    hash_wrapper.update_with_ring_element(&conj_witness_eval);
+    if let Some(conj_eval) = &conj_witness_eval {
+        hash_wrapper.update_with_ring_element(conj_eval);
+    }
 
     evaluation_points.reverse();
 
@@ -986,7 +1017,7 @@ pub fn prove_claims(
         &evaluation_points,
         witness.width,
         &witness_eval,
-        &conj_witness_eval,
+        conj_witness_eval.as_ref(),
     );
 
     (
@@ -1046,15 +1077,25 @@ pub fn verify_claims(
     validate_claims(claims, total_vars);
     assert_eq!(proof.polys.len(), total_vars);
 
+    let needs_conjugate = claims.iter().any(|claim| uses_conjugate(&claim.expr));
+    assert_eq!(
+        proof.conj_witness_eval.is_some(),
+        needs_conjugate,
+        "proof and statement disagree on the conjugate opening"
+    );
+
     // Mirror of the prover's gadget tree over the claimed evaluations
     let witness_eval_cell = ElephantCell::new(FakeEvaluationLinearSumcheck::new());
     witness_eval_cell
         .borrow_mut()
         .set_result(proof.witness_eval.clone());
     let conj_eval_cell = ElephantCell::new(FakeEvaluationLinearSumcheck::new());
-    conj_eval_cell
-        .borrow_mut()
-        .set_result(proof.conj_witness_eval.clone());
+    conj_eval_cell.borrow_mut().set_result(
+        proof
+            .conj_witness_eval
+            .clone()
+            .unwrap_or_else(|| RingElement::zero(Representation::IncompleteNTT)),
+    );
 
     let asm = VerifierAssembler {
         witness_eval: witness_eval_cell as _,
@@ -1141,7 +1182,9 @@ pub fn verify_claims(
     );
 
     hash_wrapper.update_with_ring_element(&proof.witness_eval);
-    hash_wrapper.update_with_ring_element(&proof.conj_witness_eval);
+    if let Some(conj_eval) = &proof.conj_witness_eval {
+        hash_wrapper.update_with_ring_element(conj_eval);
+    }
 
     evaluation_points.reverse();
 
@@ -1149,7 +1192,7 @@ pub fn verify_claims(
         &evaluation_points,
         shape.width,
         &proof.witness_eval,
-        &proof.conj_witness_eval,
+        proof.conj_witness_eval.as_ref(),
     )
 }
 

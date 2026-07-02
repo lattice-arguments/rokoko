@@ -656,6 +656,35 @@ mod tests {
     }
 
     #[test]
+    fn test_opening_count_tracks_conjugate_use() {
+        init_common();
+        let w = WitnessBuilder {
+            height: 64,
+            width: 4,
+            data: short(256, 100),
+            cursor: 256,
+        }
+        .finish();
+        let weights = short(256, 50);
+
+        let plain = vec![Claim::sums_to(
+            table(&weights) * witness(),
+            (table(&weights) * witness()).sum(&w),
+        )];
+        let (proof, chain) = prove_claims(&w, &plain, &mut Transcript::new());
+        assert_eq!(chain.claims.len(), 1);
+        assert!(proof.conj_witness_eval.is_none());
+
+        let with_conj = vec![Claim::sums_to(
+            witness() * witness().conjugate(),
+            (witness() * witness().conjugate()).sum(&w),
+        )];
+        let (proof, chain) = prove_claims(&w, &with_conj, &mut Transcript::new());
+        assert_eq!(chain.claims.len(), 2);
+        assert!(proof.conj_witness_eval.is_some());
+    }
+
+    #[test]
     fn test_norm_claim_roundtrip() {
         init_common();
         let w = WitnessBuilder {
