@@ -136,9 +136,7 @@ list of `(coefficient, factors)`, and the weight is `sum_a coefficient_a *
 (product of factors_a)` where every factor is a `table`/`eq`/`powers` weight.
 The prover folds all components as a single merged oracle over their union
 window; the verifier evaluates each component with its native gadget and
-combines them, so it pays the sum of the components' costs rather than the cost
-of the flattened table. Reach for it only when a claim batch is the prover
-bottleneck.
+combines them, so it pays the sum of the components' costs.
 
 ## Stating claims
 
