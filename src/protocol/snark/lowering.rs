@@ -53,6 +53,11 @@ pub enum Weights {
     /// `eq(bits, .)` over the leading `length` variables; zero-cost gadget that
     /// every `WitnessSegment` lowers to.
     Selector { bits: usize, length: usize },
+    /// Coefficient-weighted sum of dense tables sharing one placement: the
+    /// prover folds a single merged oracle, the verifier evaluates every
+    /// component separately (field components on the subfield path) and
+    /// combines the results.
+    Combination(Arc<Vec<(RingElement, Coeffs)>>),
 }
 
 pub fn qe_one_minus(a: &QuadraticExtension) -> QuadraticExtension {
@@ -86,6 +91,44 @@ pub fn expand_field_tensor(layers: &[QuadraticExtension]) -> Vec<RingElement> {
             r
         })
         .collect()
+}
+
+/// `acc += c * x`, coefficient-wise; representation-agnostic scalar fma.
+fn fma_scalar_into(acc: &mut RingElement, c: u64, x: &RingElement) {
+    use crate::common::config::{DEGREE, MOD_Q};
+    for j in 0..DEGREE {
+        let v = acc.v[j] as u128 + c as u128 * x.v[j] as u128 % MOD_Q as u128;
+        acc.v[j] = (v % MOD_Q as u128) as u64;
+    }
+}
+
+/// The merged table `sum_a gamma_a * part_a` a combination weight folds.
+fn expand_combination(parts: &[(RingElement, Coeffs)], len: usize) -> Vec<RingElement> {
+    let mut merged = vec![RingElement::zero(Representation::IncompleteNTT); len];
+    let mut temp = RingElement::zero(Representation::IncompleteNTT);
+    for (gamma, coeffs) in parts {
+        match coeffs {
+            Coeffs::Field(v) => {
+                assert_eq!(v.len(), len, "combination component length mismatch");
+                for (m, qe) in merged.iter_mut().zip(v.iter()) {
+                    if qe.coeffs[1] == 0 {
+                        fma_scalar_into(m, qe.coeffs[0], gamma);
+                    } else {
+                        temp *= (&embed_qe(qe), gamma);
+                        *m += &temp;
+                    }
+                }
+            }
+            Coeffs::Ring(v) => {
+                assert_eq!(v.len(), len, "combination component length mismatch");
+                for (m, r) in merged.iter_mut().zip(v.iter()) {
+                    temp *= (gamma, r);
+                    *m += &temp;
+                }
+            }
+        }
+    }
+    merged
 }
 
 /// Transcript challenges for tensor layers, MSB-first.
@@ -541,6 +584,12 @@ impl<'a> ProverAssembler<'a> {
                             v.iter().map(embed_qe).collect::<Vec<_>>(),
                         )
                     }
+                    Weights::Combination(parts) => self.pooled_leaf(
+                        Arc::as_ptr(parts) as *const () as usize,
+                        prefix_len,
+                        suffix_len,
+                        expand_combination(parts, middle_len),
+                    ),
                 }
             }
         }
@@ -653,7 +702,74 @@ impl VerifierAssembler {
                 ev.load_from(&v[..]);
                 ElephantCell::new(RingToFieldWrapperEvaluation::new(ElephantCell::new(ev) as _)) as _
             }
+            Weights::Combination(parts) => {
+                let cells: Vec<(RingElement, EvalCell)> = parts
+                    .iter()
+                    .map(|(gamma, coeffs)| {
+                        let cell: EvalCell = match coeffs {
+                            Coeffs::Ring(v) => {
+                                let mut ev =
+                                    BasicEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
+                                        v.len(),
+                                        prefix_len,
+                                        suffix_len,
+                                    );
+                                ev.load_from(&v[..]);
+                                ElephantCell::new(ev) as _
+                            }
+                            Coeffs::Field(v) => {
+                                let mut ev = BasicEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
+                                    v.len(),
+                                    prefix_len,
+                                    suffix_len,
+                                );
+                                ev.load_from(&v[..]);
+                                ElephantCell::new(RingToFieldWrapperEvaluation::new(
+                                    ElephantCell::new(ev) as _,
+                                )) as _
+                            }
+                        };
+                        (gamma.clone(), cell)
+                    })
+                    .collect();
+                ElephantCell::new(CombinationEvaluation::new(cells)) as _
+            }
         }
+    }
+}
+
+/// Verifier-side mirror of a combination weight: evaluates every component at
+/// the final point and returns `sum_a gamma_a * eval_a`.
+struct CombinationEvaluation {
+    parts: Vec<(RingElement, EvalCell)>,
+    result: RingElement,
+    evaluated: bool,
+}
+
+impl CombinationEvaluation {
+    fn new(parts: Vec<(RingElement, EvalCell)>) -> Self {
+        CombinationEvaluation {
+            parts,
+            result: RingElement::zero(Representation::IncompleteNTT),
+            evaluated: false,
+        }
+    }
+}
+
+impl EvaluationSumcheckData for CombinationEvaluation {
+    type Element = RingElement;
+
+    fn evaluate(&mut self, point: &Vec<RingElement>) -> &RingElement {
+        if self.evaluated {
+            return &self.result;
+        }
+        let mut temp = RingElement::zero(Representation::IncompleteNTT);
+        for (gamma, cell) in &self.parts {
+            temp *= (gamma, cell.borrow_mut().evaluate(point));
+            self.result += &temp;
+        }
+        self.evaluated = true;
+        &self.result
     }
 }
 

@@ -234,6 +234,7 @@ impl From<&[u64]> for Scalars {
 enum WeightKind {
     Eq(Scalars),
     Table(Scalars),
+    Combination(Vec<(RingElement, Scalars)>),
 }
 
 /// Public weight factor; spans the whole witness unless placed with [`Weight::on`].
@@ -253,6 +254,19 @@ pub fn eq(point: impl Into<Scalars>) -> Weight {
 /// Arbitrary weight table, entry `i` is `values[i]`; verifier cost linear in it.
 pub fn table(values: impl Into<Scalars>) -> Weight {
     Weight { kind: WeightKind::Table(values.into()), placement: None, coefficient: None }
+}
+
+/// Coefficient-weighted sum of tables as one weight: the prover folds a
+/// single merged oracle, the verifier evaluates the components separately.
+#[doc(hidden)]
+pub fn combination(parts: Vec<(RingElement, impl Into<Scalars>)>) -> Weight {
+    Weight {
+        kind: WeightKind::Combination(
+            parts.into_iter().map(|(gamma, v)| (gamma, v.into())).collect(),
+        ),
+        placement: None,
+        coefficient: None,
+    }
 }
 
 /// The weight `ratio^i` over `2^num_vars` entries (recomposes base-`ratio`
@@ -293,6 +307,17 @@ impl Weight {
                 values.len(),
                 1usize << at.len
             ),
+            WeightKind::Combination(parts) => {
+                for (_, values) in parts {
+                    assert_eq!(
+                        values.len(),
+                        1usize << at.len,
+                        "combination component has {} entries but the block addresses {}",
+                        values.len(),
+                        1usize << at.len
+                    );
+                }
+            }
         }
         self.placement = Some(at);
         self
@@ -306,6 +331,20 @@ impl From<Weight> for ClaimExpr {
             WeightKind::Eq(Scalars::Field(v)) => Weights::Tensor(Coeffs::Field(v)),
             WeightKind::Table(Scalars::Ring(v)) => Weights::Dense(Coeffs::Ring(v)),
             WeightKind::Table(Scalars::Field(v)) => Weights::Dense(Coeffs::Field(v)),
+            WeightKind::Combination(parts) => Weights::Combination(Arc::new(
+                parts
+                    .into_iter()
+                    .map(|(gamma, v)| {
+                        (
+                            gamma,
+                            match v {
+                                Scalars::Ring(v) => Coeffs::Ring(v),
+                                Scalars::Field(v) => Coeffs::Field(v),
+                            },
+                        )
+                    })
+                    .collect(),
+            )),
         };
         let (prefix_len, suffix_len) = match w.placement {
             Some(at) => (at.skip, at.total - at.skip - at.len),
@@ -460,6 +499,19 @@ fn eval_public_at(pf: &PublicFactor, index: usize, total_vars: usize) -> RingEle
                     one_minus -= a;
                     acc *= &one_minus;
                 }
+            }
+            acc
+        }
+        Weights::Combination(parts) => {
+            let mut acc = zero();
+            let mut temp = zero();
+            for (gamma, coeffs) in parts.iter() {
+                let component = match coeffs {
+                    Coeffs::Ring(v) => v[middle].clone(),
+                    Coeffs::Field(v) => lowering::embed_qe(&v[middle]),
+                };
+                temp *= (gamma, &component);
+                acc += &temp;
             }
             acc
         }
@@ -682,6 +734,46 @@ mod tests {
         let (proof, chain) = prove_claims(&w, &with_conj, &mut Transcript::new());
         assert_eq!(chain.claims.len(), 2);
         assert!(proof.conj_witness_eval.is_some());
+    }
+
+    #[test]
+    fn test_combination_weight_roundtrip() {
+        init_common();
+        let data = short(128, 100);
+        let mut layout = WitnessBuilder::new(64, 4);
+        let region = layout.push(&data);
+        layout.push(&short(128, 100));
+        let w = layout.finish();
+
+        let make = |t: &mut Transcript| {
+            let tables: Vec<Vec<u64>> = (0..3)
+                .map(|k| (0..128u64).map(|i| 7 * i + k + 1).collect())
+                .collect();
+            let parts: Vec<(RingElement, Vec<u64>)> = tables
+                .into_iter()
+                .map(|tab| {
+                    let mut gamma = zero();
+                    t.sample_ring_element_into(&mut gamma);
+                    (gamma, tab)
+                })
+                .collect();
+
+            let mut direct = zero();
+            let mut term = zero();
+            for (gamma, tab) in &parts {
+                let single = (table(tab.clone()).on(region) * witness_in(region)).sum(&w);
+                term *= (gamma, &single);
+                direct += &term;
+            }
+            let expr = combination(parts.clone()).on(region) * witness_in(region);
+            assert_eq!(expr.sum(&w), direct);
+
+            vec![Claim::sums_to(
+                combination(parts).on(region) * witness_in(region),
+                direct,
+            )]
+        };
+        roundtrip(&w, make);
     }
 
     #[test]
