@@ -19,10 +19,10 @@ let mut layout = WitnessBuilder::new(256, 8);
 let balances_at = layout.push(&balances);
 let witness = layout.finish();
 
-let revenue = (table(prices.clone()).on(balances_at) * witness_in(balances_at)).sum(&witness);
+let revenue = (table(prices.clone()).on(balances_at.vars()) * witness_in(balances_at)).sum(&witness);
 
 let claims = vec![Claim::sums_to(
-    table(prices).on(balances_at) * witness_in(balances_at),
+    table(prices).on(balances_at.vars()) * witness_in(balances_at),
     revenue,
 )];
 
@@ -106,13 +106,21 @@ Pass weight entries as whatever you have - `Vec<u64>`, transcript challenges
 weights automatically take a fast verifier path; ring-element weights are for
 genuinely ring-valued tables.
 
-A weight spans the whole witness by default. `.on(...)` places it on a region
-or on a block of variables, where it varies; everywhere else it is constant:
+A weight spans the whole witness by default. `.on(block)` restricts it to a
+`Vars` block of index variables, where it varies; over every bit outside the
+block it broadcasts (its value is constant in those bits). Name the block with
+`region.vars()`, a split of it, or `Vars::low(len, total)` / `high` / `window`:
 
 ```rust
-table(prices).on(balances_at)                       // one weight per entry
+table(prices).on(balances_at.vars())                // one weight per region entry
 eq(alpha).on(row) * table(k).on(column)             // rows weighted by alpha, columns by k
 ```
+
+A placed weight does not *select* the region it came from: `region.vars()` reads
+only the bit block, not the offset, so `.on(a.vars())` and `.on(b.vars())` are
+the same weight when `a` and `b` have the same size. Restricting a sum to a
+region is `witness_in(region)`'s job (its selector); a broadcast weight times a
+region-restricted witness is the usual dot-product-over-a-region shape.
 
 Weights on non-overlapping variable blocks stack freely in one product - that
 `eq * table` pair costs degree one per variable, not two.
@@ -189,15 +197,15 @@ verifier panics on any mismatch.
 **A weighted sum over a region** (dot product with public weights):
 
 ```rust
-let value = (table(prices.clone()).on(orders) * witness_in(orders)).sum(&witness);
-Claim::sums_to(table(prices).on(orders) * witness_in(orders), value)
+let value = (table(prices.clone()).on(orders.vars()) * witness_in(orders)).sum(&witness);
+Claim::sums_to(table(prices).on(orders.vars()) * witness_in(orders), value)
 ```
 
 **Tie two regions together** (copy claim; the alignment tool):
 
 ```rust
 let point = challenge_point(&mut transcript, original.vars().len());
-Claim::sums_to_zero(eq(&point).on(original) * (witness_in(original) - witness_in(mirror)))
+Claim::sums_to_zero(eq(&point).on(original.vars()) * (witness_in(original) - witness_in(mirror)))
 ```
 
 **A hash-style layer relation** (the ajtai-merkle shape: nodes x slots, an
@@ -237,7 +245,7 @@ Claim::sums_to(witness() * witness().conjugate(), energy)
 ```
 
 **Binariness of a region's coefficients**: `sum x(x-1) = 0` per coefficient,
-stated as `witness_in(r) * witness_in(r).conjugate() - table(ones_conj).on(r)
+stated as `witness_in(r) * witness_in(r).conjugate() - table(ones_conj).on(r.vars())
 * witness_in(r)` summing to a shipped value whose constant coefficient the
 verifier checks is zero.
 

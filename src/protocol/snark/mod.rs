@@ -82,6 +82,20 @@ pub struct Vars {
 }
 
 impl Vars {
+    /// A weight placed here broadcasts over the bits outside the block.
+    pub fn window(skip: usize, len: usize, total: usize) -> Vars {
+        assert!(skip + len <= total, "window exceeds the index width");
+        Vars { skip, len, total }
+    }
+
+    pub fn low(len: usize, total: usize) -> Vars {
+        Vars::window(total - len, len, total)
+    }
+
+    pub fn high(len: usize, total: usize) -> Vars {
+        Vars::window(0, len, total)
+    }
+
     pub fn len(&self) -> usize {
         self.len
     }
@@ -104,12 +118,6 @@ impl Vars {
 
     pub fn trailing(self, num_vars: usize) -> Vars {
         self.split_at(self.len - num_vars).1
-    }
-}
-
-impl From<Region> for Vars {
-    fn from(region: Region) -> Vars {
-        region.vars()
     }
 }
 
@@ -691,7 +699,7 @@ mod tests {
         let make = |t: &mut Transcript| {
             let point = challenge_point(t, original.vars().len());
             vec![Claim::sums_to_zero(
-                eq(&point).on(original) * (witness_in(original) - witness_in(mirror)),
+                eq(&point).on(original.vars()) * (witness_in(original) - witness_in(mirror)),
             )]
         };
         roundtrip(&w, make);
@@ -712,7 +720,7 @@ mod tests {
         let make = |t: &mut Transcript| {
             let point = challenge_point(t, original.vars().len());
             vec![Claim::sums_to_zero(
-                eq(&point).on(original) * (witness_in(original) - witness_in(mirror)),
+                eq(&point).on(original.vars()) * (witness_in(original) - witness_in(mirror)),
             )]
         };
         let mut tp = Transcript::new();
@@ -789,11 +797,11 @@ mod tests {
                     (gamma, vec![table(tab).on(left), powers(base, right.len()).on(right)])
                 })
                 .collect();
-            let expr = combination(parts.clone()).on(region) * witness_in(region);
+            let expr = combination(parts.clone()).on(region.vars()) * witness_in(region);
             assert_eq!(expr.sum(&w), direct);
 
             vec![Claim::sums_to(
-                combination(parts).on(region) * witness_in(region),
+                combination(parts).on(region.vars()) * witness_in(region),
                 direct,
             )]
         };

@@ -1579,7 +1579,7 @@ mod tests {
         let dense1 = expand_field_tensor(&layers);
         let value1 = inner_product_direct(&dense1, &witness.data[quarter..2 * quarter]);
         let make_claim1 = || SnarkClaim {
-            expr: eq(layers.clone()).on(Region::new(n / 4, n / 4, n))
+            expr: eq(layers.clone()).on(Region::new(n / 4, n / 4, n).vars())
                 * ClaimExpr::segment(Prefix {
                     prefix: 1,
                     length: 2,
@@ -1714,7 +1714,7 @@ mod tests {
         let make_claims = || {
             vec![
                 SnarkClaim {
-                    expr: table(tab.clone()).on(Region::new(quarter, quarter, n))
+                    expr: table(tab.clone()).on(Region::new(quarter, quarter, n).vars())
                         * ClaimExpr::segment(Prefix {
                             prefix: 1,
                             length: 2,
@@ -1722,7 +1722,7 @@ mod tests {
                     value: value_a.clone(),
                 },
                 SnarkClaim {
-                    expr: eq(layers.clone()).on(Region::new(2 * quarter, quarter, n))
+                    expr: eq(layers.clone()).on(Region::new(2 * quarter, quarter, n).vars())
                         * ClaimExpr::segment(Prefix {
                             prefix: 2,
                             length: 2,
@@ -1796,7 +1796,7 @@ mod tests {
         // sum_seg w*conj(w) - ones_conj*w = 0 iff each coefficient is binary
         let claims = vec![SnarkClaim {
             expr: (ClaimExpr::segment(p.clone()) * ClaimExpr::conj_segment(p.clone()))
-                - (table(vec![ones.conjugate(); quarter]).on(Region::new(quarter, quarter, n))
+                - (table(vec![ones.conjugate(); quarter]).on(Region::new(quarter, quarter, n).vars())
                     * ClaimExpr::segment(p)),
             value,
         }];
