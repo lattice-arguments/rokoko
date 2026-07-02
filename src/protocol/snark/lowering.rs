@@ -93,30 +93,47 @@ pub fn expand_field_tensor(layers: &[QuadraticExtension]) -> Vec<RingElement> {
         .collect()
 }
 
-/// `acc += c * x`, coefficient-wise; representation-agnostic scalar fma.
-fn fma_scalar_into(acc: &mut RingElement, c: u64, x: &RingElement) {
-    use crate::common::config::{DEGREE, MOD_Q};
-    for j in 0..DEGREE {
-        let v = acc.v[j] as u128 + c as u128 * x.v[j] as u128 % MOD_Q as u128;
-        acc.v[j] = (v % MOD_Q as u128) as u64;
-    }
-}
-
 /// The merged table `sum_a gamma_a * part_a` a combination weight folds.
+/// Scalar field components take a lazy-reduction path: per coefficient, the
+/// gamma-scaled terms accumulate in u128 (each product < 2^102, so up to 32
+/// components fit) with a single reduction at the end.
 fn expand_combination(parts: &[(RingElement, Coeffs)], len: usize) -> Vec<RingElement> {
+    use crate::common::config::{DEGREE, MOD_Q};
     let mut merged = vec![RingElement::zero(Representation::IncompleteNTT); len];
+
+    let scalar_tables: Option<Vec<(&RingElement, &[QuadraticExtension])>> = parts
+        .iter()
+        .map(|(gamma, coeffs)| match coeffs {
+            Coeffs::Field(v) if v.iter().all(|qe| qe.coeffs[1] == 0) => {
+                assert_eq!(v.len(), len, "combination component length mismatch");
+                Some((gamma, &v[..]))
+            }
+            _ => None,
+        })
+        .collect();
+
+    if let Some(tables) = scalar_tables {
+        assert!(tables.len() <= 32, "lazy accumulation caps at 32 components");
+        for (i, m) in merged.iter_mut().enumerate() {
+            for j in 0..DEGREE {
+                let mut acc: u128 = 0;
+                for (gamma, tab) in &tables {
+                    acc += tab[i].coeffs[0] as u128 * gamma.v[j] as u128;
+                }
+                m.v[j] = (acc % MOD_Q as u128) as u64;
+            }
+        }
+        return merged;
+    }
+
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
     for (gamma, coeffs) in parts {
         match coeffs {
             Coeffs::Field(v) => {
                 assert_eq!(v.len(), len, "combination component length mismatch");
                 for (m, qe) in merged.iter_mut().zip(v.iter()) {
-                    if qe.coeffs[1] == 0 {
-                        fma_scalar_into(m, qe.coeffs[0], gamma);
-                    } else {
-                        temp *= (&embed_qe(qe), gamma);
-                        *m += &temp;
-                    }
+                    temp *= (&embed_qe(qe), gamma);
+                    *m += &temp;
                 }
             }
             Coeffs::Ring(v) => {
