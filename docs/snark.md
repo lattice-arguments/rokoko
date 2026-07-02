@@ -99,6 +99,7 @@ coefficients, and `ct(u * conj(v)) = sum_c u_c * v_c` in general.
 | `table(values)` | `values[i]` | linear in the table |
 | `eq(point)` | `eq(point, bits(i))` | `O(point.len())` |
 | `powers(ratio, k)` | `ratio^i` (over `2^k` entries) | `O(k)` |
+| `combination(parts)` | `sum_a c_a * prod_f w_af(i)` | sum of the components' costs |
 
 Pass weight entries as whatever you have - `Vec<u64>`, transcript challenges
 (`Vec<QuadraticExtension>`), or `Vec<RingElement>`. Scalar and challenge
@@ -121,6 +122,15 @@ transcript; with such a point, `eq` is the standard random-linear-combination
 weight ("check a random mixture instead of every entry"). Points read
 MSB-first: coordinate `j` weighs index bit `j` counted from the top of the
 block.
+
+`combination(parts)` batches linear claims into one product term. `parts` is a
+list of `(coefficient, factors)`, and the weight is `sum_a coefficient_a *
+(product of factors_a)` where every factor is a `table`/`eq`/`powers` weight.
+The prover folds all components as a single merged oracle over their union
+window; the verifier evaluates each component with its native gadget and
+combines them, so it pays the sum of the components' costs rather than the cost
+of the flattened table. Reach for it only when a claim batch is the prover
+bottleneck.
 
 ## Stating claims
 

@@ -259,7 +259,6 @@ pub fn table(values: impl Into<Scalars>) -> Weight {
 /// Coefficient-weighted sum of weight products as one weight: the prover
 /// folds a single merged oracle over the union window, the verifier evaluates
 /// every component factor with its native gadget and combines the results.
-#[doc(hidden)]
 pub fn combination(parts: Vec<(RingElement, Vec<Weight>)>) -> Weight {
     Weight { kind: WeightKind::Combination(parts), placement: None, coefficient: None }
 }
