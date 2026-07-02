@@ -191,22 +191,22 @@ pub enum ClaimExpr {
 }
 
 impl ClaimExpr {
-    pub fn witness() -> ClaimExpr {
+    pub(crate) fn witness() -> ClaimExpr {
         ClaimExpr::Factor(ClaimFactor::Witness)
     }
-    pub fn conj_witness() -> ClaimExpr {
+    pub(crate) fn conj_witness() -> ClaimExpr {
         ClaimExpr::Factor(ClaimFactor::ConjWitness)
     }
-    pub fn segment(prefix: Prefix) -> ClaimExpr {
+    pub(crate) fn segment(prefix: Prefix) -> ClaimExpr {
         ClaimExpr::Factor(ClaimFactor::WitnessSegment(prefix))
     }
-    pub fn conj_segment(prefix: Prefix) -> ClaimExpr {
+    pub(crate) fn conj_segment(prefix: Prefix) -> ClaimExpr {
         ClaimExpr::Factor(ClaimFactor::ConjWitnessSegment(prefix))
     }
-    pub fn public(factor: PublicFactor) -> ClaimExpr {
+    pub(crate) fn public(factor: PublicFactor) -> ClaimExpr {
         ClaimExpr::Factor(ClaimFactor::Public(factor))
     }
-    pub fn constant(value: RingElement) -> ClaimExpr {
+    pub(crate) fn constant(value: RingElement) -> ClaimExpr {
         ClaimExpr::Constant(value)
     }
 
@@ -257,8 +257,15 @@ impl std::ops::Neg for ClaimExpr {
 
 /// One functional-sumcheck claim: `sum_z expr(z) = value`.
 pub struct SnarkClaim {
-    pub expr: ClaimExpr,
-    pub value: RingElement,
+    pub(crate) expr: ClaimExpr,
+    pub(crate) value: RingElement,
+}
+
+impl SnarkClaim {
+    /// The claimed sum.
+    pub fn value(&self) -> &RingElement {
+        &self.value
+    }
 }
 
 pub struct InitialSumcheckProof {

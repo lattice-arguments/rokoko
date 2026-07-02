@@ -118,7 +118,9 @@ Weights on non-overlapping variable blocks stack freely in one product - that
 
 `challenge_point(&mut transcript, num_vars)` draws an `eq` point from the
 transcript; with such a point, `eq` is the standard random-linear-combination
-weight ("check a random mixture instead of every entry").
+weight ("check a random mixture instead of every entry"). Points read
+MSB-first: coordinate `j` weighs index bit `j` counted from the top of the
+block.
 
 ## Stating claims
 
@@ -264,19 +266,3 @@ itself breaks the compiled chain.
 
 The commitment is binding only for short vectors, and the front end never
 decomposes anything for you: whatever you `push` must already be short.
-
-## Escape hatches
-
-The lowering machinery is private; the handful of raw pieces that stay public
-are exactly what real relations have needed:
-
-- `Claim`'s `value` field. Shipped values reach the verifier out of band, so
-  the verifier assigns `claims[i].value` before calling `verify_claims`.
-- `ClaimExpr`, the expression tree every builder produces (`witness_in`,
-  weights, the operators), for code that assembles claims programmatically.
-- `expand_field_tensor(&point)`, the dense eq-tensor expansion - for folding
-  public data by challenges when *building* a weight table (as opposed to
-  `eq_weighted_sum`, which folds a claim *value*).
-
-Weight points read MSB-first: coordinate `j` weighs index bit `j` counted
-from the top of the block.
