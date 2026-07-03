@@ -3,8 +3,8 @@ use crate::{
         hash::HashWrapper,
         matrix::VerticallyAlignedMatrix,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
-        sumcheck_element::SumcheckElement,
         structured_row::{PreprocessedRow, StructuredRow},
+        sumcheck_element::SumcheckElement,
     },
     protocol::{
         commitment::Prefix,
@@ -348,7 +348,10 @@ impl LeafCell {
 /// region (a cell cannot be aliased inside one product), reused across additive
 /// branches and claims so a shared oracle folds once.
 struct OraclePool {
-    pools: std::collections::HashMap<(usize, usize, usize, bool), (Vec<ElephantCell<LinearSumcheck<RingElement>>>, usize)>,
+    pools: std::collections::HashMap<
+        (usize, usize, usize, bool),
+        (Vec<ElephantCell<LinearSumcheck<RingElement>>>, usize),
+    >,
 }
 
 const FULL_WITNESS_KEY: (usize, usize, usize, bool) = (usize::MAX, usize::MAX, 0, false);
@@ -380,7 +383,10 @@ impl OraclePool {
         }
     }
 
-    fn first_cell(&self, key: &(usize, usize, usize, bool)) -> Option<&ElephantCell<LinearSumcheck<RingElement>>> {
+    fn first_cell(
+        &self,
+        key: &(usize, usize, usize, bool),
+    ) -> Option<&ElephantCell<LinearSumcheck<RingElement>>> {
         self.pools.get(key).and_then(|(cells, _)| cells.first())
     }
 
@@ -473,12 +479,17 @@ impl<'a> ProverAssembler<'a> {
         suffix_len: usize,
         data: Vec<RingElement>,
     ) -> HighOrderCell {
-        let cell = self.public_pool.next((ptr, prefix_len, suffix_len, false), move || {
-            let mut ls =
-                LinearSumcheck::new_with_prefixed_sufixed_data(data.len(), prefix_len, suffix_len);
-            ls.load_from(&data);
-            ls
-        });
+        let cell = self
+            .public_pool
+            .next((ptr, prefix_len, suffix_len, false), move || {
+                let mut ls = LinearSumcheck::new_with_prefixed_sufixed_data(
+                    data.len(),
+                    prefix_len,
+                    suffix_len,
+                );
+                ls.load_from(&data);
+                ls
+            });
         cell as _
     }
 
@@ -660,7 +671,8 @@ impl VerifierAssembler {
                 ev.load_from(StructuredRow {
                     tensor_layers: (**layers).clone(),
                 });
-                ElephantCell::new(RingToFieldWrapperEvaluation::new(ElephantCell::new(ev) as _)) as _
+                ElephantCell::new(RingToFieldWrapperEvaluation::new(ElephantCell::new(ev) as _))
+                    as _
             }
             Weights::Dense(Coeffs::Ring(v)) => {
                 let mut ev = BasicEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
@@ -678,7 +690,8 @@ impl VerifierAssembler {
                     suffix_len,
                 );
                 ev.load_from(&v[..]);
-                ElephantCell::new(RingToFieldWrapperEvaluation::new(ElephantCell::new(ev) as _)) as _
+                ElephantCell::new(RingToFieldWrapperEvaluation::new(ElephantCell::new(ev) as _))
+                    as _
             }
         }
     }
@@ -1114,7 +1127,11 @@ pub fn verify_initial_claims(
         // The transcript absorbs the full coefficient array; the unused tail
         // must be zero so the prover cannot vary it under one absorption.
         for c in &poly_over_field.coefficients[poly_over_field.num_coefficients..] {
-            assert_eq!(c, &QuadraticExtension::zero(), "round polynomial tail nonzero");
+            assert_eq!(
+                c,
+                &QuadraticExtension::zero(),
+                "round polynomial tail nonzero"
+            );
         }
 
         assert_eq!(
@@ -1426,19 +1443,21 @@ mod tests {
         let make_claims = || {
             vec![
                 SnarkClaim {
-                    expr: ClaimExpr::public(PublicFactor::dense_field(table.clone()).over_middle(2, 0))
-                        * ClaimExpr::segment(Prefix {
-                            prefix: 1,
-                            length: 2,
-                        }),
+                    expr: ClaimExpr::public(
+                        PublicFactor::dense_field(table.clone()).over_middle(2, 0),
+                    ) * ClaimExpr::segment(Prefix {
+                        prefix: 1,
+                        length: 2,
+                    }),
                     value: value_a.clone(),
                 },
                 SnarkClaim {
-                    expr: ClaimExpr::public(PublicFactor::tensor_ring(layers.clone()).over_middle(2, 0))
-                        * ClaimExpr::segment(Prefix {
-                            prefix: 2,
-                            length: 2,
-                        }),
+                    expr: ClaimExpr::public(
+                        PublicFactor::tensor_ring(layers.clone()).over_middle(2, 0),
+                    ) * ClaimExpr::segment(Prefix {
+                        prefix: 2,
+                        length: 2,
+                    }),
                     value: value_b.clone(),
                 },
             ]
@@ -1447,8 +1466,13 @@ mod tests {
         let mut hw_p = HashWrapper::new();
         let (proof, chain_p) = prove_initial_claims(&witness, &make_claims(), &mut hw_p);
         let mut hw_v = HashWrapper::new();
-        let chain_v =
-            verify_initial_claims(witness.height, witness.width, &make_claims(), &proof, &mut hw_v);
+        let chain_v = verify_initial_claims(
+            witness.height,
+            witness.width,
+            &make_claims(),
+            &proof,
+            &mut hw_v,
+        );
         assert_eq!(chain_p.claims, chain_v.claims);
 
         for j in 0..chain_p.claims.len() {

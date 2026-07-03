@@ -35,7 +35,8 @@ pub fn run_intermediate_sumcheck(
     sumcheck_context: &mut IntermediateSumcheckContext,
     hash_wrapper: &mut HashWrapper,
 ) -> (IntermediateSumcheckProof, Vec<RingElement>) {
-    let mut conjugated_combined_witness = vec![RingElement::zero(Representation::IncompleteNTT); combined_witness.len()];
+    let mut conjugated_combined_witness =
+        vec![RingElement::zero(Representation::IncompleteNTT); combined_witness.len()];
     combined_witness
         .iter()
         .zip(conjugated_combined_witness.iter_mut())
@@ -76,7 +77,11 @@ pub fn run_intermediate_sumcheck(
         &qe,
     );
 
-    let norm_check_claim = sumcheck_context.norm_check_sumcheck.output.borrow_mut().claim();
+    let norm_check_claim = sumcheck_context
+        .norm_check_sumcheck
+        .output
+        .borrow_mut()
+        .claim();
     assert_eq!(
         norm_check_claim, norm_claim,
         "NormCheck intermediate claim mismatch: expected <w, conj(w)>"

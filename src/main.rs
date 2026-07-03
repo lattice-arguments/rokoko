@@ -123,7 +123,11 @@ fn main() {
 
 #[cfg(any(feature = "events", feature = "profile"))]
 fn trace_name() -> &'static str {
-    match (cfg!(feature = "p-26"), cfg!(feature = "p-28"), cfg!(feature = "p-30")) {
+    match (
+        cfg!(feature = "p-26"),
+        cfg!(feature = "p-28"),
+        cfg!(feature = "p-30"),
+    ) {
         (true, _, _) => "p26",
         (_, true, _) => "p28",
         (_, _, true) => "p30",

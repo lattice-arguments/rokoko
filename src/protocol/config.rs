@@ -428,7 +428,9 @@ impl SizeableProof for SumcheckRoundProof {
     fn size_in_bits(&self) -> usize {
         let mut rows: Vec<(&str, usize)> = Vec::new();
 
-        let polys_size: usize = self.polys.iter()
+        let polys_size: usize = self
+            .polys
+            .iter()
             .flat_map(|p| &p.coefficients[0..p.num_coefficients])
             .map(|c| c.size_in_bits())
             .sum();
@@ -439,12 +441,18 @@ impl SizeableProof for SumcheckRoundProof {
             &self.claim_over_witness_conjugate,
             &self.norm_claim,
             &self.most_inner_norm_claim,
-        ].iter().map(|c| c.size_in_bits()).sum();
+        ]
+        .iter()
+        .map(|c| c.size_in_bits())
+        .sum();
         rows.push(("Claims", claims_size));
 
         rows.push((
             "RC opening inner",
-            self.rc_opening_inner.iter().map(|el| el.size_in_bits()).sum(),
+            self.rc_opening_inner
+                .iter()
+                .map(|el| el.size_in_bits())
+                .sum(),
         ));
 
         if let Some(rc_coarse) = &self.rc_coarse_projection_inner {
@@ -470,7 +478,9 @@ impl SizeableProof for SumcheckRoundProof {
 
         let next_round_size: usize = match &self.next_round_commitment {
             Some(NextRoundCommitment::Recursive(rc)) => rc.iter().map(|el| el.size_in_bits()).sum(),
-            Some(NextRoundCommitment::Simple(mat)) => mat.data.iter().map(|el| el.size_in_bits()).sum(),
+            Some(NextRoundCommitment::Simple(mat)) => {
+                mat.data.iter().map(|el| el.size_in_bits()).sum()
+            }
             None => 0,
         };
         rows.push(("Next round commitment", next_round_size));
@@ -504,25 +514,42 @@ impl SizeableProof for SimpleRoundProof {
         let rows: Vec<(&str, usize)> = vec![
             (
                 "Folded witness",
-                self.folded_witness.data.iter().map(|el| el.size_in_bits()).sum(),
+                self.folded_witness
+                    .data
+                    .iter()
+                    .map(|el| el.size_in_bits())
+                    .sum(),
             ),
             (
                 "Projection image ct",
-                self.projection_image_ct.data.iter().map(|el| el.size_in_bits()).sum(),
+                self.projection_image_ct
+                    .data
+                    .iter()
+                    .map(|el| el.size_in_bits())
+                    .sum(),
             ),
             (
                 "Batched projection image",
-                self.batched_projection_image.data.iter().map(|el| el.size_in_bits()).sum(),
+                self.batched_projection_image
+                    .data
+                    .iter()
+                    .map(|el| el.size_in_bits())
+                    .sum(),
             ),
             (
                 "Opening RHS",
-                self.opening_rhs.data.iter().map(|el| el.size_in_bits()).sum(),
+                self.opening_rhs
+                    .data
+                    .iter()
+                    .map(|el| el.size_in_bits())
+                    .sum(),
             ),
         ];
         let total: usize = rows.iter().map(|(_, s)| s).sum();
-        let params = [
-            ("opening", format!("{}x{}", self.opening_rhs.height, self.opening_rhs.width)),
-        ];
+        let params = [(
+            "opening",
+            format!("{}x{}", self.opening_rhs.height, self.opening_rhs.width),
+        )];
         emit_size_table("Simple round", &params, &rows, total);
         total
     }
@@ -542,7 +569,9 @@ pub struct IntermediateRoundProof {
 
 impl SizeableProof for IntermediateRoundProof {
     fn size_in_bits(&self) -> usize {
-        let polys_size: usize = self.polys.iter()
+        let polys_size: usize = self
+            .polys
+            .iter()
             .flat_map(|p| &p.coefficients[0..p.num_coefficients])
             .map(|c| c.size_in_bits())
             .sum();
@@ -551,35 +580,51 @@ impl SizeableProof for IntermediateRoundProof {
             &self.claim_over_witness,
             &self.claim_over_witness_conjugate,
             &self.norm_claim,
-        ].iter().map(|c| c.size_in_bits()).sum();
+        ]
+        .iter()
+        .map(|c| c.size_in_bits())
+        .sum();
 
         // Intermediate's `next_round_commitment` is always `Simple(mat)`, and `mat.data.len()`
         // IS the outer length — so we can derive `next_commitment` for the header directly.
-        let (next_round_size, next_commitment_outer_len): (usize, Option<usize>) = match &self.next_round_commitment {
-            Some(NextRoundCommitment::Recursive(_)) => unreachable!(
-                "Intermediate round should not have recursive commitment for next round."
-            ),
-            Some(NextRoundCommitment::Simple(mat)) => (
-                mat.data.iter().map(|el| el.size_in_bits()).sum(),
-                Some(mat.data.len()),
-            ),
-            None => (0, None),
-        };
+        let (next_round_size, next_commitment_outer_len): (usize, Option<usize>) =
+            match &self.next_round_commitment {
+                Some(NextRoundCommitment::Recursive(_)) => unreachable!(
+                    "Intermediate round should not have recursive commitment for next round."
+                ),
+                Some(NextRoundCommitment::Simple(mat)) => (
+                    mat.data.iter().map(|el| el.size_in_bits()).sum(),
+                    Some(mat.data.len()),
+                ),
+                None => (0, None),
+            };
 
         let rows: Vec<(&str, usize)> = vec![
             ("Polys", polys_size),
             ("Claims", claims_size),
             (
                 "Projection image ct",
-                self.projection_image_ct.data.iter().map(|el| el.size_in_bits()).sum(),
+                self.projection_image_ct
+                    .data
+                    .iter()
+                    .map(|el| el.size_in_bits())
+                    .sum(),
             ),
             (
                 "Batched projection image",
-                self.batched_projection_image.data.iter().map(|el| el.size_in_bits()).sum(),
+                self.batched_projection_image
+                    .data
+                    .iter()
+                    .map(|el| el.size_in_bits())
+                    .sum(),
             ),
             (
                 "Opening RHS",
-                self.opening_rhs.data.iter().map(|el| el.size_in_bits()).sum(),
+                self.opening_rhs
+                    .data
+                    .iter()
+                    .map(|el| el.size_in_bits())
+                    .sum(),
             ),
             ("Next round commitment", next_round_size),
         ];
@@ -587,7 +632,10 @@ impl SizeableProof for IntermediateRoundProof {
 
         let mut params: Vec<(&str, String)> = vec![
             ("sumcheck_vars", self.polys.len().to_string()),
-            ("opening", format!("{}x{}", self.opening_rhs.height, self.opening_rhs.width)),
+            (
+                "opening",
+                format!("{}x{}", self.opening_rhs.height, self.opening_rhs.width),
+            ),
         ];
         if let Some(outer_len) = next_commitment_outer_len {
             params.push(("next_commitment", outer_len.to_string()));

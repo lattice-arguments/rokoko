@@ -207,7 +207,8 @@ pub fn prover_round(
         use crate::common::norms;
 
         let folded_image = fold(image, &vec![fold_challenge.clone(); 1].concat());
-        let check = crate::protocol::project_coarse::project_ring(&folded_witness, &projection_matrix);
+        let check =
+            crate::protocol::project_coarse::project_ring(&folded_witness, &projection_matrix);
         let mismatch = check
             .data
             .iter()
@@ -223,10 +224,10 @@ pub fn prover_round(
             mismatch,
             check.data.len()
         );
-        
     }
 
-    let mut next_round_data = vec![RingElement::zero(Representation::IncompleteNTT); config.composed_witness_length];
+    let mut next_round_data =
+        vec![RingElement::zero(Representation::IncompleteNTT); config.composed_witness_length];
 
     let folded_witness_decomposed = {
         let _s = tracing::info_span!("prover_round::decompose").entered();
@@ -276,8 +277,7 @@ pub fn prover_round(
         &config.commitment_recursion,
     );
 
-    let next_witness_span =
-        tracing::info_span!("prover_round::next_witness_and_commit").entered();
+    let next_witness_span = tracing::info_span!("prover_round::next_witness_and_commit").entered();
 
     let next_config_base = config.next.as_ref().map(|c| config_base_from_config(c));
 
@@ -421,8 +421,8 @@ pub fn prover_round(
             Some(Config::Intermediate(next_intermediate_config)),
             Some(PendingNextCommitment::Basic(basic_commitment)),
         ) => {
-            let (points_outer, points_inner) = evaluation_points
-                .split_at(next_intermediate_config.witness_width.ilog2() as usize);
+            let (points_outer, points_inner) =
+                evaluation_points.split_at(next_intermediate_config.witness_width.ilog2() as usize);
             let next_context = match sumcheck_context.next.as_deref_mut() {
                 Some(NextSumcheckContext::Intermediate(next_ctx)) => next_ctx,
                 _ => panic!("Expected NextSumcheckContext::Intermediate in sumcheck_context.next"),
@@ -512,8 +512,7 @@ pub fn prover_round_intermediate(
 
     hash_wrapper.update_with_ring_element_slice(&batched_projection_image.data);
 
-    let mut fold_challenge =
-        vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
+    let mut fold_challenge = vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
     hash_wrapper.sample_low_op_norm_ring_vec_into(&mut fold_challenge);
 
     let folded_witness = fold(&witness, &fold_challenge);
@@ -557,9 +556,7 @@ pub fn prover_round_intermediate(
     let next_round_commitment: HorizontallyAlignedMatrix<RingElement> = commit_basic(
         &crs,
         &next_round_witness,
-        next_config_base
-            .map(|c| c.basic_commitment_rank())
-            .unwrap(),
+        next_config_base.map(|c| c.basic_commitment_rank()).unwrap(),
     );
     hash_wrapper.update_with_ring_element_slice(&next_round_commitment.data);
 

@@ -81,7 +81,8 @@ pub fn intermediate_sumcheck_verifier(
         combination_to_field.split_into_quadratic_extensions();
 
     let (mut batched_claim, idx) = batch_claims_linear(folded_commitment, &combination, 0);
-    let (batched_inner_eval_claims, idx) = batch_claims_linear(folded_opening_claims, &combination, idx);
+    let (batched_inner_eval_claims, idx) =
+        batch_claims_linear(folded_opening_claims, &combination, idx);
     batched_claim += &batched_inner_eval_claims;
     let (batched_fine_proj_claims, idx) =
         batch_claims_linear(folded_batched_projection_claims, &combination, idx);
