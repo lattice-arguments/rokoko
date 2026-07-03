@@ -154,7 +154,7 @@ pub fn execute_snark() {
         _ => panic!("Expected sumcheck config at the top level."),
     };
 
-    println!("Generating CRS...");
+    tracing::debug!("Generating CRS...");
     let crs = CRS::gen_crs(
         config.composed_witness_length,
         config.basic_commitment_rank + 2,
@@ -174,10 +174,10 @@ pub fn execute_snark() {
         ),
     };
 
-    println!("===== COMMITTING WITNESS =====");
-    let start = std::time::Instant::now();
+    tracing::debug!("\n==== COMMIT ====");
+    let _commit_span = tracing::info_span!("commit").entered();
     let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness);
-    println!("TOTAL Commit time: {:?} ns", start.elapsed().as_nanos());
+    drop(_commit_span);
 
     // Demo claim set: a structured linear claim, a segment-sum claim, and a
     // degree-2 claim, with values computed from the witness.
@@ -226,8 +226,9 @@ pub fn execute_snark() {
 
     let claims = vec![claim_linear, claim_square];
 
-    println!("==== SNARK PROVER STARTING ===");
-    let start = std::time::Instant::now();
+    tracing::debug!("\n==== PROVER ====");
+    let prover_start = std::time::Instant::now();
+    let _prover_span = tracing::info_span!("prover").entered();
 
     let mut hash_wrapper = HashWrapper::new();
     hash_wrapper.update_with_ring_element_slice(
@@ -236,14 +237,10 @@ pub fn execute_snark() {
             .most_inner_commitment(),
     );
 
-    let (initial_proof, chain_inputs) =
-        prove_initial_claims(&witness, &claims, &mut hash_wrapper);
-
-
-    println!(
-        "Initial claims sumcheck done: {} ms",
-        start.elapsed().as_millis()
-    );
+    let (initial_proof, chain_inputs) = {
+        let _s = tracing::info_span!("prover::initial_claims").entered();
+        prove_initial_claims(&witness, &claims, &mut hash_wrapper)
+    };
 
     let (proof, _) = prover_round(
         &crs,
@@ -256,25 +253,33 @@ pub fn execute_snark() {
         false,
         Some(hash_wrapper),
     );
-    println!("==== SNARK PROVER DONE ===");
-    println!("TOTAL Prover time: {:?} ns", start.elapsed().as_nanos());
+    drop(_prover_span);
+    let prover_elapsed = prover_start.elapsed();
+    #[cfg(not(any(feature = "events", feature = "profile")))]
+    println!("Prover:   {}", format_duration(prover_elapsed));
+    #[cfg(any(feature = "events", feature = "profile"))]
+    let _ = prover_elapsed;
 
     let proof_size_bits = proof.size_in_bits();
-    println!("Total proof size: {} KB", to_kb(proof_size_bits));
+    tracing::debug!("Total proof size: {} KB", to_kb(proof_size_bits));
 
-    println!("==== SNARK VERIFIER STARTING ===");
-    let start = std::time::Instant::now();
+    tracing::debug!("\n==== VERIFIER ====");
+    let verifier_start = std::time::Instant::now();
+    let _verifier_span = tracing::info_span!("verifier").entered();
 
     let mut hash_wrapper_verifier = HashWrapper::new();
     hash_wrapper_verifier.update_with_ring_element_slice(&rc_commitment);
 
-    let chain_inputs_verifier = verify_initial_claims(
-        config.witness_height,
-        config.witness_width,
-        &claims,
-        &initial_proof,
-        &mut hash_wrapper_verifier,
-    );
+    let chain_inputs_verifier = {
+        let _s = tracing::info_span!("verifier::initial_claims").entered();
+        verify_initial_claims(
+            config.witness_height,
+            config.witness_width,
+            &claims,
+            &initial_proof,
+            &mut hash_wrapper_verifier,
+        )
+    };
 
     verifier_round(
         &crs,
@@ -287,6 +292,9 @@ pub fn execute_snark() {
         &mut sumcheck_context_verifier,
         Some(hash_wrapper_verifier),
     );
-    println!("==== SNARK VERIFIER DONE ===");
-    println!("TOTAL Verifier time: {:?} ns", start.elapsed().as_nanos());
+    drop(_verifier_span);
+    #[cfg(not(any(feature = "events", feature = "profile")))]
+    println!("Verifier: {}", format_duration(verifier_start.elapsed()));
+    #[cfg(any(feature = "events", feature = "profile"))]
+    let _ = verifier_start;
 }
