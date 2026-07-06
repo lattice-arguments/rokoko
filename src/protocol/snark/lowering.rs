@@ -53,43 +53,12 @@ pub enum Weights {
     /// `eq(bits, .)` over the leading `length` variables; zero-cost gadget that
     /// every `WitnessSegment` lowers to.
     Selector { bits: usize, length: usize },
-}
-
-impl PublicFactor {
-    fn full(weights: Weights) -> Self {
-        PublicFactor {
-            prefix_len: 0,
-            suffix_len: 0,
-            weights,
-        }
-    }
-    /// eq-tensor with ring layers, over the full cube.
-    pub fn tensor_ring(layers: impl Into<Arc<Vec<RingElement>>>) -> Self {
-        Self::full(Weights::Tensor(Coeffs::Ring(layers.into())))
-    }
-    /// eq-tensor with field layers, over the full cube.
-    pub fn tensor_field(layers: impl Into<Arc<Vec<QuadraticExtension>>>) -> Self {
-        Self::full(Weights::Tensor(Coeffs::Field(layers.into())))
-    }
-    /// Arbitrary ring table over the full cube.
-    pub fn dense_ring(table: impl Into<Arc<Vec<RingElement>>>) -> Self {
-        Self::full(Weights::Dense(Coeffs::Ring(table.into())))
-    }
-    /// Arbitrary field table over the full cube.
-    pub fn dense_field(table: impl Into<Arc<Vec<QuadraticExtension>>>) -> Self {
-        Self::full(Weights::Dense(Coeffs::Field(table.into())))
-    }
-    /// `eq(bits, .)` over the leading `length` variables.
-    pub fn selector(bits: usize, length: usize) -> Self {
-        Self::full(Weights::Selector { bits, length })
-    }
-    /// Place the weights over the middle variables: constant on the top
-    /// `prefix_len` and bottom `suffix_len` variables.
-    pub fn over_middle(mut self, prefix_len: usize, suffix_len: usize) -> Self {
-        self.prefix_len = prefix_len;
-        self.suffix_len = suffix_len;
-        self
-    }
+    /// Coefficient-weighted sum of weight products: the prover folds a single
+    /// merged oracle over the union window, the verifier evaluates every
+    /// component factor with its native gadget and combines the results.
+    /// Component factors must be placed `Tensor`/`Dense` weights inside the
+    /// union window.
+    Combination(Arc<Vec<(RingElement, Vec<PublicFactor>)>>),
 }
 
 pub fn qe_one_minus(a: &QuadraticExtension) -> QuadraticExtension {
@@ -123,6 +92,184 @@ pub fn expand_field_tensor(layers: &[QuadraticExtension]) -> Vec<RingElement> {
             r
         })
         .collect()
+}
+
+/// A combination sub-factor expanded for indexed lookup over its own window.
+enum SubTable<'a> {
+    Scalar(Vec<u64>),
+    Field(&'a [QuadraticExtension]),
+    FieldOwned(Vec<QuadraticExtension>),
+    Ring(&'a [RingElement]),
+    RingOwned(Vec<RingElement>),
+}
+
+impl SubTable<'_> {
+    fn len(&self) -> usize {
+        match self {
+            SubTable::Scalar(v) => v.len(),
+            SubTable::Field(v) => v.len(),
+            SubTable::FieldOwned(v) => v.len(),
+            SubTable::Ring(v) => v.len(),
+            SubTable::RingOwned(v) => v.len(),
+        }
+    }
+
+    fn ring_at(&self, i: usize, out: &mut RingElement) {
+        match self {
+            SubTable::Scalar(v) => *out = RingElement::constant(v[i], Representation::IncompleteNTT),
+            SubTable::Field(v) => *out = embed_qe(&v[i]),
+            SubTable::FieldOwned(v) => *out = embed_qe(&v[i]),
+            SubTable::Ring(v) => out.set_from(&v[i]),
+            SubTable::RingOwned(v) => out.set_from(&v[i]),
+        }
+    }
+}
+
+fn scalar_dense(v: &[QuadraticExtension]) -> Option<Vec<u64>> {
+    if v.iter().any(|qe| qe.coeffs[1] != 0) {
+        return None;
+    }
+    Some(v.iter().map(|qe| qe.coeffs[0]).collect())
+}
+
+/// Mirror of [`expand_field_tensor`] staying in the field.
+fn expand_field_tensor_qe(layers: &[QuadraticExtension]) -> Vec<QuadraticExtension> {
+    let mut vals = vec![QuadraticExtension::one()];
+    for a in layers.iter().rev() {
+        let one_minus = qe_one_minus(a);
+        let mut next = Vec::with_capacity(vals.len() * 2);
+        let mut t = QuadraticExtension::zero();
+        for v in &vals {
+            t *= (v, &one_minus);
+            next.push(t);
+        }
+        for v in &vals {
+            t *= (v, a);
+            next.push(t);
+        }
+        vals = next;
+    }
+    vals
+}
+
+fn scalar_tensor_expansion(layers: &[QuadraticExtension]) -> Option<Vec<u64>> {
+    use crate::common::config::MOD_Q;
+    if layers.iter().any(|a| a.coeffs[1] != 0) {
+        return None;
+    }
+    let mut vals = vec![1u64];
+    for a in layers.iter().rev() {
+        let a0 = a.coeffs[0] % MOD_Q;
+        let one_minus = (MOD_Q + 1 - a0) % MOD_Q;
+        let mut next = Vec::with_capacity(vals.len() * 2);
+        for v in &vals {
+            next.push((*v as u128 * one_minus as u128 % MOD_Q as u128) as u64);
+        }
+        for v in &vals {
+            next.push((*v as u128 * a0 as u128 % MOD_Q as u128) as u64);
+        }
+        vals = next;
+    }
+    Some(vals)
+}
+
+fn sub_table(pf: &PublicFactor) -> SubTable<'_> {
+    match &pf.weights {
+        Weights::Dense(Coeffs::Field(v)) => match scalar_dense(v) {
+            Some(s) => SubTable::Scalar(s),
+            None => SubTable::Field(&v[..]),
+        },
+        Weights::Dense(Coeffs::Ring(v)) => SubTable::Ring(&v[..]),
+        Weights::Tensor(Coeffs::Field(layers)) => match scalar_tensor_expansion(layers) {
+            Some(s) => SubTable::Scalar(s),
+            None => SubTable::FieldOwned(expand_field_tensor_qe(layers)),
+        },
+        Weights::Tensor(Coeffs::Ring(layers)) => {
+            SubTable::RingOwned(PreprocessedRow::from_layers(&layers[..]).preprocessed_row)
+        }
+        Weights::Selector { .. } | Weights::Combination(_) => {
+            panic!("combination components must be tensor or dense weights")
+        }
+    }
+}
+
+/// The merged table `sum_a gamma_a * prod_f factor_{a,f}` a combination weight
+/// folds over its union window. All-scalar components take a lazy-reduction
+/// path: per coefficient, the gamma-scaled terms accumulate in u128 (each
+/// product < 2^102, so up to 32 components fit) with one reduction at the end.
+fn expand_combination(
+    parts: &[(RingElement, Vec<PublicFactor>)],
+    union_prefix: usize,
+    union_suffix: usize,
+    total_vars: usize,
+    len: usize,
+) -> Vec<RingElement> {
+    use crate::common::config::{DEGREE, MOD_Q};
+    let mut merged = vec![RingElement::zero(Representation::IncompleteNTT); len];
+
+    struct Component<'a> {
+        gamma: &'a RingElement,
+        subs: Vec<(usize, usize, SubTable<'a>)>,
+    }
+    let components: Vec<Component> = parts
+        .iter()
+        .map(|(gamma, factors)| {
+            let subs = factors
+                .iter()
+                .map(|pf| {
+                    assert!(
+                        pf.prefix_len >= union_prefix && pf.suffix_len >= union_suffix,
+                        "combination component escapes the union window"
+                    );
+                    let width = total_vars - pf.prefix_len - pf.suffix_len;
+                    let table = sub_table(pf);
+                    assert_eq!(table.len(), 1usize << width, "combination component length mismatch");
+                    (pf.suffix_len - union_suffix, (1usize << width) - 1, table)
+                })
+                .collect();
+            Component { gamma, subs }
+        })
+        .collect();
+
+    let (scalar_components, general_components): (Vec<_>, Vec<_>) = components
+        .into_iter()
+        .partition(|c| c.subs.iter().all(|(_, _, t)| matches!(t, SubTable::Scalar(_))));
+
+    if !scalar_components.is_empty() {
+        assert!(scalar_components.len() <= 32, "lazy accumulation caps at 32 components");
+        let mut cs = vec![0u64; scalar_components.len()];
+        for (i, m) in merged.iter_mut().enumerate() {
+            for (a, comp) in scalar_components.iter().enumerate() {
+                let mut c: u64 = 1;
+                for (shift, mask, tab) in &comp.subs {
+                    let SubTable::Scalar(v) = tab else { unreachable!() };
+                    c = (c as u128 * v[(i >> shift) & mask] as u128 % MOD_Q as u128) as u64;
+                }
+                cs[a] = c;
+            }
+            for j in 0..DEGREE {
+                let mut acc: u128 = 0;
+                for (a, comp) in scalar_components.iter().enumerate() {
+                    acc += cs[a] as u128 * comp.gamma.v[j] as u128;
+                }
+                m.v[j] = (acc % MOD_Q as u128) as u64;
+            }
+        }
+    }
+
+    let mut value = RingElement::zero(Representation::IncompleteNTT);
+    let mut sub_value = RingElement::zero(Representation::IncompleteNTT);
+    for comp in &general_components {
+        for (i, m) in merged.iter_mut().enumerate() {
+            value.set_from(comp.gamma);
+            for (shift, mask, tab) in &comp.subs {
+                tab.ring_at((i >> shift) & mask, &mut sub_value);
+                value *= &sub_value;
+            }
+            *m += &value;
+        }
+    }
+    merged
 }
 
 /// Transcript challenges for tensor layers, MSB-first.
@@ -228,22 +375,22 @@ pub enum ClaimExpr {
 }
 
 impl ClaimExpr {
-    pub fn witness() -> ClaimExpr {
+    pub(crate) fn witness() -> ClaimExpr {
         ClaimExpr::Factor(ClaimFactor::Witness)
     }
-    pub fn conj_witness() -> ClaimExpr {
+    pub(crate) fn conj_witness() -> ClaimExpr {
         ClaimExpr::Factor(ClaimFactor::ConjWitness)
     }
-    pub fn segment(prefix: Prefix) -> ClaimExpr {
+    pub(crate) fn segment(prefix: Prefix) -> ClaimExpr {
         ClaimExpr::Factor(ClaimFactor::WitnessSegment(prefix))
     }
-    pub fn conj_segment(prefix: Prefix) -> ClaimExpr {
+    pub(crate) fn conj_segment(prefix: Prefix) -> ClaimExpr {
         ClaimExpr::Factor(ClaimFactor::ConjWitnessSegment(prefix))
     }
-    pub fn public(factor: PublicFactor) -> ClaimExpr {
+    pub(crate) fn public(factor: PublicFactor) -> ClaimExpr {
         ClaimExpr::Factor(ClaimFactor::Public(factor))
     }
-    pub fn constant(value: RingElement) -> ClaimExpr {
+    pub(crate) fn constant(value: RingElement) -> ClaimExpr {
         ClaimExpr::Constant(value)
     }
 
@@ -294,21 +441,31 @@ impl std::ops::Neg for ClaimExpr {
 
 /// One functional-sumcheck claim: `sum_z expr(z) = value`.
 pub struct SnarkClaim {
-    pub expr: ClaimExpr,
-    pub value: RingElement,
+    pub(crate) expr: ClaimExpr,
+    pub(crate) value: RingElement,
+}
+
+impl SnarkClaim {
+    /// The claimed sum.
+    pub fn value(&self) -> &RingElement {
+        &self.value
+    }
 }
 
 pub struct InitialSumcheckProof {
     pub polys: Vec<Polynomial<QuadraticExtension>>,
     /// `z_0 = MLE[vec(W)](c)`
     pub witness_eval: RingElement,
-    /// `z_1 = MLE[conj(vec(W))](c)`
-    pub conj_witness_eval: RingElement,
+    /// `z_1 = MLE[conj(vec(W))](c)`; present only when some claim conjugates.
+    pub conj_witness_eval: Option<RingElement>,
 }
 
 impl crate::protocol::config::SizeableProof for InitialSumcheckProof {
     fn size_in_bits(&self) -> usize {
-        let mut size = self.witness_eval.size_in_bits() + self.conj_witness_eval.size_in_bits();
+        let mut size = self.witness_eval.size_in_bits();
+        if let Some(conj_eval) = &self.conj_witness_eval {
+            size += conj_eval.size_in_bits();
+        }
         for p in &self.polys {
             for c in &p.coefficients[..p.num_coefficients] {
                 size += c.size_in_bits();
@@ -568,6 +725,12 @@ impl<'a> ProverAssembler<'a> {
                             v.iter().map(embed_qe).collect::<Vec<_>>(),
                         )
                     }
+                    Weights::Combination(parts) => self.pooled_leaf(
+                        Arc::as_ptr(parts) as *const () as usize,
+                        prefix_len,
+                        suffix_len,
+                        expand_combination(parts, prefix_len, suffix_len, self.total_vars, middle_len),
+                    ),
                 }
             }
         }
@@ -680,7 +843,67 @@ impl VerifierAssembler {
                 ev.load_from(&v[..]);
                 ElephantCell::new(RingToFieldWrapperEvaluation::new(ElephantCell::new(ev) as _)) as _
             }
+            Weights::Combination(parts) => {
+                let cells: Vec<(RingElement, Vec<EvalCell>)> = parts
+                    .iter()
+                    .map(|(gamma, factors)| {
+                        let factor_cells: Vec<EvalCell> = factors
+                            .iter()
+                            .map(|f| {
+                                assert!(
+                                    !matches!(
+                                        f.weights,
+                                        Weights::Combination(_) | Weights::Selector { .. }
+                                    ),
+                                    "combination components must be tensor or dense weights"
+                                );
+                                self.public(f)
+                            })
+                            .collect();
+                        (gamma.clone(), factor_cells)
+                    })
+                    .collect();
+                ElephantCell::new(CombinationEvaluation::new(cells)) as _
+            }
         }
+    }
+}
+
+/// Verifier-side mirror of a combination weight: evaluates every component's
+/// factors at the final point and returns `sum_a gamma_a * prod_f eval_{a,f}`.
+struct CombinationEvaluation {
+    parts: Vec<(RingElement, Vec<EvalCell>)>,
+    result: RingElement,
+    evaluated: bool,
+}
+
+impl CombinationEvaluation {
+    fn new(parts: Vec<(RingElement, Vec<EvalCell>)>) -> Self {
+        CombinationEvaluation {
+            parts,
+            result: RingElement::zero(Representation::IncompleteNTT),
+            evaluated: false,
+        }
+    }
+}
+
+impl EvaluationSumcheckData for CombinationEvaluation {
+    type Element = RingElement;
+
+    fn evaluate(&mut self, point: &Vec<RingElement>) -> &RingElement {
+        if self.evaluated {
+            return &self.result;
+        }
+        let mut value = RingElement::zero(Representation::IncompleteNTT);
+        for (gamma, cells) in &self.parts {
+            value.set_from(gamma);
+            for cell in cells {
+                value *= cell.borrow_mut().evaluate(point);
+            }
+            self.result += &value;
+        }
+        self.evaluated = true;
+        &self.result
     }
 }
 
@@ -688,20 +911,22 @@ fn chain_inputs(
     evaluation_points: &[RingElement],
     witness_width: usize,
     witness_eval: &RingElement,
-    conj_witness_eval: &RingElement,
+    conj_witness_eval: Option<&RingElement>,
 ) -> ChainInputs {
     let width_bits = witness_width.ilog2() as usize;
     let (points_outer, points_inner) = evaluation_points.split_at(width_bits);
+    let mut evaluation_points_inner = vec![evaluation_point_to_structured_row(points_inner)];
+    let mut evaluation_points_outer = vec![evaluation_point_to_structured_row(points_outer)];
+    let mut claims = vec![witness_eval.clone()];
+    if let Some(conj_eval) = conj_witness_eval {
+        evaluation_points_inner.push(evaluation_point_to_structured_row_conjugate(points_inner));
+        evaluation_points_outer.push(evaluation_point_to_structured_row_conjugate(points_outer));
+        claims.push(conj_eval.conjugate());
+    }
     ChainInputs {
-        evaluation_points_inner: vec![
-            evaluation_point_to_structured_row(points_inner),
-            evaluation_point_to_structured_row_conjugate(points_inner),
-        ],
-        evaluation_points_outer: vec![
-            evaluation_point_to_structured_row(points_outer),
-            evaluation_point_to_structured_row_conjugate(points_outer),
-        ],
-        claims: vec![witness_eval.clone(), conj_witness_eval.conjugate()],
+        evaluation_points_inner,
+        evaluation_points_outer,
+        claims,
     }
 }
 /// Canonicalize a claim: lower segments to `selector x witness`, fold scales
@@ -709,6 +934,20 @@ fn chain_inputs(
 /// a product (eq is 0/1 on the cube, so eq^2 = eq and the sum is unchanged).
 /// The result's leaves are `Witness`/`ConjWitness`/`Public`/`Constant` only;
 /// both prover and verifier consume it, so their trees match exactly.
+/// Whether any factor reads the conjugated witness; decides (identically on
+/// both sides) if the conjugate opening `z_1` exists at all.
+fn uses_conjugate(expr: &ClaimExpr) -> bool {
+    match expr {
+        ClaimExpr::Factor(ClaimFactor::ConjWitness)
+        | ClaimExpr::Factor(ClaimFactor::ConjWitnessSegment(_)) => true,
+        ClaimExpr::Factor(_) | ClaimExpr::Constant(_) => false,
+        ClaimExpr::Product(a, b) | ClaimExpr::Sum(a, b) | ClaimExpr::Diff(a, b) => {
+            uses_conjugate(a) || uses_conjugate(b)
+        }
+        ClaimExpr::Scale(_, x) => uses_conjugate(x),
+    }
+}
+
 fn canonicalize(claim: &SnarkClaim) -> SnarkClaim {
     SnarkClaim {
         expr: canon(&claim.expr),
@@ -742,7 +981,11 @@ fn canon_product(expr: &ClaimExpr) -> ClaimExpr {
         parts.push(ClaimExpr::Constant(const_acc.clone()));
     }
     for (bits, length) in selectors {
-        parts.push(ClaimExpr::public(PublicFactor::selector(bits, length)));
+        parts.push(ClaimExpr::public(PublicFactor {
+            prefix_len: 0,
+            suffix_len: 0,
+            weights: Weights::Selector { bits, length },
+        }));
     }
     parts.extend(members);
 
@@ -877,7 +1120,7 @@ fn public_support(pf: &PublicFactor, total_vars: usize) -> (usize, usize) {
     }
 }
 
-pub fn prove_initial_claims(
+pub fn prove_claims(
     witness: &VerticallyAlignedMatrix<RingElement>,
     claims: &[SnarkClaim],
     hash_wrapper: &mut HashWrapper,
@@ -889,12 +1132,20 @@ pub fn prove_initial_claims(
     let claims = &canon[..];
     validate_claims(claims, total_vars);
 
-    let mut conjugated = vec![RingElement::zero(Representation::IncompleteNTT); n];
-    witness
-        .data
-        .iter()
-        .zip(conjugated.iter_mut())
-        .for_each(|(orig, conj)| orig.conjugate_into(conj));
+    // z_1 (the conjugate opening) ships only when some claim conjugates; a
+    // conjugate-free statement emits a single opening and skips this pass.
+    let needs_conjugate = claims.iter().any(|claim| uses_conjugate(&claim.expr));
+    let conjugated = if needs_conjugate {
+        let mut v = vec![RingElement::zero(Representation::IncompleteNTT); n];
+        witness
+            .data
+            .iter()
+            .zip(v.iter_mut())
+            .for_each(|(orig, conj)| orig.conjugate_into(conj));
+        v
+    } else {
+        vec![]
+    };
 
     let mut asm = ProverAssembler {
         witness: &witness.data,
@@ -984,25 +1235,31 @@ pub fn prove_initial_claims(
         .borrow()
         .final_evaluations()
         .clone();
-    let conj_witness_eval = if asm.conj_pool.first_cell(&FULL_WITNESS_KEY).is_none() {
+    let conj_witness_eval: Option<RingElement> = if !needs_conjugate {
+        None
+    } else if asm.conj_pool.first_cell(&FULL_WITNESS_KEY).is_none() {
         // no conjugate oracle was used: evaluate one on demand at the final point
         let mut ls = LinearSumcheck::new(n);
         ls.load_from(asm.conjugated);
         for r in &evaluation_points {
             ls.partial_evaluate(r);
         }
-        ls.final_evaluations().clone()
+        Some(ls.final_evaluations().clone())
     } else {
-        asm.conj_pool
-            .first_cell(&FULL_WITNESS_KEY)
-            .unwrap()
-            .borrow()
-            .final_evaluations()
-            .clone()
+        Some(
+            asm.conj_pool
+                .first_cell(&FULL_WITNESS_KEY)
+                .unwrap()
+                .borrow()
+                .final_evaluations()
+                .clone(),
+        )
     };
 
     hash_wrapper.update_with_ring_element(&witness_eval);
-    hash_wrapper.update_with_ring_element(&conj_witness_eval);
+    if let Some(conj_eval) = &conj_witness_eval {
+        hash_wrapper.update_with_ring_element(conj_eval);
+    }
 
     evaluation_points.reverse();
 
@@ -1010,7 +1267,7 @@ pub fn prove_initial_claims(
         &evaluation_points,
         witness.width,
         &witness_eval,
-        &conj_witness_eval,
+        conj_witness_eval.as_ref(),
     );
 
     (
@@ -1023,22 +1280,46 @@ pub fn prove_initial_claims(
     )
 }
 
-/// The verifier's side of [`prove_initial_claims`]: replays the batching,
-/// checks every sumcheck round, evaluates all public factors at the final
-/// point, and returns the evaluation claims the chain must prove. Claim
-/// values are used as given: witness-dependent values travel in the
-/// caller's envelope, and any structural check on them (a zero constant
-/// coefficient, say) is the caller's, on this side. Panics on any
-/// mismatch; `claims` must be rebuilt exactly as the prover built them
-/// (same transcript state).
-pub fn verify_initial_claims(
-    witness_height: usize,
-    witness_width: usize,
+/// Height and width of the committed witness matrix, as the verifier knows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WitnessShape {
+    pub height: usize,
+    pub width: usize,
+}
+
+impl WitnessShape {
+    pub fn new(height: usize, width: usize) -> WitnessShape {
+        WitnessShape { height, width }
+    }
+}
+
+impl From<(usize, usize)> for WitnessShape {
+    fn from((height, width): (usize, usize)) -> WitnessShape {
+        WitnessShape { height, width }
+    }
+}
+
+impl<T> From<&VerticallyAlignedMatrix<T>> for WitnessShape {
+    fn from(m: &VerticallyAlignedMatrix<T>) -> WitnessShape {
+        WitnessShape { height: m.height, width: m.width }
+    }
+}
+
+/// The verifier's side of [`prove_claims`]: replays the batching, checks
+/// every sumcheck round, evaluates all public factors at the final point,
+/// and returns the evaluation claims the chain must prove. Claim values are
+/// used as given: witness-dependent values travel in the caller's envelope,
+/// and any structural check on them (a zero constant coefficient, say) is
+/// the caller's, on this side. Panics on any mismatch; `claims` must be
+/// rebuilt exactly as the prover built them (same transcript state).
+pub fn verify_claims(
+    shape: impl Into<WitnessShape>,
     claims: &[SnarkClaim],
     proof: &InitialSumcheckProof,
     hash_wrapper: &mut HashWrapper,
 ) -> ChainInputs {
-    let n = witness_height * witness_width;
+    let shape = shape.into();
+    let n = shape.height * shape.width;
     assert!(n.is_power_of_two());
     let total_vars = n.ilog2() as usize;
     let canon: Vec<SnarkClaim> = claims.iter().map(canonicalize).collect();
@@ -1046,15 +1327,25 @@ pub fn verify_initial_claims(
     validate_claims(claims, total_vars);
     assert_eq!(proof.polys.len(), total_vars);
 
+    let needs_conjugate = claims.iter().any(|claim| uses_conjugate(&claim.expr));
+    assert_eq!(
+        proof.conj_witness_eval.is_some(),
+        needs_conjugate,
+        "proof and statement disagree on the conjugate opening"
+    );
+
     // Mirror of the prover's gadget tree over the claimed evaluations
     let witness_eval_cell = ElephantCell::new(FakeEvaluationLinearSumcheck::new());
     witness_eval_cell
         .borrow_mut()
         .set_result(proof.witness_eval.clone());
     let conj_eval_cell = ElephantCell::new(FakeEvaluationLinearSumcheck::new());
-    conj_eval_cell
-        .borrow_mut()
-        .set_result(proof.conj_witness_eval.clone());
+    conj_eval_cell.borrow_mut().set_result(
+        proof
+            .conj_witness_eval
+            .clone()
+            .unwrap_or_else(|| RingElement::zero(Representation::IncompleteNTT)),
+    );
 
     let asm = VerifierAssembler {
         witness_eval: witness_eval_cell as _,
@@ -1108,19 +1399,19 @@ pub fn verify_initial_claims(
     field_combiner_evaluation.load_challenges_from(qe.clone());
 
     let mut evaluation_points: Vec<RingElement> = vec![];
-    for poly_over_field in proof.polys.iter() {
+    for (round, poly_over_field) in proof.polys.iter().enumerate() {
         hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
 
         // The transcript absorbs the full coefficient array; the unused tail
         // must be zero so the prover cannot vary it under one absorption.
         for c in &poly_over_field.coefficients[poly_over_field.num_coefficients..] {
-            assert_eq!(c, &QuadraticExtension::zero(), "round polynomial tail nonzero");
+            assert_eq!(c, &QuadraticExtension::zero(), "round polynomial tail nonzero in round {round}");
         }
 
         assert_eq!(
             poly_over_field.at_zero() + poly_over_field.at_one(),
             batched_claim_over_field,
-            "Initial sumcheck round claim mismatch"
+            "round claim mismatch in sumcheck round {round}"
         );
 
         let mut f = QuadraticExtension::zero();
@@ -1141,15 +1432,17 @@ pub fn verify_initial_claims(
     );
 
     hash_wrapper.update_with_ring_element(&proof.witness_eval);
-    hash_wrapper.update_with_ring_element(&proof.conj_witness_eval);
+    if let Some(conj_eval) = &proof.conj_witness_eval {
+        hash_wrapper.update_with_ring_element(conj_eval);
+    }
 
     evaluation_points.reverse();
 
     chain_inputs(
         &evaluation_points,
-        witness_width,
+        shape.width,
         &proof.witness_eval,
-        &proof.conj_witness_eval,
+        proof.conj_witness_eval.as_ref(),
     )
 }
 
@@ -1157,6 +1450,7 @@ pub fn verify_initial_claims(
 mod tests {
     use super::*;
     use crate::common::{init_common, sampling::sample_random_short_vector};
+    use crate::protocol::snark::{eq, table, Region};
 
     fn inner_product_direct(a: &[RingElement], b: &[RingElement]) -> RingElement {
         let mut acc = RingElement::zero(Representation::IncompleteNTT);
@@ -1183,7 +1477,7 @@ mod tests {
         let a = sample_random_short_vector(n, 50, Representation::IncompleteNTT);
         let t1 = inner_product_direct(&a, &witness.data);
         let claim1 = SnarkClaim {
-            expr: ClaimExpr::public(PublicFactor::dense_ring(a.clone())) * ClaimExpr::witness(),
+            expr: table(a.clone()) * ClaimExpr::witness(),
             value: t1,
         };
 
@@ -1196,9 +1490,7 @@ mod tests {
         }
         let t2 = inner_product_direct(&b, &sq);
         let claim2 = SnarkClaim {
-            expr: ClaimExpr::public(PublicFactor::dense_ring(b))
-                * ClaimExpr::witness()
-                * ClaimExpr::witness(),
+            expr: table(b) * ClaimExpr::witness() * ClaimExpr::witness(),
             value: t2,
         };
 
@@ -1212,8 +1504,7 @@ mod tests {
             t3 += w;
         }
         let claim3 = SnarkClaim {
-            expr: ClaimExpr::public(PublicFactor::selector(prefix.prefix, prefix.length))
-                * ClaimExpr::witness(),
+            expr: ClaimExpr::segment(prefix),
             value: t3,
         };
 
@@ -1224,9 +1515,8 @@ mod tests {
         t4 *= &seven;
         t4 -= &inner_product_direct(&a, &conj);
         let claim4 = SnarkClaim {
-            expr: (ClaimExpr::public(PublicFactor::dense_ring(a.clone())) * ClaimExpr::witness())
-                .scale(&seven)
-                - (ClaimExpr::public(PublicFactor::dense_ring(a)) * ClaimExpr::conj_witness()),
+            expr: (table(a.clone()) * ClaimExpr::witness()).scale(&seven)
+                - (table(a) * ClaimExpr::conj_witness()),
             value: t4,
         };
 
@@ -1239,12 +1529,10 @@ mod tests {
         let (witness, claims) = toy_setup();
 
         let mut hw_prover = HashWrapper::new();
-        let (proof, chain_prover) = prove_initial_claims(&witness, &claims, &mut hw_prover);
+        let (proof, chain_prover) = prove_claims(&witness, &claims, &mut hw_prover);
 
         let mut hw_verifier = HashWrapper::new();
-        let chain_verifier = verify_initial_claims(
-            witness.height,
-            witness.width,
+        let chain_verifier = verify_claims((witness.height, witness.width),
             &claims,
             &proof,
             &mut hw_verifier,
@@ -1291,7 +1579,7 @@ mod tests {
         let dense1 = expand_field_tensor(&layers);
         let value1 = inner_product_direct(&dense1, &witness.data[quarter..2 * quarter]);
         let make_claim1 = || SnarkClaim {
-            expr: ClaimExpr::public(PublicFactor::tensor_field(layers.clone()).over_middle(2, 0))
+            expr: eq(layers.clone()).on(Region::new(n / 4, n / 4, n).vars())
                 * ClaimExpr::segment(Prefix {
                     prefix: 1,
                     length: 2,
@@ -1301,12 +1589,12 @@ mod tests {
 
         let mut hw_p = HashWrapper::new();
         let claims_p = vec![make_claim1()];
-        let (proof, chain_p) = prove_initial_claims(&witness, &claims_p, &mut hw_p);
+        let (proof, chain_p) = prove_claims(&witness, &claims_p, &mut hw_p);
 
         let mut hw_v = HashWrapper::new();
         let claims_v = vec![make_claim1()];
         let chain_v =
-            verify_initial_claims(witness.height, witness.width, &claims_v, &proof, &mut hw_v);
+            verify_claims((witness.height, witness.width), &claims_v, &proof, &mut hw_v);
         assert_eq!(chain_p.claims, chain_v.claims);
 
         for j in 0..chain_p.claims.len() {
@@ -1364,23 +1652,23 @@ mod tests {
             }
         }
 
+        let region = Region::new(start, n >> prefix.length, n);
+        let (node, slot) = region.vars().split_at(mb);
         let make_claim = || SnarkClaim {
-            expr: ClaimExpr::public(
-                PublicFactor::tensor_field(alpha.clone()).over_middle(prefix.length, in_bits),
-            ) * ClaimExpr::public(
-                PublicFactor::dense_ring(k.clone()).over_middle(prefix.length + mb, 0),
-            ) * ClaimExpr::segment(prefix.clone()),
+            expr: eq(alpha.clone()).on(node)
+                * table(k.clone()).on(slot)
+                * ClaimExpr::segment(prefix.clone()),
             value: value.clone(),
         };
 
         let mut hw_p = HashWrapper::new();
         let claims_p = vec![make_claim()];
-        let (proof, chain_p) = prove_initial_claims(&witness, &claims_p, &mut hw_p);
+        let (proof, chain_p) = prove_claims(&witness, &claims_p, &mut hw_p);
 
         let mut hw_v = HashWrapper::new();
         let claims_v = vec![make_claim()];
         let chain_v =
-            verify_initial_claims(witness.height, witness.width, &claims_v, &proof, &mut hw_v);
+            verify_claims((witness.height, witness.width), &claims_v, &proof, &mut hw_v);
         assert_eq!(chain_p.claims, chain_v.claims);
 
         for j in 0..chain_p.claims.len() {
@@ -1408,12 +1696,12 @@ mod tests {
         let quarter = n / 4;
 
         // field dense table over block 1
-        let table: Vec<QuadraticExtension> = (0..quarter)
+        let tab: Vec<QuadraticExtension> = (0..quarter)
             .map(|i| QuadraticExtension {
                 coeffs: [3 + i as u64, 5 + 2 * i as u64],
             })
             .collect();
-        let table_ring: Vec<RingElement> = table.iter().map(embed_qe).collect();
+        let table_ring: Vec<RingElement> = tab.iter().map(embed_qe).collect();
         let value_a = inner_product_direct(&table_ring, &witness.data[quarter..2 * quarter]);
 
         // ring eq-tensor over block 2
@@ -1426,7 +1714,7 @@ mod tests {
         let make_claims = || {
             vec![
                 SnarkClaim {
-                    expr: ClaimExpr::public(PublicFactor::dense_field(table.clone()).over_middle(2, 0))
+                    expr: table(tab.clone()).on(Region::new(quarter, quarter, n).vars())
                         * ClaimExpr::segment(Prefix {
                             prefix: 1,
                             length: 2,
@@ -1434,7 +1722,7 @@ mod tests {
                     value: value_a.clone(),
                 },
                 SnarkClaim {
-                    expr: ClaimExpr::public(PublicFactor::tensor_ring(layers.clone()).over_middle(2, 0))
+                    expr: eq(layers.clone()).on(Region::new(2 * quarter, quarter, n).vars())
                         * ClaimExpr::segment(Prefix {
                             prefix: 2,
                             length: 2,
@@ -1445,10 +1733,10 @@ mod tests {
         };
 
         let mut hw_p = HashWrapper::new();
-        let (proof, chain_p) = prove_initial_claims(&witness, &make_claims(), &mut hw_p);
+        let (proof, chain_p) = prove_claims(&witness, &make_claims(), &mut hw_p);
         let mut hw_v = HashWrapper::new();
         let chain_v =
-            verify_initial_claims(witness.height, witness.width, &make_claims(), &proof, &mut hw_v);
+            verify_claims((witness.height, witness.width), &make_claims(), &proof, &mut hw_v);
         assert_eq!(chain_p.claims, chain_v.claims);
 
         for j in 0..chain_p.claims.len() {
@@ -1508,9 +1796,8 @@ mod tests {
         // sum_seg w*conj(w) - ones_conj*w = 0 iff each coefficient is binary
         let claims = vec![SnarkClaim {
             expr: (ClaimExpr::segment(p.clone()) * ClaimExpr::conj_segment(p.clone()))
-                - (ClaimExpr::public(
-                    PublicFactor::dense_ring(vec![ones.conjugate(); quarter]).over_middle(2, 0),
-                ) * ClaimExpr::segment(p)),
+                - (table(vec![ones.conjugate(); quarter]).on(Region::new(quarter, quarter, n).vars())
+                    * ClaimExpr::segment(p)),
             value,
         }];
         (witness, claims)
@@ -1524,7 +1811,7 @@ mod tests {
         // constant-coefficient check itself, and uses the value as is.
         let (witness, claims) = binariness_setup(false);
         let mut hw_p = HashWrapper::new();
-        let (proof, chain_p) = prove_initial_claims(&witness, &claims, &mut hw_p);
+        let (proof, chain_p) = prove_claims(&witness, &claims, &mut hw_p);
 
         let (witness_v, mut claims_v) = binariness_setup(false);
         let _ = witness_v;
@@ -1535,7 +1822,7 @@ mod tests {
         claims_v[0].value = shipped;
         let mut hw_v = HashWrapper::new();
         let chain_v =
-            verify_initial_claims(witness.height, witness.width, &claims_v, &proof, &mut hw_v);
+            verify_claims((witness.height, witness.width), &claims_v, &proof, &mut hw_v);
         assert_eq!(chain_p.claims, chain_v.claims);
         for j in 0..chain_p.claims.len() {
             let direct = crate::protocol::open::claim(
@@ -1553,7 +1840,7 @@ mod tests {
         init_common();
         let (witness, claims) = binariness_setup(true);
         let mut hw_p = HashWrapper::new();
-        let _ = prove_initial_claims(&witness, &claims, &mut hw_p);
+        let _ = prove_claims(&witness, &claims, &mut hw_p);
 
         let shipped = claims[0].value.clone();
         let mut ct = shipped;
@@ -1568,13 +1855,11 @@ mod tests {
         let (witness, mut claims) = toy_setup();
 
         let mut hw_prover = HashWrapper::new();
-        let (proof, _) = prove_initial_claims(&witness, &claims, &mut hw_prover);
+        let (proof, _) = prove_claims(&witness, &claims, &mut hw_prover);
 
         claims[0].value += &RingElement::constant(1, Representation::IncompleteNTT);
         let mut hw_verifier = HashWrapper::new();
-        verify_initial_claims(
-            witness.height,
-            witness.width,
+        verify_claims((witness.height, witness.width),
             &claims,
             &proof,
             &mut hw_verifier,
@@ -1588,10 +1873,10 @@ mod tests {
         make: impl Fn() -> Vec<SnarkClaim>,
     ) {
         let mut hw_p = HashWrapper::new();
-        let (proof, chain_p) = prove_initial_claims(witness, &make(), &mut hw_p);
+        let (proof, chain_p) = prove_claims(witness, &make(), &mut hw_p);
         let mut hw_v = HashWrapper::new();
         let chain_v =
-            verify_initial_claims(witness.height, witness.width, &make(), &proof, &mut hw_v);
+            verify_claims((witness.height, witness.width), &make(), &proof, &mut hw_v);
         assert_eq!(chain_p.claims, chain_v.claims);
         for j in 0..chain_p.claims.len() {
             let direct = crate::protocol::open::claim(
@@ -1624,7 +1909,7 @@ mod tests {
     }
 
     fn dot(weights: &[RingElement]) -> ClaimExpr {
-        ClaimExpr::public(PublicFactor::dense_ring(weights.to_vec())) * ClaimExpr::witness()
+        table(weights.to_vec()) * ClaimExpr::witness()
     }
 
     #[test]
@@ -1705,7 +1990,7 @@ mod tests {
             expr: dot(&a) + dot(&b),
             value: value.clone(),
         }];
-        let (proof, _) = prove_initial_claims(&witness, &combined, &mut hw_p);
+        let (proof, _) = prove_claims(&witness, &combined, &mut hw_p);
 
         value += &RingElement::constant(1, Representation::IncompleteNTT);
         let claims_v = vec![SnarkClaim {
@@ -1713,6 +1998,6 @@ mod tests {
             value,
         }];
         let mut hw_v = HashWrapper::new();
-        verify_initial_claims(witness.height, witness.width, &claims_v, &proof, &mut hw_v);
+        verify_claims((witness.height, witness.width), &claims_v, &proof, &mut hw_v);
     }
 }
