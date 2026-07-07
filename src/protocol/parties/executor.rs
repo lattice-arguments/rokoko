@@ -143,11 +143,8 @@ pub fn execute_snark() {
         ring_arithmetic::{Representation, RingElement},
         sampling::sample_random_short_vector,
     };
-    use crate::protocol::commitment::Prefix;
     use crate::protocol::params::P_EN_TWO_EVALS;
-    use crate::protocol::snark::{
-        prove_initial_claims, verify_initial_claims, ClaimExpr, PublicFactor, SnarkClaim,
-    };
+    use crate::protocol::snark::{eq, prove_claims, verify_claims, witness_in, Claim, Region};
 
     let config = match &*P_EN_TWO_EVALS {
         Config::Sumcheck(config) => config,
@@ -179,10 +176,9 @@ pub fn execute_snark() {
     let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness);
     drop(_commit_span);
 
-    // Demo claim set: a structured linear claim, a segment-sum claim, and a
-    // degree-2 claim, with values computed from the witness.
     let total_vars = (config.witness_height * config.witness_width).ilog2() as usize;
     let n = config.witness_height * config.witness_width;
+    let everything = Region::whole(n);
 
     let structured_point: Vec<RingElement> = (0..total_vars)
         .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 1 << 10))
@@ -198,33 +194,35 @@ pub fn execute_snark() {
         }
         acc
     };
-    let claim_linear = SnarkClaim {
-        expr: ClaimExpr::public(PublicFactor::tensor_ring(structured_point)) * ClaimExpr::witness(),
-        value: t1,
-    };
+    let claim_linear = Claim::sums_to(eq(structured_point) * witness_in(everything), t1);
 
-    let segment = Prefix {
-        prefix: 0b01,
-        length: 2,
-    };
+    let segment = Region::new(n / 4, n / 4, n);
     let mut t2 = RingElement::zero(Representation::IncompleteNTT);
     {
-        let seg_len = n >> segment.length;
-        let start_idx = segment.prefix * seg_len;
         let mut temp = RingElement::zero(Representation::IncompleteNTT);
-        for w in &witness.data[start_idx..start_idx + seg_len] {
+        for w in &witness.data[segment.range()] {
             temp *= (w, w);
             t2 += &temp;
         }
     }
-    let claim_square = SnarkClaim {
-        expr: ClaimExpr::public(PublicFactor::selector(segment.prefix, segment.length))
-            * ClaimExpr::witness()
-            * ClaimExpr::witness(),
-        value: t2,
-    };
+    let claim_square = Claim::sums_to(witness_in(segment) * witness_in(segment), t2);
 
-    let claims = vec![claim_linear, claim_square];
+    // P_EN_TWO_EVALS is compiled for two openings, so the statement must use
+    // the conjugate; the norm claim is the natural way.
+    let mut t3 = RingElement::zero(Representation::IncompleteNTT);
+    {
+        let mut temp = RingElement::zero(Representation::IncompleteNTT);
+        for w in &witness.data {
+            temp *= (w, &w.conjugate());
+            t3 += &temp;
+        }
+    }
+    let claim_norm = Claim::sums_to(
+        witness_in(everything) * witness_in(everything).conjugate(),
+        t3,
+    );
+
+    let claims = vec![claim_linear, claim_square, claim_norm];
 
     tracing::debug!("\n==== PROVER ====");
     let prover_start = std::time::Instant::now();
@@ -238,8 +236,8 @@ pub fn execute_snark() {
     );
 
     let (initial_proof, chain_inputs) = {
-        let _s = tracing::info_span!("prover::initial_claims").entered();
-        prove_initial_claims(&witness, &claims, &mut hash_wrapper)
+        let _s = tracing::info_span!("prover::claims").entered();
+        prove_claims(&witness, &claims, &mut hash_wrapper)
     };
 
     let (proof, _) = prover_round(
@@ -271,10 +269,9 @@ pub fn execute_snark() {
     hash_wrapper_verifier.update_with_ring_element_slice(&rc_commitment);
 
     let chain_inputs_verifier = {
-        let _s = tracing::info_span!("verifier::initial_claims").entered();
-        verify_initial_claims(
-            config.witness_height,
-            config.witness_width,
+        let _s = tracing::info_span!("verifier::claims").entered();
+        verify_claims(
+            (config.witness_height, config.witness_width),
             &claims,
             &initial_proof,
             &mut hash_wrapper_verifier,
