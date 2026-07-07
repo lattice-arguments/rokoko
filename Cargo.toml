@@ -17,7 +17,6 @@ p-26 = []
 p-28 = []
 events = ["dep:rokoko-profiling"]
 profile = ["dep:rokoko-profiling"]
-debug = []
 snark = []
 
 [dependencies]

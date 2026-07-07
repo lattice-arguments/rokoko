@@ -11,25 +11,24 @@ use crate::snapshot::SnapshotLayer;
 #[must_use = "guards must be held alive for the duration of profiling"]
 pub struct TracingGuards(#[allow(dead_code)] Vec<Box<dyn Any>>);
 
-/// Install a tracing subscriber stack from three orthogonal flags:
+/// Install a tracing subscriber stack from two orthogonal flags:
 ///
 /// - `events`: console summary (`ConsoleLayer`). Empty `LINEAR_PHASES`
 ///   defaults to `verifier` so the per-round verifier breakdown is on by default.
 /// - `profile`: file artifacts (`ChromeLayer` JSON + `SnapshotLayer` JSON).
-/// - `debug`: lower the level filter from `info` to `trace`, surfacing the
 ///   `tracing::trace!` memory-layout dumps. No-op without `events` or `profile`.
+///
+/// Level filtering is `info` by default; the env `RUST_LOG` is set to control the logging level
 ///
 /// Panics if called more than once — the global subscriber can only be set once.
 pub fn setup(
     events: bool,
     profile: bool,
-    debug: bool,
     trace_name: &str,
     features: &str,
 ) -> TracingGuards {
-    let level = if debug { "trace" } else { "info" };
     let filter =
-        || EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
+        || EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     let parse_csv = |var: &str| -> Vec<String> {
         std::env::var(var)

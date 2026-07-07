@@ -97,7 +97,6 @@ fn main() {
     let _tracing_guards = rokoko_profiling::setup(
         cfg!(feature = "events"),
         cfg!(feature = "profile"),
-        cfg!(feature = "debug"),
         &trace_base,
         &active_features(),
     );
