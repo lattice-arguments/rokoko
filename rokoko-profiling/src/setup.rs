@@ -18,6 +18,9 @@ pub struct TracingGuards(#[allow(dead_code)] Vec<Box<dyn Any>>);
 /// - `profile`: file artifacts (`ChromeLayer` JSON + `SnapshotLayer` JSON).
 ///   `tracing::trace!` memory-layout dumps. No-op without `events` or `profile`.
 ///
+/// Note that `ConsoleLayer` aggregates by (parent, child) edge (where time went); while
+/// `SnapshotLayer` aggregates by span name (total time anywhere).
+///
 /// Level filtering is `info` by default; the env `RUST_LOG` is set to control the logging level
 ///
 /// Panics if called more than once — the global subscriber can only be set once.
