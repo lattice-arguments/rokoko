@@ -93,11 +93,7 @@ fn main() {
     );
 
     #[cfg(any(feature = "events", feature = "profile"))]
-    let trace_base = format!(
-        "{}_{}",
-        trace_name(),
-        profiling::timestamp_for_filename()
-    );
+    let trace_base = format!("{}_{}", trace_name(), profiling::timestamp_for_filename());
 
     #[cfg(any(feature = "events", feature = "profile"))]
     let _tracing_guards = profiling::setup(

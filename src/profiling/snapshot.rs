@@ -44,11 +44,7 @@ pub struct SnapshotGuard {
 }
 
 impl SnapshotLayer {
-    pub fn new(
-        trace_name: &str,
-        features: &str,
-        focus: Vec<String>,
-    ) -> (Self, SnapshotGuard) {
+    pub fn new(trace_name: &str, features: &str, focus: Vec<String>) -> (Self, SnapshotGuard) {
         let aggregates: Aggregates = Arc::new(Mutex::new(HashMap::new()));
         let path = PathBuf::from(format!("profiles/{trace_name}/snapshot.json"));
         let metadata = SnapshotMetadata {
@@ -139,8 +135,7 @@ fn machine_string() -> String {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get().to_string())
         .unwrap_or_else(|_| "?".to_string());
-    let kernel = sysinfo::System::kernel_version()
-        .unwrap_or_else(|| "unknown".to_string());
+    let kernel = sysinfo::System::kernel_version().unwrap_or_else(|| "unknown".to_string());
     let os = sysinfo::System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
     format!("{os} {kernel} {} / {cores} cores", std::env::consts::ARCH)
 }
