@@ -47,8 +47,6 @@ pub fn compute_j_batched(
     {
         use std::arch::x86_64::*;
 
-        // Each ring element has DEGREE u64 coefficients; each __m512i holds 8 of them,
-        // so we need `degree_blocks` iterations to cover a full ring element.
         let degree_blocks = DEGREE / 8;
 
         // Outer loop: iterate over the output ring elements.
@@ -149,7 +147,7 @@ pub fn compute_j_batched_collectively(
 ) -> [Vec<RingElement>; NOF_BATCHES] {
     let inner_width_ring =
         projection_matrix.projection_ratio * (projection_matrix.projection_height / DEGREE);
-    let mut j_batched = std::array::from_fn(|_| {
+    let mut j_batched: [Vec<RingElement>; NOF_BATCHES] = std::array::from_fn(|_| {
         vec![RingElement::zero(Representation::IncompleteNTT); inner_width_ring]
     });
 
@@ -163,36 +161,54 @@ pub fn compute_j_batched_collectively(
     {
         use std::arch::x86_64::*;
 
-        let degree_blocks = DEGREE / 8;
+        const DEGREE_BLOCKS: usize = DEGREE / 8;
 
         for i in 0..inner_width_ring {
             let base_index = i * DEGREE;
+            let row_ptrs: [*mut i64; NOF_BATCHES] =
+                std::array::from_fn(|b| j_batched[b][i].v.as_mut_ptr() as *mut i64);
+            let mut loaded_rows: [[__m512i; DEGREE_BLOCKS]; NOF_BATCHES] =
+                std::array::from_fn(|b| {
+                    std::array::from_fn(|j_| unsafe { _mm512_load_epi64(row_ptrs[b].add(j_ * 8)) })
+                });
             for k in 0..projection_matrix.projection_height {
-                // Broadcast the k-th challenge weight into all 8 lanes of a zmm.
                 unsafe {
                     let row_base = k * projection_matrix.width;
                     let kpos_row = projection_matrix.pos_masks.data.as_ptr().add(row_base);
                     let kinc_row = projection_matrix.non_zero_masks.data.as_ptr().add(row_base);
                     let base_chunk = base_index >> 3;
 
-                    for j_ in 0..degree_blocks {
+                    let coeff_vecs: [__m512i; NOF_BATCHES] =
+                        std::array::from_fn(|b| _mm512_set1_epi64(c_1_values[b][k] as i64));
+
+                    for j_ in 0..DEGREE_BLOCKS {
                         let chunk = base_chunk + j_;
                         let k_pos = *kpos_row.add(chunk);
                         let k_inc = *kinc_row.add(chunk);
                         let add: __mmask8 = (k_inc & k_pos) as __mmask8;
                         let sub: __mmask8 = (k_inc & !k_pos) as __mmask8;
                         for b in 0..NOF_BATCHES {
-                            let coeff_vec = _mm512_set1_epi64(c_1_values[b][k] as i64);
-
-                            let row_ptr = j_batched[b][i].v.as_mut_ptr() as *mut i64;
-                            let base_ptr = row_ptr.add(j_ * 8);
-                            let cur = _mm512_load_epi64(base_ptr);
-
-                            let res = _mm512_mask_add_epi64(cur, add, cur, coeff_vec);
-                            let res = _mm512_mask_sub_epi64(res, sub, res, coeff_vec);
-
-                            _mm512_store_epi64(base_ptr, res);
+                            let coeff_vec = coeff_vecs[b];
+                            loaded_rows[b][j_] = _mm512_mask_add_epi64(
+                                loaded_rows[b][j_],
+                                add,
+                                loaded_rows[b][j_],
+                                coeff_vec,
+                            );
+                            loaded_rows[b][j_] = _mm512_mask_sub_epi64(
+                                loaded_rows[b][j_],
+                                sub,
+                                loaded_rows[b][j_],
+                                coeff_vec,
+                            );
                         }
+                    }
+                }
+            }
+            for (b, row) in loaded_rows.iter().enumerate() {
+                for (j_, res) in row.iter().enumerate() {
+                    unsafe {
+                        _mm512_store_epi64(row_ptrs[b].add(j_ * 8), *res);
                     }
                 }
             }
@@ -223,7 +239,6 @@ pub fn compute_j_batched_collectively(
             }
         }
     }
-
     for bp in j_batched.iter_mut() {
         for el in bp.iter_mut() {
             unsafe {
@@ -805,14 +820,19 @@ pub fn verifier_sample_projection_challenges_collectively(
     config: &dyn ConfigBase,
     hash_wrapper: &mut HashWrapper,
 ) -> [BatchedProjectionChallengesSuccinct; NOF_BATCHES] {
-    let challenges: [BatchedProjectionChallengesSuccinctWithoutJBatched; NOF_BATCHES] =
+    let challenges: [BatchedProjectionChallengesSuccinctWithoutJBatched; NOF_BATCHES] = {
+        let _s = tracing::info_span!("sample_projection_challenges::layers").entered();
         std::array::from_fn(|_| {
             verifier_sample_projection_challenges(projection_matrix, config, hash_wrapper)
-        });
+        })
+    };
 
     let js_batched = {
-        let c_1_values_batches: [Vec<u64>; NOF_BATCHES] =
-            std::array::from_fn(|i| precompute_structured_values_fast(&challenges[i].c_1_layers));
+        let _s = tracing::info_span!("sample_projection_challenges::j_batched").entered();
+        let c_1_values_batches: [Vec<u64>; NOF_BATCHES] = {
+            let _s = tracing::info_span!("j_batched::c_1_values").entered();
+            std::array::from_fn(|i| precompute_structured_values_fast(&challenges[i].c_1_layers))
+        };
         compute_j_batched_collectively(projection_matrix, &c_1_values_batches)
     };
 
