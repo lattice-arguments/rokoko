@@ -60,6 +60,11 @@ pub fn execute() {
 
     println!("==== PROVER STARTING ===");
 
+<<<<<<< HEAD
+=======
+    let prover_start = std::time::Instant::now();
+    let _prover_span = tracing::info_span!("prover").entered();
+>>>>>>> 525cbd6 (rework tracing)
     let (proof, claims) = prover_round(
         &crs,
         &config,
@@ -83,8 +88,13 @@ pub fn execute() {
     println!("Total proof size: {} KB", to_kb(proof_size_bits));
     println!("====================\n");
 
+<<<<<<< HEAD
     let start = std::time::Instant::now();
     println!("==== VERIFIER STARTING ===");
+=======
+    let verifier_start = std::time::Instant::now();
+    let _verifier_span = tracing::info_span!("verifier").entered();
+>>>>>>> 525cbd6 (rework tracing)
     verifier_round(
         &verifier_crs,
         &config,

@@ -615,6 +615,7 @@ version = "0.1.0"
 dependencies = [
  "aes",
  "blake3",
+ "chrono",
  "criterion",
  "ctr",
  "incomplete-rexl",
@@ -623,6 +624,15 @@ dependencies = [
  "mimalloc",
  "num",
  "rand",
+<<<<<<< HEAD
+=======
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tracing",
+ "tracing-chrome",
+ "tracing-subscriber",
+>>>>>>> 525cbd6 (rework tracing)
 ]
 
 [[package]]
