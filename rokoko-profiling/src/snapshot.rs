@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -129,35 +128,19 @@ impl Drop for SnapshotGuard {
 }
 
 fn git_sha() -> String {
-    Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string())
+    env!("GIT_SHA").to_string()
 }
 
 fn now_iso8601() -> String {
-    Command::new("date")
-        .args(["-u", "+%Y-%m-%dT%H:%M:%SZ"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string())
+    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 fn machine_string() -> String {
-    let uname = Command::new("uname")
-        .args(["-srm"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
     let cores = std::thread::available_parallelism()
         .map(|n| n.get().to_string())
         .unwrap_or_else(|_| "?".to_string());
-    format!("{uname} / {cores} cores")
+    let kernel = sysinfo::System::kernel_version()
+        .unwrap_or_else(|| "unknown".to_string());
+    let os = sysinfo::System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
+    format!("{os} {kernel} {} / {cores} cores", std::env::consts::ARCH)
 }
