@@ -15,9 +15,8 @@ profile-sumcheck = []
 p-30 = []
 p-26 = []
 p-28 = []
-events = ["dep:tracing-subscriber"]
+events = []
 profile = [
-    "dep:tracing-subscriber",
     "dep:tracing-chrome",
     "dep:chrono",
     "dep:sysinfo",
@@ -37,7 +36,7 @@ incomplete-rexl = { path = "incomplete-rexl", optional = true }
 libloading = "0.8.6"
 libm = "0.2"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"], optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-chrome = { version = "0.7", optional = true }
 chrono = { version = "0.4", optional = true }
 sysinfo = { version = "0.32", optional = true }
