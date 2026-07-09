@@ -7,6 +7,7 @@ use tracing_subscriber::{prelude::*, registry::Registry, EnvFilter, Layer};
 #[cfg(feature = "profile")]
 use tracing_chrome::ChromeLayerBuilder;
 
+#[cfg(feature = "events")]
 use super::console::ConsoleLayer;
 use super::log::LogLayer;
 #[cfg(feature = "profile")]
@@ -15,8 +16,8 @@ use super::snapshot::SnapshotLayer;
 #[must_use = "guards must be held alive for the duration of profiling"]
 pub struct TracingGuards(#[allow(dead_code)] Vec<Box<dyn Any>>);
 
-/// Install a tracing subscriber stack from two orthogonal flags:
-///
+/// Install the global tracing subscriber. Can be only set once.
+/// Two different layers are optionally selected based on the feature flags:
 /// - `events`: console summary (`ConsoleLayer`).
 /// - `profile`: file artifacts (`ChromeLayer` JSON + `SnapshotLayer` JSON).
 ///
@@ -26,7 +27,8 @@ pub struct TracingGuards(#[allow(dead_code)] Vec<Box<dyn Any>>);
 /// Level filtering is `info` by default; the env `RUST_LOG` is set to control the logging level
 ///
 /// Panics if called more than once — the global subscriber can only be set once.
-pub fn setup(events: bool, profile: bool, trace_name: &str, features: &str) -> TracingGuards {
+pub fn setup() -> TracingGuards {
+
     let filter = || EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     let parse_csv = |var: &str| -> Vec<String> {
@@ -42,25 +44,27 @@ pub fn setup(events: bool, profile: bool, trace_name: &str, features: &str) -> T
             .unwrap_or_default()
     };
 
-    let focus = parse_csv("PROFILE_FOCUS");
-
-    let max_level =
-        <EnvFilter as Layer<Registry>>::max_level_hint(&filter()).unwrap_or(LevelFilter::INFO);
-    let linear = max_level >= LevelFilter::DEBUG;
+    let _focus = parse_csv("PROFILE_FOCUS");
 
     let mut layers: Vec<Box<dyn Layer<Registry> + Send + Sync>> = Vec::new();
     let mut guards: Vec<Box<dyn Any>> = Vec::new();
 
     layers.push(LogLayer.with_filter(filter()).boxed());
 
-    if events {
-        let (console_layer, console_guard) = ConsoleLayer::new(focus.clone(), linear);
+    #[cfg(feature = "events")]
+    {
+        let max_level =
+            <EnvFilter as Layer<Registry>>::max_level_hint(&filter()).unwrap_or(LevelFilter::INFO);
+        let linear = max_level >= LevelFilter::DEBUG;
+        let (console_layer, console_guard) = ConsoleLayer::new(_focus.clone(), linear);
         layers.push(console_layer.with_filter(filter()).boxed());
         guards.push(Box::new(console_guard));
     }
 
     #[cfg(feature = "profile")]
-    if profile {
+    {
+        let features = active_features();
+        let trace_name = trace_name();
         let run_dir = format!("profiles/{trace_name}");
         let _ = std::fs::create_dir_all(&run_dir);
         let chrome_path = format!("{run_dir}/trace.json");
@@ -71,14 +75,10 @@ pub fn setup(events: bool, profile: bool, trace_name: &str, features: &str) -> T
         layers.push(chrome_layer.with_filter(filter()).boxed());
         guards.push(Box::new(chrome_guard));
 
-        let (snapshot_layer, snapshot_guard) = SnapshotLayer::new(trace_name, features, focus);
+        let (snapshot_layer, snapshot_guard) = SnapshotLayer::new(trace_name, &features, _focus);
         layers.push(snapshot_layer.with_filter(filter()).boxed());
         guards.push(Box::new(snapshot_guard));
     }
-
-    // `profile`-only file artifacts are compiled out without that feature.
-    #[cfg(not(feature = "profile"))]
-    let _ = (profile, trace_name, features);
 
     if !layers.is_empty() {
         tracing_subscriber::registry().with(layers).init();
@@ -110,4 +110,33 @@ pub fn print_artifact_paths(trace_base: &str) {
         https://profiler.firefox.com/\n  \
         https://ui.perfetto.dev/"
     );
+}
+
+pub fn trace_name() -> &'static str {
+    match (
+        cfg!(feature = "p-26"),
+        cfg!(feature = "p-28"),
+        cfg!(feature = "p-30"),
+    ) {
+        (true, _, _) => "p26",
+        (_, true, _) => "p28",
+        (_, _, true) => "p30",
+        _ => panic!("--features events|profile requires one of p-26, p-28, p-30"),
+    }
+}
+
+fn active_features() -> String {
+    [
+        cfg!(feature = "p-26").then_some("p-26"),
+        cfg!(feature = "p-28").then_some("p-28"),
+        cfg!(feature = "p-30").then_some("p-30"),
+        cfg!(feature = "incomplete-rexl").then_some("incomplete-rexl"),
+        cfg!(feature = "unsafe-sumcheck").then_some("unsafe-sumcheck"),
+        cfg!(feature = "debug-hardness").then_some("debug-hardness"),
+        cfg!(feature = "debug-decomp").then_some("debug-decomp"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(",")
 }
