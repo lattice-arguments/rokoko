@@ -326,6 +326,7 @@ pub fn tensor_at(layers_msb: &[QuadraticExtension], index: usize) -> QuadraticEx
 }
 
 /// `eq(a, z)` over matching layer/point slices, MSB-first.
+#[allow(dead_code)]
 pub fn eq_layers_qe(a: &[QuadraticExtension], z: &[QuadraticExtension]) -> QuadraticExtension {
     let mut r = QuadraticExtension::one();
     for (x, y) in a.iter().zip(z.iter()) {
@@ -404,6 +405,7 @@ impl ClaimExpr {
     pub(crate) fn public(factor: PublicFactor) -> ClaimExpr {
         ClaimExpr::Factor(ClaimFactor::Public(factor))
     }
+    #[allow(dead_code)]
     pub(crate) fn constant(value: RingElement) -> ClaimExpr {
         ClaimExpr::Constant(value)
     }
