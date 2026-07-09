@@ -18,7 +18,10 @@ pub(crate) fn is_in_focus<S>(span: &SpanRef<'_, S>, focus: &[String]) -> bool
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    focus.is_empty() || outermost_matching_ancestor(span, focus).is_some()
+    focus.is_empty()
+        || span
+            .scope()
+            .any(|ancestor| focus.iter().any(|tok| matches_token(ancestor.name(), tok)))
 }
 
 fn round_base(name: &str) -> Option<&str> {
@@ -39,35 +42,21 @@ where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
     let mut depth = 0;
-    let mut child: Option<String> = None;
+    let mut child: Option<&'static str> = None;
     for ancestor in span.scope() {
         let name = ancestor.name();
-        if child.as_deref().is_some_and(|c| !same_round_chain(c, name)) {
+        if child.is_some_and(|c| !same_round_chain(c, name)) {
             depth += 1;
         }
-        child = Some(name.to_string());
+        child = Some(name);
     }
     depth
 }
 
-fn outermost_matching_ancestor<S>(span: &SpanRef<'_, S>, tokens: &[String]) -> Option<String>
-where
-    S: Subscriber + for<'a> LookupSpan<'a>,
-{
-    let mut root = None;
-    for ancestor in span.scope() {
-        let n = ancestor.name();
-        if tokens.iter().any(|tok| matches_token(n, tok)) {
-            root = Some(n.to_string());
-        }
-    }
-    root
-}
-
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 struct EdgeKey {
-    parent: Option<String>,
-    child: String,
+    parent: Option<&'static str>,
+    child: &'static str,
 }
 
 #[derive(Default, Clone)]
@@ -82,14 +71,14 @@ type EdgeMap = HashMap<EdgeKey, EdgeAggregate>;
 struct PhaseData {
     total: Duration,
     lines: Vec<(Instant, String)>,
-    rounds: Vec<(Instant, String, Duration)>,
+    rounds: Vec<(Instant, &'static str, Duration)>,
 }
 
-type LinearBuffers = HashMap<String, PhaseData>;
+type LinearBuffers = HashMap<&'static str, PhaseData>;
 
 pub struct ConsoleLayer {
     edges: Arc<Mutex<EdgeMap>>,
-    root_order: Arc<Mutex<Vec<String>>>,
+    root_order: Arc<Mutex<Vec<&'static str>>>,
     linear_buffers: Arc<Mutex<LinearBuffers>>,
     focus: Vec<String>,
     linear: bool,
@@ -97,7 +86,7 @@ pub struct ConsoleLayer {
 
 pub struct ConsoleSummaryGuard {
     edges: Arc<Mutex<EdgeMap>>,
-    root_order: Arc<Mutex<Vec<String>>>,
+    root_order: Arc<Mutex<Vec<&'static str>>>,
     linear_buffers: Arc<Mutex<LinearBuffers>>,
 }
 
@@ -150,8 +139,8 @@ where
             (timing.start, timing.start.elapsed(), timing.recursive_child_ns)
         };
         let parent = span.parent();
-        let parent_name = parent.as_ref().map(|p| p.name().to_string());
-        let child_name = span.name().to_string();
+        let parent_name = parent.as_ref().map(|p| p.name());
+        let child_name = span.name();
 
         if let Some(parent) = &parent {
             if same_round_chain(parent.name(), span.name()) {
@@ -168,11 +157,7 @@ where
         if self.linear {
             let per_round =
                 Duration::from_nanos(elapsed.as_nanos().saturating_sub(recursive_child_ns) as u64);
-            let root_name = span
-                .scope()
-                .last()
-                .map(|s| s.name().to_string())
-                .unwrap_or_else(|| child_name.clone());
+            let root_name = span.scope().last().map_or(child_name, |s| s.name());
             let is_root = parent_name.is_none();
 
             {
@@ -197,15 +182,15 @@ where
                     );
                     phase.lines.push((start, line));
                 }
-                if round_base(&child_name).is_some() {
-                    phase.rounds.push((start, child_name.clone(), per_round));
+                if round_base(child_name).is_some() {
+                    phase.rounds.push((start, child_name, per_round));
                 }
             }
 
             if is_root {
                 let mut order = self.root_order.lock().expect("root_order lock poisoned");
-                if !order.iter().any(|n| n == &child_name) {
-                    order.push(child_name.clone());
+                if !order.iter().any(|&n| n == child_name) {
+                    order.push(child_name);
                 }
             }
             return;
@@ -214,16 +199,16 @@ where
         let mut edges = self.edges.lock().expect("edges lock poisoned");
         let entry = edges
             .entry(EdgeKey {
-                parent: parent_name.clone(),
-                child: child_name.clone(),
+                parent: parent_name,
+                child: child_name,
             })
             .or_default();
         entry.total_ns += elapsed.as_nanos();
         entry.calls += 1;
         if parent_name.is_none() {
             let mut order = self.root_order.lock().expect("root_order lock poisoned");
-            if !order.iter().any(|n| n == &child_name) {
-                order.push(child_name.clone());
+            if !order.iter().any(|&n| n == child_name) {
+                order.push(child_name);
             }
         }
     }
@@ -250,13 +235,13 @@ impl Drop for ConsoleSummaryGuard {
         let mut out = io::stdout().lock();
         let _ = writeln!(out);
 
-        let roots: Vec<(String, u128)> = root_order
+        let roots: Vec<(&'static str, u128)> = root_order
             .into_iter()
             .map(|name| {
                 let total = edges
                     .get(&EdgeKey {
                         parent: None,
-                        child: name.clone(),
+                        child: name,
                     })
                     .map(|agg| agg.total_ns)
                     .unwrap_or(0);
@@ -264,7 +249,7 @@ impl Drop for ConsoleSummaryGuard {
             })
             .collect();
 
-        for (i, (root, total_ns)) in roots.iter().enumerate() {
+        for (i, &(root, total_ns)) in roots.iter().enumerate() {
             if i > 0 {
                 let _ = writeln!(out);
             }
@@ -310,16 +295,16 @@ impl Drop for ConsoleSummaryGuard {
                 continue;
             }
 
-            write_phase_header(&mut out, root, Duration::from_nanos(*total_ns as u64));
+            write_phase_header(&mut out, root, Duration::from_nanos(total_ns as u64));
 
-            let mut visited = HashSet::new();
-            visited.insert(root.clone());
-            let mut shown_edges: HashSet<(Option<String>, String)> = HashSet::new();
+            let mut visited: HashSet<&'static str> = HashSet::new();
+            visited.insert(root);
+            let mut shown_edges: HashSet<(Option<&'static str>, &'static str)> = HashSet::new();
 
-            let mut children: Vec<(String, u128)> = edges
+            let mut children: Vec<(&'static str, u128)> = edges
                 .iter()
-                .filter(|(k, _)| k.parent.as_deref() == Some(root.as_str()))
-                .map(|(k, v)| (k.child.clone(), v.total_ns))
+                .filter(|(k, _)| k.parent == Some(root))
+                .map(|(k, v)| (k.child, v.total_ns))
                 .collect();
             children.sort_by(|a, b| b.1.cmp(&a.1));
             children.dedup_by(|a, b| a.0 == b.0);
@@ -328,9 +313,9 @@ impl Drop for ConsoleSummaryGuard {
                 print_subtree(
                     &mut out,
                     &edges,
-                    &child,
+                    child,
                     Some(root),
-                    Some(*total_ns),
+                    Some(total_ns),
                     1,
                     &mut visited,
                     &mut shown_edges,
@@ -357,19 +342,17 @@ fn write_phase_header(out: &mut impl io::Write, root: &str, total: Duration) {
 fn print_subtree(
     out: &mut impl io::Write,
     edges: &EdgeMap,
-    name: &str,
-    parent: Option<&str>,
+    name: &'static str,
+    parent: Option<&'static str>,
     parent_total_ns: Option<u128>,
     depth: usize,
-    visited: &mut HashSet<String>,
-    shown_edges: &mut HashSet<(Option<String>, String)>,
+    visited: &mut HashSet<&'static str>,
+    shown_edges: &mut HashSet<(Option<&'static str>, &'static str)>,
 ) {
     let indent = "  ".repeat(depth);
     let display = strip_common_prefix(name, parent);
 
-    // Re-expanding the same edge elsewhere in the tree would print identical
-    // numbers a second time and mislead the reader, so stub on repeat.
-    let edge_id = (parent.map(String::from), name.to_string());
+    let edge_id = (parent, name);
     if shown_edges.contains(&edge_id) {
         let _ = writeln!(out, "{indent}…{display}");
         return;
@@ -383,8 +366,8 @@ fn print_subtree(
     shown_edges.insert(edge_id);
 
     let edge_key = EdgeKey {
-        parent: parent.map(String::from),
-        child: name.to_string(),
+        parent,
+        child: name,
     };
     let agg = edges.get(&edge_key).cloned().unwrap_or_default();
     let time = format_duration(Duration::from_nanos(agg.total_ns as u64));
@@ -416,12 +399,12 @@ fn print_subtree(
         pct_w = PCT_WIDTH,
     );
 
-    visited.insert(name.to_string());
+    visited.insert(name);
 
-    let mut children: Vec<(String, u128)> = edges
+    let mut children: Vec<(&'static str, u128)> = edges
         .iter()
-        .filter(|(k, _)| k.parent.as_deref() == Some(name))
-        .map(|(k, v)| (k.child.clone(), v.total_ns))
+        .filter(|(k, _)| k.parent == Some(name))
+        .map(|(k, v)| (k.child, v.total_ns))
         .collect();
     children.sort_by(|a, b| b.1.cmp(&a.1));
     children.dedup_by(|a, b| a.0 == b.0);
@@ -430,7 +413,7 @@ fn print_subtree(
         print_subtree(
             out,
             edges,
-            &child,
+            child,
             Some(name),
             Some(agg.total_ns),
             depth + 1,
