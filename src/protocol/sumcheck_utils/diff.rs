@@ -51,7 +51,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
     type Element = E;
 
     fn gadget_span(&self) -> tracing::Span {
-        tracing::info_span!("sumcheck::gadget::diff")
+        tracing::trace_span!("sumcheck::gadget::diff")
     }
 
     fn get_scratch_poly(&self) -> &RefCell<Polynomial<E>> {

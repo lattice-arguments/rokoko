@@ -63,7 +63,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
     type Element = E;
 
     fn gadget_span(&self) -> tracing::Span {
-        tracing::info_span!("sumcheck::gadget::combiner")
+        tracing::trace_span!("sumcheck::gadget::combiner")
     }
 
     fn max_num_polynomial_coefficients(&self) -> usize {

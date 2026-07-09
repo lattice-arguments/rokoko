@@ -42,7 +42,7 @@ impl HighOrderSumcheckData for RingToFieldCombiner {
     type Element = QuadraticExtension;
 
     fn gadget_span(&self) -> tracing::Span {
-        tracing::info_span!("sumcheck::gadget::ring_to_field")
+        tracing::trace_span!("sumcheck::gadget::ring_to_field")
     }
 
     fn max_num_polynomial_coefficients(&self) -> usize {

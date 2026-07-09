@@ -124,11 +124,11 @@ pub trait HighOrderSumcheckData {
     fn final_evaluations_test_only(&self) -> Self::Element;
 
     /// Returns a `tracing::Span` named for this gadget's concrete kind. Each
-    /// implementor overrides this to return `info_span!("sumcheck::gadget::<kind>")`
+    /// implementor overrides this to return `trace_span!("sumcheck::gadget::<kind>")`
     /// so per-gadget timings show up in the snapshot and Chrome JSON without
     /// any additional wiring at the call sites.
     fn gadget_span(&self) -> tracing::Span {
-        tracing::info_span!("sumcheck::gadget::unknown")
+        tracing::trace_span!("sumcheck::gadget::unknown")
     }
 }
 

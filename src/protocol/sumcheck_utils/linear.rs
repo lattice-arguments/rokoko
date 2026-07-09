@@ -143,7 +143,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
     type Element = E;
 
     fn gadget_span(&self) -> tracing::Span {
-        tracing::info_span!("sumcheck::gadget::linear")
+        tracing::trace_span!("sumcheck::gadget::linear")
     }
 
     fn get_scratch_poly(&self) -> &RefCell<Polynomial<E>> {
