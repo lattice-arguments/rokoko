@@ -16,7 +16,7 @@ pub struct TracingGuards(#[allow(dead_code)] Vec<Box<dyn Any>>);
 /// - `events`: console summary (`ConsoleLayer`). Empty `LINEAR_PHASES`
 ///   defaults to `verifier` so the per-round verifier breakdown is on by default.
 /// - `profile`: file artifacts (`ChromeLayer` JSON + `SnapshotLayer` JSON).
-///   `tracing::trace!` memory-layout dumps. No-op without `events` or `profile`.
+///   `tracing::trace!` memory-layout dumps.
 ///
 /// Note that `ConsoleLayer` aggregates by (parent, child) edge (where time went); while
 /// `SnapshotLayer` aggregates by span name (total time anywhere).
