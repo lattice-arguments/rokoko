@@ -91,7 +91,7 @@ where
         let Some(timing) = ext.get::<Timing>() else {
             return;
         };
-        if !crate::console::is_in_focus(&span, &self.focus) {
+        if !super::console::is_in_focus(&span, &self.focus) {
             return;
         }
         let elapsed_ns = timing.start.elapsed().as_nanos();
@@ -117,18 +117,18 @@ impl Drop for SnapshotGuard {
             Ok(json) => {
                 if let Err(e) = fs::write(&self.path, json) {
                     eprintln!(
-                        "rokoko-profiling: snapshot write failed at {}: {e}",
+                        "profiling: snapshot write failed at {}: {e}",
                         self.path.display()
                     );
                 }
             }
-            Err(e) => eprintln!("rokoko-profiling: snapshot serialize failed: {e}"),
+            Err(e) => eprintln!("profiling: snapshot serialize failed: {e}"),
         }
     }
 }
 
 fn git_sha() -> String {
-    env!("GIT_SHA").to_string()
+    option_env!("GIT_SHA").unwrap_or("unknown").to_string()
 }
 
 fn now_iso8601() -> String {

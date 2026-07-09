@@ -6,7 +6,13 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[cfg(not(feature = "snark"))]
 use rokoko::protocol::parties::executor::execute;
 
+#[cfg(any(feature = "events", feature = "profile"))]
+mod profiling;
+
 fn main() {
+    #[cfg(not(any(feature = "events", feature = "profile")))]
+    mem_layout_log::install();
+
     #[cfg(feature = "p-26")]
     {
         println!("Using p26...");
@@ -90,11 +96,11 @@ fn main() {
     let trace_base = format!(
         "{}_{}",
         trace_name(),
-        rokoko_profiling::timestamp_for_filename()
+        profiling::timestamp_for_filename()
     );
 
     #[cfg(any(feature = "events", feature = "profile"))]
-    let _tracing_guards = rokoko_profiling::setup(
+    let _tracing_guards = profiling::setup(
         cfg!(feature = "events"),
         cfg!(feature = "profile"),
         &trace_base,
@@ -117,7 +123,7 @@ fn main() {
     #[cfg(any(feature = "events", feature = "profile"))]
     drop(_tracing_guards);
     #[cfg(feature = "profile")]
-    rokoko_profiling::print_artifact_paths(&trace_base);
+    profiling::print_artifact_paths(&trace_base);
 }
 
 #[cfg(any(feature = "events", feature = "profile"))]
@@ -131,6 +137,73 @@ fn trace_name() -> &'static str {
         (_, true, _) => "p28",
         (_, _, true) => "p30",
         _ => panic!("--features events|profile requires one of p-26, p-28, p-30"),
+    }
+}
+
+#[cfg(not(any(feature = "events", feature = "profile")))]
+mod mem_layout_log {
+    use std::fmt::Write as _;
+
+    use tracing::field::{Field, Visit};
+    use tracing::span::{Attributes, Id, Record};
+    use tracing::{Event, Level, Metadata, Subscriber};
+
+    pub fn install() {
+        let threshold = match std::env::var("RUST_LOG").ok().as_deref() {
+            Some(s) if s.contains("trace") => 4,
+            Some(s) if s.contains("debug") => 3,
+            Some(s) if s.contains("warn") => 1,
+            Some(s) if s.contains("error") => 0,
+            _ => 2,
+        };
+        let _ = tracing::subscriber::set_global_default(MemLayoutSubscriber { threshold });
+    }
+
+    struct MemLayoutSubscriber {
+        threshold: u8,
+    }
+
+    fn verbosity(level: &Level) -> u8 {
+        match *level {
+            Level::ERROR => 0,
+            Level::WARN => 1,
+            Level::INFO => 2,
+            Level::DEBUG => 3,
+            Level::TRACE => 4,
+        }
+    }
+
+    impl Subscriber for MemLayoutSubscriber {
+        fn enabled(&self, metadata: &Metadata<'_>) -> bool {
+            metadata.is_event() && verbosity(metadata.level()) <= self.threshold
+        }
+        fn new_span(&self, _: &Attributes<'_>) -> Id {
+            Id::from_u64(1)
+        }
+        fn record(&self, _: &Id, _: &Record<'_>) {}
+        fn record_follows_from(&self, _: &Id, _: &Id) {}
+        fn event(&self, event: &Event<'_>) {
+            let mut message = String::new();
+            event.record(&mut MessageVisitor(&mut message));
+            println!("{message}");
+        }
+        fn enter(&self, _: &Id) {}
+        fn exit(&self, _: &Id) {}
+    }
+
+    struct MessageVisitor<'a>(&'a mut String);
+
+    impl Visit for MessageVisitor<'_> {
+        fn record_str(&mut self, field: &Field, value: &str) {
+            if field.name() == "message" {
+                self.0.push_str(value);
+            }
+        }
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "message" {
+                let _ = write!(self.0, "{value:?}");
+            }
+        }
     }
 }
 

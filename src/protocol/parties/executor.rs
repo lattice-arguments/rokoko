@@ -43,7 +43,6 @@ pub fn execute() {
     let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness_decomposed);
     drop(_commit_span);
 
-    tracing::debug!("\n==== PROVER ====");
     let prover_start = std::time::Instant::now();
     let _prover_span = tracing::info_span!("prover").entered();
     let (proof, claims) = prover_round(
@@ -72,7 +71,6 @@ pub fn execute() {
     let proof_size_bits = proof.size_in_bits();
     tracing::debug!("Total proof size: {} KB", to_kb(proof_size_bits));
 
-    tracing::debug!("\n==== VERIFIER ====");
     let verifier_start = std::time::Instant::now();
     let _verifier_span = tracing::info_span!("verifier").entered();
     verifier_round(

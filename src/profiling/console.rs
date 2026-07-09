@@ -21,6 +21,35 @@ where
     focus.is_empty() || outermost_matching_ancestor(span, focus).is_some()
 }
 
+fn round_base(name: &str) -> Option<&str> {
+    let idx = name.rfind("_round")?;
+    let end = idx + "_round".len();
+    match name.as_bytes().get(end) {
+        None | Some(b'_') => Some(&name[..end]),
+        _ => None,
+    }
+}
+
+fn same_round_chain(a: &str, b: &str) -> bool {
+    a == b || matches!((round_base(a), round_base(b)), (Some(x), Some(y)) if x == y)
+}
+
+fn linear_depth<S>(span: &SpanRef<'_, S>) -> usize
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    let mut depth = 0;
+    let mut child: Option<String> = None;
+    for ancestor in span.scope() {
+        let name = ancestor.name();
+        if child.as_deref().is_some_and(|c| !same_round_chain(c, name)) {
+            depth += 1;
+        }
+        child = Some(name.to_string());
+    }
+    depth
+}
+
 fn outermost_matching_ancestor<S>(span: &SpanRef<'_, S>, tokens: &[String]) -> Option<String>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
@@ -49,14 +78,21 @@ struct EdgeAggregate {
 
 type EdgeMap = HashMap<EdgeKey, EdgeAggregate>;
 
-type LinearBuffers = HashMap<String, Vec<String>>;
+#[derive(Default)]
+struct PhaseData {
+    total: Duration,
+    lines: Vec<(Instant, String)>,
+    rounds: Vec<(Instant, String, Duration)>,
+}
+
+type LinearBuffers = HashMap<String, PhaseData>;
 
 pub struct ConsoleLayer {
     edges: Arc<Mutex<EdgeMap>>,
     root_order: Arc<Mutex<Vec<String>>>,
     linear_buffers: Arc<Mutex<LinearBuffers>>,
     focus: Vec<String>,
-    linear_phases: Vec<String>,
+    linear: bool,
 }
 
 pub struct ConsoleSummaryGuard {
@@ -66,7 +102,7 @@ pub struct ConsoleSummaryGuard {
 }
 
 impl ConsoleLayer {
-    pub fn new(focus: Vec<String>, linear_phases: Vec<String>) -> (Self, ConsoleSummaryGuard) {
+    pub fn new(focus: Vec<String>, linear: bool) -> (Self, ConsoleSummaryGuard) {
         let edges = Arc::new(Mutex::new(HashMap::new()));
         let root_order = Arc::new(Mutex::new(Vec::new()));
         let linear_buffers = Arc::new(Mutex::new(HashMap::new()));
@@ -76,7 +112,7 @@ impl ConsoleLayer {
                 root_order: Arc::clone(&root_order),
                 linear_buffers: Arc::clone(&linear_buffers),
                 focus,
-                linear_phases,
+                linear,
             },
             ConsoleSummaryGuard {
                 edges,
@@ -89,6 +125,7 @@ impl ConsoleLayer {
 
 struct Timing {
     start: Instant,
+    recursive_child_ns: u128,
 }
 
 impl<S> Layer<S> for ConsoleLayer
@@ -99,49 +136,73 @@ where
         let span = ctx.span(id).expect("span exists at on_new_span");
         span.extensions_mut().insert(Timing {
             start: Instant::now(),
+            recursive_child_ns: 0,
         });
     }
 
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
         let span = ctx.span(&id).expect("span exists at on_close");
-        let ext = span.extensions();
-        let Some(timing) = ext.get::<Timing>() else {
-            return;
+        let (start, elapsed, recursive_child_ns) = {
+            let ext = span.extensions();
+            let Some(timing) = ext.get::<Timing>() else {
+                return;
+            };
+            (timing.start, timing.start.elapsed(), timing.recursive_child_ns)
         };
-        let elapsed = timing.start.elapsed();
-        let depth = span.scope().skip(1).count();
-        let parent_name = span.parent().map(|p| p.name().to_string());
+        let parent = span.parent();
+        let parent_name = parent.as_ref().map(|p| p.name().to_string());
         let child_name = span.name().to_string();
+
+        if let Some(parent) = &parent {
+            if same_round_chain(parent.name(), span.name()) {
+                if let Some(pt) = parent.extensions_mut().get_mut::<Timing>() {
+                    pt.recursive_child_ns += elapsed.as_nanos();
+                }
+            }
+        }
 
         if !is_in_focus(&span, &self.focus) {
             return;
         }
 
-        let phase = outermost_matching_ancestor(&span, &self.linear_phases);
-
-        if phase.is_some() {
+        if self.linear {
+            let per_round =
+                Duration::from_nanos(elapsed.as_nanos().saturating_sub(recursive_child_ns) as u64);
             let root_name = span
                 .scope()
                 .last()
                 .map(|s| s.name().to_string())
                 .unwrap_or_else(|| child_name.clone());
-            let indent = "  ".repeat(depth);
-            let width = NAME_END.saturating_sub(2 * depth);
-            let line = format!(
-                "{indent}{name:<width$}  {elapsed:>elapsed_w$}",
-                indent = indent,
-                name = child_name,
-                width = width,
-                elapsed = format_duration(elapsed),
-                elapsed_w = TIME_WIDTH,
-            );
-            self.linear_buffers
-                .lock()
-                .expect("linear_buffers lock poisoned")
-                .entry(root_name)
-                .or_default()
-                .push(line);
-            if parent_name.is_none() {
+            let is_root = parent_name.is_none();
+
+            {
+                let mut buffers = self
+                    .linear_buffers
+                    .lock()
+                    .expect("linear_buffers lock poisoned");
+                let phase = buffers.entry(root_name).or_default();
+                if is_root {
+                    phase.total = per_round;
+                } else {
+                    let depth = linear_depth(&span);
+                    let indent = "  ".repeat(depth);
+                    let width = NAME_END.saturating_sub(2 * depth);
+                    let line = format!(
+                        "{indent}{name:<width$}  {elapsed:>elapsed_w$}",
+                        indent = indent,
+                        name = child_name,
+                        width = width,
+                        elapsed = format_duration(per_round),
+                        elapsed_w = TIME_WIDTH,
+                    );
+                    phase.lines.push((start, line));
+                }
+                if round_base(&child_name).is_some() {
+                    phase.rounds.push((start, child_name.clone(), per_round));
+                }
+            }
+
+            if is_root {
                 let mut order = self.root_order.lock().expect("root_order lock poisoned");
                 if !order.iter().any(|n| n == &child_name) {
                     order.push(child_name.clone());
@@ -208,20 +269,48 @@ impl Drop for ConsoleSummaryGuard {
                 let _ = writeln!(out);
             }
 
-            if let Some(lines) = linear_buffers.remove(root) {
-                for line in lines {
+            if let Some(mut phase) = linear_buffers.remove(root) {
+                write_phase_header(&mut out, root, phase.total);
+
+                phase.lines.sort_by_key(|(start, _)| *start);
+                for (_, line) in &phase.lines {
                     let _ = writeln!(out, "{line}");
+                }
+
+                if !phase.rounds.is_empty() {
+                    phase.rounds.sort_by_key(|(start, _, _)| *start);
+                    let _ = writeln!(out, "  rounds:");
+                    let mut rounds_total = Duration::ZERO;
+                    for (i, (_, name, dur)) in phase.rounds.iter().enumerate() {
+                        rounds_total += *dur;
+                        let label = format!("round {}  {name}", i + 1);
+                        let _ = writeln!(
+                            out,
+                            "    {label:<label_w$}  {time:>time_w$}",
+                            label = label,
+                            label_w = NAME_END.saturating_sub(4),
+                            time = format_duration(*dur),
+                            time_w = TIME_WIDTH,
+                        );
+                    }
+                    let base = phase
+                        .rounds
+                        .first()
+                        .and_then(|(_, name, _)| round_base(name))
+                        .unwrap_or("round");
+                    let _ = writeln!(
+                        out,
+                        "    {label:<label_w$}  {time:>time_w$}",
+                        label = format!("total {base}"),
+                        label_w = NAME_END.saturating_sub(4),
+                        time = format_duration(rounds_total),
+                        time_w = TIME_WIDTH,
+                    );
                 }
                 continue;
             }
 
-            let phase = root.to_uppercase();
-            let time = format_duration(Duration::from_nanos(*total_ns as u64));
-            let prefix = format!("=== {phase} ");
-            let suffix = format!(" {time}");
-            let filler_count =
-                HEADER_WIDTH.saturating_sub(prefix.len() + suffix.len());
-            let _ = writeln!(out, "{prefix}{}{suffix}", "=".repeat(filler_count));
+            write_phase_header(&mut out, root, Duration::from_nanos(*total_ns as u64));
 
             let mut visited = HashSet::new();
             visited.insert(root.clone());
@@ -251,6 +340,15 @@ impl Drop for ConsoleSummaryGuard {
 
         let _ = writeln!(out);
     }
+}
+
+fn write_phase_header(out: &mut impl io::Write, root: &str, total: Duration) {
+    let phase = root.to_uppercase();
+    let time = format_duration(total);
+    let prefix = format!("=== {phase} ");
+    let suffix = format!(" {time}");
+    let filler_count = HEADER_WIDTH.saturating_sub(prefix.len() + suffix.len());
+    let _ = writeln!(out, "{prefix}{}{suffix}", "=".repeat(filler_count));
 }
 
 /// All times and call counts are read from the `(parent, child)` edge — not

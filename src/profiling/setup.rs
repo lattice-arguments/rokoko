@@ -1,22 +1,24 @@
 use std::any::Any;
 use std::process::Command;
 
-use tracing_chrome::ChromeLayerBuilder;
+use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::{prelude::*, registry::Registry, EnvFilter, Layer};
 
-use crate::console::ConsoleLayer;
-use crate::log::LogLayer;
-use crate::snapshot::SnapshotLayer;
+#[cfg(feature = "profile")]
+use tracing_chrome::ChromeLayerBuilder;
+
+use super::console::ConsoleLayer;
+use super::log::LogLayer;
+#[cfg(feature = "profile")]
+use super::snapshot::SnapshotLayer;
 
 #[must_use = "guards must be held alive for the duration of profiling"]
 pub struct TracingGuards(#[allow(dead_code)] Vec<Box<dyn Any>>);
 
 /// Install a tracing subscriber stack from two orthogonal flags:
 ///
-/// - `events`: console summary (`ConsoleLayer`). Empty `LINEAR_PHASES`
-///   defaults to `verifier` so the per-round verifier breakdown is on by default.
+/// - `events`: console summary (`ConsoleLayer`).
 /// - `profile`: file artifacts (`ChromeLayer` JSON + `SnapshotLayer` JSON).
-///   `tracing::trace!` memory-layout dumps.
 ///
 /// Note that `ConsoleLayer` aggregates by (parent, child) edge (where time went); while
 /// `SnapshotLayer` aggregates by span name (total time anywhere).
@@ -48,23 +50,22 @@ pub fn setup(
 
     let focus = parse_csv("PROFILE_FOCUS");
 
+    let max_level = <EnvFilter as Layer<Registry>>::max_level_hint(&filter())
+        .unwrap_or(LevelFilter::INFO);
+    let linear = max_level >= LevelFilter::DEBUG;
+
     let mut layers: Vec<Box<dyn Layer<Registry> + Send + Sync>> = Vec::new();
     let mut guards: Vec<Box<dyn Any>> = Vec::new();
 
-    if events || profile {
-        layers.push(LogLayer.with_filter(filter()).boxed());
-    }
+    layers.push(LogLayer.with_filter(filter()).boxed());
 
     if events {
-        let mut linear_phases = parse_csv("LINEAR_PHASES");
-        if linear_phases.is_empty() {
-            linear_phases.push("verifier".to_string());
-        }
-        let (console_layer, console_guard) = ConsoleLayer::new(focus.clone(), linear_phases);
+        let (console_layer, console_guard) = ConsoleLayer::new(focus.clone(), linear);
         layers.push(console_layer.with_filter(filter()).boxed());
         guards.push(Box::new(console_guard));
     }
 
+    #[cfg(feature = "profile")]
     if profile {
         let run_dir = format!("profiles/{trace_name}");
         let _ = std::fs::create_dir_all(&run_dir);
@@ -81,6 +82,10 @@ pub fn setup(
         layers.push(snapshot_layer.with_filter(filter()).boxed());
         guards.push(Box::new(snapshot_guard));
     }
+
+    // `profile`-only file artifacts are compiled out without that feature.
+    #[cfg(not(feature = "profile"))]
+    let _ = (profile, trace_name, features);
 
     if !layers.is_empty() {
         tracing_subscriber::registry().with(layers).init();

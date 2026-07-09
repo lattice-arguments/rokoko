@@ -164,7 +164,7 @@ impl AuxSumcheckConfig {
         let highest_used = used_prefixes.iter().max().map_or(0, |m| m + 1);
         let usage_ratio = highest_used as f64 / composed_witness_length as f64;
 
-        tracing::trace!(
+        tracing::debug!(
             "\n=== Level {} ===   {} / {} used  ({:.1}%)",
             depth,
             highest_used,
@@ -172,7 +172,7 @@ impl AuxSumcheckConfig {
             usage_ratio * 100.0
         );
         for line in &layout_lines {
-            tracing::trace!("{}", line);
+            tracing::debug!("{}", line);
         }
 
         // Build the actual config with assigned prefixes
