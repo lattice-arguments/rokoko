@@ -29,16 +29,27 @@ impl CommitmentWithAux {
     }
 }
 
+#[tracing::instrument(skip_all, name = "commit::basic_internal")]
 pub fn commit_basic_internal(
     ck: &CK,
     witness: &VerticallyAlignedMatrix<RingElement>,
     rank: usize,
 ) -> BasicCommitment {
     if rank == 0 {
-        return HorizontallyAlignedMatrix { data: vec![RingElement::zero(Representation::IncompleteNTT); 0 * witness.width], width: witness.width, height: 0 };
+        return HorizontallyAlignedMatrix {
+            data: vec![RingElement::zero(Representation::IncompleteNTT); 0 * witness.width],
+            width: witness.width,
+            height: 0,
+        };
     }
-    let mut commitment =
-        HorizontallyAlignedMatrix { data: vec![RingElement::zero(Representation::IncompleteNTT); rank.next_power_of_two() * witness.width], width: witness.width, height: rank.next_power_of_two() };
+    let mut commitment = HorizontallyAlignedMatrix {
+        data: vec![
+            RingElement::zero(Representation::IncompleteNTT);
+            rank.next_power_of_two() * witness.width
+        ],
+        width: witness.width,
+        height: rank.next_power_of_two(),
+    };
 
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
     for (i, row) in ck.iter().take(rank).enumerate() {
@@ -115,6 +126,7 @@ impl RecursiveCommitmentWithAux {
 
 pub type RecursiveCommitment = Vec<RingElement>;
 
+#[tracing::instrument(skip_all, name = "commit::recursive_layer")]
 pub fn recursive_commit(
     crs: &CRS,
     config: &RecursionConfig,

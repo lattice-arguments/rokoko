@@ -86,6 +86,21 @@ fn main() {
         challenge_set_repetition_rate
     );
 
+    #[cfg(any(feature = "events", feature = "profile"))]
+    let trace_base = format!(
+        "{}_{}",
+        trace_name(),
+        rokoko_profiling::timestamp_for_filename()
+    );
+
+    #[cfg(any(feature = "events", feature = "profile"))]
+    let _tracing_guards = rokoko_profiling::setup(
+        cfg!(feature = "events"),
+        cfg!(feature = "profile"),
+        &trace_base,
+        &active_features(),
+    );
+
     init_common();
     #[cfg(feature = "snark")]
     {
@@ -97,4 +112,41 @@ fn main() {
         println!("Running executor...");
         execute();
     }
+
+    // Drop guards so the chrome trace flushes before we print its path.
+    #[cfg(any(feature = "events", feature = "profile"))]
+    drop(_tracing_guards);
+    #[cfg(feature = "profile")]
+    rokoko_profiling::print_artifact_paths(&trace_base);
+}
+
+#[cfg(any(feature = "events", feature = "profile"))]
+fn trace_name() -> &'static str {
+    match (
+        cfg!(feature = "p-26"),
+        cfg!(feature = "p-28"),
+        cfg!(feature = "p-30"),
+    ) {
+        (true, _, _) => "p26",
+        (_, true, _) => "p28",
+        (_, _, true) => "p30",
+        _ => panic!("--features events|profile requires one of p-26, p-28, p-30"),
+    }
+}
+
+#[cfg(any(feature = "events", feature = "profile"))]
+fn active_features() -> String {
+    [
+        cfg!(feature = "p-26").then_some("p-26"),
+        cfg!(feature = "p-28").then_some("p-28"),
+        cfg!(feature = "p-30").then_some("p-30"),
+        cfg!(feature = "incomplete-rexl").then_some("incomplete-rexl"),
+        cfg!(feature = "unsafe-sumcheck").then_some("unsafe-sumcheck"),
+        cfg!(feature = "debug-hardness").then_some("debug-hardness"),
+        cfg!(feature = "debug-decomp").then_some("debug-decomp"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(",")
 }

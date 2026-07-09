@@ -35,7 +35,8 @@ pub fn run_intermediate_sumcheck(
     sumcheck_context: &mut IntermediateSumcheckContext,
     hash_wrapper: &mut HashWrapper,
 ) -> (IntermediateSumcheckProof, Vec<RingElement>) {
-    let mut conjugated_combined_witness = vec![RingElement::zero(Representation::IncompleteNTT); combined_witness.len()];
+    let mut conjugated_combined_witness =
+        vec![RingElement::zero(Representation::IncompleteNTT); combined_witness.len()];
     combined_witness
         .iter()
         .zip(conjugated_combined_witness.iter_mut())
@@ -55,7 +56,6 @@ pub fn run_intermediate_sumcheck(
     hash_wrapper.update_with_ring_element(&norm_claim);
 
     let num_sumchecks = sumcheck_context.combiner.borrow().sumchecks_count();
-    println!("num_sumchecks: {}", num_sumchecks);
 
     let mut combination = vec![RingElement::zero(Representation::IncompleteNTT); num_sumchecks];
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
@@ -77,7 +77,11 @@ pub fn run_intermediate_sumcheck(
         &qe,
     );
 
-    let norm_check_claim = sumcheck_context.norm_check_sumcheck.output.borrow_mut().claim();
+    let norm_check_claim = sumcheck_context
+        .norm_check_sumcheck
+        .output
+        .borrow_mut()
+        .claim();
     assert_eq!(
         norm_check_claim, norm_claim,
         "NormCheck intermediate claim mismatch: expected <w, conj(w)>"
@@ -110,9 +114,6 @@ pub fn run_intermediate_sumcheck(
         evaluation_points.push(challenge_ring);
         polys.push(poly_over_field);
     }
-    #[cfg(feature = "profile-sumcheck")]
-    crate::protocol::sumcheck_utils::profile::print_and_reset("intermediate-sumcheck");
-
     let claim_over_witness = sumcheck_context
         .witness_sumcheck
         .borrow()

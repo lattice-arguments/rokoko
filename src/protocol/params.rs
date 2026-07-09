@@ -139,7 +139,11 @@ fn assign_norm_bounds(config: &mut Config, bounds: &[[f64; 2]]) {
     }
     let mut i = 0;
     rec(config, bounds, &mut i);
-    assert_eq!(i, bounds.len(), "norm-bound array length must match chain length");
+    assert_eq!(
+        i,
+        bounds.len(),
+        "norm-bound array length must match chain length"
+    );
 }
 
 pub fn p_exact_norm_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
@@ -367,9 +371,12 @@ pub static P_LARGE: LazyLock<Config> = LazyLock::new(|| {
     c
 });
 
-pub static P_2_SMALL: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Small, 2).generate_config());
-pub static P_2_MEDIUM: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Medium, 2).generate_config());
-pub static P_2_LARGE: LazyLock<Config> = LazyLock::new(|| p_root_aux(SizeConfig::Large, 2).generate_config()); 
+pub static P_2_SMALL: LazyLock<Config> =
+    LazyLock::new(|| p_root_aux(SizeConfig::Small, 2).generate_config());
+pub static P_2_MEDIUM: LazyLock<Config> =
+    LazyLock::new(|| p_root_aux(SizeConfig::Medium, 2).generate_config());
+pub static P_2_LARGE: LazyLock<Config> =
+    LazyLock::new(|| p_root_aux(SizeConfig::Large, 2).generate_config());
 
 pub static P: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
     SizeConfig::Small => P_SMALL.clone(),
@@ -382,7 +389,6 @@ pub static P_TWO_EVALS: LazyLock<Config> = LazyLock::new(|| match compiled_size(
     SizeConfig::Medium => P_2_MEDIUM.clone(),
     SizeConfig::Large => P_2_LARGE.clone(),
 });
-
 
 pub static P_3: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
     witness_height: 2usize.pow(8),
@@ -612,6 +618,7 @@ pub fn witness_sampler() -> VerticallyAlignedMatrix<RingElement> {
     }
 }
 
+#[tracing::instrument(skip_all, name = "commit::decompose_witness")]
 pub fn decompose_witness(
     witness: &VerticallyAlignedMatrix<RingElement>,
 ) -> VerticallyAlignedMatrix<RingElement> {
@@ -661,7 +668,9 @@ mod tests {
 
     fn assert_chain_dims(mut config: &Config) {
         while let Config::Sumcheck(sc) = config {
-            let Some(next) = sc.next.as_deref() else { break };
+            let Some(next) = sc.next.as_deref() else {
+                break;
+            };
             let (h, w) = match next {
                 Config::Sumcheck(n) => (n.witness_height, n.witness_width),
                 Config::Intermediate(n) => (n.witness_height, n.witness_width),
