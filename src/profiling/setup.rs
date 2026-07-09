@@ -26,14 +26,8 @@ pub struct TracingGuards(#[allow(dead_code)] Vec<Box<dyn Any>>);
 /// Level filtering is `info` by default; the env `RUST_LOG` is set to control the logging level
 ///
 /// Panics if called more than once — the global subscriber can only be set once.
-pub fn setup(
-    events: bool,
-    profile: bool,
-    trace_name: &str,
-    features: &str,
-) -> TracingGuards {
-    let filter =
-        || EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+pub fn setup(events: bool, profile: bool, trace_name: &str, features: &str) -> TracingGuards {
+    let filter = || EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     let parse_csv = |var: &str| -> Vec<String> {
         std::env::var(var)
@@ -50,8 +44,8 @@ pub fn setup(
 
     let focus = parse_csv("PROFILE_FOCUS");
 
-    let max_level = <EnvFilter as Layer<Registry>>::max_level_hint(&filter())
-        .unwrap_or(LevelFilter::INFO);
+    let max_level =
+        <EnvFilter as Layer<Registry>>::max_level_hint(&filter()).unwrap_or(LevelFilter::INFO);
     let linear = max_level >= LevelFilter::DEBUG;
 
     let mut layers: Vec<Box<dyn Layer<Registry> + Send + Sync>> = Vec::new();
@@ -77,8 +71,7 @@ pub fn setup(
         layers.push(chrome_layer.with_filter(filter()).boxed());
         guards.push(Box::new(chrome_guard));
 
-        let (snapshot_layer, snapshot_guard) =
-            SnapshotLayer::new(trace_name, features, focus);
+        let (snapshot_layer, snapshot_guard) = SnapshotLayer::new(trace_name, features, focus);
         layers.push(snapshot_layer.with_filter(filter()).boxed());
         guards.push(Box::new(snapshot_guard));
     }

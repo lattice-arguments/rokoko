@@ -10,7 +10,9 @@ use tracing_subscriber::registry::{LookupSpan, SpanRef};
 
 /// `n == tok`, or `n` starts with `"{tok}::"`.
 pub(crate) fn matches_token(n: &str, tok: &str) -> bool {
-    n == tok || n.strip_prefix(tok).is_some_and(|rest| rest.starts_with("::"))
+    n == tok
+        || n.strip_prefix(tok)
+            .is_some_and(|rest| rest.starts_with("::"))
 }
 
 /// Empty `focus` means no filter (everything matches).
@@ -136,7 +138,11 @@ where
             let Some(timing) = ext.get::<Timing>() else {
                 return;
             };
-            (timing.start, timing.start.elapsed(), timing.recursive_child_ns)
+            (
+                timing.start,
+                timing.start.elapsed(),
+                timing.recursive_child_ns,
+            )
         };
         let parent = span.parent();
         let parent_name = parent.as_ref().map(|p| p.name());
@@ -222,7 +228,11 @@ const HEADER_WIDTH: usize = NAME_END + 2 + TIME_WIDTH;
 
 impl Drop for ConsoleSummaryGuard {
     fn drop(&mut self) {
-        let root_order = self.root_order.lock().expect("root_order lock poisoned").clone();
+        let root_order = self
+            .root_order
+            .lock()
+            .expect("root_order lock poisoned")
+            .clone();
         if root_order.is_empty() {
             return;
         }
@@ -478,7 +488,10 @@ mod tests {
     fn strip_common_prefix_strips_segments() {
         assert_eq!(strip_common_prefix("commit", None), "commit");
 
-        assert_eq!(strip_common_prefix("commit::basic", Some("commit")), "basic");
+        assert_eq!(
+            strip_common_prefix("commit::basic", Some("commit")),
+            "basic"
+        );
         assert_eq!(
             strip_common_prefix("commit::decompose_witness", Some("commit")),
             "decompose_witness"
