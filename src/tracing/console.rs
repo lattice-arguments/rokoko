@@ -8,24 +8,6 @@ use tracing::Subscriber;
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::registry::{LookupSpan, SpanRef};
 
-/// `n == tok`, or `n` starts with `"{tok}::"`.
-pub(crate) fn matches_token(n: &str, tok: &str) -> bool {
-    n == tok
-        || n.strip_prefix(tok)
-            .is_some_and(|rest| rest.starts_with("::"))
-}
-
-/// Empty `focus` means no filter (everything matches).
-pub(crate) fn is_in_focus<S>(span: &SpanRef<'_, S>, focus: &[String]) -> bool
-where
-    S: Subscriber + for<'a> LookupSpan<'a>,
-{
-    focus.is_empty()
-        || span
-            .scope()
-            .any(|ancestor| focus.iter().any(|tok| matches_token(ancestor.name(), tok)))
-}
-
 fn round_base(name: &str) -> Option<&str> {
     let idx = name.rfind("_round")?;
     let end = idx + "_round".len();
@@ -156,7 +138,7 @@ where
             }
         }
 
-        if !is_in_focus(&span, &self.focus) {
+        if !super::is_in_focus(&span, &self.focus) {
             return;
         }
 

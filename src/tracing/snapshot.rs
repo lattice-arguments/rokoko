@@ -87,7 +87,7 @@ where
         let Some(timing) = ext.get::<Timing>() else {
             return;
         };
-        if !super::console::is_in_focus(&span, &self.focus) {
+        if !super::is_in_focus(&span, &self.focus) {
             return;
         }
         let elapsed_ns = timing.start.elapsed().as_nanos();
@@ -121,6 +121,21 @@ impl Drop for SnapshotGuard {
             Err(e) => eprintln!("profiling: snapshot serialize failed: {e}"),
         }
     }
+}
+pub fn active_features() -> String {
+    [
+        cfg!(feature = "p-26").then_some("p-26"),
+        cfg!(feature = "p-28").then_some("p-28"),
+        cfg!(feature = "p-30").then_some("p-30"),
+        cfg!(feature = "incomplete-rexl").then_some("incomplete-rexl"),
+        cfg!(feature = "unsafe-sumcheck").then_some("unsafe-sumcheck"),
+        cfg!(feature = "debug-hardness").then_some("debug-hardness"),
+        cfg!(feature = "debug-decomp").then_some("debug-decomp"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(",")
 }
 
 fn git_sha() -> String {
