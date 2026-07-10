@@ -319,10 +319,17 @@ pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
     }
 }
 
-pub static P_EN_SMALL: LazyLock<Config> =
-    LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Small, 1).generate_config());
-pub static P_EN_MEDIUM: LazyLock<Config> =
-    LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Medium, 1).generate_config());
+pub static P_EN_SMALL: LazyLock<Config> = LazyLock::new(|| {
+    let mut c = p_exact_norm_root_aux(SizeConfig::Small, 1).generate_config();
+    assign_norm_bounds(&mut c, &NB_P_EN_26);
+    c
+});
+
+pub static P_EN_MEDIUM: LazyLock<Config> = LazyLock::new(|| {
+    let mut c = p_exact_norm_root_aux(SizeConfig::Medium, 1).generate_config();
+    assign_norm_bounds(&mut c, &NB_P_EN_28);
+    c
+});
 pub static P_EN_LARGE: LazyLock<Config> =
     LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Large, 1).generate_config()); // never executed, OOM for 64GiB RAM
 
