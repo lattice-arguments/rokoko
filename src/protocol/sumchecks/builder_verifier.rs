@@ -7,7 +7,7 @@ use crate::{
     protocol::{
         commitment::{self, Prefix},
         config::{Config, Projection, SumcheckConfig},
-        crs::CRS,
+        crs::VerifierCRS,
         intermediate_sumchecks::builder_verifier::init_intermediate_verifier,
         sumcheck_utils::{
             combiner::CombinerEvaluation,
@@ -81,7 +81,7 @@ pub fn load_combiner_evaluation_data(
 }
 
 pub fn structured_row_ck_evaluation(
-    crs: &CRS,
+    crs: &VerifierCRS,
     total_vars: usize,
     wit_dim: usize,
     i: usize,
@@ -101,7 +101,7 @@ pub fn structured_row_ck_evaluation(
 }
 
 fn build_com_verify_verifier_context(
-    crs: &CRS,
+    crs: &VerifierCRS,
     total_vars: usize,
     combined_witness_eval: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
     config: &commitment::RecursionConfig,
@@ -229,7 +229,7 @@ fn build_com_verify_verifier_context(
     }
 }
 
-pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckContext {
+pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumcheckContext {
     let total_vars = config.composed_witness_length.ilog2() as usize;
 
     let combined_witness_evaluation =

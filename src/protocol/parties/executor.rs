@@ -32,15 +32,13 @@ pub fn execute() {
     println!("Generating CRS...");
 
     let crs_start = std::time::Instant::now();
-    let crs = CRS::gen_crs(
-        config.composed_witness_length,
-        config.basic_commitment_rank + 2,
-    );
+    let crs = CRS::gen_prover_crs(&config);
+    let verifier_crs = CRS::gen_verifier_crs(&config);
     let crs_duration = crs_start.elapsed().as_nanos();
     println!("TOTAL CRS gen time: {:?} ns", crs_duration);
 
     let mut sumcheck_context = init_sumcheck(&crs, &config);
-    let mut sumcheck_context_verifier = init_verifier(&crs, &config);
+    let mut sumcheck_context_verifier = init_verifier(&verifier_crs, &config);
     println!("Sumcheck contexts initialized.");
 
     let witness = witness_sampler();
@@ -88,7 +86,7 @@ pub fn execute() {
     let start = std::time::Instant::now();
     println!("==== VERIFIER STARTING ===");
     verifier_round(
-        &crs,
+        &verifier_crs,
         &config,
         &rc_commitment,
         &proof,
@@ -148,13 +146,11 @@ pub fn execute_snark() {
     };
 
     println!("Generating CRS...");
-    let crs = CRS::gen_crs(
-        config.composed_witness_length,
-        config.basic_commitment_rank + 2,
-    );
+    let crs = CRS::gen_prover_crs(&config);
+    let verifier_crs = CRS::gen_verifier_crs(&config);
 
     let mut sumcheck_context = init_sumcheck(&crs, &config);
-    let mut sumcheck_context_verifier = init_verifier(&crs, &config);
+    let mut sumcheck_context_verifier = init_verifier(&verifier_crs, &config);
 
     let witness = VerticallyAlignedMatrix {
         height: config.witness_height,
@@ -269,7 +265,7 @@ pub fn execute_snark() {
     );
 
     verifier_round(
-        &crs,
+        &verifier_crs,
         &config,
         &rc_commitment,
         &proof,
