@@ -186,10 +186,7 @@ pub fn sumcheck_verifier(
     let projection_matrix_flatter_structured = match config.projection_recursion {
         Projection::Coarse(_) => {
             let mut projection_matrix_flatter_base =
-                vec![
-                    RingElement::zero(Representation::IncompleteNTT);
-                    projection_height_flat.ilog2() as usize
-                ];
+                vec![RingElement::zero(Representation::IncompleteNTT); projection_height_flat.ilog2() as usize];
             hash_wrapper
                 .sample_ring_element_ntt_slots_same_vec_into(&mut projection_matrix_flatter_base);
 
@@ -237,6 +234,8 @@ pub fn sumcheck_verifier(
         &round_proof.most_inner_norm_claim,
         &combination,
     );
+
+
 
     if let Some(constant_term_claims) = &round_proof.constant_term_claims {
         for ct_claim in constant_term_claims.iter() {

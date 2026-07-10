@@ -109,8 +109,9 @@ impl<E: SumcheckElement> ProductSumcheck<E> {
 impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
     type Element = E;
 
-    fn gadget_span(&self) -> tracing::Span {
-        tracing::trace_span!("sumcheck::gadget::product")
+    #[cfg(feature = "profile-sumcheck")]
+    fn gadget_kind(&self) -> super::profile::GadgetKind {
+        super::profile::GadgetKind::Product
     }
 
     fn get_scratch_poly(&self) -> &RefCell<Polynomial<E>> {
@@ -197,7 +198,6 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
     /// via batched inner products (3 dot products), eliminating all per-point
     /// vtable dispatch.
     fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
-        let _s = self.gadget_span().entered();
         // Case 1: both children expose raw data → batched Karatsuba inner product
         let lhs_ref = self.lhs_sumcheck.get_ref();
         let rhs_ref = self.rhs_sumcheck.get_ref();

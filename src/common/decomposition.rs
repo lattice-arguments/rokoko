@@ -1,4 +1,6 @@
-use crate::common::ring_arithmetic::{Representation, RingElement};
+use crate::common::{
+    ring_arithmetic::{Representation, RingElement},
+};
 
 #[cfg(test)]
 use crate::common::config::MOD_Q;
@@ -20,8 +22,7 @@ impl RingElement {
 // This ensures each decomposed part lies in the range [-2^{base_log - 1}, 2^{base_log - 1}).
 // Since k = (b/2) * Σ b^i, the recomposition is exact: Σ d_i * b^i = (x + k) - k = x, with zero offset.
 pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<RingElement> {
-    let mut decomposed =
-        vec![RingElement::zero(Representation::IncompleteNTT); input.len() * radix];
+    let mut decomposed = vec![RingElement::zero(Representation::IncompleteNTT); input.len() * radix];
 
     if base_log == 1 {
         decomposed.clone_from_slice(input);
@@ -49,11 +50,7 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
         {
             let q = crate::common::config::MOD_Q;
             for &c in temp.v.iter() {
-                let s = if c > q / 2 {
-                    c as i64 - q as i64
-                } else {
-                    c as i64
-                };
+                let s = if c > q / 2 { c as i64 - q as i64 } else { c as i64 };
                 call_max = call_max.max(s.abs());
             }
         }
@@ -165,8 +162,7 @@ pub fn compose_from_decomposed(
     base_log: u64,
     radix: usize,
 ) -> Vec<RingElement> {
-    let mut recomposed =
-        vec![RingElement::zero(Representation::IncompleteNTT); decomposed.len() / radix];
+    let mut recomposed = vec![RingElement::zero(Representation::IncompleteNTT); decomposed.len() / radix];
 
     for i in 0..recomposed.len() {
         recomposed[i] = RingElement::all(0, Representation::IncompleteNTT);

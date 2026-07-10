@@ -3,7 +3,7 @@ use crate::common::config::DEGREE;
 use crate::protocol::config::{Projection, SumcheckConfig};
 use crate::protocol::intermediate_sumchecks::builder::init_intermediate_sumcheck;
 use crate::protocol::sumcheck_utils::sum::SumSumcheck;
-use crate::protocol::sumchecks::context::{FineProjSumcheckContextWrapper, NextSumcheckContext};
+use crate::protocol::sumchecks::context::{NextSumcheckContext, FineProjSumcheckContextWrapper};
 use crate::{
     common::{config::NOF_BATCHES, ring_arithmetic::RingElement},
     protocol::{
@@ -21,10 +21,9 @@ use crate::{
 
 use super::{
     context::{
-        CoarseProjSumcheckContext, ComVerifyLayerSumcheckContext,
+        SumcheckContext, CommitmentFoldSumcheckContext, InnerEvalFoldSumcheckContext, OuterEvalClaimSumcheckContext,
+        CoarseProjSumcheckContext, FineProjSumcheckContext, ComVerifyLayerSumcheckContext,
         ComVerifyOutputLayerSumcheckContext, ComVerifySumcheckContext,
-        CommitmentFoldSumcheckContext, FineProjSumcheckContext, InnerEvalFoldSumcheckContext,
-        OuterEvalClaimSumcheckContext, SumcheckContext,
     },
     helpers::{ck_sumcheck, composition_sumcheck, sumcheck_from_prefix},
 };

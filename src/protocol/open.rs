@@ -60,7 +60,7 @@ pub fn open_at(
     }
 
     Opening {
-        rhs,                                                // paper: T = matrix-from-rows(l_j) W
+        rhs, // paper: T = matrix-from-rows(l_j) W
         evaluation_points_inner: preprocessed_points_inner, // kept to avoid re-preprocessing
         evaluation_points_outer: preprocessed_points_outer,
     }
@@ -251,5 +251,6 @@ mod tests {
                 Representation::IncompleteNTT
             )
         );
+
     }
 }

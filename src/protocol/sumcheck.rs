@@ -48,10 +48,9 @@
 pub use crate::protocol::sumchecks::{
     builder::init_sumcheck,
     context::{
-        CoarseProjSumcheckContext, ComVerifyLayerSumcheckContext,
-        ComVerifyOutputLayerSumcheckContext, ComVerifySumcheckContext,
-        CommitmentFoldSumcheckContext, InnerEvalFoldSumcheckContext, OuterEvalClaimSumcheckContext,
-        SumcheckContext,
+        SumcheckContext, CommitmentFoldSumcheckContext, InnerEvalFoldSumcheckContext, OuterEvalClaimSumcheckContext,
+        CoarseProjSumcheckContext, ComVerifyLayerSumcheckContext, ComVerifyOutputLayerSumcheckContext,
+        ComVerifySumcheckContext,
     },
     runner::sumcheck,
 };

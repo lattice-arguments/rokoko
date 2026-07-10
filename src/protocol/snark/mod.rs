@@ -32,21 +32,11 @@ pub struct Region {
 
 impl Region {
     pub fn new(start: usize, len: usize, witness_len: usize) -> Region {
-        assert!(
-            len.is_power_of_two(),
-            "region length must be a power of two"
-        );
-        assert!(
-            witness_len.is_power_of_two(),
-            "witness length must be a power of two"
-        );
+        assert!(len.is_power_of_two(), "region length must be a power of two");
+        assert!(witness_len.is_power_of_two(), "witness length must be a power of two");
         assert_eq!(start % len, 0, "region start must be aligned to its length");
         assert!(start + len <= witness_len, "region exceeds the witness");
-        Region {
-            start,
-            len,
-            witness_len,
-        }
+        Region { start, len, witness_len }
     }
 
     pub fn whole(witness_len: usize) -> Region {
@@ -73,20 +63,13 @@ impl Region {
     pub fn vars(&self) -> Vars {
         let total = self.witness_len.ilog2() as usize;
         let len = self.len.ilog2() as usize;
-        Vars {
-            skip: total - len,
-            len,
-            total,
-        }
+        Vars { skip: total - len, len, total }
     }
 
     pub fn prefix(&self) -> Prefix {
         let total = self.witness_len.ilog2() as usize;
         let len = self.len.ilog2() as usize;
-        Prefix {
-            prefix: self.start / self.len,
-            length: total - len,
-        }
+        Prefix { prefix: self.start / self.len, length: total - len }
     }
 }
 
@@ -122,21 +105,10 @@ impl Vars {
     }
 
     pub fn split_at(self, num_vars: usize) -> (Vars, Vars) {
-        assert!(
-            num_vars <= self.len,
-            "cannot split off more variables than the block has"
-        );
+        assert!(num_vars <= self.len, "cannot split off more variables than the block has");
         (
-            Vars {
-                skip: self.skip,
-                len: num_vars,
-                total: self.total,
-            },
-            Vars {
-                skip: self.skip + num_vars,
-                len: self.len - num_vars,
-                total: self.total,
-            },
+            Vars { skip: self.skip, len: num_vars, total: self.total },
+            Vars { skip: self.skip + num_vars, len: self.len - num_vars, total: self.total },
         )
     }
 
@@ -170,10 +142,7 @@ impl WitnessBuilder {
     }
 
     pub fn push(&mut self, values: &[RingElement]) -> Region {
-        assert!(
-            !values.is_empty() && values.len().is_power_of_two(),
-            "pushed data length must be a nonzero power of two"
-        );
+        assert!(!values.is_empty() && values.len().is_power_of_two(), "pushed data length must be a nonzero power of two");
         let start = self.cursor.next_multiple_of(values.len());
         assert!(start + values.len() <= self.data.len(), "witness is full");
         self.data[start..start + values.len()].clone_from_slice(values);
@@ -258,11 +227,7 @@ impl From<&Vec<QuadraticExtension>> for Scalars {
 impl From<Vec<u64>> for Scalars {
     fn from(v: Vec<u64>) -> Scalars {
         Scalars::Field(Arc::new(
-            v.into_iter()
-                .map(|x| QuadraticExtension {
-                    coeffs: [x % MOD_Q, 0],
-                })
-                .collect(),
+            v.into_iter().map(|x| QuadraticExtension { coeffs: [x % MOD_Q, 0] }).collect(),
         ))
     }
 }
@@ -291,31 +256,19 @@ pub struct Weight {
 /// The weight `eq(point, index)`, one coordinate per index bit (MSB-first);
 /// verifier cost `O(point.len())`.
 pub fn eq(point: impl Into<Scalars>) -> Weight {
-    Weight {
-        kind: WeightKind::Eq(point.into()),
-        placement: None,
-        coefficient: None,
-    }
+    Weight { kind: WeightKind::Eq(point.into()), placement: None, coefficient: None }
 }
 
 /// Arbitrary weight table, entry `i` is `values[i]`; verifier cost linear in it.
 pub fn table(values: impl Into<Scalars>) -> Weight {
-    Weight {
-        kind: WeightKind::Table(values.into()),
-        placement: None,
-        coefficient: None,
-    }
+    Weight { kind: WeightKind::Table(values.into()), placement: None, coefficient: None }
 }
 
 /// Coefficient-weighted sum of weight products as one weight: the prover
 /// folds a single merged oracle over the union window, the verifier evaluates
 /// every component factor with its native gadget and combines the results.
 pub fn combination(parts: Vec<(RingElement, Vec<Weight>)>) -> Weight {
-    Weight {
-        kind: WeightKind::Combination(parts),
-        placement: None,
-        coefficient: None,
-    }
+    Weight { kind: WeightKind::Combination(parts), placement: None, coefficient: None }
 }
 
 /// The weight `ratio^i` over `2^num_vars` entries (recomposes base-`ratio`
@@ -332,10 +285,7 @@ pub fn powers(ratio: u64, num_vars: usize) -> Weight {
     Weight {
         kind: WeightKind::Eq(Scalars::Field(Arc::new(layers))),
         placement: None,
-        coefficient: Some(RingElement::constant(
-            scale as u64,
-            Representation::IncompleteNTT,
-        )),
+        coefficient: Some(RingElement::constant(scale as u64, Representation::IncompleteNTT)),
     }
 }
 
@@ -418,14 +368,7 @@ fn weight_to_factor(w: Weight) -> (PublicFactor, Option<RingElement>) {
                 .collect(),
         )),
     };
-    (
-        PublicFactor {
-            prefix_len,
-            suffix_len,
-            weights,
-        },
-        w.coefficient,
-    )
+    (PublicFactor { prefix_len, suffix_len, weights }, w.coefficient)
 }
 
 impl From<Weight> for ClaimExpr {
@@ -463,10 +406,7 @@ impl std::ops::Mul<Weight> for ClaimExpr {
 impl std::ops::Mul<ClaimExpr> for u64 {
     type Output = ClaimExpr;
     fn mul(self, rhs: ClaimExpr) -> ClaimExpr {
-        rhs.scale(&RingElement::constant(
-            self % MOD_Q,
-            Representation::IncompleteNTT,
-        ))
+        rhs.scale(&RingElement::constant(self % MOD_Q, Representation::IncompleteNTT))
     }
 }
 
@@ -528,18 +468,10 @@ fn eval_at(expr: &ClaimExpr, data: &[RingElement], index: usize, total_vars: usi
         ClaimExpr::Factor(ClaimFactor::Witness) => data[index].clone(),
         ClaimExpr::Factor(ClaimFactor::ConjWitness) => data[index].conjugate(),
         ClaimExpr::Factor(ClaimFactor::WitnessSegment(p)) => {
-            if in_prefix(index, p, total_vars) {
-                data[index].clone()
-            } else {
-                zero()
-            }
+            if in_prefix(index, p, total_vars) { data[index].clone() } else { zero() }
         }
         ClaimExpr::Factor(ClaimFactor::ConjWitnessSegment(p)) => {
-            if in_prefix(index, p, total_vars) {
-                data[index].conjugate()
-            } else {
-                zero()
-            }
+            if in_prefix(index, p, total_vars) { data[index].conjugate() } else { zero() }
         }
         ClaimExpr::Factor(ClaimFactor::Public(pf)) => eval_public_at(pf, index, total_vars),
         ClaimExpr::Constant(c) => c.clone(),
@@ -568,15 +500,8 @@ fn eval_at(expr: &ClaimExpr, data: &[RingElement], index: usize, total_vars: usi
 
 fn eval_public_at(pf: &PublicFactor, index: usize, total_vars: usize) -> RingElement {
     if let Weights::Selector { bits, length } = &pf.weights {
-        let p = Prefix {
-            prefix: *bits,
-            length: *length,
-        };
-        return if in_prefix(index, &p, total_vars) {
-            one()
-        } else {
-            zero()
-        };
+        let p = Prefix { prefix: *bits, length: *length };
+        return if in_prefix(index, &p, total_vars) { one() } else { zero() };
     }
     let middle_vars = total_vars - pf.prefix_len - pf.suffix_len;
     let middle = (index >> pf.suffix_len) & ((1usize << middle_vars) - 1);
@@ -619,10 +544,7 @@ fn eval_public_at(pf: &PublicFactor, index: usize, total_vars: usize) -> RingEle
 
 impl SnarkClaim {
     pub fn sums_to(expr: impl Into<ClaimExpr>, value: RingElement) -> SnarkClaim {
-        SnarkClaim {
-            expr: expr.into(),
-            value,
-        }
+        SnarkClaim { expr: expr.into(), value }
     }
 
     pub fn sums_to_zero(expr: impl Into<ClaimExpr>) -> SnarkClaim {
@@ -640,13 +562,7 @@ pub fn challenge_point(transcript: &mut Transcript, num_vars: usize) -> Vec<Quad
 /// public boundary data matching `eq(point) * witness_in(region)`.
 pub fn eq_weighted_sum(point: &[QuadraticExtension], values: &[RingElement]) -> RingElement {
     let expanded = lowering::expand_field_tensor(point);
-    assert_eq!(
-        expanded.len(),
-        values.len(),
-        "point addresses {} entries, got {}",
-        expanded.len(),
-        values.len()
-    );
+    assert_eq!(expanded.len(), values.len(), "point addresses {} entries, got {}", expanded.len(), values.len());
     let mut acc = zero();
     let mut term = zero();
     for (e, v) in expanded.iter().zip(values.iter()) {
@@ -666,10 +582,7 @@ mod tests {
         sample_random_short_vector(n, bound, Representation::IncompleteNTT)
     }
 
-    fn roundtrip(
-        witness: &VerticallyAlignedMatrix<RingElement>,
-        make: impl Fn(&mut Transcript) -> Vec<Claim>,
-    ) {
+    fn roundtrip(witness: &VerticallyAlignedMatrix<RingElement>, make: impl Fn(&mut Transcript) -> Vec<Claim>) {
         let mut tp = Transcript::new();
         let claims_p = make(&mut tp);
         let (proof, chain_p) = prove_claims(witness, &claims_p, &mut tp);
@@ -699,13 +612,7 @@ mod tests {
         assert_eq!((a.start(), a.len()), (0, 512));
         assert_eq!((b.start(), b.len()), (512, 256));
         assert_eq!((c.start(), c.len()), (1024, 512));
-        assert_eq!(
-            c.prefix(),
-            Prefix {
-                prefix: 2,
-                length: 2
-            }
-        );
+        assert_eq!(c.prefix(), Prefix { prefix: 2, length: 2 });
         let (rows, cols) = a.vars().split_at(3);
         assert_eq!((rows.len(), cols.len()), (3, 6));
         let w = layout.finish();
@@ -733,9 +640,7 @@ mod tests {
         }
         assert_eq!(expr.sum(&w), direct);
 
-        roundtrip(&w, |_| {
-            vec![Claim::sums_to(table(&weights) * witness(), direct.clone())]
-        });
+        roundtrip(&w, |_| vec![Claim::sums_to(table(&weights) * witness(), direct.clone())]);
     }
 
     #[test]
@@ -753,10 +658,7 @@ mod tests {
             let alpha = challenge_point(t, node.len());
             let expr = eq(&alpha).on(node) * table(per_slot.clone()).on(slot) * witness_in(layer);
             let value = expr.sum(&w);
-            vec![Claim::sums_to(
-                eq(&alpha).on(node) * table(per_slot.clone()).on(slot) * witness_in(layer),
-                value,
-            )]
+            vec![Claim::sums_to(eq(&alpha).on(node) * table(per_slot.clone()).on(slot) * witness_in(layer), value)]
         };
         roundtrip(&w, make);
     }
@@ -766,9 +668,8 @@ mod tests {
         init_common();
         let base_log = 8u64;
         let digits_per_value = 8usize;
-        let values: Vec<RingElement> = (0..32)
-            .map(|_| RingElement::random(Representation::IncompleteNTT))
-            .collect();
+        let values: Vec<RingElement> =
+            (0..32).map(|_| RingElement::random(Representation::IncompleteNTT)).collect();
         let digits = decompose(&values, base_log, digits_per_value);
 
         let mut layout = WitnessBuilder::new(64, 4);
@@ -893,10 +794,7 @@ mod tests {
             let parts: Vec<(RingElement, Vec<Weight>)> = amps
                 .into_iter()
                 .map(|(gamma, tab, base)| {
-                    (
-                        gamma,
-                        vec![table(tab).on(left), powers(base, right.len()).on(right)],
-                    )
+                    (gamma, vec![table(tab).on(left), powers(base, right.len()).on(right)])
                 })
                 .collect();
             let expr = combination(parts.clone()).on(region.vars()) * witness_in(region);
@@ -937,10 +835,7 @@ mod tests {
         assert_eq!(ct.v[0] as u128, norm_sq % MOD_Q as u128);
 
         roundtrip(&w, |_| {
-            vec![Claim::sums_to(
-                witness() * witness().conjugate(),
-                energy.clone(),
-            )]
+            vec![Claim::sums_to(witness() * witness().conjugate(), energy.clone())]
         });
     }
 

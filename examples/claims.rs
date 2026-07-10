@@ -63,19 +63,11 @@ fn main() {
 
     let mut verifier_transcript = Transcript::new();
     let verifier_claims = build_claims(&mut verifier_transcript);
-    verify_claims(
-        WitnessShape::new(256, 8),
-        &verifier_claims,
-        &proof,
-        &mut verifier_transcript,
-    );
+    verify_claims(WitnessShape::new(256, 8), &verifier_claims, &proof, &mut verifier_transcript);
     println!("verifier: accepted the weighted revenue, the mirrored balances,");
     println!("          the digit recomposition of every audit total,");
 
     let mut norm = energy;
     norm.to_representation(Representation::Coefficients);
-    println!(
-        "          and the witness energy (squared l2 norm = {})",
-        norm.v[0]
-    );
+    println!("          and the witness energy (squared l2 norm = {})", norm.v[0]);
 }
