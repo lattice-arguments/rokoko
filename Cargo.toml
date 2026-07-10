@@ -15,8 +15,14 @@ profile-sumcheck = []
 p-30 = []
 p-26 = []
 p-28 = []
-events = ["dep:rokoko-profiling"]
-profile = ["dep:rokoko-profiling"]
+events = []
+profile = [
+    "dep:tracing-chrome",
+    "dep:chrono",
+    "dep:sysinfo",
+    "dep:serde",
+    "dep:serde_json",
+]
 snark = []
 
 [dependencies]
@@ -30,7 +36,12 @@ incomplete-rexl = { path = "incomplete-rexl", optional = true }
 libloading = "0.8.6"
 libm = "0.2"
 tracing = "0.1"
-rokoko-profiling = { path = "rokoko-profiling", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-chrome = { version = "0.7", optional = true }
+chrono = { version = "0.4", optional = true }
+sysinfo = { version = "0.32", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
 mimalloc = "0.1"
 
 [profile.release]

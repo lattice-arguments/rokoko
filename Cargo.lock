@@ -712,6 +712,7 @@ version = "0.1.0"
 dependencies = [
  "aes",
  "blake3",
+ "chrono",
  "criterion",
  "ctr",
  "incomplete-rexl",
@@ -720,15 +721,6 @@ dependencies = [
  "mimalloc",
  "num",
  "rand",
- "rokoko-profiling",
- "tracing",
-]
-
-[[package]]
-name = "rokoko-profiling"
-version = "0.1.0"
-dependencies = [
- "chrono",
  "serde",
  "serde_json",
  "sysinfo",

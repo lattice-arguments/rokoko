@@ -1,22 +1,24 @@
 use std::any::Any;
 use std::process::Command;
 
-use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::{prelude::*, registry::Registry, EnvFilter, Layer};
 
-use crate::console::ConsoleLayer;
-use crate::log::LogLayer;
-use crate::snapshot::SnapshotLayer;
+#[cfg(feature = "profile")]
+use tracing_chrome::ChromeLayerBuilder;
+
+#[cfg(feature = "events")]
+use super::console::ConsoleLayer;
+use super::log::LogLayer;
+#[cfg(feature = "profile")]
+use super::snapshot::SnapshotLayer;
 
 #[must_use = "guards must be held alive for the duration of profiling"]
 pub struct TracingGuards(#[allow(dead_code)] Vec<Box<dyn Any>>);
 
-/// Install a tracing subscriber stack from two orthogonal flags:
-///
-/// - `events`: console summary (`ConsoleLayer`). Empty `LINEAR_PHASES`
-///   defaults to `verifier` so the per-round verifier breakdown is on by default.
+/// Install the global tracing subscriber. Can be only set once.
+/// Two different layers are optionally selected based on the feature flags:
+/// - `events`: console summary (`ConsoleLayer`).
 /// - `profile`: file artifacts (`ChromeLayer` JSON + `SnapshotLayer` JSON).
-///   `tracing::trace!` memory-layout dumps.
 ///
 /// Note that `ConsoleLayer` aggregates by (parent, child) edge (where time went); while
 /// `SnapshotLayer` aggregates by span name (total time anywhere).
@@ -24,14 +26,8 @@ pub struct TracingGuards(#[allow(dead_code)] Vec<Box<dyn Any>>);
 /// Level filtering is `info` by default; the env `RUST_LOG` is set to control the logging level
 ///
 /// Panics if called more than once — the global subscriber can only be set once.
-pub fn setup(
-    events: bool,
-    profile: bool,
-    trace_name: &str,
-    features: &str,
-) -> TracingGuards {
-    let filter =
-        || EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+pub fn setup() -> TracingGuards {
+    let filter = || EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     let parse_csv = |var: &str| -> Vec<String> {
         std::env::var(var)
@@ -46,26 +42,28 @@ pub fn setup(
             .unwrap_or_default()
     };
 
-    let focus = parse_csv("PROFILE_FOCUS");
+    let _focus = parse_csv("PROFILE_FOCUS");
 
     let mut layers: Vec<Box<dyn Layer<Registry> + Send + Sync>> = Vec::new();
     let mut guards: Vec<Box<dyn Any>> = Vec::new();
 
-    if events || profile {
-        layers.push(LogLayer.with_filter(filter()).boxed());
-    }
+    layers.push(LogLayer.with_filter(filter()).boxed());
 
-    if events {
-        let mut linear_phases = parse_csv("LINEAR_PHASES");
-        if linear_phases.is_empty() {
-            linear_phases.push("verifier".to_string());
-        }
-        let (console_layer, console_guard) = ConsoleLayer::new(focus.clone(), linear_phases);
+    #[cfg(feature = "events")]
+    {
+        use tracing_subscriber::filter::LevelFilter;
+        let max_level =
+            <EnvFilter as Layer<Registry>>::max_level_hint(&filter()).unwrap_or(LevelFilter::INFO);
+        let linear = max_level >= LevelFilter::DEBUG;
+        let (console_layer, console_guard) = ConsoleLayer::new(_focus.clone(), linear);
         layers.push(console_layer.with_filter(filter()).boxed());
         guards.push(Box::new(console_guard));
     }
 
-    if profile {
+    #[cfg(feature = "profile")]
+    {
+        let features = crate::tracing::snapshot::active_features();
+        let trace_name = trace_name();
         let run_dir = format!("profiles/{trace_name}");
         let _ = std::fs::create_dir_all(&run_dir);
         let chrome_path = format!("{run_dir}/trace.json");
@@ -76,8 +74,7 @@ pub fn setup(
         layers.push(chrome_layer.with_filter(filter()).boxed());
         guards.push(Box::new(chrome_guard));
 
-        let (snapshot_layer, snapshot_guard) =
-            SnapshotLayer::new(trace_name, features, focus);
+        let (snapshot_layer, snapshot_guard) = SnapshotLayer::new(trace_name, &features, _focus);
         layers.push(snapshot_layer.with_filter(filter()).boxed());
         guards.push(Box::new(snapshot_guard));
     }
@@ -112,4 +109,17 @@ pub fn print_artifact_paths(trace_base: &str) {
         https://profiler.firefox.com/\n  \
         https://ui.perfetto.dev/"
     );
+}
+
+pub fn trace_name() -> &'static str {
+    match (
+        cfg!(feature = "p-26"),
+        cfg!(feature = "p-28"),
+        cfg!(feature = "p-30"),
+    ) {
+        (true, _, _) => "p26",
+        (_, true, _) => "p28",
+        (_, _, true) => "p30",
+        _ => "default (p28)",
+    }
 }

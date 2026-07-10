@@ -8,37 +8,39 @@ use tracing::Subscriber;
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::registry::{LookupSpan, SpanRef};
 
-/// `n == tok`, or `n` starts with `"{tok}::"`.
-pub(crate) fn matches_token(n: &str, tok: &str) -> bool {
-    n == tok || n.strip_prefix(tok).is_some_and(|rest| rest.starts_with("::"))
-}
-
-/// Empty `focus` means no filter (everything matches).
-pub(crate) fn is_in_focus<S>(span: &SpanRef<'_, S>, focus: &[String]) -> bool
-where
-    S: Subscriber + for<'a> LookupSpan<'a>,
-{
-    focus.is_empty() || outermost_matching_ancestor(span, focus).is_some()
-}
-
-fn outermost_matching_ancestor<S>(span: &SpanRef<'_, S>, tokens: &[String]) -> Option<String>
-where
-    S: Subscriber + for<'a> LookupSpan<'a>,
-{
-    let mut root = None;
-    for ancestor in span.scope() {
-        let n = ancestor.name();
-        if tokens.iter().any(|tok| matches_token(n, tok)) {
-            root = Some(n.to_string());
-        }
+fn round_base(name: &str) -> Option<&str> {
+    let idx = name.rfind("_round")?;
+    let end = idx + "_round".len();
+    match name.as_bytes().get(end) {
+        None | Some(b'_') => Some(&name[..end]),
+        _ => None,
     }
-    root
+}
+
+fn same_round_chain(a: &str, b: &str) -> bool {
+    a == b || matches!((round_base(a), round_base(b)), (Some(x), Some(y)) if x == y)
+}
+
+fn linear_depth<S>(span: &SpanRef<'_, S>) -> usize
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+{
+    let mut depth = 0;
+    let mut child: Option<&'static str> = None;
+    for ancestor in span.scope() {
+        let name = ancestor.name();
+        if child.is_some_and(|c| !same_round_chain(c, name)) {
+            depth += 1;
+        }
+        child = Some(name);
+    }
+    depth
 }
 
 #[derive(Hash, PartialEq, Eq, Clone, Debug)]
 struct EdgeKey {
-    parent: Option<String>,
-    child: String,
+    parent: Option<&'static str>,
+    child: &'static str,
 }
 
 #[derive(Default, Clone)]
@@ -49,24 +51,31 @@ struct EdgeAggregate {
 
 type EdgeMap = HashMap<EdgeKey, EdgeAggregate>;
 
-type LinearBuffers = HashMap<String, Vec<String>>;
+#[derive(Default)]
+struct PhaseData {
+    total: Duration,
+    lines: Vec<(Instant, String)>,
+    rounds: Vec<(Instant, &'static str, Duration)>,
+}
+
+type LinearBuffers = HashMap<&'static str, PhaseData>;
 
 pub struct ConsoleLayer {
     edges: Arc<Mutex<EdgeMap>>,
-    root_order: Arc<Mutex<Vec<String>>>,
+    root_order: Arc<Mutex<Vec<&'static str>>>,
     linear_buffers: Arc<Mutex<LinearBuffers>>,
     focus: Vec<String>,
-    linear_phases: Vec<String>,
+    linear: bool,
 }
 
 pub struct ConsoleSummaryGuard {
     edges: Arc<Mutex<EdgeMap>>,
-    root_order: Arc<Mutex<Vec<String>>>,
+    root_order: Arc<Mutex<Vec<&'static str>>>,
     linear_buffers: Arc<Mutex<LinearBuffers>>,
 }
 
 impl ConsoleLayer {
-    pub fn new(focus: Vec<String>, linear_phases: Vec<String>) -> (Self, ConsoleSummaryGuard) {
+    pub fn new(focus: Vec<String>, linear: bool) -> (Self, ConsoleSummaryGuard) {
         let edges = Arc::new(Mutex::new(HashMap::new()));
         let root_order = Arc::new(Mutex::new(Vec::new()));
         let linear_buffers = Arc::new(Mutex::new(HashMap::new()));
@@ -76,7 +85,7 @@ impl ConsoleLayer {
                 root_order: Arc::clone(&root_order),
                 linear_buffers: Arc::clone(&linear_buffers),
                 focus,
-                linear_phases,
+                linear,
             },
             ConsoleSummaryGuard {
                 edges,
@@ -89,6 +98,7 @@ impl ConsoleLayer {
 
 struct Timing {
     start: Instant,
+    recursive_child_ns: u128,
 }
 
 impl<S> Layer<S> for ConsoleLayer
@@ -99,52 +109,76 @@ where
         let span = ctx.span(id).expect("span exists at on_new_span");
         span.extensions_mut().insert(Timing {
             start: Instant::now(),
+            recursive_child_ns: 0,
         });
     }
 
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
         let span = ctx.span(&id).expect("span exists at on_close");
-        let ext = span.extensions();
-        let Some(timing) = ext.get::<Timing>() else {
-            return;
+        let (start, elapsed, recursive_child_ns) = {
+            let ext = span.extensions();
+            let Some(timing) = ext.get::<Timing>() else {
+                return;
+            };
+            (
+                timing.start,
+                timing.start.elapsed(),
+                timing.recursive_child_ns,
+            )
         };
-        let elapsed = timing.start.elapsed();
-        let depth = span.scope().skip(1).count();
-        let parent_name = span.parent().map(|p| p.name().to_string());
-        let child_name = span.name().to_string();
+        let parent = span.parent();
+        let parent_name = parent.as_ref().map(|p| p.name());
+        let child_name = span.name();
 
-        if !is_in_focus(&span, &self.focus) {
+        if let Some(parent) = &parent {
+            if same_round_chain(parent.name(), span.name()) {
+                if let Some(pt) = parent.extensions_mut().get_mut::<Timing>() {
+                    pt.recursive_child_ns += elapsed.as_nanos();
+                }
+            }
+        }
+
+        if !super::is_in_focus(&span, &self.focus) {
             return;
         }
 
-        let phase = outermost_matching_ancestor(&span, &self.linear_phases);
+        if self.linear {
+            let per_round =
+                Duration::from_nanos(elapsed.as_nanos().saturating_sub(recursive_child_ns) as u64);
+            let root_name = span.scope().last().map_or(child_name, |s| s.name());
+            let is_root = parent_name.is_none();
 
-        if phase.is_some() {
-            let root_name = span
-                .scope()
-                .last()
-                .map(|s| s.name().to_string())
-                .unwrap_or_else(|| child_name.clone());
-            let indent = "  ".repeat(depth);
-            let width = NAME_END.saturating_sub(2 * depth);
-            let line = format!(
-                "{indent}{name:<width$}  {elapsed:>elapsed_w$}",
-                indent = indent,
-                name = child_name,
-                width = width,
-                elapsed = format_duration(elapsed),
-                elapsed_w = TIME_WIDTH,
-            );
-            self.linear_buffers
-                .lock()
-                .expect("linear_buffers lock poisoned")
-                .entry(root_name)
-                .or_default()
-                .push(line);
-            if parent_name.is_none() {
+            {
+                let mut buffers = self
+                    .linear_buffers
+                    .lock()
+                    .expect("linear_buffers lock poisoned");
+                let phase = buffers.entry(root_name).or_default();
+                if is_root {
+                    phase.total = per_round;
+                } else {
+                    let depth = linear_depth(&span);
+                    let indent = "  ".repeat(depth);
+                    let width = NAME_END.saturating_sub(2 * depth);
+                    let line = format!(
+                        "{indent}{name:<width$}  {elapsed:>elapsed_w$}",
+                        indent = indent,
+                        name = child_name,
+                        width = width,
+                        elapsed = format_duration(per_round),
+                        elapsed_w = TIME_WIDTH,
+                    );
+                    phase.lines.push((start, line));
+                }
+                if round_base(child_name).is_some() {
+                    phase.rounds.push((start, child_name, per_round));
+                }
+            }
+
+            if is_root {
                 let mut order = self.root_order.lock().expect("root_order lock poisoned");
-                if !order.iter().any(|n| n == &child_name) {
-                    order.push(child_name.clone());
+                if !order.iter().any(|&n| n == child_name) {
+                    order.push(child_name);
                 }
             }
             return;
@@ -153,16 +187,16 @@ where
         let mut edges = self.edges.lock().expect("edges lock poisoned");
         let entry = edges
             .entry(EdgeKey {
-                parent: parent_name.clone(),
-                child: child_name.clone(),
+                parent: parent_name,
+                child: child_name,
             })
             .or_default();
         entry.total_ns += elapsed.as_nanos();
         entry.calls += 1;
         if parent_name.is_none() {
             let mut order = self.root_order.lock().expect("root_order lock poisoned");
-            if !order.iter().any(|n| n == &child_name) {
-                order.push(child_name.clone());
+            if !order.iter().any(|&n| n == child_name) {
+                order.push(child_name);
             }
         }
     }
@@ -176,7 +210,11 @@ const HEADER_WIDTH: usize = NAME_END + 2 + TIME_WIDTH;
 
 impl Drop for ConsoleSummaryGuard {
     fn drop(&mut self) {
-        let root_order = self.root_order.lock().expect("root_order lock poisoned").clone();
+        let root_order = self
+            .root_order
+            .lock()
+            .expect("root_order lock poisoned")
+            .clone();
         if root_order.is_empty() {
             return;
         }
@@ -189,13 +227,13 @@ impl Drop for ConsoleSummaryGuard {
         let mut out = io::stdout().lock();
         let _ = writeln!(out);
 
-        let roots: Vec<(String, u128)> = root_order
+        let roots: Vec<(&'static str, u128)> = root_order
             .into_iter()
             .map(|name| {
                 let total = edges
                     .get(&EdgeKey {
                         parent: None,
-                        child: name.clone(),
+                        child: name,
                     })
                     .map(|agg| agg.total_ns)
                     .unwrap_or(0);
@@ -203,34 +241,62 @@ impl Drop for ConsoleSummaryGuard {
             })
             .collect();
 
-        for (i, (root, total_ns)) in roots.iter().enumerate() {
+        for (i, &(root, total_ns)) in roots.iter().enumerate() {
             if i > 0 {
                 let _ = writeln!(out);
             }
 
-            if let Some(lines) = linear_buffers.remove(root) {
-                for line in lines {
+            if let Some(mut phase) = linear_buffers.remove(root) {
+                write_phase_header(&mut out, root, phase.total);
+
+                phase.lines.sort_by_key(|(start, _)| *start);
+                for (_, line) in &phase.lines {
                     let _ = writeln!(out, "{line}");
+                }
+
+                if !phase.rounds.is_empty() {
+                    phase.rounds.sort_by_key(|(start, _, _)| *start);
+                    let _ = writeln!(out, "  rounds:");
+                    let mut rounds_total = Duration::ZERO;
+                    for (i, (_, name, dur)) in phase.rounds.iter().enumerate() {
+                        rounds_total += *dur;
+                        let label = format!("round {}  {name}", i + 1);
+                        let _ = writeln!(
+                            out,
+                            "    {label:<label_w$}  {time:>time_w$}",
+                            label = label,
+                            label_w = NAME_END.saturating_sub(4),
+                            time = format_duration(*dur),
+                            time_w = TIME_WIDTH,
+                        );
+                    }
+                    let base = phase
+                        .rounds
+                        .first()
+                        .and_then(|(_, name, _)| round_base(name))
+                        .unwrap_or("round");
+                    let _ = writeln!(
+                        out,
+                        "    {label:<label_w$}  {time:>time_w$}",
+                        label = format!("total {base}"),
+                        label_w = NAME_END.saturating_sub(4),
+                        time = format_duration(rounds_total),
+                        time_w = TIME_WIDTH,
+                    );
                 }
                 continue;
             }
 
-            let phase = root.to_uppercase();
-            let time = format_duration(Duration::from_nanos(*total_ns as u64));
-            let prefix = format!("=== {phase} ");
-            let suffix = format!(" {time}");
-            let filler_count =
-                HEADER_WIDTH.saturating_sub(prefix.len() + suffix.len());
-            let _ = writeln!(out, "{prefix}{}{suffix}", "=".repeat(filler_count));
+            write_phase_header(&mut out, root, Duration::from_nanos(total_ns as u64));
 
-            let mut visited = HashSet::new();
-            visited.insert(root.clone());
-            let mut shown_edges: HashSet<(Option<String>, String)> = HashSet::new();
+            let mut visited: HashSet<&'static str> = HashSet::new();
+            visited.insert(root);
+            let mut shown_edges: HashSet<(Option<&'static str>, &'static str)> = HashSet::new();
 
-            let mut children: Vec<(String, u128)> = edges
+            let mut children: Vec<(&'static str, u128)> = edges
                 .iter()
-                .filter(|(k, _)| k.parent.as_deref() == Some(root.as_str()))
-                .map(|(k, v)| (k.child.clone(), v.total_ns))
+                .filter(|(k, _)| k.parent == Some(root))
+                .map(|(k, v)| (k.child, v.total_ns))
                 .collect();
             children.sort_by(|a, b| b.1.cmp(&a.1));
             children.dedup_by(|a, b| a.0 == b.0);
@@ -239,9 +305,9 @@ impl Drop for ConsoleSummaryGuard {
                 print_subtree(
                     &mut out,
                     &edges,
-                    &child,
+                    child,
                     Some(root),
-                    Some(*total_ns),
+                    Some(total_ns),
                     1,
                     &mut visited,
                     &mut shown_edges,
@@ -253,25 +319,32 @@ impl Drop for ConsoleSummaryGuard {
     }
 }
 
+fn write_phase_header(out: &mut impl io::Write, root: &str, total: Duration) {
+    let phase = root.to_uppercase();
+    let time = format_duration(total);
+    let prefix = format!("=== {phase} ");
+    let suffix = format!(" {time}");
+    let filler_count = HEADER_WIDTH.saturating_sub(prefix.len() + suffix.len());
+    let _ = writeln!(out, "{prefix}{}{suffix}", "=".repeat(filler_count));
+}
+
 /// All times and call counts are read from the `(parent, child)` edge — not
 /// from a by-name aggregate — so a span called from multiple parents shows the
 /// correct slice under each parent and percent-of-parent never exceeds 100%.
 fn print_subtree(
     out: &mut impl io::Write,
     edges: &EdgeMap,
-    name: &str,
-    parent: Option<&str>,
+    name: &'static str,
+    parent: Option<&'static str>,
     parent_total_ns: Option<u128>,
     depth: usize,
-    visited: &mut HashSet<String>,
-    shown_edges: &mut HashSet<(Option<String>, String)>,
+    visited: &mut HashSet<&'static str>,
+    shown_edges: &mut HashSet<(Option<&'static str>, &'static str)>,
 ) {
     let indent = "  ".repeat(depth);
     let display = strip_common_prefix(name, parent);
 
-    // Re-expanding the same edge elsewhere in the tree would print identical
-    // numbers a second time and mislead the reader, so stub on repeat.
-    let edge_id = (parent.map(String::from), name.to_string());
+    let edge_id = (parent, name);
     if shown_edges.contains(&edge_id) {
         let _ = writeln!(out, "{indent}…{display}");
         return;
@@ -285,8 +358,8 @@ fn print_subtree(
     shown_edges.insert(edge_id);
 
     let edge_key = EdgeKey {
-        parent: parent.map(String::from),
-        child: name.to_string(),
+        parent,
+        child: name,
     };
     let agg = edges.get(&edge_key).cloned().unwrap_or_default();
     let time = format_duration(Duration::from_nanos(agg.total_ns as u64));
@@ -318,12 +391,12 @@ fn print_subtree(
         pct_w = PCT_WIDTH,
     );
 
-    visited.insert(name.to_string());
+    visited.insert(name);
 
-    let mut children: Vec<(String, u128)> = edges
+    let mut children: Vec<(&'static str, u128)> = edges
         .iter()
-        .filter(|(k, _)| k.parent.as_deref() == Some(name))
-        .map(|(k, v)| (k.child.clone(), v.total_ns))
+        .filter(|(k, _)| k.parent == Some(name))
+        .map(|(k, v)| (k.child, v.total_ns))
         .collect();
     children.sort_by(|a, b| b.1.cmp(&a.1));
     children.dedup_by(|a, b| a.0 == b.0);
@@ -332,7 +405,7 @@ fn print_subtree(
         print_subtree(
             out,
             edges,
-            &child,
+            child,
             Some(name),
             Some(agg.total_ns),
             depth + 1,
@@ -397,7 +470,10 @@ mod tests {
     fn strip_common_prefix_strips_segments() {
         assert_eq!(strip_common_prefix("commit", None), "commit");
 
-        assert_eq!(strip_common_prefix("commit::basic", Some("commit")), "basic");
+        assert_eq!(
+            strip_common_prefix("commit::basic", Some("commit")),
+            "basic"
+        );
         assert_eq!(
             strip_common_prefix("commit::decompose_witness", Some("commit")),
             "decompose_witness"

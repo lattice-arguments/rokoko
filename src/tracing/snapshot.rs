@@ -44,11 +44,7 @@ pub struct SnapshotGuard {
 }
 
 impl SnapshotLayer {
-    pub fn new(
-        trace_name: &str,
-        features: &str,
-        focus: Vec<String>,
-    ) -> (Self, SnapshotGuard) {
+    pub fn new(trace_name: &str, features: &str, focus: Vec<String>) -> (Self, SnapshotGuard) {
         let aggregates: Aggregates = Arc::new(Mutex::new(HashMap::new()));
         let path = PathBuf::from(format!("profiles/{trace_name}/snapshot.json"));
         let metadata = SnapshotMetadata {
@@ -91,7 +87,7 @@ where
         let Some(timing) = ext.get::<Timing>() else {
             return;
         };
-        if !crate::console::is_in_focus(&span, &self.focus) {
+        if !super::is_in_focus(&span, &self.focus) {
             return;
         }
         let elapsed_ns = timing.start.elapsed().as_nanos();
@@ -117,18 +113,33 @@ impl Drop for SnapshotGuard {
             Ok(json) => {
                 if let Err(e) = fs::write(&self.path, json) {
                     eprintln!(
-                        "rokoko-profiling: snapshot write failed at {}: {e}",
+                        "profiling: snapshot write failed at {}: {e}",
                         self.path.display()
                     );
                 }
             }
-            Err(e) => eprintln!("rokoko-profiling: snapshot serialize failed: {e}"),
+            Err(e) => eprintln!("profiling: snapshot serialize failed: {e}"),
         }
     }
 }
+pub fn active_features() -> String {
+    [
+        cfg!(feature = "p-26").then_some("p-26"),
+        cfg!(feature = "p-28").then_some("p-28"),
+        cfg!(feature = "p-30").then_some("p-30"),
+        cfg!(feature = "incomplete-rexl").then_some("incomplete-rexl"),
+        cfg!(feature = "unsafe-sumcheck").then_some("unsafe-sumcheck"),
+        cfg!(feature = "debug-hardness").then_some("debug-hardness"),
+        cfg!(feature = "debug-decomp").then_some("debug-decomp"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(",")
+}
 
 fn git_sha() -> String {
-    env!("GIT_SHA").to_string()
+    option_env!("GIT_SHA").unwrap_or("unknown").to_string()
 }
 
 fn now_iso8601() -> String {
@@ -139,8 +150,7 @@ fn machine_string() -> String {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get().to_string())
         .unwrap_or_else(|_| "?".to_string());
-    let kernel = sysinfo::System::kernel_version()
-        .unwrap_or_else(|| "unknown".to_string());
+    let kernel = sysinfo::System::kernel_version().unwrap_or_else(|| "unknown".to_string());
     let os = sysinfo::System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
     format!("{os} {kernel} {} / {cores} cores", std::env::consts::ARCH)
 }
