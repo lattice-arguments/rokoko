@@ -103,7 +103,11 @@ fn main() {
     drop(_tracing_guards);
     #[cfg(feature = "profile")]
     {
-        let trace_base = format!("{}_{}", rokoko::tracing::trace_name(), rokoko::tracing::timestamp_for_filename());
+        let trace_base = format!(
+            "{}_{}",
+            rokoko::tracing::trace_name(),
+            rokoko::tracing::timestamp_for_filename()
+        );
         rokoko::tracing::print_artifact_paths(&trace_base);
     }
 }

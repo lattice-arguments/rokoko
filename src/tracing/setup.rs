@@ -1,7 +1,6 @@
 use std::any::Any;
 use std::process::Command;
 
-use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::{prelude::*, registry::Registry, EnvFilter, Layer};
 
 #[cfg(feature = "profile")]
@@ -28,7 +27,6 @@ pub struct TracingGuards(#[allow(dead_code)] Vec<Box<dyn Any>>);
 ///
 /// Panics if called more than once — the global subscriber can only be set once.
 pub fn setup() -> TracingGuards {
-
     let filter = || EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     let parse_csv = |var: &str| -> Vec<String> {
@@ -53,6 +51,7 @@ pub fn setup() -> TracingGuards {
 
     #[cfg(feature = "events")]
     {
+        use tracing_subscriber::filter::LevelFilter;
         let max_level =
             <EnvFilter as Layer<Registry>>::max_level_hint(&filter()).unwrap_or(LevelFilter::INFO);
         let linear = max_level >= LevelFilter::DEBUG;
@@ -63,7 +62,7 @@ pub fn setup() -> TracingGuards {
 
     #[cfg(feature = "profile")]
     {
-        let features = active_features();
+        let features = crate::tracing::snapshot::active_features();
         let trace_name = trace_name();
         let run_dir = format!("profiles/{trace_name}");
         let _ = std::fs::create_dir_all(&run_dir);
@@ -121,22 +120,6 @@ pub fn trace_name() -> &'static str {
         (true, _, _) => "p26",
         (_, true, _) => "p28",
         (_, _, true) => "p30",
-        _ => panic!("--features events|profile requires one of p-26, p-28, p-30"),
+        _ => "default (p28)",
     }
-}
-
-fn active_features() -> String {
-    [
-        cfg!(feature = "p-26").then_some("p-26"),
-        cfg!(feature = "p-28").then_some("p-28"),
-        cfg!(feature = "p-30").then_some("p-30"),
-        cfg!(feature = "incomplete-rexl").then_some("incomplete-rexl"),
-        cfg!(feature = "unsafe-sumcheck").then_some("unsafe-sumcheck"),
-        cfg!(feature = "debug-hardness").then_some("debug-hardness"),
-        cfg!(feature = "debug-decomp").then_some("debug-decomp"),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(",")
 }
