@@ -119,6 +119,12 @@ pub fn ntt_inverse_in_place(data: &mut [u64], n: usize, modulus: u64) {
     });
 }
 
+pub fn ntt_inverse(result: &mut [u64], operand: &[u64], n: usize, modulus: u64) {
+    with_ntt(n, modulus, |ntt| {
+        ntt.compute_inverse(result, operand, 1, 1);
+    });
+}
+
 /// Convert a polynomial from coefficient representation to the even-odd
 /// incomplete-NTT representation used by [`fused_incomplete_ntt_mult`].
 ///

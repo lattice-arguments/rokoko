@@ -21,8 +21,9 @@ pub static HALF_WAY_MOD_Q_RING_CF: LazyLock<RingElement> =
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 use std::arch::x86_64::{
-    __m128i, __m512i, __mmask8, _mm512_add_epi16, _mm512_cmpgt_epu64_mask, _mm512_cvtepi64_epi16,
-    _mm512_load_si512, _mm512_mask_sub_epi64, _mm512_set1_epi64, _mm512_setzero_si512,
+    __m128i, __m512i, _mm512_add_epi16, _mm512_cmpgt_epu64_mask, _mm512_cvtepi16_epi64,
+    _mm512_cvtepi64_epi16, _mm512_extracti32x4_epi32, _mm512_load_si512, _mm512_mask_add_epi64,
+    _mm512_mask_sub_epi64, _mm512_movepi64_mask, _mm512_set1_epi64, _mm512_setzero_si512,
     _mm512_store_si512, _mm512_sub_epi16, _mm_store_si128,
 };
 
@@ -36,170 +37,39 @@ pub fn centered_i64_from_u64_mod_q_scalar(x: u64) -> i64 {
     }
 }
 
-/// Packs `i64` values into `i16` by signed truncation (keeping the low 16 bits).
-///
-/// On AVX-512, loads 16 × `i64` values (two `__m512i` registers of 8 lanes each),
-/// narrows them to 16 × `i16` via [`_mm512_cvtepi64_epi16`], and stores the two
-/// resulting `__m128i` vectors.  Falls back to scalar casts on other platforms.
-///
-/// # Panics
-///
-/// Panics if `dst.len() != src.len()` or `src.len()` is not a multiple of 16.
-/// In the scalar fallback, also panics (debug) if any value exceeds the `i16` range.
 #[inline(always)]
-pub fn pack_i64_to_i16_deg16(dst: &mut [i16], src: &[i64]) {
-    debug_assert_eq!(dst.len(), src.len());
-    debug_assert!(src.len() % 16 == 0);
-
+pub fn centered_i16_from_u64_mod_q(dst: &mut [i16; DEGREE], src: &[u64; DEGREE]) {
     #[cfg(feature = "debug-decomp")]
-    {
-        for &s in src.iter() {
-            assert!(
-                s >= i16::MIN as i64 && s <= i16::MAX as i64,
-                "i16 narrowing overflow: {}",
-                s
-            );
-        }
-    }
-
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    {
-        let _i = 0usize;
-        for k in 0..src.len() / 16 {
-            unsafe {
-                let i = k * 16;
-                // Load 16 i64 (two zmm registers of 8 i64)
-                let a0 = _mm512_load_si512(src.as_ptr().add(i) as *const __m512i);
-                let a1 = _mm512_load_si512(src.as_ptr().add(i + 8) as *const __m512i);
-
-                // Narrow 8 i64 -> 8 i16 (signed truncating), result is 128-bit each
-                let w0: __m128i = _mm512_cvtepi64_epi16(a0);
-                let w1: __m128i = _mm512_cvtepi64_epi16(a1);
-
-                _mm_store_si128(dst.as_mut_ptr().add(i) as *mut __m128i, w0);
-                _mm_store_si128(dst.as_mut_ptr().add(i + 8) as *mut __m128i, w1);
-            }
-        }
-    }
-
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
-    for (d, &s) in dst.iter_mut().zip(src.iter()) {
-        debug_assert!(s >= i16::MIN as i64 && s <= i16::MAX as i64);
-        *d = s as i16;
-    }
-    return;
-}
-
-/// Converts unsigned residues in `[0, Q)` to centred signed form in `(-Q/2, Q/2]`.
-///
-/// For each element `x`:
-/// - If `x > Q/2`, the result is `x − Q` (interpreted as a negative `i64`).
-/// - Otherwise the value is kept as-is.
-///
-/// On AVX-512, processes 8 lanes per iteration using
-/// [`_mm512_cmpgt_epu64_mask`] to identify the "negative" lanes and
-/// [`_mm512_mask_sub_epi64`] to subtract `Q` from them.
-/// Falls back to [`centered_i64_from_u64_mod_q_scalar`] on other platforms.
-#[inline(always)]
-pub fn centered_coeffs_u64_to_i64_inplace(out_i64: &mut [i64; DEGREE], in_u64: &[u64; DEGREE]) {
-    debug_assert_eq!(out_i64.len(), in_u64.len());
-
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    unsafe {
-        let half_q = MOD_Q >> 1;
-        let vq = _mm512_set1_epi64(MOD_Q as i64);
-        let vhalfq = _mm512_set1_epi64(half_q as i64);
-
-        let _i = 0usize;
-        let n = in_u64.len();
-
-        // 8 u64 lanes per __m512i
-        for k in 0..(n / 8) {
-            let i = k * 8;
-            let a = _mm512_load_si512(in_u64.as_ptr().add(i) as *const __m512i);
-
-            // neg lanes are ones where x > halfQ
-            let neg: __mmask8 = _mm512_cmpgt_epu64_mask(a, vhalfq);
-
-            // if neg: x = x - Q (wraps in u64 domain; interpreting as i64 gives negative)
-            let signed = _mm512_mask_sub_epi64(a, neg, a, vq);
-
-            // store as i64
-            _mm512_store_si512(out_i64.as_mut_ptr().add(i) as *mut __m512i, signed);
-        }
-    }
-
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
-    for (dst, &src) in out_i64.iter_mut().zip(in_u64.iter()) {
-        *dst = centered_i64_from_u64_mod_q_scalar(src);
-    }
-}
-
-/// Projects one row of the projection matrix against an `i16`-packed sub-witness,
-/// producing the result as `u64` residues modulo `Q`.
-///
-/// Given the pre-separated lists of positive (`pos`) and negative (`neg`) column
-/// indices for a single projection-matrix row, this function:
-///
-/// 1. Accumulates the positive witness rows via `_mm512_add_epi16`.
-/// 2. Accumulates the negated negative rows via `_mm512_sub_epi16`.
-/// 3. Combines both accumulators, unpacks 32 × `i16` lanes into `u64`
-///    (via [`convert_i16_as_u64`]), and reduces modulo `Q`.
-///
-/// Processes 32 `i16` lanes (one `__m512i`) per inner iteration.
-///
-/// # Arguments
-///
-/// * `subwitness_i16` – Slice of [`Signed16RingElement`]s (the packed witness rows).
-/// * `pos` – Column indices where the projection matrix entry is +1.
-/// * `neg` – Column indices where the projection matrix entry is −1.
-/// * `out_u64` – Output buffer of `DEGREE` `u64` values (reduced mod `Q`).
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-pub fn project_one_row_i16_to_u64<const DEGREE: usize>(
-    subwitness_i16: &[Signed16RingElement], // len = projection_ratio*H
-    pos: &[u16],
-    neg: &[u16],
-    out_u64: &mut [u64; DEGREE],
-) {
-    use crate::hexl::bindings::eltwise_reduce_mod;
-
-    debug_assert!(DEGREE % 16 == 0);
-
-    unsafe {
-        for j in 0..(DEGREE / 32) {
-            let k = j * 32;
-
-            let mut acc0 = _mm512_setzero_si512();
-            let mut acc1 = _mm512_setzero_si512();
-
-            for &i in pos {
-                let v = _mm512_load_si512(
-                    subwitness_i16[i as usize].0.as_ptr().add(k) as *const __m512i
-                );
-                acc0 = _mm512_add_epi16(acc0, v);
-            }
-
-            for &i in neg {
-                let v = _mm512_load_si512(
-                    subwitness_i16[i as usize].0.as_ptr().add(k) as *const __m512i
-                );
-                acc1 = _mm512_sub_epi16(acc1, v);
-            }
-
-            let acc = _mm512_add_epi16(acc0, acc1);
-            convert_i16_as_u64(out_u64.as_mut_ptr().add(k), acc);
-        }
-        eltwise_reduce_mod(
-            out_u64.as_mut_ptr(),
-            out_u64.as_ptr(),
-            out_u64.len() as u64,
-            MOD_Q,
+    for &x in src.iter() {
+        let c = centered_i64_from_u64_mod_q_scalar(x);
+        assert!(
+            c >= i16::MIN as i64 && c <= i16::MAX as i64,
+            "i16 narrowing overflow: {}",
+            c
         );
     }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    unsafe {
+        let vq = _mm512_set1_epi64(MOD_Q as i64);
+        let vhalfq = _mm512_set1_epi64((MOD_Q >> 1) as i64);
+        for k in 0..DEGREE / 8 {
+            let a = _mm512_load_si512(src.as_ptr().add(k * 8) as *const __m512i);
+            let neg = _mm512_cmpgt_epu64_mask(a, vhalfq);
+            let s = _mm512_mask_sub_epi64(a, neg, a, vq);
+            let w = _mm512_cvtepi64_epi16(s);
+            _mm_store_si128(dst.as_mut_ptr().add(k * 8) as *mut __m128i, w);
+        }
+    }
+
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+    for (d, &x) in dst.iter_mut().zip(src.iter()) {
+        let c = centered_i64_from_u64_mod_q_scalar(x);
+        debug_assert!(c >= i16::MIN as i64 && c <= i16::MAX as i64);
+        *d = c as i16;
+    }
 }
 
-/// Scalar fallback for [`project_one_row_i16_to_u64`].
-///
 /// Uses `i32` accumulators (to avoid `i16` overflow) and final modular
 /// reduction to produce `u64` residues in `[0, Q)`.
 #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
@@ -236,6 +106,150 @@ pub fn project_one_row_i16_to_u64<const DEGREE: usize>(
             r += q;
         }
         out_u64[k] = r as u64;
+    }
+}
+
+// Centered i16 lanes -> canonical residues in [0, Q): sign-extend, add Q to negatives.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[inline(always)]
+unsafe fn convert_i16x32_to_u64_mod_q(dst_u64: *mut u64, v16x32: __m512i) {
+    let q = _mm512_set1_epi64(MOD_Q as i64);
+    macro_rules! part {
+        ($p:literal) => {
+            let x = _mm512_extracti32x4_epi32::<$p>(v16x32);
+            let w = _mm512_cvtepi16_epi64(x);
+            let neg = _mm512_movepi64_mask(w);
+            let r = _mm512_mask_add_epi64(w, neg, w, q);
+            _mm512_store_si512(dst_u64.add($p * 8) as *mut __m512i, r);
+        };
+    }
+    part!(0);
+    part!(1);
+    part!(2);
+    part!(3);
+}
+
+// Computes out[row] = sum of witness elements listed in pos[row] minus those
+// in neg[row], coefficient-wise in i16, for one witness block.
+//
+// The loop nest exists to keep the loads cache-hot (L1, spill L2, never L3):
+//   k    - one 32-lane (64 B) slice of the coefficients at a time. Each
+//          witness element is 4 such lines; a k-pass touches exactly one
+//          line per element.
+//   tile - the witness is walked in 256-element windows: 256 x 64 B = 16 KB,
+//          which stays L1-resident while...
+//   row  - ...ALL output rows consume their entries falling inside the
+//          window. So a witness line is fetched from memory once per k and
+//          then reused ~H/2 times from L1.
+//
+// Because rows are revisited per tile, their partial sums cannot live in
+// registers; they live in `scratch` (H x 64 B = 16 KB, also L1-resident).
+// The offset lists are sorted, so `pos_cur`/`neg_cur` remember per row how
+// far its list has been consumed; the next tile continues from there, and
+// "entry belongs to this tile" is a single compare against the tile's end.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+pub fn project_rows_sparse_tiled<const DEGREE: usize>(
+    subwitness_i16: &[Signed16RingElement],
+    pos: &[u32],
+    pos_bounds: &[usize],
+    neg: &[u32],
+    neg_bounds: &[usize],
+    out: &mut [RingElement],
+) {
+    const TILE: usize = 256;
+
+    #[repr(align(64))]
+    #[derive(Clone, Copy)]
+    struct Acc([i16; 32]);
+
+    debug_assert!(DEGREE % 32 == 0);
+    let h = out.len();
+    debug_assert_eq!(pos_bounds.len(), h + 1);
+    debug_assert_eq!(neg_bounds.len(), h + 1);
+    let row_len = subwitness_i16.len();
+    let elem_bytes = core::mem::size_of::<Signed16RingElement>();
+
+    let mut scratch = vec![Acc([0i16; 32]); h];
+    let mut pos_cur = vec![0usize; h];
+    let mut neg_cur = vec![0usize; h];
+
+    let base = subwitness_i16.as_ptr() as *const u8;
+
+    unsafe {
+        for k in 0..DEGREE / 32 {
+            // The list entries are byte offsets of ELEMENTS; adding them to
+            // `chunk` (base shifted to this k-slice) addresses the element's
+            // k-th line directly.
+            let chunk = base.add(k * 64);
+            // Fresh coefficient slice: clear the partial sums, rewind every
+            // row's cursor to the start of its list.
+            scratch.fill(Acc([0i16; 32]));
+            pos_cur.copy_from_slice(&pos_bounds[..h]);
+            neg_cur.copy_from_slice(&neg_bounds[..h]);
+
+            let mut tile_start = 0usize;
+            while tile_start < row_len {
+                // Tile boundary in the same units as the list entries (bytes).
+                let tile_end = ((tile_start + TILE).min(row_len) * elem_bytes) as u32;
+                for row in 0..h {
+                    // Two independent accumulators so the adds and the
+                    // subtracts form separate dependency chains: a0 continues
+                    // this row's running sum, a1 collects the negatives, and
+                    // a0 - a1 is stored back. i16 adds wrap mod 2^16, which
+                    // is exact as long as the true sum fits i16 (the norm
+                    // bounds guarantee that; debug-decomp checks it).
+                    let mut a0 =
+                        _mm512_load_si512(scratch[row].0.as_ptr() as *const __m512i);
+                    let mut a1 = _mm512_setzero_si512();
+
+                    // Consume this row's +1 entries that fall inside the
+                    // tile. The load fuses into the add (one vpaddw with a
+                    // memory operand) and stays cache-hot: the address is
+                    // inside the tile (measured: ~78% of kernel loads L1-hit,
+                    // the rest L2-hit, ~nothing reaches L3).
+                    let end = pos_bounds[row + 1];
+                    let mut i = *pos_cur.get_unchecked(row);
+                    while i < end && *pos.get_unchecked(i) < tile_end {
+                        a0 = _mm512_add_epi16(
+                            a0,
+                            _mm512_load_si512(
+                                chunk.add(*pos.get_unchecked(i) as usize) as *const __m512i
+                            ),
+                        );
+                        i += 1;
+                    }
+                    *pos_cur.get_unchecked_mut(row) = i;
+
+                    // Same for the -1 entries.
+                    let end = neg_bounds[row + 1];
+                    let mut i = *neg_cur.get_unchecked(row);
+                    while i < end && *neg.get_unchecked(i) < tile_end {
+                        a1 = _mm512_add_epi16(
+                            a1,
+                            _mm512_load_si512(
+                                chunk.add(*neg.get_unchecked(i) as usize) as *const __m512i
+                            ),
+                        );
+                        i += 1;
+                    }
+                    *neg_cur.get_unchecked_mut(row) = i;
+
+                    _mm512_store_si512(
+                        scratch[row].0.as_mut_ptr() as *mut __m512i,
+                        _mm512_sub_epi16(a0, a1),
+                    );
+                }
+                tile_start += TILE;
+            }
+
+            // All tiles done: scratch holds the finished centered i16 sums
+            // for this coefficient slice; lift them to residues in [0, Q)
+            // and write them into the output elements.
+            for row in 0..h {
+                let acc = _mm512_load_si512(scratch[row].0.as_ptr() as *const __m512i);
+                convert_i16x32_to_u64_mod_q(out[row].v.as_mut_ptr().add(k * 32), acc);
+            }
+        }
     }
 }
 
@@ -295,30 +309,6 @@ pub unsafe fn sub_epi16_checked(a: __m512i, b: __m512i) -> __m512i {
     }
 }
 
-/// Unpacks the 32 × `i16` lanes of a `__m512i` into 32 consecutive `u64` values,
-/// mapping negative lanes to their canonical representative mod `Q` (by adding `Q`).
-///
-/// This is the final conversion step of [`project_one_row_i16_to_u64`]: it bridges
-/// the `i16` SIMD accumulator with the `u64` domain expected by [`eltwise_reduce_mod`].
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-#[inline(always)]
-fn convert_i16_as_u64(dst_u64: *mut u64, v16x32: __m512i) {
-    unsafe {
-        let mut tmp = [0i16; 32];
-        _mm512_store_si512(tmp.as_mut_ptr() as *mut __m512i, v16x32);
-
-        let q_i64 = MOD_Q as i64;
-        for lane in 0..32 {
-            let mut r = tmp[lane] as i64;
-            if r < 0 {
-                r += q_i64;
-            }
-            *dst_u64.add(lane) = r as u64;
-        }
-    }
-}
-
-#[inline]
 pub fn inner_product(a: &Vec<RingElement>, b: &Vec<RingElement>) -> RingElement {
     debug_assert_eq!(a.len(), b.len());
     let mut result = RingElement::zero(Representation::IncompleteNTT);

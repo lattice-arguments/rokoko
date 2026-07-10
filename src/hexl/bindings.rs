@@ -117,6 +117,14 @@ mod inner {
     }
 
     #[inline(always)]
+    pub unsafe fn ntt_inverse(result: *mut u64, operand: *const u64, n: usize, modulus: u64) {
+        let result = slice_from_raw_mut_usize(result, n);
+        let operand = std::slice::from_raw_parts(operand, n);
+        hexl::ntt_inverse(result, operand, n, modulus);
+    }
+
+
+    #[inline(always)]
     pub unsafe fn eltwise_fma_mod(
         result: *mut u64,
         operand1: *const u64,
@@ -197,6 +205,13 @@ mod inner {
         pub fn ntt_forward_in_place(operand: *mut u64, n: usize, modulus: u64);
         pub fn ntt_inverse_in_place(operand: *mut u64, n: usize, modulus: u64);
     }
+
+    #[inline(always)]
+    pub unsafe fn ntt_inverse(result: *mut u64, operand: *const u64, n: usize, modulus: u64) {
+        std::ptr::copy_nonoverlapping(operand, result, n);
+        ntt_inverse_in_place(result, n, modulus);
+    }
+
 
     use crate::common::config::DEGREE;
 
