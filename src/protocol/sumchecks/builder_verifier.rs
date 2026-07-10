@@ -24,11 +24,11 @@ use crate::{
             sum::SumSumcheckEvaluation,
         },
         sumchecks::context_verifier::{
-            CoarseProjVerifierContext, ComVerifyLayerVerifierContext,
-            ComVerifyOutputLayerVerifierContext, ComVerifyVerifierContext,
-            CommitmentFoldVerifierContext, FineProjVerifierContext, FineProjVerifierContextWrapper,
-            InnerEvalFoldVerifierContext, NextVerifierSumcheckContext, NormCheckVerifierContext,
-            OuterEvalClaimVerifierContext, VerifierSumcheckContext,
+            NextVerifierSumcheckContext, CommitmentFoldVerifierContext, InnerEvalFoldVerifierContext,
+            OuterEvalClaimVerifierContext, CoarseProjVerifierContext, FineProjVerifierContext,
+            FineProjVerifierContextWrapper, ComVerifyLayerVerifierContext,
+            ComVerifyOutputLayerVerifierContext, ComVerifyVerifierContext, NormCheckVerifierContext,
+            VerifierSumcheckContext,
         },
     },
 };
@@ -532,10 +532,7 @@ pub fn init_verifier(crs: &CRS, config: &SumcheckConfig) -> VerifierSumcheckCont
                     rhs_projection_flatter_evaluation,
                     rhs_fold_challenge_evaluation,
                     projection_selector_evaluation,
-                    output: ElephantCell::new(DiffSumcheckEvaluation::new(
-                        coarse_proj_lhs,
-                        coarse_proj_rhs,
-                    )),
+                    output: ElephantCell::new(DiffSumcheckEvaluation::new(coarse_proj_lhs, coarse_proj_rhs)),
                 })
             }
             Projection::Fine(_projection_recursion) => None,

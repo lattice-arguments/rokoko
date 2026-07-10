@@ -113,9 +113,8 @@ pub fn check_sumcheck_round(
             }
             _ => 0,
         };
-        ((norm_commitment_data_ell_2_sq
-            + norm_opening_data_ell_2_sq
-            + norm_projection_data_ell_2_sq) as f64)
+        ((norm_commitment_data_ell_2_sq + norm_opening_data_ell_2_sq + norm_projection_data_ell_2_sq)
+            as f64)
             .sqrt()
     };
     println!(

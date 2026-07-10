@@ -7,7 +7,7 @@ use crate::{
         config::{Config, IntermediateConfig},
         crs::CRS,
         intermediate_sumchecks::context::{
-            FineProjIntermediateSumcheckContext, InnerEvalFoldIntermediateSumcheckContext,
+            InnerEvalFoldIntermediateSumcheckContext, FineProjIntermediateSumcheckContext,
         },
         sumcheck_utils::{
             combiner::Combiner, common::HighOrderSumcheckData, elephant_cell::ElephantCell,
@@ -19,8 +19,7 @@ use crate::{
 };
 
 use super::context::{
-    CommitmentFoldIntermediateSumcheckContext, IntermediateSumcheckContext,
-    NormCheckIntermediateSumcheckContext,
+    IntermediateSumcheckContext, CommitmentFoldIntermediateSumcheckContext, NormCheckIntermediateSumcheckContext,
 };
 
 pub fn init_intermediate_sumcheck(

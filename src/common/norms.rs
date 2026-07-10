@@ -48,6 +48,7 @@ pub fn l2_norm_coeffs(vec: &[RingElement]) -> f64 {
 }
 
 pub fn assert_norm_bounded(label: &str, value: f64, bound: f64) {
+    println!("L2 norm of {label}: {value} (bound {bound})");
     assert!(
         value <= bound,
         "L2 norm of {label} = {value} exceeds the registered bound {bound}"

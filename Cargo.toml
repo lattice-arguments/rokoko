@@ -15,8 +15,6 @@ profile-sumcheck = []
 p-30 = []
 p-26 = []
 p-28 = []
-events = ["dep:rokoko-profiling"]
-profile = ["dep:rokoko-profiling"]
 snark = []
 
 [dependencies]
@@ -29,8 +27,6 @@ ctr = "0.9"
 incomplete-rexl = { path = "incomplete-rexl", optional = true }
 libloading = "0.8.6"
 libm = "0.2"
-tracing = "0.1"
-rokoko-profiling = { path = "rokoko-profiling", optional = true }
 mimalloc = "0.1"
 
 [profile.release]

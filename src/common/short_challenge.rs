@@ -232,7 +232,7 @@ const SIGN_BYTES: usize = (TAU + 7) / 8;
 const _: () = assert!(N <= 256, "Fisher-Yates uses one byte per index sample");
 
 #[allow(unused_assignments)]
-pub fn sample_attempt(hasher: &mut HashWrapper) -> ([u8; TAU], [i8; TAU]) {
+fn sample_attempt(hasher: &mut HashWrapper) -> ([u8; TAU], [i8; TAU]) {
     let mut buf = [0u8; ATTEMPT_BUF_LEN];
     hasher.fill_from_xof(ATTEMPT_LABEL, &mut buf);
     let mut idx: usize = 0;
