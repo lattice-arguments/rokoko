@@ -187,8 +187,21 @@ pub fn project(
     projection_image
 }
 
-// Per-sign column lists as flat byte offsets (index * elem size) with per-row
-// bounds, filled via compress-store straight from the packed mask bytes.
+// Flattens J's two bitplanes into "which witness elements to add / subtract"
+// per output row, so the kernel never touches J's zeros (~half of all entries).
+//
+// For each row the +1 column positions go into one list and the -1 positions
+// into another; all rows' lists are glued back-to-back into ONE flat array per
+// sign. Example with 3 rows, +1 entries at columns {2,5}, {0}, {1,3,4}:
+//
+//   pos        = [2, 5, 0, 1, 3, 4]      (times elem_bytes, see below)
+//   pos_bounds = [0, 2, 3, 6]            row r owns pos[bounds[r]..bounds[r+1]]
+//
+// Entries are stored pre-multiplied by the element size, i.e. as BYTE offsets
+// into the witness slice, so the kernel's inner loop computes an element
+// address as base + offset with no shift. Within a row the offsets ascend
+// (built left to right), which lets the kernel walk them with a cursor and
+// stop at a tile boundary with one compare.
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 fn signed_offset_lists(
     projection_matrix: &ProjectionMatrix,
@@ -196,6 +209,11 @@ fn signed_offset_lists(
     let h = projection_matrix.projection_height;
     let elem_bytes = core::mem::size_of::<Signed16RingElement>();
 
+    // Pass 1 - count only. J is packed 8 columns per byte in two planes:
+    // pos (sign) and nz (nonzero). An entry is +1 where both bits are set
+    // (p & n) and -1 where only nz is set (!p & n). Popcounting every byte
+    // gives the per-row counts; their running totals are exactly the
+    // bounds arrays, and the final totals size the two flat vectors.
     let mut pos_bounds = Vec::with_capacity(h + 1);
     let mut neg_bounds = Vec::with_capacity(h + 1);
     pos_bounds.push(0usize);
@@ -211,6 +229,7 @@ fn signed_offset_lists(
         neg_bounds.push(nneg);
     }
 
+    // Pass 2 - fill, one mask byte (= 8 columns) per compress-store.
     let mut pos: Vec<u32> = Vec::with_capacity(npos);
     let mut neg: Vec<u32> = Vec::with_capacity(nneg);
     unsafe {
@@ -219,16 +238,24 @@ fn signed_offset_lists(
             _mm256_setr_epi32,
         };
         let eb = elem_bytes as i32;
+        // Byte offsets of the 8 consecutive columns a mask byte covers,
+        // relative to the first of them: [0, eb, 2*eb, ..., 7*eb].
         let lane_offsets = _mm256_setr_epi32(0, eb, 2 * eb, 3 * eb, 4 * eb, 5 * eb, 6 * eb, 7 * eb);
+        // Raw write cursors into the (already exactly-sized) vectors.
         let mut pw = pos.as_mut_ptr();
         let mut nw = neg.as_mut_ptr();
         for row in 0..h {
             let (pos_row, nz_row) = projection_matrix.row_chunks(row);
             for (c, (&p, &n)) in pos_row.iter().zip(nz_row).enumerate() {
+                // Absolute byte offsets of this byte's 8 columns: byte c
+                // starts at column c*8, so base = c*8*eb plus the lane table.
                 let offs = _mm256_add_epi32(
                     _mm256_set1_epi32((c * 8) as i32 * eb),
                     lane_offsets,
                 );
+                // compress-store with the mask byte as __mmask8 writes only
+                // the offsets whose bit is set, packed contiguously; advance
+                // the cursor by how many that was (popcount).
                 let add = p & n;
                 _mm256_mask_compressstoreu_epi32(pw as *mut i32, add, offs);
                 pw = pw.add(add.count_ones() as usize);
@@ -237,6 +264,8 @@ fn signed_offset_lists(
                 nw = nw.add(sub.count_ones() as usize);
             }
         }
+        // Everything was written through raw pointers; the counts from pass 1
+        // say how much.
         pos.set_len(npos);
         neg.set_len(nneg);
     }

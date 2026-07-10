@@ -129,9 +129,24 @@ unsafe fn convert_i16x32_to_u64_mod_q(dst_u64: *mut u64, v16x32: __m512i) {
     part!(3);
 }
 
-// One 32-lane coefficient chunk at a time (k outer), witness tiled in 256-element
-// blocks so tile (16 KB) + row accumulators (16 KB) stay L1; per-row
-// cursors advance monotonically over the sorted offset lists.
+// Computes out[row] = sum of witness elements listed in pos[row] minus those
+// in neg[row], coefficient-wise in i16, for one witness block.
+//
+// The loop nest exists to keep the loads cache-hot (L1, spill L2, never L3):
+//   k    - one 32-lane (64 B) slice of the coefficients at a time. Each
+//          witness element is 4 such lines; a k-pass touches exactly one
+//          line per element.
+//   tile - the witness is walked in 256-element windows: 256 x 64 B = 16 KB,
+//          which stays L1-resident while...
+//   row  - ...ALL output rows consume their entries falling inside the
+//          window. So a witness line is fetched from memory once per k and
+//          then reused ~H/2 times from L1.
+//
+// Because rows are revisited per tile, their partial sums cannot live in
+// registers; they live in `scratch` (H x 64 B = 16 KB, also L1-resident).
+// The offset lists are sorted, so `pos_cur`/`neg_cur` remember per row how
+// far its list has been consumed; the next tile continues from there, and
+// "entry belongs to this tile" is a single compare against the tile's end.
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 pub fn project_rows_sparse_tiled<const DEGREE: usize>(
     subwitness_i16: &[Signed16RingElement],
@@ -162,21 +177,36 @@ pub fn project_rows_sparse_tiled<const DEGREE: usize>(
 
     unsafe {
         for k in 0..DEGREE / 32 {
+            // The list entries are byte offsets of ELEMENTS; adding them to
+            // `chunk` (base shifted to this k-slice) addresses the element's
+            // k-th line directly.
             let chunk = base.add(k * 64);
-            for s in scratch.iter_mut() {
-                _mm512_store_si512(s.0.as_mut_ptr() as *mut __m512i, _mm512_setzero_si512());
-            }
+            // Fresh coefficient slice: clear the partial sums, rewind every
+            // row's cursor to the start of its list.
+            scratch.fill(Acc([0i16; 32]));
             pos_cur.copy_from_slice(&pos_bounds[..h]);
             neg_cur.copy_from_slice(&neg_bounds[..h]);
 
             let mut tile_start = 0usize;
             while tile_start < row_len {
+                // Tile boundary in the same units as the list entries (bytes).
                 let tile_end = ((tile_start + TILE).min(row_len) * elem_bytes) as u32;
                 for row in 0..h {
+                    // Two independent accumulators so the adds and the
+                    // subtracts form separate dependency chains: a0 continues
+                    // this row's running sum, a1 collects the negatives, and
+                    // a0 - a1 is stored back. i16 adds wrap mod 2^16, which
+                    // is exact as long as the true sum fits i16 (the norm
+                    // bounds guarantee that; debug-decomp checks it).
                     let mut a0 =
                         _mm512_load_si512(scratch[row].0.as_ptr() as *const __m512i);
                     let mut a1 = _mm512_setzero_si512();
 
+                    // Consume this row's +1 entries that fall inside the
+                    // tile. The load fuses into the add (one vpaddw with a
+                    // memory operand) and stays cache-hot: the address is
+                    // inside the tile (measured: ~78% of kernel loads L1-hit,
+                    // the rest L2-hit, ~nothing reaches L3).
                     let end = pos_bounds[row + 1];
                     let mut i = *pos_cur.get_unchecked(row);
                     while i < end && *pos.get_unchecked(i) < tile_end {
@@ -190,6 +220,7 @@ pub fn project_rows_sparse_tiled<const DEGREE: usize>(
                     }
                     *pos_cur.get_unchecked_mut(row) = i;
 
+                    // Same for the -1 entries.
                     let end = neg_bounds[row + 1];
                     let mut i = *neg_cur.get_unchecked(row);
                     while i < end && *neg.get_unchecked(i) < tile_end {
@@ -211,6 +242,9 @@ pub fn project_rows_sparse_tiled<const DEGREE: usize>(
                 tile_start += TILE;
             }
 
+            // All tiles done: scratch holds the finished centered i16 sums
+            // for this coefficient slice; lift them to residues in [0, Q)
+            // and write them into the output elements.
             for row in 0..h {
                 let acc = _mm512_load_si512(scratch[row].0.as_ptr() as *const __m512i);
                 convert_i16x32_to_u64_mod_q(out[row].v.as_mut_ptr().add(k * 32), acc);
