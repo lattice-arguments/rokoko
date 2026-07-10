@@ -11,12 +11,12 @@ use crate::{
     },
     hexl::bindings::{add_mod, eltwise_mult_mod, multiply_mod},
     protocol::{
-        commitment::{commit_basic, BasicCommitment},
+        commitment::{commit_basic_internal, BasicCommitment},
         config::{
             Config, IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, RoundProof,
             SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof,
         },
-        crs::CRS,
+        crs::VerifierCRS,
         intermediate_sumchecks::{
             context_verifier::IntermediateVerifierSumcheckContext,
             runner_verifier::intermediate_sumcheck_verifier,
@@ -36,7 +36,7 @@ use crate::{
 };
 
 pub fn verifier_round(
-    crs: &CRS,
+    crs: &VerifierCRS,
     config: &SumcheckConfig,
     rc_commitment: &[RingElement],
     round_proof: &SumcheckRoundProof,
@@ -244,7 +244,7 @@ pub(crate) fn fold_matrix_claims(
 }
 
 pub fn verifier_round_intermediate(
-    crs: &CRS,
+    crs: &VerifierCRS,
     config: &IntermediateConfig,
     commitment: &BasicCommitment,
     round_proof: &IntermediateRoundProof,
@@ -473,7 +473,7 @@ pub fn verifier_round_intermediate(
 }
 
 pub fn verifier_round_simple(
-    crs: &CRS,
+    crs: &VerifierCRS,
     config: &SimpleConfig,
     commitment: &BasicCommitment,
     round_proof: &SimpleRoundProof,
@@ -514,8 +514,15 @@ pub fn verifier_round_simple(
 
     hash_wrapper.sample_low_op_norm_ring_vec_into(&mut folding_challenges);
 
-    let commitment_of_folded_witness = commit_basic(
-        &crs,
+    // the folded witness is short, so preprocessing the key here is cheap
+    let ck: Vec<PreprocessedRow> = crs
+        .structured_ck_for_wit_dim(round_proof.folded_witness.height)
+        .iter()
+        .take(config.basic_commitment_rank)
+        .map(PreprocessedRow::from_structured_row)
+        .collect();
+    let commitment_of_folded_witness = commit_basic_internal(
+        &ck,
         &round_proof.folded_witness,
         config.basic_commitment_rank,
     );

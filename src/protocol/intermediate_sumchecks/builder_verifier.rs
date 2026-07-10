@@ -5,7 +5,7 @@ use crate::{
     },
     protocol::{
         config::{Config, IntermediateConfig},
-        crs::CRS,
+        crs::VerifierCRS,
         intermediate_sumchecks::context_verifier::{
             IntermediateVerifierSumcheckContext, CommitmentFoldIntermediateVerifierContext,
             InnerEvalFoldIntermediateVerifierContext, FineProjIntermediateVerifierContext,
@@ -28,7 +28,7 @@ use crate::{
 type EvalData = dyn EvaluationSumcheckData<Element = RingElement>;
 
 pub fn init_intermediate_verifier(
-    crs: &CRS,
+    crs: &VerifierCRS,
     config: &IntermediateConfig,
 ) -> IntermediateVerifierSumcheckContext {
     let decomposed_witness_height = config.witness_height * config.witness_decomposition_chunks;
