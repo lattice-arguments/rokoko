@@ -812,16 +812,16 @@ pub fn verifier_sample_projection_challenges_collectively(
     hash_wrapper: &mut HashWrapper,
 ) -> [BatchedProjectionChallengesSuccinct; NOF_BATCHES] {
     let challenges: [BatchedProjectionChallengesSuccinctWithoutJBatched; NOF_BATCHES] = {
-        let _s = tracing::info_span!("sample_projection_challenges::layers").entered();
+        //let _s = tracing::info_span!("sample_projection_challenges::layers").entered();
         std::array::from_fn(|_| {
             verifier_sample_projection_challenges(projection_matrix, config, hash_wrapper)
         })
     };
 
     let js_batched = {
-        let _s = tracing::info_span!("sample_projection_challenges::j_batched").entered();
+        //let _s = tracing::info_span!("sample_projection_challenges::j_batched").entered();
         let c_1_values_batches: [Vec<u64>; NOF_BATCHES] = {
-            let _s = tracing::info_span!("j_batched::c_1_values").entered();
+            //let _s = tracing::info_span!("j_batched::c_1_values").entered();
             std::array::from_fn(|i| precompute_structured_values_fast(&challenges[i].c_1_layers))
         };
         compute_j_batched_collectively(projection_matrix, &c_1_values_batches)
