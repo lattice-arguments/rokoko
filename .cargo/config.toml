@@ -3,3 +3,6 @@ rustflags = ["-C", "target-cpu=native"]
 
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "target-cpu=native", "-C", "opt-level=3"]
+
+[env]
+MIMALLOC_PURGE_DELAY = { value = "-1", force = true }
