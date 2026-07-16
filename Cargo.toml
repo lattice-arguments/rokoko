@@ -27,7 +27,6 @@ ctr = "0.9"
 incomplete-rexl = { path = "incomplete-rexl", optional = true }
 libloading = "0.8.6"
 libm = "0.2"
-mimalloc = "0.1"
 
 [profile.release]
 opt-level = 3

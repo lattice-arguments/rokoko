@@ -1,8 +1,6 @@
 use rokoko::common::init_common;
 use rokoko::common::short_challenge::repetition_rate;
 
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[cfg(not(feature = "snark"))]
 use rokoko::protocol::parties::executor::execute;
 
