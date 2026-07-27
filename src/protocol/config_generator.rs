@@ -97,6 +97,7 @@ impl AuxSumcheckConfig {
         let total_bits = composed_witness_length.ilog2() as usize;
         let mut assigned_prefixes = Vec::new();
         let mut used_prefixes = std::collections::HashSet::new();
+        let mut layout_lines: Vec<String> = Vec::with_capacity(components.len());
 
         for comp in &components {
             let required_bits = comp.size.ilog2() as usize;
@@ -166,15 +167,6 @@ impl AuxSumcheckConfig {
         let used_memory = used_prefixes.len();
         let highest_used = used_prefixes.iter().max().map_or(0, |m| m + 1);
         let usage_ratio = highest_used as f64 / composed_witness_length as f64;
-<<<<<<< HEAD
-        println!("\n=== Memory Usage level {} ===", depth);
-        println!(
-            "Used: {} / {} (highest index {})",
-            used_memory, composed_witness_length, highest_used
-        );
-        println!("Usage ratio: {:.2}%\n", usage_ratio * 100.0);
-=======
-
         tracing::debug!(
             "\n=== Level {} ===   {} / {} used  ({:.1}%)",
             depth,
@@ -185,7 +177,6 @@ impl AuxSumcheckConfig {
         for line in &layout_lines {
             tracing::debug!("{}", line);
         }
->>>>>>> 525cbd6 (rework tracing)
 
         // Build the actual config with assigned prefixes
         self.build_config_with_prefixes(
