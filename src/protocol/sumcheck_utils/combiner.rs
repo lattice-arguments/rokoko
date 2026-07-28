@@ -62,11 +62,6 @@ impl<E: SumcheckElement> Combiner<E> {
 impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
     type Element = E;
 
-    #[cfg(feature = "profile-sumcheck")]
-    fn gadget_kind(&self) -> super::profile::GadgetKind {
-        super::profile::GadgetKind::Combiner
-    }
-
     fn max_num_polynomial_coefficients(&self) -> usize {
         let mut max_coeffs = 0;
         for sumcheck in &self.sumchecks {
@@ -109,11 +104,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
             output_poly.num_coefficients = 0;
 
             let sumcheck_ref = sumcheck.get_ref();
-            {
-                #[cfg(feature = "profile-sumcheck")]
-                let _timer = super::profile::timer(sumcheck_ref.gadget_kind());
-                sumcheck_ref.univariate_polynomial_into(&mut output_poly);
-            }
+            sumcheck_ref.univariate_polynomial_into(&mut output_poly);
 
             // Scale by the batching challenge and accumulate
             for j in 0..output_poly.num_coefficients {

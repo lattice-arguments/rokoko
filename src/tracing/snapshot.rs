@@ -34,7 +34,6 @@ type Aggregates = Arc<Mutex<HashMap<String, SpanAggregate>>>;
 
 pub struct SnapshotLayer {
     aggregates: Aggregates,
-    focus: Vec<String>,
 }
 
 pub struct SnapshotGuard {
@@ -44,9 +43,9 @@ pub struct SnapshotGuard {
 }
 
 impl SnapshotLayer {
-    pub fn new(trace_name: &str, features: &str, focus: Vec<String>) -> (Self, SnapshotGuard) {
+    pub fn new(run_dir: &str, features: &str) -> (Self, SnapshotGuard) {
         let aggregates: Aggregates = Arc::new(Mutex::new(HashMap::new()));
-        let path = PathBuf::from(format!("profiles/{trace_name}/snapshot.json"));
+        let path = PathBuf::from(format!("{run_dir}/snapshot.json"));
         let metadata = SnapshotMetadata {
             git_sha: git_sha(),
             date: now_iso8601(),
@@ -55,7 +54,6 @@ impl SnapshotLayer {
         };
         let layer = SnapshotLayer {
             aggregates: Arc::clone(&aggregates),
-            focus,
         };
         let guard = SnapshotGuard {
             aggregates,
@@ -83,14 +81,13 @@ where
 
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
         let span = ctx.span(&id).expect("span exists at on_close");
-        let ext = span.extensions();
-        let Some(timing) = ext.get::<Timing>() else {
-            return;
+        let elapsed_ns = {
+            let ext = span.extensions();
+            let Some(timing) = ext.get::<Timing>() else {
+                return;
+            };
+            timing.start.elapsed().as_nanos()
         };
-        if !super::is_in_focus(&span, &self.focus) {
-            return;
-        }
-        let elapsed_ns = timing.start.elapsed().as_nanos();
         let name = span.name().to_string();
         let mut agg = self.aggregates.lock().expect("aggregates lock poisoned");
         let entry = agg.entry(name).or_default();

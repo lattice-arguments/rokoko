@@ -1260,9 +1260,6 @@ pub fn prove_claims(
         evaluation_points.push(r);
         polys.push(poly_over_field);
     }
-    #[cfg(feature = "profile-sumcheck")]
-    crate::protocol::sumcheck_utils::profile::print_and_reset("entry");
-
     let witness_eval = asm
         .witness_pool
         .first_cell(&FULL_WITNESS_KEY)

@@ -11,7 +11,6 @@ unsafe-sumcheck = []
 debug-hardness = []
 debug-decomp = []
 debug-fs = []
-profile-sumcheck = []
 p-30 = []
 p-26 = []
 p-28 = []
@@ -36,7 +35,11 @@ incomplete-rexl = { path = "incomplete-rexl", optional = true }
 libloading = "0.8.6"
 libm = "0.2"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "std",
+    "registry",
+    "env-filter",
+] }
 tracing-chrome = { version = "0.7", optional = true }
 chrono = { version = "0.4", optional = true }
 sysinfo = { version = "0.32", optional = true }

@@ -64,7 +64,6 @@ pub struct ConsoleLayer {
     edges: Arc<Mutex<EdgeMap>>,
     root_order: Arc<Mutex<Vec<&'static str>>>,
     linear_buffers: Arc<Mutex<LinearBuffers>>,
-    focus: Vec<String>,
     linear: bool,
 }
 
@@ -75,7 +74,7 @@ pub struct ConsoleSummaryGuard {
 }
 
 impl ConsoleLayer {
-    pub fn new(focus: Vec<String>, linear: bool) -> (Self, ConsoleSummaryGuard) {
+    pub fn new(linear: bool) -> (Self, ConsoleSummaryGuard) {
         let edges = Arc::new(Mutex::new(HashMap::new()));
         let root_order = Arc::new(Mutex::new(Vec::new()));
         let linear_buffers = Arc::new(Mutex::new(HashMap::new()));
@@ -84,7 +83,6 @@ impl ConsoleLayer {
                 edges: Arc::clone(&edges),
                 root_order: Arc::clone(&root_order),
                 linear_buffers: Arc::clone(&linear_buffers),
-                focus,
                 linear,
             },
             ConsoleSummaryGuard {
@@ -136,10 +134,6 @@ where
                     pt.recursive_child_ns += elapsed.as_nanos();
                 }
             }
-        }
-
-        if !super::is_in_focus(&span, &self.focus) {
-            return;
         }
 
         if self.linear {

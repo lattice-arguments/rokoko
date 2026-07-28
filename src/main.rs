@@ -86,7 +86,7 @@ fn main() {
         challenge_set_repetition_rate
     );
 
-    let _tracing_guards = rokoko::tracing::setup();
+    let tracing_guards = rokoko::tracing::setup();
 
     init_common();
     #[cfg(feature = "snark")]
@@ -99,15 +99,7 @@ fn main() {
         println!("Running executor...");
         execute();
     }
-
-    drop(_tracing_guards);
+    drop(tracing_guards);
     #[cfg(feature = "profile")]
-    {
-        let trace_base = format!(
-            "{}_{}",
-            rokoko::tracing::trace_name(),
-            rokoko::tracing::timestamp_for_filename()
-        );
-        rokoko::tracing::print_artifact_paths(&trace_base);
-    }
+    rokoko::tracing::print_artifact_paths(rokoko::tracing::run_dir());
 }

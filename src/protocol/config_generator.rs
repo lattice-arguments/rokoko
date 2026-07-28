@@ -92,8 +92,6 @@ impl AuxSumcheckConfig {
             (composed_witness_length as f64 / (self.witness_width * self.witness_height) as f64)
                 * 100.0
         );
-        println!("\nComponents sorted by size:");
-
         let total_bits = composed_witness_length.ilog2() as usize;
         let mut assigned_prefixes = Vec::new();
         let mut used_prefixes = std::collections::HashSet::new();
@@ -150,7 +148,7 @@ impl AuxSumcheckConfig {
             let indent_level = comp.path.iter().filter(|s| *s == "next").count();
             let indent = "  ".repeat(indent_level + 1);
 
-            println!(
+            layout_lines.push(format!(
                 "{}{} (size={}): prefix=0b{} (len={}) -> indices [{}, {}]",
                 indent,
                 comp.name,
@@ -159,7 +157,7 @@ impl AuxSumcheckConfig {
                 prefix_length,
                 start,
                 end - 1
-            );
+            ));
         }
 
         // The ratio must cover the highest used index: the layout can leave
@@ -168,12 +166,14 @@ impl AuxSumcheckConfig {
         let highest_used = used_prefixes.iter().max().map_or(0, |m| m + 1);
         let usage_ratio = highest_used as f64 / composed_witness_length as f64;
         tracing::debug!(
-            "\n=== Level {} ===   {} / {} used  ({:.1}%)",
+            "\n=== Level {} ===   {} / {} used  (highest index {}, {:.1}%)",
             depth,
-            highest_used,
+            used_memory,
             composed_witness_length,
+            highest_used,
             usage_ratio * 100.0
         );
+        tracing::debug!("\nComponents sorted by size:");
         for line in &layout_lines {
             tracing::debug!("{}", line);
         }

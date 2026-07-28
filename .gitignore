@@ -114,6 +114,7 @@ _deps
 perf.data*
 flamegraph.svg
 trace.json
+profiles/
 profile.json.gz
 bench_results/
 pool_stats.txt
