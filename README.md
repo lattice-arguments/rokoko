@@ -211,7 +211,7 @@ where `Coarse` and `Fine` are the two random projection variants (paper: Π^proj
 The protocol is instrumented with [`tracing`](https://docs.rs/tracing) spans. Instrumentation is opt-in through two feature flags, which are independent and may be combined:
 
 * `events` — prints a per-phase timing summary to the console when the run finishes
-* `profile` — writes machine-readable artifacts to `profiles/` for offline analysis
+* `profile` — writes machine-readable artifacts to `profiles/` for analysis
 
 Without either flag a global subscriber is still installed, so `tracing` log messages are printed, but no timings are collected.
 
@@ -221,7 +221,7 @@ Without either flag a global subscriber is still installed, so `tracing` log mes
 cargo +nightly run --release --features incomplete-rexl,p-28,events
 ```
 
-The summary is aggregated by `(parent, child)` edge — that is, it reports *where time went* within each phase, showing per-edge totals, call counts, and the share of the parent's time. Repeated rounds are collapsed into a single `total <round>` line.
+The summary is aggregated by `(parent, child)` edge — that is, it reports where time went within each phase, showing per-edge totals, call counts, and the share of the parent's time. Repeated rounds are collapsed into a single `total <round>` line.
 
 ### Log level
 
@@ -243,12 +243,6 @@ Artifacts are written to `profiles/<params>_<timestamp>/`, where `<params>` is t
 
 * `trace.json` — a Chrome trace. Drag it into [Firefox Profiler](https://profiler.firefox.com/) or [Perfetto](https://ui.perfetto.dev/) to inspect the run as a flame chart.
 * `snapshot.json` — per-span totals (`total_ns`, `calls`) plus run metadata: git SHA, date, enabled features, and machine description. Aggregation is by span *name*, i.e. total time spent in a span anywhere in the tree, which makes snapshots comparable across runs.
-
-The two aggregations answer different questions: `events` (and `trace.json`) attribute time to a position in the call tree, whereas `snapshot.json` totals a span wherever it occurs. The path to the artifacts is printed at the end of the run.
-
-### A note on benchmarking
-
-Enabling `events` or `profile` adds crates to the build, and under the release profile (`lto = "fat"`, `codegen-units = 1`) this perturbs inlining and code layout. On the smallest parameter set (`p-26`) the effect has been measured at a few percent (~3%) on total prover time, and it is not attributable to the instrumentation being executed — uninstrumented phases move too. Timings taken with tracing enabled are therefore reliable for *comparing phases within a run*, but take not when comparing against numbers from a build without these features. 
 
 ## Experiments
 

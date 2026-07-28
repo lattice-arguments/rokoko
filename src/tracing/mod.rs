@@ -5,6 +5,6 @@ mod setup;
 #[cfg(feature = "profile")]
 mod snapshot;
 
-pub use setup::{setup, TracingGuards};
 #[cfg(feature = "profile")]
 pub use setup::{print_artifact_paths, run_dir};
+pub use setup::{setup, TracingGuards};
