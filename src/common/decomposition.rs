@@ -1,6 +1,6 @@
 use crate::common::{
     arithmetic::pow_mod,
-    config::MOD_Q,
+    config::{DEGREE, MOD_Q},
     ring_arithmetic::{Representation, RingElement},
 };
 
@@ -140,6 +140,9 @@ pub fn decompose_bits(input: &[RingElement], radix: usize) -> Vec<RingElement> {
     );
     assert!(radix <= 64, "radix must fit into a u64 representative");
 
+    // Representatives lie in [0, q), so digits n_bits.. are zero, as is their NTT: leave those slots.
+    let n_bits = ((MOD_Q.ilog2() + 1) as usize).min(radix);
+
     let mut decomposed =
         vec![RingElement::zero(Representation::IncompleteNTT); input.len() * radix];
 
@@ -149,11 +152,31 @@ pub fn decompose_bits(input: &[RingElement], radix: usize) -> Vec<RingElement> {
         temp.set_from(el);
         // Bit extraction is per coefficient, so the even/odd ordering is irrelevant here.
         temp.to_representation(Representation::EvenOddCoefficients);
-        for i in 0..radix {
-            let slot = &mut decomposed[index * radix + i];
-            slot.representation = Representation::EvenOddCoefficients;
-            temp.bits_into(slot, i as u64, i as u64 + 1);
-            slot.to_representation(Representation::IncompleteNTT);
+        debug_assert!(temp.v.iter().all(|&c| c < (1u64 << n_bits)));
+
+        let digits = &mut decomposed[index * radix..index * radix + n_bits];
+        for (i, d) in digits.iter_mut().enumerate() {
+            d.representation = Representation::EvenOddCoefficients;
+
+            #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+            unsafe {
+                use std::arch::x86_64::*;
+
+                let count = _mm_cvtsi32_si128(i as i32);
+                let one = _mm512_set1_epi64(1);
+                let src = temp.v.as_ptr() as *const i64;
+                let dst = d.v.as_mut_ptr() as *mut i64;
+                for b in (0..DEGREE).step_by(8) {
+                    let x = _mm512_srl_epi64(_mm512_load_epi64(src.add(b)), count);
+                    _mm512_store_epi64(dst.add(b), _mm512_and_si512(x, one));
+                }
+            }
+            #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+            for c in 0..DEGREE {
+                d.v[c] = (temp.v[c] >> i) & 1;
+            }
+
+            d.to_representation(Representation::IncompleteNTT);
         }
     }
 
@@ -373,6 +396,32 @@ fn test_decompose_bits_edge_values() {
     let recomposed = compose_from_decomposed(&decomposed, 1, radix);
     debug_assert_eq!(recomposed[0], input[0]);
     debug_assert_eq!(recomposed[1], input[1]);
+}
+
+#[test]
+fn test_decompose_bits_non_uniform_coefficients() {
+    let mut el = RingElement::zero(Representation::EvenOddCoefficients);
+    for j in 0..el.v.len() {
+        el.v[j] = (j as u64).wrapping_mul(0x9E3779B97F4A7C15) % MOD_Q;
+    }
+    el.to_representation(Representation::IncompleteNTT);
+    let input = vec![el];
+    let radix = 64;
+
+    let decomposed = decompose_bits(&input, radix);
+
+    let mut coefficients = input[0].clone();
+    coefficients.to_representation(Representation::EvenOddCoefficients);
+    for i in 0..radix {
+        let mut digit = decomposed[i].clone();
+        digit.to_representation(Representation::EvenOddCoefficients);
+        for j in 0..digit.v.len() {
+            debug_assert_eq!(digit.v[j], (coefficients.v[j] >> i) & 1);
+        }
+    }
+
+    let recomposed = compose_from_decomposed(&decomposed, 1, radix);
+    debug_assert_eq!(recomposed[0], input[0]);
 }
 
 #[test]
