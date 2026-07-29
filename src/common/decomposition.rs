@@ -1,9 +1,8 @@
 use crate::common::{
+    arithmetic::pow_mod,
+    config::MOD_Q,
     ring_arithmetic::{Representation, RingElement},
 };
-
-#[cfg(test)]
-use crate::common::config::MOD_Q;
 
 impl RingElement {
     pub fn bits_into(&mut self, target: &mut RingElement, from: u64, to: u64) {
@@ -25,6 +24,10 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
     let mut decomposed = vec![RingElement::zero(Representation::IncompleteNTT); input.len() * radix];
 
     if base_log == 1 {
+        assert_eq!(
+            radix, 1,
+            "balanced base-2 decomposition is not supported; use decompose_bits"
+        );
         decomposed.clone_from_slice(input);
         return decomposed;
     }
@@ -127,6 +130,36 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
     decomposed
 }
 
+// Decomposes each element in input into radix unsigned binary digits of its representative in [0, q).
+// output[index * radix + i] holds, coefficient-wise, bit i of input[index], so every digit is in {0, 1}
+// and Σ d_i * 2^i = x. radix must cover the bit length of q; digits beyond it are zero padding.
+pub fn decompose_bits(input: &[RingElement], radix: usize) -> Vec<RingElement> {
+    assert!(
+        radix as u32 > MOD_Q.ilog2(),
+        "radix must cover the whole [0, q) representative"
+    );
+    assert!(radix <= 64, "radix must fit into a u64 representative");
+
+    let mut decomposed =
+        vec![RingElement::zero(Representation::IncompleteNTT); input.len() * radix];
+
+    let mut temp = RingElement::all(0, Representation::EvenOddCoefficients);
+
+    for (index, el) in input.iter().enumerate() {
+        temp.set_from(el);
+        // Bit extraction is per coefficient, so the even/odd ordering is irrelevant here.
+        temp.to_representation(Representation::EvenOddCoefficients);
+        for i in 0..radix {
+            let slot = &mut decomposed[index * radix + i];
+            slot.representation = Representation::EvenOddCoefficients;
+            temp.bits_into(slot, i as u64, i as u64 + 1);
+            slot.to_representation(Representation::IncompleteNTT);
+        }
+    }
+
+    decomposed
+}
+
 // Like decompose, but interleaves by digit index rather than by element.
 // decompose([a, b], radix=2)        -> [a0, a1, b0, b1]
 // decompose_chunks([a, b], radix=2) -> [a0, b0, a1, b1]
@@ -168,8 +201,11 @@ pub fn compose_from_decomposed(
         recomposed[i] = RingElement::all(0, Representation::IncompleteNTT);
         for j in 0..radix {
             let mut term = decomposed[i * radix + j].clone();
-            let shift =
-                RingElement::constant(1u64 << (j as u64 * base_log), Representation::IncompleteNTT);
+            // Reduced mod q: 1u64 << k overflows the modulus (and then u64) once k >= 50.
+            let shift = RingElement::constant(
+                pow_mod(2, j as u64 * base_log),
+                Representation::IncompleteNTT,
+            );
             term *= &shift;
             recomposed[i] += &term;
         }
@@ -263,4 +299,91 @@ fn test_compose_from_decomposed() {
     let decomposed = decompose(&mut input, base_log, radix);
     let recomposed = compose_from_decomposed(&decomposed, base_log, radix);
     debug_assert_eq!(recomposed[0], input[0]);
+}
+
+#[test]
+fn test_decompose_bits_roundtrip() {
+    let input: Vec<RingElement> = (0..3)
+        .map(|_| RingElement::random(Representation::IncompleteNTT))
+        .collect();
+
+    // 64 exercises the composer at shifts >= 50, where an unreduced 2^k would wrap.
+    for radix in [MOD_Q.ilog2() as usize + 1, 64] {
+        let decomposed = decompose_bits(&input, radix);
+        debug_assert_eq!(decomposed.len(), input.len() * radix);
+
+        let recomposed = compose_from_decomposed(&decomposed, 1, radix);
+        for i in 0..input.len() {
+            debug_assert_eq!(recomposed[i], input[i]);
+        }
+    }
+}
+
+#[test]
+fn test_decompose_bits_digits_are_binary() {
+    let input: Vec<RingElement> = (0..2)
+        .map(|_| RingElement::random(Representation::IncompleteNTT))
+        .collect();
+    let radix = 64;
+
+    let mut decomposed = decompose_bits(&input, radix);
+
+    for d in decomposed.iter_mut() {
+        d.from_incomplete_ntt_to_even_odd_coefficients();
+        for &v in d.v.iter() {
+            debug_assert_eq!(v == 0 || v == 1, true);
+        }
+    }
+}
+
+#[test]
+fn test_decompose_bits_padding_is_zero() {
+    let input = vec![RingElement::random(Representation::IncompleteNTT)];
+    let radix = 64;
+
+    let decomposed = decompose_bits(&input, radix);
+
+    let zero = RingElement::all(0, Representation::IncompleteNTT);
+    for i in (MOD_Q.ilog2() as usize + 1)..radix {
+        debug_assert_eq!(decomposed[i], zero);
+    }
+}
+
+#[test]
+fn test_decompose_bits_edge_values() {
+    let input = vec![
+        RingElement::all(MOD_Q - 1, Representation::IncompleteNTT),
+        RingElement::all(0, Representation::IncompleteNTT),
+    ];
+    let radix = 64;
+
+    let decomposed = decompose_bits(&input, radix);
+
+    for i in 0..radix {
+        debug_assert_eq!(
+            decomposed[i],
+            RingElement::all(((MOD_Q - 1) >> i) & 1, Representation::IncompleteNTT)
+        );
+        debug_assert_eq!(
+            decomposed[radix + i],
+            RingElement::all(0, Representation::IncompleteNTT)
+        );
+    }
+
+    let recomposed = compose_from_decomposed(&decomposed, 1, radix);
+    debug_assert_eq!(recomposed[0], input[0]);
+    debug_assert_eq!(recomposed[1], input[1]);
+}
+
+#[test]
+fn test_decompose_bits_preserves_input() {
+    let input = vec![
+        RingElement::random(Representation::IncompleteNTT),
+        RingElement::random(Representation::EvenOddCoefficients),
+    ];
+    let before = input.clone();
+
+    let _ = decompose_bits(&input, 64);
+
+    debug_assert_eq!(input, before);
 }
