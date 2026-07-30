@@ -539,7 +539,7 @@ impl OraclePool {
     fn next(
         &mut self,
         key: (usize, usize, usize, bool),
-        make: impl Fn() -> LinearSumcheck<RingElement>,
+        make: impl FnOnce() -> LinearSumcheck<RingElement>,
     ) -> ElephantCell<LinearSumcheck<RingElement>> {
         let entry = self.pools.entry(key).or_insert_with(|| (vec![], 0));
         if entry.1 == entry.0.len() {
@@ -578,7 +578,6 @@ type EvalCell = ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>;
 /// occurrence gets its own cell.
 struct ProverAssembler<'a> {
     witness: &'a [RingElement],
-    conjugated: &'a [RingElement],
     n: usize,
     total_vars: usize,
     witness_pool: OraclePool,
@@ -630,17 +629,19 @@ impl<'a> ProverAssembler<'a> {
     }
 
     fn constant_leaf(&mut self, value: &RingElement) -> HighOrderCell {
-        let mut ls = LinearSumcheck::new_with_prefixed_sufixed_data(1, self.total_vars, 0);
-        ls.load_from(std::slice::from_ref(value));
+        let ls = LinearSumcheck::from_data_with_prefixed_sufixed_data(
+            vec![value.clone()],
+            self.total_vars,
+            0,
+        );
         let cell = ElephantCell::new(ls);
         self.leaves.push(LeafCell::Linear(cell.clone()));
         cell as _
     }
 
     fn full_ring_leaf(&mut self, data: Vec<RingElement>) -> HighOrderCell {
-        let mut ls = LinearSumcheck::new(self.n);
-        ls.load_from(&data);
-        let cell = ElephantCell::new(ls);
+        assert_eq!(data.len(), self.n);
+        let cell = ElephantCell::new(LinearSumcheck::from_data(data));
         self.leaves.push(LeafCell::Linear(cell.clone()));
         cell as _
     }
@@ -655,13 +656,7 @@ impl<'a> ProverAssembler<'a> {
         let cell = self
             .public_pool
             .next((ptr, prefix_len, suffix_len, false), move || {
-                let mut ls = LinearSumcheck::new_with_prefixed_sufixed_data(
-                    data.len(),
-                    prefix_len,
-                    suffix_len,
-                );
-                ls.load_from(&data);
-                ls
+                LinearSumcheck::from_data_with_prefixed_sufixed_data(data, prefix_len, suffix_len)
             });
         cell as _
     }
@@ -671,19 +666,15 @@ impl<'a> ProverAssembler<'a> {
             ClaimFactor::Witness => {
                 let data = self.witness;
                 let cell = self.witness_pool.next(FULL_WITNESS_KEY, move || {
-                    let mut ls = LinearSumcheck::new(data.len());
-                    ls.load_from(data);
-                    ls
+                    LinearSumcheck::from_data(data.to_vec())
                 });
                 cell as _
             }
             ClaimFactor::ConjWitness => {
-                let data = self.conjugated;
-                let cell = self.conj_pool.next(FULL_WITNESS_KEY, move || {
-                    let mut ls = LinearSumcheck::new(data.len());
-                    ls.load_from(data);
-                    ls
-                });
+                let data = self.witness;
+                let cell = self
+                    .conj_pool
+                    .next(FULL_WITNESS_KEY, move || conjugated_oracle(data));
                 cell as _
             }
             ClaimFactor::WitnessSegment(_) | ClaimFactor::ConjWitnessSegment(_) => {
@@ -768,6 +759,14 @@ impl<'a> ProverAssembler<'a> {
             }
         }
     }
+}
+
+fn conjugated_oracle(witness: &[RingElement]) -> LinearSumcheck<RingElement> {
+    let mut data = Vec::with_capacity(witness.len());
+    for element in witness {
+        data.push(element.conjugate());
+    }
+    LinearSumcheck::from_data(data)
 }
 
 /// Verifier-side mirror: lowers the same canonical [`ClaimExpr`] to evaluation
@@ -1170,21 +1169,9 @@ pub fn prove_claims(
     // z_1 (the conjugate opening) ships only when some claim conjugates; a
     // conjugate-free statement emits a single opening and skips this pass.
     let needs_conjugate = claims.iter().any(|claim| uses_conjugate(&claim.expr));
-    let conjugated = if needs_conjugate {
-        let mut v = vec![RingElement::zero(Representation::IncompleteNTT); n];
-        witness
-            .data
-            .iter()
-            .zip(v.iter_mut())
-            .for_each(|(orig, conj)| orig.conjugate_into(conj));
-        v
-    } else {
-        vec![]
-    };
 
     let mut asm = ProverAssembler {
         witness: &witness.data,
-        conjugated: &conjugated,
         n,
         total_vars,
         witness_pool: OraclePool::new(),
@@ -1202,9 +1189,7 @@ pub fn prove_claims(
     if asm.witness_pool.first_cell(&FULL_WITNESS_KEY).is_none() {
         let data = asm.witness;
         asm.witness_pool.next(FULL_WITNESS_KEY, move || {
-            let mut ls = LinearSumcheck::new(data.len());
-            ls.load_from(data);
-            ls
+            LinearSumcheck::from_data(data.to_vec())
         });
     }
     let pooled: Vec<ElephantCell<LinearSumcheck<RingElement>>> = asm
@@ -1274,8 +1259,7 @@ pub fn prove_claims(
         None
     } else if asm.conj_pool.first_cell(&FULL_WITNESS_KEY).is_none() {
         // no conjugate oracle was used: evaluate one on demand at the final point
-        let mut ls = LinearSumcheck::new(n);
-        ls.load_from(asm.conjugated);
+        let mut ls = conjugated_oracle(asm.witness);
         for r in &evaluation_points {
             ls.partial_evaluate(r);
         }

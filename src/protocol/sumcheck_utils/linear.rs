@@ -61,6 +61,26 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
             non_zero_end: count,
         }
     }
+    pub fn from_data(data: Vec<E>) -> Self {
+        Self::from_data_with_prefixed_sufixed_data(data, 0, 0)
+    }
+
+    pub fn from_data_with_prefixed_sufixed_data(
+        data: Vec<E>,
+        prefix_size: usize,
+        suffix_size: usize,
+    ) -> Self {
+        let count = data.len();
+        LinearSumcheck {
+            data,
+            variable_count: count.ilog2() as usize + prefix_size + suffix_size,
+            index_mask: count - 1,
+            poly_scratch: RefCell::new(Polynomial::new(2)),
+            suffix: suffix_size,
+            non_zero_end: count,
+        }
+    }
+
     /// Populate the internal buffer with the provided values.
     /// Marks the whole buffer as potentially non-zero.
     pub fn load_from(&mut self, src: &[E]) {
