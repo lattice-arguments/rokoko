@@ -1,22 +1,54 @@
+// Span aggregation + artifact writing, with no dependencies outside `std` and the
+// `tracing` facade. This layer emits BOTH artifacts that `profile` used to produce:
+//   - snapshot.json  per-span totals + run metadata   (was: serde + serde_json)
+//   - trace.json     Chrome Trace Event timeline      (was: tracing-chrome)
+// The Chrome format needed here is a flat array of complete ("ph":"X") events, which
+// is a few lines to write directly.
+
+use std::cell::Cell;
 use std::collections::HashMap;
+use std::fmt;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
-use serde::Serialize;
+use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id};
 use tracing::Subscriber;
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::registry::LookupSpan;
 
-#[derive(Default, Serialize)]
+use super::jsonw;
+use super::timefmt;
+
+/// Process-wide zero point for Chrome trace timestamps.
+fn base() -> Instant {
+    static START: OnceLock<Instant> = OnceLock::new();
+    *START.get_or_init(Instant::now)
+}
+
+static NEXT_TID: AtomicU64 = AtomicU64::new(1);
+thread_local! {
+    static TID: Cell<u64> = const { Cell::new(0) };
+}
+
+fn tid() -> u64 {
+    TID.with(|t| {
+        if t.get() == 0 {
+            t.set(NEXT_TID.fetch_add(1, Ordering::Relaxed));
+        }
+        t.get()
+    })
+}
+
+#[derive(Default)]
 struct SpanAggregate {
     total_ns: u128,
     calls: u64,
 }
 
-#[derive(Serialize)]
 struct SnapshotMetadata {
     git_sha: String,
     date: String,
@@ -24,40 +56,51 @@ struct SnapshotMetadata {
     machine: String,
 }
 
-#[derive(Serialize)]
-struct Snapshot<'a> {
-    metadata: &'a SnapshotMetadata,
-    spans: &'a HashMap<String, SpanAggregate>,
+/// One completed span, in Chrome Trace Event terms.
+struct ChromeEvent {
+    name: String,
+    ts_us: u128,
+    dur_us: u128,
+    tid: u64,
+    args: String,
 }
 
-type Aggregates = Arc<Mutex<HashMap<String, SpanAggregate>>>;
+struct Shared {
+    aggregates: HashMap<String, SpanAggregate>,
+    events: Vec<ChromeEvent>,
+}
+
+type State = Arc<Mutex<Shared>>;
 
 pub struct SnapshotLayer {
-    aggregates: Aggregates,
+    state: State,
 }
 
 pub struct SnapshotGuard {
-    aggregates: Aggregates,
-    path: PathBuf,
+    state: State,
+    dir: PathBuf,
     metadata: SnapshotMetadata,
 }
 
 impl SnapshotLayer {
     pub fn new(run_dir: &str, features: &str) -> (Self, SnapshotGuard) {
-        let aggregates: Aggregates = Arc::new(Mutex::new(HashMap::new()));
-        let path = PathBuf::from(format!("{run_dir}/snapshot.json"));
+        base(); // pin the zero point before any span opens
+        let state: State = Arc::new(Mutex::new(Shared {
+            aggregates: HashMap::new(),
+            events: Vec::new(),
+        }));
         let metadata = SnapshotMetadata {
             git_sha: git_sha(),
-            date: now_iso8601(),
+            date: timefmt::now_utc().iso8601(),
             features: features.to_string(),
             machine: machine_string(),
         };
         let layer = SnapshotLayer {
-            aggregates: Arc::clone(&aggregates),
+            state: Arc::clone(&state),
         };
         let guard = SnapshotGuard {
-            aggregates,
-            path,
+            state,
+            dir: PathBuf::from(run_dir),
             metadata,
         };
         (layer, guard)
@@ -66,59 +109,164 @@ impl SnapshotLayer {
 
 struct Timing {
     start: Instant,
+    ts_us: u128,
+    tid: u64,
+    args: String,
 }
 
 impl<S> Layer<S> for SnapshotLayer
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
-    fn on_new_span(&self, _attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+    fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
         let span = ctx.span(id).expect("span exists at on_new_span");
+        let start = Instant::now();
+        let mut args = ArgVisitor::default();
+        attrs.record(&mut args);
         span.extensions_mut().insert(Timing {
-            start: Instant::now(),
+            start,
+            ts_us: start.saturating_duration_since(base()).as_micros(),
+            tid: tid(),
+            args: args.finish(),
         });
     }
 
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
         let span = ctx.span(&id).expect("span exists at on_close");
-        let elapsed_ns = {
+        let (elapsed_ns, ts_us, tid, args) = {
             let ext = span.extensions();
-            let Some(timing) = ext.get::<Timing>() else {
+            let Some(t) = ext.get::<Timing>() else {
                 return;
             };
-            timing.start.elapsed().as_nanos()
+            (
+                t.start.elapsed().as_nanos(),
+                t.ts_us,
+                t.tid,
+                t.args.clone(),
+            )
         };
         let name = span.name().to_string();
-        let mut agg = self.aggregates.lock().expect("aggregates lock poisoned");
-        let entry = agg.entry(name).or_default();
+        let mut st = self.state.lock().expect("state lock poisoned");
+        let entry = st.aggregates.entry(name.clone()).or_default();
         entry.total_ns += elapsed_ns;
         entry.calls += 1;
+        st.events.push(ChromeEvent {
+            name,
+            ts_us,
+            dur_us: elapsed_ns / 1_000,
+            tid,
+            args,
+        });
+    }
+}
+
+impl SnapshotGuard {
+    fn snapshot_json(&self, st: &Shared) -> String {
+        let m = &self.metadata;
+        let mut out = String::with_capacity(512);
+        out.push_str("{\n  \"metadata\": {\n");
+        jsonw::field_str(&mut out, "    ", "git_sha", &m.git_sha, false);
+        jsonw::field_str(&mut out, "    ", "date", &m.date, false);
+        jsonw::field_str(&mut out, "    ", "features", &m.features, false);
+        jsonw::field_str(&mut out, "    ", "machine", &m.machine, true);
+        out.push_str("  },\n  \"spans\": {\n");
+        // sorted so successive runs diff cleanly
+        let mut names: Vec<&String> = st.aggregates.keys().collect();
+        names.sort_unstable();
+        for (i, name) in names.iter().enumerate() {
+            let a = &st.aggregates[*name];
+            out.push_str("    ");
+            jsonw::str_into(&mut out, name);
+            out.push_str(&format!(
+                ": {{\n      \"total_ns\": {},\n      \"calls\": {}\n    }}",
+                a.total_ns, a.calls
+            ));
+            if i + 1 < names.len() {
+                out.push(',');
+            }
+            out.push('\n');
+        }
+        out.push_str("  }\n}\n");
+        out
+    }
+
+    fn trace_json(&self, st: &Shared) -> String {
+        let mut out = String::with_capacity(256 + st.events.len() * 128);
+        out.push_str("[\n");
+        for (i, e) in st.events.iter().enumerate() {
+            out.push_str("  {\"name\": ");
+            jsonw::str_into(&mut out, &e.name);
+            out.push_str(&format!(
+                ", \"cat\": \"span\", \"ph\": \"X\", \"pid\": 1, \"tid\": {}, \"ts\": {}, \"dur\": {}",
+                e.tid, e.ts_us, e.dur_us
+            ));
+            if !e.args.is_empty() {
+                out.push_str(", \"args\": ");
+                out.push_str(&e.args);
+            }
+            out.push('}');
+            if i + 1 < st.events.len() {
+                out.push(',');
+            }
+            out.push('\n');
+        }
+        out.push_str("]\n");
+        out
     }
 }
 
 impl Drop for SnapshotGuard {
     fn drop(&mut self) {
-        if let Some(parent) = self.path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
-        let agg = self.aggregates.lock().expect("aggregates lock poisoned");
-        let snapshot = Snapshot {
-            metadata: &self.metadata,
-            spans: &agg,
-        };
-        match serde_json::to_string_pretty(&snapshot) {
-            Ok(json) => {
-                if let Err(e) = fs::write(&self.path, json) {
-                    eprintln!(
-                        "profiling: snapshot write failed at {}: {e}",
-                        self.path.display()
-                    );
-                }
+        let _ = fs::create_dir_all(&self.dir);
+        let st = self.state.lock().expect("state lock poisoned");
+        for (name, body) in [
+            ("snapshot.json", self.snapshot_json(&st)),
+            ("trace.json", self.trace_json(&st)),
+        ] {
+            let path = self.dir.join(name);
+            if let Err(e) = fs::write(&path, body) {
+                eprintln!("profiling: write failed at {}: {e}", path.display());
             }
-            Err(e) => eprintln!("profiling: snapshot serialize failed: {e}"),
         }
     }
 }
+
+/// Collects span fields into a JSON object, mirroring `tracing-chrome`'s `include_args`.
+#[derive(Default)]
+struct ArgVisitor {
+    out: String,
+}
+
+impl ArgVisitor {
+    fn push(&mut self, key: &str, value: &str) {
+        if self.out.is_empty() {
+            self.out.push('{');
+        } else {
+            self.out.push_str(", ");
+        }
+        jsonw::str_into(&mut self.out, key);
+        self.out.push_str(": ");
+        jsonw::str_into(&mut self.out, value);
+    }
+
+    fn finish(mut self) -> String {
+        if !self.out.is_empty() {
+            self.out.push('}');
+        }
+        self.out
+    }
+}
+
+impl Visit for ArgVisitor {
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.push(field.name(), value);
+    }
+
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        self.push(field.name(), &format!("{value:?}"));
+    }
+}
+
 pub fn active_features() -> String {
     [
         cfg!(feature = "p-26").then_some("p-26"),
@@ -139,14 +287,9 @@ fn git_sha() -> String {
     option_env!("GIT_SHA").unwrap_or("unknown").to_string()
 }
 
-fn now_iso8601() -> String {
-    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
-}
-
 fn machine_string() -> String {
     let cores = std::thread::available_parallelism()
-        .map(|n| n.get().to_string())
-        .unwrap_or_else(|_| "?".to_string());
+        .map_or_else(|_| "?".to_string(), |n| n.get().to_string());
     let kernel = sysinfo::System::kernel_version().unwrap_or_else(|| "unknown".to_string());
     let os = sysinfo::System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
     format!("{os} {kernel} {} / {cores} cores", std::env::consts::ARCH)

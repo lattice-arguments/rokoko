@@ -233,6 +233,8 @@ RUST_LOG=debug cargo +nightly run --release --features incomplete-rexl,p-28,even
 
 Beyond enabling `debug!` messages, the level changes how `events` renders: at `info` the summary is aggregated as described above, while at `debug` (or lower) it switches to a **linear** trace that prints spans in execution order, indented by nesting depth. Use `info` to see where time is spent, `debug` to follow what happened in sequence.
 
+Directives may also be scoped to a target, with the longest matching prefix winning (`RUST_LOG=warn,rokoko::protocol=debug`). `RUST_LOG` is parsed by [`src/tracing/filter.rs`](src/tracing/filter.rs) rather than by `tracing-subscriber`'s `env-filter`, whose regex engine is ~560 KB of live code under `lto = "fat"`. The level and target syntax above behaves as `env-filter` does; span and field predicates (`target[span{field=value}]=level`) are not supported, and — as with any unparseable `RUST_LOG` — fall back to `info`.
+
 ### File artifacts (`profile`)
 
 ```

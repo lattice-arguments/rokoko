@@ -15,17 +15,10 @@ p-30 = []
 p-26 = []
 p-28 = []
 events = []
-profile = [
-    "dep:tracing-chrome",
-    "dep:chrono",
-    "dep:sysinfo",
-    "dep:serde",
-    "dep:serde_json",
-]
+profile = ["dep:sysinfo"]
 snark = []
 
 [dependencies]
-criterion = "0.7.0"
 num = "0.4.3"
 rand = "0.9.2"
 blake3 = "1.5.1"
@@ -38,14 +31,14 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = [
     "std",
     "registry",
-    "env-filter",
 ] }
-tracing-chrome = { version = "0.7", optional = true }
-chrono = { version = "0.4", optional = true }
-sysinfo = { version = "0.32", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
-serde_json = { version = "1", optional = true }
+sysinfo = { version = "0.32", default-features = false, features = [
+    "system",
+], optional = true }
 mimalloc = "0.1"
+
+[dev-dependencies]
+criterion = "0.7.0"
 
 [profile.release]
 opt-level = 3
