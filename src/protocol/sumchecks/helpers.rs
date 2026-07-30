@@ -93,7 +93,6 @@ pub(crate) fn ck_sumcheck(
     sumcheck
 }
 
-
 pub fn tensor_product_u64(a: &Vec<u64>, b: &Vec<u64>) -> Vec<u64> {
     let mut result: Vec<u64> = vec![0u64; a.len() * b.len()];
     let mut idx = 0;
@@ -106,7 +105,6 @@ pub fn tensor_product_u64(a: &Vec<u64>, b: &Vec<u64>) -> Vec<u64> {
     }
     result
 }
-
 
 /// Splits projection_flatter into two components for the elder/LS variable separation.
 ///

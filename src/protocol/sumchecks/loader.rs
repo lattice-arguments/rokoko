@@ -240,5 +240,4 @@ pub fn load_sumcheck_data(
                 .load_from(folding_challenges);
         }
     }
-
 }

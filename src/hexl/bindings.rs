@@ -123,7 +123,6 @@ mod inner {
         hexl::ntt_inverse(result, operand, n, modulus);
     }
 
-
     #[inline(always)]
     pub unsafe fn eltwise_fma_mod(
         result: *mut u64,
@@ -211,7 +210,6 @@ mod inner {
         std::ptr::copy_nonoverlapping(operand, result, n);
         ntt_inverse_in_place(result, n, modulus);
     }
-
 
     use crate::common::config::DEGREE;
 

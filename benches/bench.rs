@@ -35,7 +35,10 @@ fn bench_project_coarse(c: &mut Criterion) {
 
     group.bench_function("project", |bencher| {
         bencher.iter(|| {
-            black_box(project(black_box(&witness_i16), black_box(&projection_matrix)));
+            black_box(project(
+                black_box(&witness_i16),
+                black_box(&projection_matrix),
+            ));
         });
     });
 

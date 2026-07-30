@@ -63,7 +63,10 @@ pub fn sumcheck(
         Projection::Coarse(_) => {
             let projection_height_flat = config.witness_height / config.projection_ratio;
             let mut projection_matrix_flatter_base =
-                vec![RingElement::zero(Representation::IncompleteNTT); projection_height_flat.ilog2() as usize];
+                vec![
+                    RingElement::zero(Representation::IncompleteNTT);
+                    projection_height_flat.ilog2() as usize
+                ];
             hash_wrapper
                 .sample_ring_element_ntt_slots_same_vec_into(&mut projection_matrix_flatter_base);
 
@@ -81,7 +84,8 @@ pub fn sumcheck(
         Projection::Skip => None,
     };
 
-    let mut conjugated_combined_witness = vec![RingElement::zero(Representation::IncompleteNTT); combined_witness.len()];
+    let mut conjugated_combined_witness =
+        vec![RingElement::zero(Representation::IncompleteNTT); combined_witness.len()];
     combined_witness
         .iter()
         .zip(conjugated_combined_witness.iter_mut())
@@ -111,7 +115,11 @@ pub fn sumcheck(
         t_load.elapsed().as_millis()
     );
 
-    let norm_inner_norm_claim = sumcheck_context.norm_check_sumcheck.output_2.borrow_mut().claim();
+    let norm_inner_norm_claim = sumcheck_context
+        .norm_check_sumcheck
+        .output_2
+        .borrow_mut()
+        .claim();
 
     let constant_term_claims =
         sumcheck_context

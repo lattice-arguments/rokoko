@@ -7,8 +7,8 @@ use crate::{
         config::{Config, IntermediateConfig},
         crs::VerifierCRS,
         intermediate_sumchecks::context_verifier::{
-            IntermediateVerifierSumcheckContext, CommitmentFoldIntermediateVerifierContext,
-            InnerEvalFoldIntermediateVerifierContext, FineProjIntermediateVerifierContext,
+            CommitmentFoldIntermediateVerifierContext, FineProjIntermediateVerifierContext,
+            InnerEvalFoldIntermediateVerifierContext, IntermediateVerifierSumcheckContext,
             NormCheckIntermediateVerifierContext,
         },
         sumcheck_utils::{

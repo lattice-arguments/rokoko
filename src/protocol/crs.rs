@@ -76,7 +76,11 @@ impl CRS {
         let structured_cks = gen_structured_cks(max_wit_dim, max_module_size);
         let cks = structured_cks
             .iter()
-            .map(|sck| sck.iter().map(PreprocessedRow::from_structured_row).collect())
+            .map(|sck| {
+                sck.iter()
+                    .map(PreprocessedRow::from_structured_row)
+                    .collect()
+            })
             .collect();
 
         CRS {

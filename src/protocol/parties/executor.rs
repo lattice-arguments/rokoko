@@ -228,7 +228,6 @@ pub fn execute_snark() {
 
     let (initial_proof, chain_inputs) = prove_claims(&witness, &claims, &mut hash_wrapper);
 
-
     println!(
         "Initial claims sumcheck done: {} ms",
         start.elapsed().as_millis()

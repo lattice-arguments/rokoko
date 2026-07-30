@@ -7,7 +7,12 @@ pub fn fold(
     witness: &VerticallyAlignedMatrix<RingElement>,
     fold_challenge: &[RingElement],
 ) -> VerticallyAlignedMatrix<RingElement> {
-    let mut folded_witness = VerticallyAlignedMatrix { data: vec![RingElement::zero(Representation::IncompleteNTT); witness.height * 1], width: 1, height: witness.height, used_cols: 1 };
+    let mut folded_witness = VerticallyAlignedMatrix {
+        data: vec![RingElement::zero(Representation::IncompleteNTT); witness.height * 1],
+        width: 1,
+        height: witness.height,
+        used_cols: 1,
+    };
 
     debug_assert_eq!(witness.width, fold_challenge.len());
 

@@ -198,8 +198,7 @@ pub fn project_rows_sparse_tiled<const DEGREE: usize>(
                     // a0 - a1 is stored back. i16 adds wrap mod 2^16, which
                     // is exact as long as the true sum fits i16 (the norm
                     // bounds guarantee that; debug-decomp checks it).
-                    let mut a0 =
-                        _mm512_load_si512(scratch[row].0.as_ptr() as *const __m512i);
+                    let mut a0 = _mm512_load_si512(scratch[row].0.as_ptr() as *const __m512i);
                     let mut a1 = _mm512_setzero_si512();
 
                     // Consume this row's +1 entries that fall inside the

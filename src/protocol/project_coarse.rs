@@ -12,10 +12,10 @@ use crate::common::{
 };
 use crate::hexl::bindings::ntt_inverse;
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-use crate::common::arithmetic::project_rows_sparse_tiled;
 #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
 use crate::common::arithmetic::project_one_row_i16_to_u64;
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+use crate::common::arithmetic::project_rows_sparse_tiled;
 
 #[derive(Clone, Copy)]
 #[repr(align(64))]
@@ -62,7 +62,15 @@ pub fn project_ring(
     witness: &VerticallyAlignedMatrix<RingElement>,
     projection_matrix: &ProjectionMatrix,
 ) -> VerticallyAlignedMatrix<RingElement> {
-    let mut image = VerticallyAlignedMatrix { data: vec![RingElement::zero(Representation::IncompleteNTT); witness.height / projection_matrix.projection_ratio * witness.width], width: witness.width, height: witness.height / projection_matrix.projection_ratio, used_cols: witness.width };
+    let mut image = VerticallyAlignedMatrix {
+        data: vec![
+            RingElement::zero(Representation::IncompleteNTT);
+            witness.height / projection_matrix.projection_ratio * witness.width
+        ],
+        width: witness.width,
+        height: witness.height / projection_matrix.projection_ratio,
+        used_cols: witness.width,
+    };
     let row_len = projection_matrix.projection_ratio * projection_matrix.projection_height;
     for col in 0..witness.width {
         for chunk in 0..image.height / projection_matrix.projection_height {
@@ -91,7 +99,15 @@ pub fn project(
     witness_16: &VerticallyAlignedMatrix<Signed16RingElement>,
     projection_matrix: &ProjectionMatrix,
 ) -> VerticallyAlignedMatrix<RingElement> {
-    let mut projection_image = VerticallyAlignedMatrix { data: vec![RingElement::zero(Representation::IncompleteNTT); witness_16.height / projection_matrix.projection_ratio * witness_16.width], width: witness_16.width, height: witness_16.height / projection_matrix.projection_ratio, used_cols: witness_16.width };
+    let mut projection_image = VerticallyAlignedMatrix {
+        data: vec![
+            RingElement::zero(Representation::IncompleteNTT);
+            witness_16.height / projection_matrix.projection_ratio * witness_16.width
+        ],
+        width: witness_16.width,
+        height: witness_16.height / projection_matrix.projection_ratio,
+        used_cols: witness_16.width,
+    };
 
     debug_assert_eq!(projection_image.width, witness_16.width);
     debug_assert_eq!(
@@ -249,10 +265,7 @@ fn signed_offset_lists(
             for (c, (&p, &n)) in pos_row.iter().zip(nz_row).enumerate() {
                 // Absolute byte offsets of this byte's 8 columns: byte c
                 // starts at column c*8, so base = c*8*eb plus the lane table.
-                let offs = _mm256_add_epi32(
-                    _mm256_set1_epi32((c * 8) as i32 * eb),
-                    lane_offsets,
-                );
+                let offs = _mm256_add_epi32(_mm256_set1_epi32((c * 8) as i32 * eb), lane_offsets);
                 // compress-store with the mask byte as __mmask8 writes only
                 // the offsets whose bit is set, packed contiguously; advance
                 // the cursor by how many that was (popcount).
