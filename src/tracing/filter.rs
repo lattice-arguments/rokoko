@@ -42,7 +42,7 @@ impl RustLog {
         }
     }
 
-    #[cfg_attr(not(feature = "events"), allow(dead_code))]
+    #[cfg(any(feature = "events", test))]
     pub fn max_level(&self) -> LevelFilter {
         self.level
     }
