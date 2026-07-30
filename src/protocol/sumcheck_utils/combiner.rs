@@ -62,6 +62,10 @@ impl<E: SumcheckElement> Combiner<E> {
 impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
     type Element = E;
 
+    fn gadget_span(&self) -> tracing::Span {
+        tracing::trace_span!("sumcheck::gadget::combiner")
+    }
+
     fn max_num_polynomial_coefficients(&self) -> usize {
         let mut max_coeffs = 0;
         for sumcheck in &self.sumchecks {
@@ -94,6 +98,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
     /// skipping etc. live. Without this, the default path only ever calls
     /// univariate_polynomial_at_point_into, so those bulk overrides never fire.
     fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<E>) {
+        let _s = self.gadget_span().entered();
         polynomial.set_zero();
         polynomial.num_coefficients = 0;
 

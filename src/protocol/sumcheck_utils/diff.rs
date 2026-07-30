@@ -50,6 +50,10 @@ impl<E: SumcheckElement> DiffSumcheck<E> {
 impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
     type Element = E;
 
+    fn gadget_span(&self) -> tracing::Span {
+        tracing::trace_span!("sumcheck::gadget::diff")
+    }
+
     fn get_scratch_poly(&self) -> &RefCell<Polynomial<E>> {
         &self.scratch_poly
     }
@@ -122,6 +126,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
     /// child's `univariate_polynomial_into`, we let them handle their own
     /// zero-skipping internally, eliminating redundant tree traversals.
     fn univariate_polynomial_into(&self, polynomial: &mut Polynomial<Self::Element>) {
+        let _s = self.gadget_span().entered();
         let lhs_ref = self.lhs_sumcheck.get_ref();
         lhs_ref.univariate_polynomial_into(polynomial);
 
