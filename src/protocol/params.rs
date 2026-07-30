@@ -81,17 +81,6 @@ const NB_P_28: [[f64; 2]; 9] = [
     [73668.6367459043, 18268958.675824028],
     [349498.9501185948, 809458.9433127538],
 ];
-const NB_P_29: [[f64; 2]; 9] = [
-    [66427.98663966867, 2160.0013888884423],
-    [181558.43011548652, 2705.682169065687],
-    [95004.44916949942, 3133.253580545309],
-    [52846.942182116836, 3145.1373578907487],
-    [35438.889895142034, 3128.613750529138],
-    [193799.4028705971, 193690.07834166416],
-    [1583993.8583391036, 1296847.5245818223],
-    [73668.6367459043, 18268958.675824028],
-    [349498.9501185948, 809458.9433127538],
-];
 const NB_P_30: [[f64; 2]; 9] = [
     [146947.061954297, 2201.3457247783685],
     [250426.82932745045, 3131.986111080316],
@@ -439,11 +428,6 @@ pub static P_MEDIUM: LazyLock<Config> = LazyLock::new(|| {
     assign_norm_bounds(&mut c, &NB_P_28);
     c
 });
-pub static P_NARROW_LARGE: LazyLock<Config> = LazyLock::new(|| {
-    let mut c = p_root_aux(SizeConfig::NarrowLarge, 1).generate_config();
-    assign_norm_bounds(&mut c, &NB_P_29);
-    c
-});
 pub static P_LARGE: LazyLock<Config> = LazyLock::new(|| {
     let mut c = p_root_aux(SizeConfig::Large, 1).generate_config();
     assign_norm_bounds(&mut c, &NB_P_30);
@@ -454,22 +438,24 @@ pub static P_2_SMALL: LazyLock<Config> =
     LazyLock::new(|| p_root_aux(SizeConfig::Small, 2).generate_config());
 pub static P_2_MEDIUM: LazyLock<Config> =
     LazyLock::new(|| p_root_aux(SizeConfig::Medium, 2).generate_config());
-pub static P_2_NARROW_LARGE: LazyLock<Config> =
-    LazyLock::new(|| p_root_aux(SizeConfig::NarrowLarge, 2).generate_config());
 pub static P_2_LARGE: LazyLock<Config> =
     LazyLock::new(|| p_root_aux(SizeConfig::Large, 2).generate_config());
 
 pub static P: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
     SizeConfig::Small => P_SMALL.clone(),
     SizeConfig::Medium => P_MEDIUM.clone(),
-    SizeConfig::NarrowLarge => P_NARROW_LARGE.clone(),
+    SizeConfig::NarrowLarge => {
+        panic!("no calibrated norm bounds for the plain NarrowLarge chain; use P_EN / P_EN_TWO_EVALS")
+    }
     SizeConfig::Large => P_LARGE.clone(),
 });
 
 pub static P_TWO_EVALS: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
     SizeConfig::Small => P_2_SMALL.clone(),
     SizeConfig::Medium => P_2_MEDIUM.clone(),
-    SizeConfig::NarrowLarge => P_2_NARROW_LARGE.clone(),
+    SizeConfig::NarrowLarge => {
+        panic!("no calibrated norm bounds for the plain NarrowLarge chain; use P_EN / P_EN_TWO_EVALS")
+    }
     SizeConfig::Large => P_2_LARGE.clone(),
 });
 
@@ -780,8 +766,8 @@ mod tests {
     fn test_p29_chain_dims() {
         assert_chain_dims(&super::P_EN_NARROW_LARGE);
         assert_chain_dims(&super::P_EN_2_NARROW_LARGE);
-        assert_chain_dims(&super::P_NARROW_LARGE);
-        assert_chain_dims(&super::P_2_NARROW_LARGE);
+        assert_chain_dims(&super::p_root_aux(super::SizeConfig::NarrowLarge, 1).generate_config());
+        assert_chain_dims(&super::p_root_aux(super::SizeConfig::NarrowLarge, 2).generate_config());
     }
 
     #[test]
