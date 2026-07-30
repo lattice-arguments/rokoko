@@ -84,8 +84,8 @@ impl AuxSumcheckConfig {
         // Sort by size (largest to smallest)
         components.sort_by(|a, b| b.size.cmp(&a.size));
 
-        println!("\n=== Prefix Assignment level {} ===", depth);
-        println!(
+        tracing::debug!("\n=== Prefix Assignment level {} ===", depth);
+        tracing::debug!(
             "Total size needed: {} -> Composed witness length: {} (compresion ratio {:.2}%)",
             total_size,
             composed_witness_length,
@@ -95,7 +95,8 @@ impl AuxSumcheckConfig {
         let total_bits = composed_witness_length.ilog2() as usize;
         let mut assigned_prefixes = Vec::new();
         let mut used_prefixes = std::collections::HashSet::new();
-        let mut layout_lines: Vec<String> = Vec::with_capacity(components.len());
+        let want_layout = tracing::enabled!(tracing::Level::DEBUG);
+        let mut layout_lines: Vec<String> = Vec::new();
 
         for comp in &components {
             let required_bits = comp.size.ilog2() as usize;
@@ -140,24 +141,26 @@ impl AuxSumcheckConfig {
 
             assigned_prefixes.push((comp.clone(), prefix));
 
-            let prefix_binary = format!("{:0width$b}", prefix_value, width = prefix_length);
-            let start = prefix_value << required_bits;
-            let end = start + comp.size;
+            if want_layout {
+                let prefix_binary = format!("{:0width$b}", prefix_value, width = prefix_length);
+                let start = prefix_value << required_bits;
+                let end = start + comp.size;
 
-            // Calculate indentation based on path depth
-            let indent_level = comp.path.iter().filter(|s| *s == "next").count();
-            let indent = "  ".repeat(indent_level + 1);
+                // Calculate indentation based on path depth
+                let indent_level = comp.path.iter().filter(|s| *s == "next").count();
+                let indent = "  ".repeat(indent_level + 1);
 
-            layout_lines.push(format!(
-                "{}{} (size={}): prefix=0b{} (len={}) -> indices [{}, {}]",
-                indent,
-                comp.name,
-                comp.size,
-                prefix_binary,
-                prefix_length,
-                start,
-                end - 1
-            ));
+                layout_lines.push(format!(
+                    "{}{} (size={}): prefix=0b{} (len={}) -> indices [{}, {}]",
+                    indent,
+                    comp.name,
+                    comp.size,
+                    prefix_binary,
+                    prefix_length,
+                    start,
+                    end - 1
+                ));
+            }
         }
 
         // The ratio must cover the highest used index: the layout can leave
@@ -165,6 +168,10 @@ impl AuxSumcheckConfig {
         let used_memory = used_prefixes.len();
         let highest_used = used_prefixes.iter().max().map_or(0, |m| m + 1);
         let usage_ratio = highest_used as f64 / composed_witness_length as f64;
+        tracing::debug!("\nComponents sorted by size:");
+        for line in &layout_lines {
+            tracing::debug!("{}", line);
+        }
         tracing::debug!(
             "\n=== Level {} ===   {} / {} used  (highest index {}, {:.1}%)",
             depth,
@@ -173,10 +180,6 @@ impl AuxSumcheckConfig {
             highest_used,
             usage_ratio * 100.0
         );
-        tracing::debug!("\nComponents sorted by size:");
-        for line in &layout_lines {
-            tracing::debug!("{}", line);
-        }
 
         // Build the actual config with assigned prefixes
         self.build_config_with_prefixes(

@@ -58,7 +58,7 @@ struct SnapshotMetadata {
 
 /// One completed span, in Chrome Trace Event terms.
 struct ChromeEvent {
-    name: String,
+    name: &'static str,
     ts_us: u128,
     dur_us: u128,
     tid: u64,
@@ -66,7 +66,7 @@ struct ChromeEvent {
 }
 
 struct Shared {
-    aggregates: HashMap<String, SpanAggregate>,
+    aggregates: HashMap<&'static str, SpanAggregate>,
     events: Vec<ChromeEvent>,
 }
 
@@ -133,29 +133,22 @@ where
 
     fn on_close(&self, id: Id, ctx: Context<'_, S>) {
         let span = ctx.span(&id).expect("span exists at on_close");
-        let (elapsed_ns, ts_us, tid, args) = {
-            let ext = span.extensions();
-            let Some(t) = ext.get::<Timing>() else {
-                return;
-            };
-            (
-                t.start.elapsed().as_nanos(),
-                t.ts_us,
-                t.tid,
-                t.args.clone(),
-            )
+        let timing = { span.extensions_mut().remove::<Timing>() };
+        let Some(timing) = timing else {
+            return;
         };
-        let name = span.name().to_string();
+        let elapsed_ns = timing.start.elapsed().as_nanos();
+        let name = span.name();
         let mut st = self.state.lock().expect("state lock poisoned");
-        let entry = st.aggregates.entry(name.clone()).or_default();
+        let entry = st.aggregates.entry(name).or_default();
         entry.total_ns += elapsed_ns;
         entry.calls += 1;
         st.events.push(ChromeEvent {
             name,
-            ts_us,
+            ts_us: timing.ts_us,
             dur_us: elapsed_ns / 1_000,
-            tid,
-            args,
+            tid: timing.tid,
+            args: timing.args,
         });
     }
 }
@@ -171,10 +164,10 @@ impl SnapshotGuard {
         jsonw::field_str(&mut out, "    ", "machine", &m.machine, true);
         out.push_str("  },\n  \"spans\": {\n");
         // sorted so successive runs diff cleanly
-        let mut names: Vec<&String> = st.aggregates.keys().collect();
+        let mut names: Vec<&'static str> = st.aggregates.keys().copied().collect();
         names.sort_unstable();
-        for (i, name) in names.iter().enumerate() {
-            let a = &st.aggregates[*name];
+        for (i, &name) in names.iter().enumerate() {
+            let a = &st.aggregates[name];
             out.push_str("    ");
             jsonw::str_into(&mut out, name);
             out.push_str(&format!(
@@ -195,7 +188,7 @@ impl SnapshotGuard {
         out.push_str("[\n");
         for (i, e) in st.events.iter().enumerate() {
             out.push_str("  {\"name\": ");
-            jsonw::str_into(&mut out, &e.name);
+            jsonw::str_into(&mut out, e.name);
             out.push_str(&format!(
                 ", \"cat\": \"span\", \"ph\": \"X\", \"pid\": 1, \"tid\": {}, \"ts\": {}, \"dur\": {}",
                 e.tid, e.ts_us, e.dur_us

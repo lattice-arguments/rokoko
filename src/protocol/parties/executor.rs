@@ -45,7 +45,7 @@ pub fn execute() {
     let commit_span = tracing::info_span!("commit").entered();
     let witness_decomposed = decompose_witness(&witness);
     let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness_decomposed);
-    let commit_span = commit_span.exit();
+    drop(commit_span);
 
     let commit_duration = start.elapsed().as_nanos();
     println!("TOTAL Commit time: {:?} ns", commit_duration);
@@ -64,7 +64,7 @@ pub fn execute() {
         true,
         None,
     );
-    let prover_span = prover_span.exit();
+    drop(prover_span);
     let claims = claims.expect("Prover round must return claims when with_claims is true.");
     {
         let _s = tracing::info_span!("verify_claims").entered();
@@ -89,11 +89,8 @@ pub fn execute() {
         &mut sumcheck_context_verifier,
         None,
     );
-    let verifier_span = verifier_span.exit();
-
-    drop(commit_span);
-    drop(prover_span);
     drop(verifier_span);
+
     let verifier_duration = start.elapsed().as_nanos();
     println!("TOTAL Verifier time: {:?} ns", verifier_duration);
 }
