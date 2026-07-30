@@ -6,12 +6,17 @@ use crate::{
         sumcheck_element::SumcheckElement,
     },
     protocol::sumcheck_utils::{
-        common::{EvaluationSumcheckData, HighOrderSumcheckData},
+        common::{EvaluationSumcheckData, HighOrderSumcheckData, RoundLeg},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
         polynomial::{add_poly_in_place, mul_poly_into, Polynomial},
     },
 };
+
+/// Product regions wider than this fall back to the per-point path; the
+/// canonical claims here carry at most a constant, two selectors and three
+/// oracles.
+const MAX_STREAM_LEGS: usize = 8;
 
 #[cfg(test)]
 use crate::{
@@ -78,6 +83,193 @@ impl<E: SumcheckElement> ProductSumcheck<E> {
             const_flag_vc: Cell::new(usize::MAX),
             sweeping: Cell::new(false),
         }
+    }
+
+    /// Flatten the product region rooted at `cell` into its non-product leaves.
+    fn collect_product_leaves(
+        cell: &ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
+        out: &mut Vec<ElephantCell<dyn HighOrderSumcheckData<Element = E>>>,
+    ) -> bool {
+        let children = {
+            let node = cell.get_ref();
+            node.product_children().map(|(l, r)| (l.clone(), r.clone()))
+        };
+        match children {
+            Some((l, r)) => {
+                Self::collect_product_leaves(&l, out) && Self::collect_product_leaves(&r, out)
+            }
+            None => {
+                if out.len() == MAX_STREAM_LEGS {
+                    return false;
+                }
+                out.push(cell.clone());
+                true
+            }
+        }
+    }
+
+    /// Sum the region's round polynomial by sweeping the leaves' data slices
+    /// instead of walking the product tree once per point.
+    ///
+    /// Every leaf reports a [`RoundLeg`], and the sum splits three ways: legs
+    /// that are one constant for the round scale the finished coefficients once;
+    /// legs that hold a value over a run of `2^shift` points scale each run's
+    /// partial sums once; and the one or two degree-1 legs left carry the actual
+    /// per-point work, as a Karatsuba accumulation over the region's non-zero
+    /// range. That is `c * sum(x) = sum(c * x)` and the same Karatsuba identity
+    /// [`mul_poly_into`] uses, so the coefficients are the per-point path's to
+    /// the bit. Anything that does not fit — a wider region, three degree-1
+    /// legs, a leaf with no round shape — returns `false` for the caller to
+    /// fall back.
+    fn stream_univariate_into(&self, polynomial: &mut Polynomial<E>) -> bool {
+        let mut cells: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = E>>> =
+            Vec::with_capacity(MAX_STREAM_LEGS);
+        if !Self::collect_product_leaves(&self.lhs_sumcheck, &mut cells)
+            || !Self::collect_product_leaves(&self.rhs_sumcheck, &mut cells)
+        {
+            return false;
+        }
+        let leaves: Vec<_> = cells.iter().map(|cell| cell.get_ref()).collect();
+
+        let mut constants: Vec<&E> = Vec::with_capacity(MAX_STREAM_LEGS);
+        let mut runs: Vec<(&[E], u32, usize)> = Vec::with_capacity(MAX_STREAM_LEGS);
+        let mut pairs: Vec<(&[E], usize)> = Vec::with_capacity(2);
+        for leaf in &leaves {
+            match leaf.round_leg() {
+                Some(RoundLeg::Constant(value)) => constants.push(value),
+                Some(RoundLeg::Run { data, shift, mask }) => runs.push((data, shift, mask)),
+                Some(RoundLeg::Pair { data, mask }) => {
+                    if pairs.len() == 2 {
+                        return false;
+                    }
+                    pairs.push((data, mask));
+                }
+                None => return false,
+            }
+        }
+        if pairs.is_empty() {
+            return false;
+        }
+
+        let half_vars = self.variable_count() - 1;
+        let window = self.dependence_window_vars().min(half_vars);
+        let windowed = 1usize << window;
+        let (range_start, range_end) = self.non_zero_range().unwrap_or((0, windowed));
+        let range_end = range_end.min(windowed);
+
+        polynomial.set_zero();
+        polynomial.num_coefficients = 1;
+
+        if range_start < range_end {
+            let degree = pairs.len();
+            // One block covers the whole range when nothing varies per run.
+            let run_shift = runs
+                .iter()
+                .map(|&(_, shift, _)| shift)
+                .min()
+                .unwrap_or(usize::BITS - 1);
+
+            let mut sums: [E; 3] = std::array::from_fn(|_| E::zero());
+            let mut block: [E; 3] = std::array::from_fn(|_| E::zero());
+            let mut temp = E::zero();
+            let mut delta_a = E::zero();
+            let mut delta_b = E::zero();
+            let mut run_value = E::zero();
+
+            let (a_data, a_mask) = pairs[0];
+            let mut lo = range_start;
+            while lo < range_end {
+                let hi = (((lo >> run_shift) + 1) << run_shift).min(range_end);
+                for coefficient in block[..=degree].iter_mut() {
+                    coefficient.set_zero();
+                }
+
+                if degree == 1 {
+                    for p in lo..hi {
+                        let i = 2 * (p & a_mask);
+                        block[0] += &a_data[i];
+                        block[1] += &a_data[i + 1];
+                    }
+                } else {
+                    let (b_data, b_mask) = pairs[1];
+                    for p in lo..hi {
+                        let ia = 2 * (p & a_mask);
+                        let ib = 2 * (p & b_mask);
+                        temp *= (&a_data[ia], &b_data[ib]);
+                        block[0] += &temp;
+                        temp *= (&a_data[ia + 1], &b_data[ib + 1]);
+                        block[1] += &temp;
+                        delta_a.set_from(&a_data[ia + 1]);
+                        delta_a -= &a_data[ia];
+                        delta_b.set_from(&b_data[ib + 1]);
+                        delta_b -= &b_data[ib];
+                        temp *= (&delta_a, &delta_b);
+                        block[2] += &temp;
+                    }
+                }
+
+                match runs.len() {
+                    0 => {
+                        for k in 0..=degree {
+                            sums[k] += &block[k];
+                        }
+                    }
+                    1 => {
+                        let (data, shift, mask) = runs[0];
+                        let value = &data[(lo >> shift) & mask];
+                        for k in 0..=degree {
+                            temp *= (value, &block[k]);
+                            sums[k] += &temp;
+                        }
+                    }
+                    _ => {
+                        let (data, shift, mask) = runs[0];
+                        run_value.set_from(&data[(lo >> shift) & mask]);
+                        for &(data, shift, mask) in &runs[1..] {
+                            run_value *= &data[(lo >> shift) & mask];
+                        }
+                        for k in 0..=degree {
+                            temp *= (&run_value, &block[k]);
+                            sums[k] += &temp;
+                        }
+                    }
+                }
+                lo = hi;
+            }
+
+            // sums[1] carries the Karatsuba middle term, not the linear one.
+            polynomial.coefficients[0].set_from(&sums[0]);
+            polynomial.coefficients[1].set_from(&sums[1]);
+            polynomial.coefficients[1] -= &sums[0];
+            if degree == 2 {
+                polynomial.coefficients[2].set_from(&sums[2]);
+                polynomial.coefficients[1] -= &sums[2];
+            }
+            polynomial.num_coefficients = degree + 1;
+
+            if constants.len() == 1 {
+                for k in 0..polynomial.num_coefficients {
+                    polynomial.coefficients[k] *= constants[0];
+                }
+            } else if constants.len() > 1 {
+                run_value.set_from(constants[0]);
+                for value in &constants[1..] {
+                    run_value *= *value;
+                }
+                for k in 0..polynomial.num_coefficients {
+                    polynomial.coefficients[k] *= &run_value;
+                }
+            }
+        }
+
+        for _ in window..half_vars {
+            for c in 0..polynomial.num_coefficients {
+                let coeff = &mut polynomial.coefficients[c];
+                let copy = coeff.clone();
+                *coeff += &copy;
+            }
+        }
+        true
     }
 
     /// Lazily compute and cache per-round constant flags.
@@ -148,6 +340,15 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
                 .rhs_sumcheck
                 .get_ref()
                 .is_univariate_polynomial_zero_at_point(point)
+    }
+
+    fn product_children(
+        &self,
+    ) -> Option<(
+        &ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
+        &ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
+    )> {
+        Some((&self.lhs_sumcheck, &self.rhs_sumcheck))
     }
 
     fn non_zero_range(&self) -> Option<(usize, usize)> {
@@ -352,6 +553,11 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
             return;
         }
 
+        // Case 1c: flatten the whole product region and sweep its data slices.
+        if self.stream_univariate_into(polynomial) {
+            return;
+        }
+
         // Case 2: fall through to point-by-point, but skip the expensive
         // `constant_at_point` tree traversal that the default impl performs.
         // Use non_zero_range to iterate only the relevant points when a
@@ -524,6 +730,162 @@ impl EvaluationSumcheckData for ProductSumcheckEvaluation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::sumcheck_utils::selector_eq::SelectorEq;
+
+    /// The round polynomial as the per-point path computes it: every point of
+    /// the half-cube, no window folding, no streaming.
+    fn pointwise_round(
+        node: &dyn HighOrderSumcheckData<Element = RingElement>,
+    ) -> Polynomial<RingElement> {
+        let mut out = Polynomial::new(0);
+        out.set_zero();
+        out.num_coefficients = 1;
+        let mut scratch = Polynomial::new(0);
+        for i in 0..(1usize << (node.variable_count() - 1)) {
+            let point = HypercubePoint::new(i);
+            if node.is_univariate_polynomial_zero_at_point(point) {
+                continue;
+            }
+            node.univariate_polynomial_at_point_into(point, &mut scratch);
+            add_poly_in_place(&mut out, &scratch);
+        }
+        out
+    }
+
+    fn ring(v: u64) -> RingElement {
+        RingElement::constant(v, Representation::IncompleteNTT)
+    }
+
+    /// Fold a product region round by round, checking at every round that the
+    /// streamed sum equals the per-point sum coefficient for coefficient. The
+    /// region shapes here are the ones canonical claims produce: a selector,
+    /// placed weights that pass through run mode, pair mode and folded-constant
+    /// mode, and full-cube oracles.
+    fn assert_streams_like_pointwise(
+        root: &dyn HighOrderSumcheckData<Element = RingElement>,
+        leaves: &[&dyn Fn(&RingElement)],
+        rounds: usize,
+    ) {
+        let mut streamed = Polynomial::new(0);
+        for round in 0..rounds {
+            let expected = pointwise_round(root);
+            root.univariate_polynomial_into(&mut streamed);
+            assert_eq!(
+                streamed.num_coefficients, expected.num_coefficients,
+                "round {round}: coefficient count"
+            );
+            for k in 0..expected.num_coefficients {
+                assert_eq!(
+                    streamed.coefficients[k], expected.coefficients[k],
+                    "round {round}: coefficient {k}"
+                );
+            }
+            let r = ring(7 + 13 * round as u64);
+            for fold in leaves {
+                fold(&r);
+            }
+        }
+    }
+
+    #[test]
+    fn test_streamed_product_matches_pointwise_for_placed_weights() {
+        let total_vars = 5;
+        let witness: Vec<RingElement> = (0..32).map(|i| ring(3 * i + 1)).collect();
+        let conjugate: Vec<RingElement> = (0..32).map(|i| ring(5 * i + 2)).collect();
+        let weight: Vec<RingElement> = (0..4).map(|i| ring(11 * i + 4)).collect();
+
+        // selector x weight-in-a-window x witness: the weight enters in run
+        // mode (suffix 2), becomes a pair, then a folded constant.
+        let selector = ElephantCell::new(SelectorEq::<RingElement>::new(0b10, 2, total_vars));
+        let placed = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(4, 1, 2));
+        placed.borrow_mut().load_from(&weight);
+        let oracle = ElephantCell::new(LinearSumcheck::new(witness.len()));
+        oracle.borrow_mut().load_from(&witness);
+
+        let inner = ElephantCell::new(ProductSumcheck::new(selector.clone(), placed.clone()));
+        let root = ProductSumcheck::new(inner, oracle.clone());
+        assert_streams_like_pointwise(
+            &root,
+            &[
+                &|r| selector.borrow_mut().partial_evaluate(r),
+                &|r| placed.borrow_mut().partial_evaluate(r),
+                &|r| oracle.borrow_mut().partial_evaluate(r),
+            ],
+            total_vars,
+        );
+
+        // constant x selector x oracle x conjugate oracle: two hoisted
+        // constants and two degree-one legs, the norm-claim shape.
+        let selector = ElephantCell::new(SelectorEq::<RingElement>::new(0b1, 1, total_vars));
+        let mut constant = LinearSumcheck::new_with_prefixed_sufixed_data(1, total_vars, 0);
+        constant.load_from(std::slice::from_ref(&ring(9)));
+        let constant = ElephantCell::new(constant);
+        let oracle = ElephantCell::new(LinearSumcheck::new(witness.len()));
+        oracle.borrow_mut().load_from(&witness);
+        let conj = ElephantCell::new(LinearSumcheck::new(conjugate.len()));
+        conj.borrow_mut().load_from(&conjugate);
+
+        let a = ElephantCell::new(ProductSumcheck::new(constant.clone(), selector.clone()));
+        let b = ElephantCell::new(ProductSumcheck::new(a, oracle.clone()));
+        let root = ProductSumcheck::new(b, conj.clone());
+        assert_streams_like_pointwise(
+            &root,
+            &[
+                &|r| selector.borrow_mut().partial_evaluate(r),
+                &|r| constant.borrow_mut().partial_evaluate(r),
+                &|r| oracle.borrow_mut().partial_evaluate(r),
+                &|r| conj.borrow_mut().partial_evaluate(r),
+            ],
+            total_vars,
+        );
+
+        // one hoisted constant against two degree-one legs, no selector.
+        let mut constant = LinearSumcheck::new_with_prefixed_sufixed_data(1, total_vars, 0);
+        constant.load_from(std::slice::from_ref(&ring(23)));
+        let constant = ElephantCell::new(constant);
+        let oracle = ElephantCell::new(LinearSumcheck::new(witness.len()));
+        oracle.borrow_mut().load_from(&witness);
+        let conj = ElephantCell::new(LinearSumcheck::new(conjugate.len()));
+        conj.borrow_mut().load_from(&conjugate);
+
+        let a = ElephantCell::new(ProductSumcheck::new(constant.clone(), oracle.clone()));
+        let root = ProductSumcheck::new(a, conj.clone());
+        assert_streams_like_pointwise(
+            &root,
+            &[
+                &|r| constant.borrow_mut().partial_evaluate(r),
+                &|r| oracle.borrow_mut().partial_evaluate(r),
+                &|r| conj.borrow_mut().partial_evaluate(r),
+            ],
+            total_vars,
+        );
+
+        // two weights in run mode at once, with different run lengths.
+        let mut constant = LinearSumcheck::new_with_prefixed_sufixed_data(1, total_vars, 0);
+        constant.load_from(std::slice::from_ref(&ring(23)));
+        let constant = ElephantCell::new(constant);
+        let wide = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(2, 0, 4));
+        wide.borrow_mut().load_from(&weight[..2]);
+        let narrow = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(4, 1, 2));
+        narrow.borrow_mut().load_from(&weight);
+        let oracle = ElephantCell::new(LinearSumcheck::new(witness.len()));
+        oracle.borrow_mut().load_from(&witness);
+
+        let a = ElephantCell::new(ProductSumcheck::new(constant.clone(), wide.clone()));
+        let b = ElephantCell::new(ProductSumcheck::new(a, narrow.clone()));
+        let root = ProductSumcheck::new(b, oracle.clone());
+        assert_streams_like_pointwise(
+            &root,
+            &[
+                &|r| constant.borrow_mut().partial_evaluate(r),
+                &|r| wide.borrow_mut().partial_evaluate(r),
+                &|r| narrow.borrow_mut().partial_evaluate(r),
+                &|r| oracle.borrow_mut().partial_evaluate(r),
+            ],
+            total_vars,
+        );
+    }
+
     #[test]
     fn test_inner_product_sumcheck() {
         let lhs_data = vec![

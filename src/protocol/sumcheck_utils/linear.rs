@@ -9,7 +9,7 @@ use crate::{
         sumcheck_element::SumcheckElement,
     },
     protocol::sumcheck_utils::{
-        common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
+        common::{EvaluationSumcheckData, HighOrderSumcheckData, RoundLeg, SumcheckBaseData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
         polynomial::Polynomial,
@@ -237,6 +237,28 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
             return 0;
         }
         self.data.len().ilog2() as usize - 1
+    }
+
+    fn round_leg(&self) -> Option<RoundLeg<'_, E>> {
+        if self.suffix > 0 {
+            // Suffix rounds precede every data fold, so `data` is still whole
+            // and `index_mask` still addresses it.
+            if self.data.len() != self.index_mask + 1 {
+                return None;
+            }
+            return Some(RoundLeg::Run {
+                data: &self.data,
+                shift: (self.suffix - 1) as u32,
+                mask: self.index_mask,
+            });
+        }
+        if self.data.len() == 1 {
+            return Some(RoundLeg::Constant(&self.data[0]));
+        }
+        Some(RoundLeg::Pair {
+            data: &self.data,
+            mask: self.data.len() / 2 - 1,
+        })
     }
 
     fn as_data_slices(&self) -> Option<(&[Self::Element], &[Self::Element])> {

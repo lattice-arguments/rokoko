@@ -2,9 +2,29 @@ use std::cell::RefCell;
 
 use crate::common::sumcheck_element::SumcheckElement;
 use crate::protocol::sumcheck_utils::{
+    elephant_cell::ElephantCell,
     hypercube_point::HypercubePoint,
     polynomial::{add_poly_in_place, Polynomial},
 };
+
+/// A leaf's round polynomial as an indexing rule over the half-hypercube, so a
+/// product of leaves can be summed by slice sweeps instead of a tree walk per
+/// point. Each variant restates the leaf's own
+/// `univariate_polynomial_at_point_into` exactly, inside its `non_zero_range`:
+/// `Constant` is one value for the round, `Run` is `data[(p >> shift) & mask]`,
+/// `Pair` is `[data[2q], data[2q+1] - data[2q]]` at `q = p & mask`.
+pub enum RoundLeg<'a, E> {
+    Constant(&'a E),
+    Run {
+        data: &'a [E],
+        shift: u32,
+        mask: usize,
+    },
+    Pair {
+        data: &'a [E],
+        mask: usize,
+    },
+}
 
 /// Marker trait for data that can be consumed by the sumcheck protocol.
 /// Implementors must also provide the higher-order hooks so they can be
@@ -95,6 +115,25 @@ pub trait HighOrderSumcheckData {
     /// inner-product computation.  Only `LinearSumcheck` with no prefix/suffix
     /// variables overrides this.
     fn as_data_slices(&self) -> Option<(&[Self::Element], &[Self::Element])> {
+        None
+    }
+
+    /// How this leaf's round polynomial indexes its data, when it fits one of
+    /// the [`RoundLeg`] shapes. `None` sends the caller back to the per-point
+    /// path, so a leaf only needs to answer for the rounds it can state exactly.
+    fn round_leg(&self) -> Option<RoundLeg<'_, Self::Element>> {
+        None
+    }
+
+    /// The two factors, for nodes that are a pointwise product. Lets a caller
+    /// flatten a product region into its leaves without downcasting.
+    #[allow(clippy::type_complexity)]
+    fn product_children(
+        &self,
+    ) -> Option<(
+        &ElephantCell<dyn HighOrderSumcheckData<Element = Self::Element>>,
+        &ElephantCell<dyn HighOrderSumcheckData<Element = Self::Element>>,
+    )> {
         None
     }
 

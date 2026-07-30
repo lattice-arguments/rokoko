@@ -7,7 +7,7 @@ use crate::{
         sumcheck_element::SumcheckElement,
     },
     protocol::sumcheck_utils::{
-        common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
+        common::{EvaluationSumcheckData, HighOrderSumcheckData, RoundLeg, SumcheckBaseData},
         hypercube_point::HypercubePoint,
         polynomial::Polynomial,
     },
@@ -98,6 +98,18 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SelectorEq<E> {
             // should treat the polynomial as identically zero rather than relying
             // on the general evaluation path.
             return None;
+        }
+        None
+    }
+
+    fn round_leg(&self) -> Option<RoundLeg<'_, E>> {
+        // Before the selector's own rounds it is a single constant over its
+        // whole non-zero range; during them it is degree 1, and the range has
+        // collapsed to a point or two, so the per-point path is fine.
+        if self.selector_variable_count == 0
+            || self.total_variable_count > self.selector_variable_count
+        {
+            return Some(RoundLeg::Constant(&self.current_claim));
         }
         None
     }
