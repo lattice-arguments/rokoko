@@ -15,7 +15,7 @@ p-30 = []
 p-26 = []
 p-28 = []
 events = []
-profile = ["dep:sysinfo", "dep:serde_json", "dep:time"]
+profile = ["dep:sysinfo", "dep:time"]
 snark = []
 
 [dependencies]
@@ -27,7 +27,6 @@ ctr = "0.9"
 incomplete-rexl = { path = "incomplete-rexl", optional = true }
 libloading = "0.8.6"
 libm = "0.2"
-serde_json = { version = "1", optional = true }
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "macros"], optional = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = [

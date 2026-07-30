@@ -668,7 +668,6 @@ dependencies = [
  "mimalloc",
  "num",
  "rand",
- "serde_json",
  "sysinfo",
  "time",
  "tracing",
