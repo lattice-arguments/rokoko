@@ -1,9 +1,6 @@
-// Span aggregation + artifact writing, with no dependencies outside `std` and the
-// `tracing` facade. This layer emits BOTH artifacts that `profile` used to produce:
-//   - snapshot.json  per-span totals + run metadata   (was: serde + serde_json)
-//   - trace.json     Chrome Trace Event timeline      (was: tracing-chrome)
-// The Chrome format needed here is a flat array of complete ("ph":"X") events, which
-// is a few lines to write directly.
+// Span aggregation + artifact writing:
+//   - snapshot.json  per-span totals + run metadata
+//   - trace.json     Chrome Trace Event timeline (flat array of "ph":"X" events)
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -20,8 +17,7 @@ use tracing::Subscriber;
 use tracing_subscriber::layer::{Context, Layer};
 use tracing_subscriber::registry::LookupSpan;
 
-use super::jsonw;
-use super::timefmt;
+use serde_json::{json, Map, Value};
 
 /// Process-wide zero point for Chrome trace timestamps.
 fn base() -> Instant {
@@ -62,7 +58,7 @@ struct ChromeEvent {
     ts_us: u128,
     dur_us: u128,
     tid: u64,
-    args: String,
+    args: Map<String, Value>,
 }
 
 struct Shared {
@@ -91,7 +87,11 @@ impl SnapshotLayer {
         }));
         let metadata = SnapshotMetadata {
             git_sha: git_sha(),
-            date: timefmt::now_utc().iso8601(),
+            date: {
+                let now = time::OffsetDateTime::now_utc().replace_nanosecond(0).unwrap();
+                now.format(&time::format_description::well_known::Rfc3339)
+                    .expect("format metadata date")
+            },
             features: features.to_string(),
             machine: machine_string(),
         };
@@ -111,7 +111,7 @@ struct Timing {
     start: Instant,
     ts_us: u128,
     tid: u64,
-    args: String,
+    args: Map<String, Value>,
 }
 
 impl<S> Layer<S> for SnapshotLayer
@@ -156,54 +156,52 @@ where
 impl SnapshotGuard {
     fn snapshot_json(&self, st: &Shared) -> String {
         let m = &self.metadata;
-        let mut out = String::with_capacity(512);
-        out.push_str("{\n  \"metadata\": {\n");
-        jsonw::field_str(&mut out, "    ", "git_sha", &m.git_sha, false);
-        jsonw::field_str(&mut out, "    ", "date", &m.date, false);
-        jsonw::field_str(&mut out, "    ", "features", &m.features, false);
-        jsonw::field_str(&mut out, "    ", "machine", &m.machine, true);
-        out.push_str("  },\n  \"spans\": {\n");
-        // sorted so successive runs diff cleanly
-        let mut names: Vec<&'static str> = st.aggregates.keys().copied().collect();
-        names.sort_unstable();
-        for (i, &name) in names.iter().enumerate() {
-            let a = &st.aggregates[name];
-            out.push_str("    ");
-            jsonw::str_into(&mut out, name);
-            out.push_str(&format!(
-                ": {{\n      \"total_ns\": {},\n      \"calls\": {}\n    }}",
-                a.total_ns, a.calls
-            ));
-            if i + 1 < names.len() {
-                out.push(',');
-            }
-            out.push('\n');
-        }
-        out.push_str("  }\n}\n");
+        let spans: Map<String, Value> = st
+            .aggregates
+            .iter()
+            .map(|(&name, a)| {
+                (
+                    name.to_string(),
+                    json!({ "total_ns": a.total_ns as u64, "calls": a.calls }),
+                )
+            })
+            .collect();
+        let doc = json!({
+            "metadata": {
+                "git_sha": m.git_sha,
+                "date": m.date,
+                "features": m.features,
+                "machine": m.machine,
+            },
+            "spans": spans,
+        });
+        let mut out = serde_json::to_string_pretty(&doc).expect("serialize snapshot.json");
+        out.push('\n');
         out
     }
 
     fn trace_json(&self, st: &Shared) -> String {
-        let mut out = String::with_capacity(256 + st.events.len() * 128);
-        out.push_str("[\n");
-        for (i, e) in st.events.iter().enumerate() {
-            out.push_str("  {\"name\": ");
-            jsonw::str_into(&mut out, e.name);
-            out.push_str(&format!(
-                ", \"cat\": \"span\", \"ph\": \"X\", \"pid\": 1, \"tid\": {}, \"ts\": {}, \"dur\": {}",
-                e.tid, e.ts_us, e.dur_us
-            ));
-            if !e.args.is_empty() {
-                out.push_str(", \"args\": ");
-                out.push_str(&e.args);
-            }
-            out.push('}');
-            if i + 1 < st.events.len() {
-                out.push(',');
-            }
-            out.push('\n');
-        }
-        out.push_str("]\n");
+        let events: Vec<Value> = st
+            .events
+            .iter()
+            .map(|e| {
+                let mut ev = json!({
+                    "name": e.name,
+                    "cat": "span",
+                    "ph": "X",
+                    "pid": 1,
+                    "tid": e.tid,
+                    "ts": e.ts_us as u64,
+                    "dur": e.dur_us as u64,
+                });
+                if !e.args.is_empty() {
+                    ev["args"] = Value::Object(e.args.clone());
+                }
+                ev
+            })
+            .collect();
+        let mut out = serde_json::to_string(&Value::Array(events)).expect("serialize trace.json");
+        out.push('\n');
         out
     }
 }
@@ -227,36 +225,23 @@ impl Drop for SnapshotGuard {
 /// Collects span fields into a JSON object, mirroring `tracing-chrome`'s `include_args`.
 #[derive(Default)]
 struct ArgVisitor {
-    out: String,
+    out: Map<String, Value>,
 }
 
 impl ArgVisitor {
-    fn push(&mut self, key: &str, value: &str) {
-        if self.out.is_empty() {
-            self.out.push('{');
-        } else {
-            self.out.push_str(", ");
-        }
-        jsonw::str_into(&mut self.out, key);
-        self.out.push_str(": ");
-        jsonw::str_into(&mut self.out, value);
-    }
-
-    fn finish(mut self) -> String {
-        if !self.out.is_empty() {
-            self.out.push('}');
-        }
+    fn finish(self) -> Map<String, Value> {
         self.out
     }
 }
 
 impl Visit for ArgVisitor {
     fn record_str(&mut self, field: &Field, value: &str) {
-        self.push(field.name(), value);
+        self.out.insert(field.name().to_string(), Value::from(value));
     }
 
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
-        self.push(field.name(), &format!("{value:?}"));
+        self.out
+            .insert(field.name().to_string(), Value::from(format!("{value:?}")));
     }
 }
 

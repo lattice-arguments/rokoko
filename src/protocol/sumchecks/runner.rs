@@ -171,7 +171,7 @@ pub fn sumcheck(
         round += 1;
         let _round_span = tracing::trace_span!("sumcheck::round", round = round).entered();
 
-        let mut poly_over_field = {
+        let poly_over_field = {
             let _s = tracing::trace_span!("sumcheck::round::poly").entered();
             let mut poly_over_field = Polynomial::<QuadraticExtension>::new(0);
 

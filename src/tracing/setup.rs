@@ -32,6 +32,10 @@ pub fn setup() -> TracingGuards {
     let filter = RustLog::from_default_env();
 
     let mut layers: Vec<Box<dyn Layer<Registry> + Send + Sync>> = Vec::new();
+    #[cfg_attr(
+        not(any(feature = "events", feature = "profile")),
+        allow(unused_mut)
+    )]
     let mut guards: Vec<Box<dyn Any>> = Vec::new();
 
     layers.push(LogLayer.with_filter(filter).boxed());
@@ -49,7 +53,7 @@ pub fn setup() -> TracingGuards {
     {
         let features = super::snapshot::active_features();
         let dir = run_dir();
-        let _ = std::fs::create_dir_all(dir);
+        std::fs::create_dir_all(dir).expect("create profile run dir");
         let (snapshot_layer, snapshot_guard) = SnapshotLayer::new(dir, &features);
         layers.push(snapshot_layer.with_filter(filter).boxed());
         guards.push(Box::new(snapshot_guard));
@@ -70,7 +74,10 @@ pub fn run_dir() -> &'static str {
 /// UTC `YYYYMMDD-HHMMSS`
 #[cfg(feature = "profile")]
 fn timestamp_for_filename() -> String {
-    super::timefmt::now_utc().filename()
+    let f = time::macros::format_description!("[year][month][day]-[hour][minute][second]");
+    time::OffsetDateTime::now_utc()
+        .format(f)
+        .expect("format filename timestamp")
 }
 
 #[cfg(feature = "profile")]
@@ -91,14 +98,10 @@ pub fn print_artifact_paths(run_dir: &str) {
 /// Parameter set of the build, used to name the artifact directory.
 #[cfg(feature = "profile")]
 fn trace_name() -> &'static str {
-    match (
-        cfg!(feature = "p-26"),
-        cfg!(feature = "p-28"),
-        cfg!(feature = "p-30"),
-    ) {
-        (true, _, _) => "p26",
-        (_, true, _) => "p28",
-        (_, _, true) => "p30",
-        _ => "p28-default",
+    use crate::protocol::params::{compiled_size, SizeConfig};
+    match compiled_size() {
+        SizeConfig::Small => "p26",
+        SizeConfig::Medium => "p28",
+        SizeConfig::Large => "p30",
     }
 }
