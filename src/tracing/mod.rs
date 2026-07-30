@@ -1,6 +1,8 @@
 #[cfg(feature = "events")]
 mod console;
 mod filter;
+#[cfg(feature = "profile")]
+mod jsonw;
 mod log;
 mod setup;
 #[cfg(feature = "profile")]
