@@ -233,7 +233,7 @@ RUST_LOG=debug cargo +nightly run --release --features incomplete-rexl,p-28,even
 
 Beyond enabling `debug!` messages, the level changes how `events` renders: at `info` the summary is aggregated as described above, while at `debug` (or lower) it switches to a **linear** trace that prints spans in execution order, indented by nesting depth. Use `info` to see where time is spent, `debug` to follow what happened in sequence.
 
-Valid log levels to be set for RUST_LOG are (all case insensitive) `debug`, `warn` or `warning`, `err` or `error`, and `info`, with `info` being the default. Note that other syntaxes or numeric values are not supported, as the env is not read through `tracing-subscriber` with the `env_filter` feature, so additional options supported in that case are ignored.
+Valid log levels to be set for RUST_LOG are (all case insensitive) `debug`, `warn` or `warning`, `err` or `error`, and `info`, with `info` being the default. Note that other syntaxes or numeric values are not supported.
 
 ### File artifacts (`profile`)
 
