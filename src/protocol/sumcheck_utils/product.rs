@@ -762,14 +762,22 @@ mod tests {
     /// placed weights that pass through run mode, pair mode and folded-constant
     /// mode, and full-cube oracles.
     fn assert_streams_like_pointwise(
-        root: &dyn HighOrderSumcheckData<Element = RingElement>,
+        root: &ProductSumcheck<RingElement>,
         leaves: &[&dyn Fn(&RingElement)],
         rounds: usize,
+        streamed_rounds: usize,
     ) {
         let mut streamed = Polynomial::new(0);
         for round in 0..rounds {
             let expected = pointwise_round(root);
-            root.univariate_polynomial_into(&mut streamed);
+            if round < streamed_rounds {
+                assert!(
+                    root.stream_univariate_into(&mut streamed),
+                    "round {round}: the fast path was expected to engage"
+                );
+            } else {
+                root.univariate_polynomial_into(&mut streamed);
+            }
             assert_eq!(
                 streamed.num_coefficients, expected.num_coefficients,
                 "round {round}: coefficient count"
@@ -812,6 +820,7 @@ mod tests {
                 &|r| oracle.borrow_mut().partial_evaluate(r),
             ],
             total_vars,
+            3,
         );
 
         // constant x selector x oracle x conjugate oracle: two hoisted
@@ -837,6 +846,7 @@ mod tests {
                 &|r| conj.borrow_mut().partial_evaluate(r),
             ],
             total_vars,
+            4,
         );
 
         // one hoisted constant against two degree-one legs, no selector.
@@ -858,6 +868,7 @@ mod tests {
                 &|r| conj.borrow_mut().partial_evaluate(r),
             ],
             total_vars,
+            5,
         );
 
         // two weights in run mode at once, with different run lengths.
@@ -883,6 +894,7 @@ mod tests {
                 &|r| oracle.borrow_mut().partial_evaluate(r),
             ],
             total_vars,
+            5,
         );
     }
 
@@ -1309,5 +1321,35 @@ mod tests {
             sumcheck_0.get_ref().final_evaluations() * sumcheck_1.get_ref().final_evaluations();
 
         debug_assert_eq!(product_eval.evaluate(&point), &expected);
+    }
+
+    #[test]
+    fn test_streamed_product_partial_run_block_inside_selector_range() {
+        // The selector range [2,4) sits strictly inside the run leg's block
+        // [0,8), so the sweep's first block is cut at both ends and the
+        // witness beyond the range is nonzero - an unclamped block boundary
+        // shows up in the coefficients, not as silently-added zeros.
+        let total_vars = 5;
+        let witness: Vec<RingElement> = (0..32).map(|i| ring(3 * i + 1)).collect();
+        let weight: Vec<RingElement> = (0..2).map(|i| ring(11 * i + 4)).collect();
+
+        let selector = ElephantCell::new(SelectorEq::<RingElement>::new(0b001, 3, total_vars));
+        let runweight = ElephantCell::new(LinearSumcheck::new_with_prefixed_sufixed_data(2, 0, 4));
+        runweight.borrow_mut().load_from(&weight);
+        let oracle = ElephantCell::new(LinearSumcheck::new(witness.len()));
+        oracle.borrow_mut().load_from(&witness);
+
+        let a = ElephantCell::new(ProductSumcheck::new(selector.clone(), runweight.clone()));
+        let root = ProductSumcheck::new(a, oracle.clone());
+        assert_streams_like_pointwise(
+            &root,
+            &[
+                &|r| selector.borrow_mut().partial_evaluate(r),
+                &|r| runweight.borrow_mut().partial_evaluate(r),
+                &|r| oracle.borrow_mut().partial_evaluate(r),
+            ],
+            total_vars,
+            2,
+        );
     }
 }
