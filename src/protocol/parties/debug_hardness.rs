@@ -50,7 +50,7 @@ fn check_recursive_commitment(
         length_bound: current_extracted_norm.ceil() as u64,
     });
     let indent = "  ".repeat(depth);
-    println!(
+    tracing::debug!(
         "{}Recursive Commitment '{}' norms: L_2 = {}, bit_len = {}, MOD_Q = {} => estimated security for extraction: {:?}",
         indent,
         name,
@@ -86,7 +86,7 @@ pub fn check_sumcheck_round(
         return;
     }
 
-    println!("=== Debug Hardness Check ===");
+    tracing::debug!("=== Debug Hardness Check ===");
 
     let recommited_ell_inf_norm = norms::inf_norm(next_round_data);
     let recommited_ell_2_norm = norms::l2_norm(next_round_data);
@@ -118,7 +118,7 @@ pub fn check_sumcheck_round(
             + norm_projection_data_ell_2_sq) as f64)
             .sqrt()
     };
-    println!(
+    tracing::debug!(
         "Most inner commitment data L_2 norm: {}",
         most_inner_commitment_data_ell_2
     );
@@ -178,7 +178,7 @@ pub fn check_sumcheck_round(
             0,
         );
     }
-    println!(
+    tracing::debug!(
         "Next round data norms: L_inf = {}, bit_len = {}, L_2 = {}, MOD_Q = {}",
         recommited_ell_inf_norm,
         recommited_ell_inf_norm.ilog2(),
@@ -215,13 +215,13 @@ pub fn check_sumcheck_round(
     let argued_witness_bound = recomposed_projection_bound / JL_ALPHA_RP;
 
     let worse_bound = if extracted_witness_bound > argued_witness_bound {
-        println!(
+        tracing::debug!(
             "Using extracted witness bound {} for security estimation.",
             extracted_witness_bound
         );
         extracted_witness_bound
     } else {
-        println!(
+        tracing::debug!(
             "Using projection-argued witness bound {} for security estimation.",
             argued_witness_bound
         );
@@ -246,7 +246,7 @@ pub fn check_sumcheck_round(
         n: config.basic_commitment_rank as u64,
         length_bound: worse_bound.ceil() as u64,
     });
-    println!(
+    tracing::debug!(
         "Basic commitment estimated security for extraction: {:?} with rank {}",
         basic_commitment_security, config.basic_commitment_rank
     );
@@ -258,11 +258,11 @@ pub fn check_intermediate_round(
     folded_witness_data: &[RingElement],
     projection_image_ct_data: &[RingElement],
 ) {
-    println!("=== Debug Hardness Check for Intermediate Round ===");
+    tracing::debug!("=== Debug Hardness Check for Intermediate Round ===");
 
     let recommited_ell_2_norm = norms::l2_norm(next_round_witness_data);
     let recommited_ell_inf_norm = norms::inf_norm(next_round_witness_data);
-    println!(
+    tracing::debug!(
         "Next round witness norms: L_2 = {}, L_inf = {}, bit_len = {}, MOD_Q = {}",
         recommited_ell_2_norm,
         recommited_ell_inf_norm,
@@ -272,7 +272,7 @@ pub fn check_intermediate_round(
 
     let folded_witness_ell_2_norm = norms::l2_norm(folded_witness_data);
     let folded_witness_inf_norm = norms::inf_norm(folded_witness_data);
-    println!(
+    tracing::debug!(
         "Folded witness norms: L_2 = {}, L_inf = {}, bit_len = {}, MOD_Q = {}",
         folded_witness_ell_2_norm,
         folded_witness_inf_norm,
@@ -285,7 +285,7 @@ pub fn check_intermediate_round(
             .witness_decomposition_base_log
             .pow((config.witness_decomposition_chunks - 1) as u32)) as f64;
 
-    println!("Folded witness norm: {}", recomposed_witness_bound);
+    tracing::debug!("Folded witness norm: {}", recomposed_witness_bound);
 
     let projection_l2_norm = norms::l2_norm_coeffs(projection_image_ct_data);
 
@@ -299,13 +299,13 @@ pub fn check_intermediate_round(
     );
 
     let worse_bound = if extracted_witness_bound > argued_witness_bound {
-        println!(
+        tracing::debug!(
             "Using extracted witness bound {} for security estimation.",
             extracted_witness_bound
         );
         extracted_witness_bound
     } else {
-        println!(
+        tracing::debug!(
             "Using projection-argued witness bound {} for security estimation.",
             argued_witness_bound
         );
@@ -317,7 +317,7 @@ pub fn check_intermediate_round(
         n: config.basic_commitment_rank as u64,
         length_bound: worse_bound.ceil() as u64,
     });
-    println!(
+    tracing::debug!(
         "Basic commitment estimated security for extraction: {:?} with rank {}",
         basic_commitment_security, config.basic_commitment_rank
     );
@@ -328,10 +328,10 @@ pub fn check_simple_round(
     folded_witness_data: &[RingElement],
     projection_image_ct_data: &[RingElement],
 ) {
-    println!("=== Debug Hardness Check for Simple Round ===");
+    tracing::debug!("=== Debug Hardness Check for Simple Round ===");
 
     let folded_witness_l2_norm = norms::l2_norm(folded_witness_data);
-    println!("Folded witness norm: {}", folded_witness_l2_norm);
+    tracing::debug!("Folded witness norm: {}", folded_witness_l2_norm);
 
     let projection_l2_norm = norms::l2_norm_coeffs(projection_image_ct_data);
 
@@ -339,13 +339,13 @@ pub fn check_simple_round(
 
     let argued_witness_bound = projection_l2_norm / JL_ALPHA_RP;
     let worse_bound = if extracted_witness_bound > argued_witness_bound {
-        println!(
+        tracing::debug!(
             "Using extracted witness bound {} for security estimation.",
             extracted_witness_bound
         );
         extracted_witness_bound
     } else {
-        println!(
+        tracing::debug!(
             "Using projection-argued witness bound {} for security estimation.",
             argued_witness_bound
         );
@@ -357,7 +357,7 @@ pub fn check_simple_round(
         n: config.basic_commitment_rank as u64,
         length_bound: worse_bound.ceil() as u64,
     });
-    println!(
+    tracing::debug!(
         "Basic commitment estimated security for extraction: {:?} with rank {}",
         basic_commitment_security, config.basic_commitment_rank
     );

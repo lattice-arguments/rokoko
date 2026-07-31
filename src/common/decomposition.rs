@@ -121,7 +121,7 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
         let capacity_pos = ((1u64 << (base_log * radix as u64)).wrapping_sub(big_shift_val))
             .min(1 << 62) as i64
             - 1;
-        println!(
+        tracing::debug!(
             "  [debug] decompose base={} radix={} n={} max|coeff|={} window=[-{}, {}]",
             base_log,
             radix,

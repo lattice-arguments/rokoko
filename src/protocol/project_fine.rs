@@ -100,7 +100,7 @@ pub fn compute_j_batched(
     // Index<(row, col)> impl and manually 4× unrolls for moderate throughput.
     #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
     {
-        println!("Using scalar code for compute_j_batched");
+        tracing::debug!("Using scalar code for compute_j_batched");
         for i in 0..inner_width_ring {
             let row = &mut j_batched[i].v;
             let base_index = i * DEGREE;
@@ -308,9 +308,9 @@ pub fn project_coefficients(
     #[cfg(feature = "debug-hardness")]
     {
         use crate::common::norms::l2_norm_coeffs;
-        println!("Projecting coefficients with projection matrix:");
+        tracing::debug!("Projecting coefficients with projection matrix:");
         let norm = l2_norm_coeffs(&witness_coeff.data);
-        println!("L2 norm of witness coefficients: {}", norm);
+        tracing::debug!("L2 norm of witness coefficients: {}", norm);
     }
 
     // Allocate the output matrix for the projected result
@@ -566,7 +566,7 @@ pub fn project_coefficients(
     {
         use crate::common::norms::l2_norm_coeffs;
         let norm = l2_norm_coeffs(&image_ct.data);
-        println!("L2 norm of projected witness coefficients: {}", norm);
+        tracing::debug!("L2 norm of projected witness coefficients: {}", norm);
     }
     image_ct
 }

@@ -56,7 +56,7 @@ pub fn run_intermediate_sumcheck(
     hash_wrapper.update_with_ring_element(&norm_claim);
 
     let num_sumchecks = sumcheck_context.combiner.borrow().sumchecks_count();
-    println!("num_sumchecks: {}", num_sumchecks);
+    tracing::debug!("num_sumchecks: {}", num_sumchecks);
 
     let mut combination = vec![RingElement::zero(Representation::IncompleteNTT); num_sumchecks];
     hash_wrapper.sample_ring_element_vec_into(&mut combination);

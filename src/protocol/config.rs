@@ -400,7 +400,7 @@ impl SizeableProof for SumcheckRoundProof {
                 size += coeff.size_in_bits();
             }
         }
-        println!("Polys size: {} KB, ", to_kb(size));
+        tracing::debug!("Polys size: {} KB, ", to_kb(size));
 
         let mut claims_size = 0;
         let claims = vec![
@@ -413,7 +413,7 @@ impl SizeableProof for SumcheckRoundProof {
             claims_size += claim.size_in_bits();
         }
         size += claims_size;
-        println!("Claims size: {} KB, ", to_kb(claims_size));
+        tracing::debug!("Claims size: {} KB, ", to_kb(claims_size));
 
         let mut rc_opening_inner_size = 0;
         for el in &self.rc_opening_inner {
@@ -421,7 +421,7 @@ impl SizeableProof for SumcheckRoundProof {
         }
 
         size += rc_opening_inner_size;
-        println!(
+        tracing::debug!(
             "RC opening inner size: {} KB, ",
             to_kb(rc_opening_inner_size)
         );
@@ -432,7 +432,7 @@ impl SizeableProof for SumcheckRoundProof {
                 rc_projection_inner_size += el.size_in_bits();
             }
             size += rc_projection_inner_size;
-            println!(
+            tracing::debug!(
                 "RC coarse projection inner size: {} KB, ",
                 to_kb(rc_projection_inner_size)
             );
@@ -449,7 +449,7 @@ impl SizeableProof for SumcheckRoundProof {
                 rcs_projection_1_inner_size += el.size_in_bits();
             }
             size += rcs_projection_1_inner_size;
-            println!(
+            tracing::debug!(
                 "RC fine projection inner size: {} KB, ",
                 to_kb(rcs_projection_1_inner_size)
             );
@@ -461,7 +461,7 @@ impl SizeableProof for SumcheckRoundProof {
                 constant_term_claims_size += el.size_in_bits();
             }
             size += constant_term_claims_size;
-            println!(
+            tracing::debug!(
                 "Constant term claims size: {} KB, ",
                 to_kb(constant_term_claims_size)
             );
@@ -488,11 +488,11 @@ impl SizeableProof for SumcheckRoundProof {
             0
         };
         size += next_round_size;
-        println!(
+        tracing::debug!(
             "Next round commitment size: {} KB, ",
             to_kb(next_round_size)
         );
-        println!("Total sumcheck round proof size: {} KB \n\n\n", to_kb(size));
+        tracing::debug!("Total sumcheck round proof size: {} KB \n\n\n", to_kb(size));
 
         size + if let Some(next) = &self.next {
             match &**next {
@@ -519,14 +519,14 @@ impl SizeableProof for SimpleRoundProof {
         for el in &self.folded_witness.data {
             size += el.size_in_bits();
         }
-        println!("Folded witness size: {} KB, ", to_kb(size));
+        tracing::debug!("Folded witness size: {} KB, ", to_kb(size));
 
         let mut projection_image_ct_size = 0;
         for el in &self.projection_image_ct.data {
             projection_image_ct_size += el.size_in_bits();
         }
         size += projection_image_ct_size;
-        println!(
+        tracing::debug!(
             "Projection image ct size: {} KB, ",
             to_kb(projection_image_ct_size)
         );
@@ -536,7 +536,7 @@ impl SizeableProof for SimpleRoundProof {
             batched_projection_image_size += el.size_in_bits();
         }
         size += batched_projection_image_size;
-        println!(
+        tracing::debug!(
             "Batched projection image size: {} KB, ",
             to_kb(batched_projection_image_size)
         );
@@ -546,9 +546,9 @@ impl SizeableProof for SimpleRoundProof {
             opening_rhs_size += el.size_in_bits();
         }
         size += opening_rhs_size;
-        println!("Opening RHS size: {} KB, ", to_kb(opening_rhs_size));
+        tracing::debug!("Opening RHS size: {} KB, ", to_kb(opening_rhs_size));
 
-        println!("Total simple round proof size: {} KB \n\n\n", to_kb(size));
+        tracing::debug!("Total simple round proof size: {} KB \n\n\n", to_kb(size));
         size
     }
 }
@@ -576,7 +576,7 @@ impl SizeableProof for IntermediateRoundProof {
             }
         }
         size += polys_size;
-        println!("Polys size: {} KB, ", to_kb(polys_size));
+        tracing::debug!("Polys size: {} KB, ", to_kb(polys_size));
 
         let mut claims_size = 0;
         let claims = vec![
@@ -588,14 +588,14 @@ impl SizeableProof for IntermediateRoundProof {
             claims_size += claim.size_in_bits();
         }
         size += claims_size;
-        println!("Claims size: {} KB, ", to_kb(claims_size));
+        tracing::debug!("Claims size: {} KB, ", to_kb(claims_size));
 
         let mut projection_image_ct_size = 0;
         for el in &self.projection_image_ct.data {
             projection_image_ct_size += el.size_in_bits();
         }
         size += projection_image_ct_size;
-        println!(
+        tracing::debug!(
             "Projection image ct size: {} KB, ",
             to_kb(projection_image_ct_size)
         );
@@ -605,7 +605,7 @@ impl SizeableProof for IntermediateRoundProof {
             batched_projection_image_size += el.size_in_bits();
         }
         size += batched_projection_image_size;
-        println!(
+        tracing::debug!(
             "Batched projection image size: {} KB, ",
             to_kb(batched_projection_image_size)
         );
@@ -615,7 +615,7 @@ impl SizeableProof for IntermediateRoundProof {
             opening_rhs_size += el.size_in_bits();
         }
         size += opening_rhs_size;
-        println!("Opening RHS size: {} KB, ", to_kb(opening_rhs_size));
+        tracing::debug!("Opening RHS size: {} KB, ", to_kb(opening_rhs_size));
 
         let next_round_size = if let Some(next_round_commitment) = &self.next_round_commitment {
             match next_round_commitment {
@@ -636,12 +636,12 @@ impl SizeableProof for IntermediateRoundProof {
             0
         };
         size += next_round_size;
-        println!(
+        tracing::debug!(
             "Next round commitment size in intermediate round proof: {} KB, ",
             to_kb(next_round_size)
         );
 
-        println!(
+        tracing::debug!(
             "Total intermediate round proof size: {} KB \n\n\n",
             to_kb(size)
         );

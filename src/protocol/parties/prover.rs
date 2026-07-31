@@ -217,7 +217,7 @@ pub fn prover_round(
             .filter(|(a, b)| a.v != b.v)
             .count();
         let input_norm = norms::inf_norm(&witness.data);
-        println!("  [debug] input norm: {}", input_norm);
+        tracing::debug!("  [debug] input norm: {}", input_norm);
         assert_eq!(
             mismatch,
             0,
@@ -324,7 +324,7 @@ pub fn prover_round(
                     &basic_commitment.data,
                 );
                 hash_wrapper.update_with_ring_element_slice(&rc.most_inner_commitment());
-                println!(
+                tracing::debug!(
                     "Next round commitment created of length {}.",
                     rc.committed_data.len()
                 );
@@ -490,12 +490,12 @@ pub fn prover_round_intermediate(
         &evaluation_points_outer,
         true,
     );
-    println!(
+    tracing::debug!(
         "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
         evaluation_points_inner.len(),
         evaluation_points_outer.len()
     );
-    println!(
+    tracing::debug!(
         "int opening height: {}, width: {}",
         opening.rhs.height, opening.rhs.width
     );
@@ -569,7 +569,7 @@ pub fn prover_round_intermediate(
     );
     hash_wrapper.update_with_ring_element_slice(&next_round_commitment.data);
 
-    println!(
+    tracing::debug!(
         "Next round commitment created of length {}.",
         next_round_commitment.data.len()
     );
@@ -675,12 +675,12 @@ pub fn prover_round_simple(
         &evaluation_points_outer,
         true,
     );
-    println!(
+    tracing::debug!(
         "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
         evaluation_points_inner.len(),
         evaluation_points_outer.len()
     );
-    println!(
+    tracing::debug!(
         "opening height: {}, width: {}",
         opening.rhs.height, opening.rhs.width
     );

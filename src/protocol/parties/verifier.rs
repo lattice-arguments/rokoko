@@ -263,84 +263,93 @@ pub fn verifier_round_intermediate(
         vec![RingElement::zero(Representation::IncompleteNTT); round_proof.opening_rhs.height];
     // instead of checking if claims are consistent with opening_rhs,
     // we assume they are and recompute the last column of opening_rhs to save on communication
-    for i in 0..round_proof.opening_rhs.height {
-        let preprocessed_row = PreprocessedRow::from_structured_row(&evaluation_points_outer[i]);
+    {
+        let _s = tracing::info_span!("verifier_intermediate::recompute_last_col").entered();
+        for i in 0..round_proof.opening_rhs.height {
+            let preprocessed_row =
+                PreprocessedRow::from_structured_row(&evaluation_points_outer[i]);
 
-        last_col_opening_rhs[i].set_from(&claims[i]);
-        for col in 0..round_proof.opening_rhs.width - 1 {
-            temp *= (
-                &round_proof.opening_rhs[(i, col)],
-                &preprocessed_row.preprocessed_row[col],
-            );
-            last_col_opening_rhs[i] -= &temp;
+            last_col_opening_rhs[i].set_from(&claims[i]);
+            for col in 0..round_proof.opening_rhs.width - 1 {
+                temp *= (
+                    &round_proof.opening_rhs[(i, col)],
+                    &preprocessed_row.preprocessed_row[col],
+                );
+                last_col_opening_rhs[i] -= &temp;
+            }
+            temp.set_from(&preprocessed_row.preprocessed_row[round_proof.opening_rhs.width - 1]);
+            temp.from_incomplete_ntt_to_homogenized_field_extensions();
+            let mut inv_remaining_challenge = temp.inverse();
+            inv_remaining_challenge.from_homogenized_field_extensions_to_incomplete_ntt();
+            last_col_opening_rhs[i] *= &inv_remaining_challenge;
+            temp.representation = Representation::IncompleteNTT;
         }
-        temp.set_from(&preprocessed_row.preprocessed_row[round_proof.opening_rhs.width - 1]);
-        temp.from_incomplete_ntt_to_homogenized_field_extensions();
-        let mut inv_remaining_challenge = temp.inverse();
-        inv_remaining_challenge.from_homogenized_field_extensions_to_incomplete_ntt();
-        last_col_opening_rhs[i] *= &inv_remaining_challenge;
-        temp.representation = Representation::IncompleteNTT;
     }
 
     let mut projection_matrix =
         ProjectionMatrix::new(config.projection_ratio, config.projection_height);
 
-    projection_matrix.sample(&mut hash_wrapper);
-    hash_wrapper.update_with_ring_element_slice(&round_proof.projection_image_ct.data);
-    let challenges: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] =
+    let challenges: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] = {
+        let _s = tracing::info_span!("verifier_intermediate::sample_projection").entered();
+        projection_matrix.sample(&mut hash_wrapper);
+        hash_wrapper.update_with_ring_element_slice(&round_proof.projection_image_ct.data);
         verifier_sample_projection_challenges_collectively(
             &projection_matrix,
             config,
             &mut hash_wrapper,
-        );
+        )
+    };
 
     let rows_per_chunk = config.projection_height / DEGREE;
 
     // constant term consistency
-    for i in 0..NOF_BATCHES {
-        let c_0_values = precompute_structured_values_fast(&challenges[i].c_0_layers);
-        let c_1_values = precompute_structured_values_fast(&challenges[i].c_1_layers);
+    {
+        let _s = tracing::info_span!("verifier_intermediate::ct_consistency").entered();
+        for i in 0..NOF_BATCHES {
+            let c_0_values = precompute_structured_values_fast(&challenges[i].c_0_layers);
+            let c_1_values = precompute_structured_values_fast(&challenges[i].c_1_layers);
 
-        debug_assert_eq!(
-            c_1_values.len(),
-            config.projection_height,
-            "c_1_values length mismatch."
-        );
+            debug_assert_eq!(
+                c_1_values.len(),
+                config.projection_height,
+                "c_1_values length mismatch."
+            );
 
-        for col in 0..config.witness_width {
-            let mut expected_ct = 0u64;
+            for col in 0..config.witness_width {
+                let mut expected_ct = 0u64;
 
-            for row in 0..round_proof.projection_image_ct.height {
-                let chunk_idx = row / rows_per_chunk;
-                let c_0_coeff = c_0_values[chunk_idx];
-                let c_1_offset = (row % rows_per_chunk) * DEGREE;
+                for row in 0..round_proof.projection_image_ct.height {
+                    let chunk_idx = row / rows_per_chunk;
+                    let c_0_coeff = c_0_values[chunk_idx];
+                    let c_1_offset = (row % rows_per_chunk) * DEGREE;
 
-                unsafe {
-                    eltwise_mult_mod(
-                        temp.v.as_mut_ptr(),
-                        c_1_values.as_ptr().add(c_1_offset),
-                        round_proof.projection_image_ct[(row, col)].v.as_ptr(),
-                        DEGREE as u64,
-                        MOD_Q,
-                    );
-                }
-
-                let mut row_sum = 0u64;
-                for l in 0..DEGREE {
                     unsafe {
-                        row_sum = add_mod(row_sum, temp.v[l], MOD_Q);
+                        eltwise_mult_mod(
+                            temp.v.as_mut_ptr(),
+                            c_1_values.as_ptr().add(c_1_offset),
+                            round_proof.projection_image_ct[(row, col)].v.as_ptr(),
+                            DEGREE as u64,
+                            MOD_Q,
+                        );
+                    }
+
+                    let mut row_sum = 0u64;
+                    for l in 0..DEGREE {
+                        unsafe {
+                            row_sum = add_mod(row_sum, temp.v[l], MOD_Q);
+                        }
+                    }
+
+                    unsafe {
+                        let weighted = multiply_mod(row_sum, c_0_coeff, MOD_Q);
+                        expected_ct = add_mod(expected_ct, weighted, MOD_Q);
                     }
                 }
 
-                unsafe {
-                    let weighted = multiply_mod(row_sum, c_0_coeff, MOD_Q);
-                    expected_ct = add_mod(expected_ct, weighted, MOD_Q);
-                }
+                let ct = round_proof.batched_projection_image[(i, col)]
+                    .constant_term_from_incomplete_ntt();
+                assert_eq!(ct, expected_ct);
             }
-
-            let ct =
-                round_proof.batched_projection_image[(i, col)].constant_term_from_incomplete_ntt();
-            assert_eq!(ct, expected_ct);
         }
     }
 
@@ -348,7 +357,10 @@ pub fn verifier_round_intermediate(
 
     let mut folding_challenges =
         vec![RingElement::zero(Representation::IncompleteNTT); config.witness_width];
-    hash_wrapper.sample_low_op_norm_ring_vec_into(&mut folding_challenges);
+    {
+        let _s = tracing::info_span!("verifier_intermediate::sample_folding_challenges").entered();
+        hash_wrapper.sample_low_op_norm_ring_vec_into(&mut folding_challenges);
+    }
 
     let next_round_commitment =
         match round_proof
