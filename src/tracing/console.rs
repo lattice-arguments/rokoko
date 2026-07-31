@@ -250,7 +250,7 @@ impl Drop for ConsoleSummaryGuard {
 
                 if !phase.rounds.is_empty() {
                     phase.rounds.sort_by_key(|(start, _, _)| *start);
-                    let _ = writeln!(out, "  rounds:");
+                    write_section_rule(&mut out, "rounds");
                     let mut rounds_total = Duration::ZERO;
                     for (i, (_, name, dur)) in phase.rounds.iter().enumerate() {
                         rounds_total += *dur;
@@ -311,6 +311,12 @@ impl Drop for ConsoleSummaryGuard {
 
         let _ = writeln!(out);
     }
+}
+
+fn write_section_rule(out: &mut impl io::Write, label: &str) {
+    let prefix = format!("  ── {label} ");
+    let filler_count = HEADER_WIDTH.saturating_sub(prefix.chars().count());
+    let _ = writeln!(out, "{prefix}{}", "─".repeat(filler_count));
 }
 
 fn write_phase_header(out: &mut impl io::Write, root: &str, total: Duration) {
