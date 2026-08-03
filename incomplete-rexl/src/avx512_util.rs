@@ -7,7 +7,7 @@ use crate::util::CmpInt;
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn extract_values(x: __m512i) -> [u64; 8] {
     let mut values = [0u64; 8];
     _mm512_storeu_si512(values.as_mut_ptr() as *mut __m512i, x);
@@ -16,7 +16,7 @@ pub unsafe fn extract_values(x: __m512i) -> [u64; 8] {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn extract_int_values(x: __m512i) -> [i64; 8] {
     let mut values = [0i64; 8];
     _mm512_storeu_si512(values.as_mut_ptr() as *mut __m512i, x);
@@ -25,7 +25,7 @@ pub unsafe fn extract_int_values(x: __m512i) -> [i64; 8] {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn extract_double_values(x: __m512d) -> [f64; 8] {
     let mut values = [0f64; 8];
     _mm512_storeu_pd(values.as_mut_ptr(), x);
@@ -34,7 +34,7 @@ pub unsafe fn extract_double_values(x: __m512d) -> [f64; 8] {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn clear_top_bits64<const NUM_BITS: i32>(x: __m512i) -> __m512i {
     let mask = if NUM_BITS == 64 {
         u64::MAX
@@ -47,7 +47,7 @@ pub unsafe fn clear_top_bits64<const NUM_BITS: i32>(x: __m512i) -> __m512i {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 unsafe fn mm512_hexl_mulhi_epi_64(x: __m512i, y: __m512i) -> __m512i {
     let lo_mask = _mm512_set1_epi64(0x00000000ffffffffu64 as i64);
     let x_hi = _mm512_shuffle_epi32(x, 0xB1);
@@ -69,7 +69,7 @@ unsafe fn mm512_hexl_mulhi_epi_64(x: __m512i, y: __m512i) -> __m512i {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 unsafe fn mm512_hexl_mulhi_epi_52(x: __m512i, y: __m512i) -> __m512i {
     let zero = _mm512_set1_epi64(0);
     _mm512_madd52hi_epu64(zero, x, y)
@@ -77,7 +77,7 @@ unsafe fn mm512_hexl_mulhi_epi_52(x: __m512i, y: __m512i) -> __m512i {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn mm512_hexl_mulhi_epi<const BITSHIFT: i32>(x: __m512i, y: __m512i) -> __m512i {
     if BITSHIFT == 64 {
         mm512_hexl_mulhi_epi_64(x, y)
@@ -90,7 +90,7 @@ pub unsafe fn mm512_hexl_mulhi_epi<const BITSHIFT: i32>(x: __m512i, y: __m512i) 
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 unsafe fn mm512_hexl_mulhi_approx_epi_64(x: __m512i, y: __m512i) -> __m512i {
     let lo_mask = _mm512_set1_epi64(0x00000000ffffffffu64 as i64);
     let x_hi = _mm512_shuffle_epi32(x, 0xB1);
@@ -109,7 +109,7 @@ unsafe fn mm512_hexl_mulhi_approx_epi_64(x: __m512i, y: __m512i) -> __m512i {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 unsafe fn mm512_hexl_mulhi_approx_epi_52(x: __m512i, y: __m512i) -> __m512i {
     let zero = _mm512_set1_epi64(0);
     _mm512_madd52hi_epu64(zero, x, y)
@@ -117,7 +117,7 @@ unsafe fn mm512_hexl_mulhi_approx_epi_52(x: __m512i, y: __m512i) -> __m512i {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn mm512_hexl_mulhi_approx_epi<const BITSHIFT: i32>(x: __m512i, y: __m512i) -> __m512i {
     if BITSHIFT == 64 {
         mm512_hexl_mulhi_approx_epi_64(x, y)
@@ -130,14 +130,14 @@ pub unsafe fn mm512_hexl_mulhi_approx_epi<const BITSHIFT: i32>(x: __m512i, y: __
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 unsafe fn mm512_hexl_mullo_epi_64(x: __m512i, y: __m512i) -> __m512i {
     _mm512_mullo_epi64(x, y)
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 unsafe fn mm512_hexl_mullo_epi_52(x: __m512i, y: __m512i) -> __m512i {
     let zero = _mm512_set1_epi64(0);
     _mm512_madd52lo_epu64(zero, x, y)
@@ -145,7 +145,7 @@ unsafe fn mm512_hexl_mullo_epi_52(x: __m512i, y: __m512i) -> __m512i {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn mm512_hexl_mullo_epi<const BITSHIFT: i32>(x: __m512i, y: __m512i) -> __m512i {
     if BITSHIFT == 64 {
         mm512_hexl_mullo_epi_64(x, y)
@@ -158,7 +158,7 @@ pub unsafe fn mm512_hexl_mullo_epi<const BITSHIFT: i32>(x: __m512i, y: __m512i) 
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 unsafe fn mm512_hexl_mullo_add_lo_epi_64(x: __m512i, y: __m512i, z: __m512i) -> __m512i {
     let prod = _mm512_mullo_epi64(y, z);
     _mm512_add_epi64(x, prod)
@@ -166,7 +166,7 @@ unsafe fn mm512_hexl_mullo_add_lo_epi_64(x: __m512i, y: __m512i, z: __m512i) -> 
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 unsafe fn mm512_hexl_mullo_add_lo_epi_52(x: __m512i, y: __m512i, z: __m512i) -> __m512i {
     let mut result = _mm512_madd52lo_epu64(x, y, z);
     result = clear_top_bits64::<52>(result);
@@ -175,7 +175,7 @@ unsafe fn mm512_hexl_mullo_add_lo_epi_52(x: __m512i, y: __m512i, z: __m512i) -> 
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn mm512_hexl_mullo_add_lo_epi<const BITSHIFT: i32>(
     x: __m512i,
     y: __m512i,
@@ -192,7 +192,7 @@ pub unsafe fn mm512_hexl_mullo_add_lo_epi<const BITSHIFT: i32>(
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn mm512_hexl_small_mod_epu64<const INPUT_MOD_FACTOR: i32>(
     mut x: __m512i,
     q: __m512i,
@@ -228,7 +228,7 @@ pub unsafe fn mm512_hexl_small_mod_epu64<const INPUT_MOD_FACTOR: i32>(
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn mm512_hexl_small_add_mod_epi64(x: __m512i, y: __m512i, q: __m512i) -> __m512i {
     let sum = _mm512_add_epi64(x, y);
     mm512_hexl_small_mod_epu64::<2>(sum, q, None, None)
@@ -236,7 +236,7 @@ pub unsafe fn mm512_hexl_small_add_mod_epi64(x: __m512i, y: __m512i, q: __m512i)
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn mm512_hexl_small_sub_mod_epi64(x: __m512i, y: __m512i, q: __m512i) -> __m512i {
     let diff = _mm512_sub_epi64(x, y);
     let sign_bits = _mm512_movepi64_mask(diff);
@@ -245,7 +245,7 @@ pub unsafe fn mm512_hexl_small_sub_mod_epi64(x: __m512i, y: __m512i, q: __m512i)
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn mm512_hexl_cmp_epu64_mask(a: __m512i, b: __m512i, cmp: CmpInt) -> __mmask8 {
     match cmp {
         CmpInt::Eq => _mm512_cmp_epu64_mask(a, b, 0),
@@ -261,7 +261,7 @@ pub unsafe fn mm512_hexl_cmp_epu64_mask(a: __m512i, b: __m512i, cmp: CmpInt) -> 
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn mm512_hexl_cmp_epi64(
     a: __m512i,
     b: __m512i,
@@ -274,28 +274,28 @@ pub unsafe fn mm512_hexl_cmp_epi64(
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn mm512_hexl_cmpge_epu64(a: __m512i, b: __m512i, match_value: u64) -> __m512i {
     mm512_hexl_cmp_epi64(a, b, CmpInt::Nlt, match_value)
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn mm512_hexl_cmplt_epu64(a: __m512i, b: __m512i, match_value: u64) -> __m512i {
     mm512_hexl_cmp_epi64(a, b, CmpInt::Lt, match_value)
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn mm512_hexl_cmple_epu64(a: __m512i, b: __m512i, match_value: u64) -> __m512i {
     mm512_hexl_cmp_epi64(a, b, CmpInt::Le, match_value)
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn mm512_hexl_barrett_reduce64<const BITSHIFT: i32, const OUTPUT_MOD_FACTOR: i32>(
     mut x: __m512i,
     q: __m512i,
@@ -339,7 +339,7 @@ pub unsafe fn mm512_hexl_barrett_reduce64<const BITSHIFT: i32, const OUTPUT_MOD_
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn mm512_hexl_shrdi_epi64_runtime(x: __m512i, y: __m512i, bit_shift: u32) -> __m512i {
     let v_shift = _mm512_set1_epi64(bit_shift as i64);
     let v_shift_hi = _mm512_set1_epi64((64 - bit_shift) as i64);
@@ -350,14 +350,14 @@ pub unsafe fn mm512_hexl_shrdi_epi64_runtime(x: __m512i, y: __m512i, bit_shift: 
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512vbmi2")]
-#[inline(always)]
+#[inline]
 unsafe fn mm512_hexl_shrdi_epi64_vbmi2<const BITSHIFT: i32>(x: __m512i, y: __m512i) -> __m512i {
     _mm512_shrdi_epi64::<BITSHIFT>(x, y)
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 pub unsafe fn mm512_hexl_shrdi_epi64<const BITSHIFT: i32>(x: __m512i, y: __m512i) -> __m512i {
     if *HAS_AVX512VBMI2 {
         mm512_hexl_shrdi_epi64_vbmi2::<BITSHIFT>(x, y)

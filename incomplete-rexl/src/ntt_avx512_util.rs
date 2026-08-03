@@ -3,7 +3,7 @@ use std::arch::x86_64::*;
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx2")]
-#[inline(always)]
+#[inline]
 pub unsafe fn load_fwd_interleaved_t1(arg: *const u64, out1: &mut __m512i, out2: &mut __m512i) {
     let arg_512 = arg as *const __m512i;
     let v1 = _mm512_loadu_si512(arg_512);
@@ -19,7 +19,7 @@ pub unsafe fn load_fwd_interleaved_t1(arg: *const u64, out1: &mut __m512i, out2:
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx2")]
-#[inline(always)]
+#[inline]
 pub unsafe fn load_inv_interleaved_t1(arg: *const u64, out1: &mut __m512i, out2: &mut __m512i) {
     let vperm_hi_idx = _mm512_set_epi64(6, 4, 2, 0, 7, 5, 3, 1);
     let vperm_lo_idx = _mm512_set_epi64(7, 5, 3, 1, 6, 4, 2, 0);
@@ -39,7 +39,7 @@ pub unsafe fn load_inv_interleaved_t1(arg: *const u64, out1: &mut __m512i, out2:
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx2")]
-#[inline(always)]
+#[inline]
 pub unsafe fn load_fwd_interleaved_t2(arg: *const u64, out1: &mut __m512i, out2: &mut __m512i) {
     let arg_512 = arg as *const __m512i;
     let v1 = _mm512_loadu_si512(arg_512);
@@ -55,7 +55,7 @@ pub unsafe fn load_fwd_interleaved_t2(arg: *const u64, out1: &mut __m512i, out2:
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx2")]
-#[inline(always)]
+#[inline]
 pub unsafe fn load_inv_interleaved_t2(arg: *const u64, out1: &mut __m512i, out2: &mut __m512i) {
     let arg_512 = arg as *const __m512i;
     let v1 = _mm512_loadu_si512(arg_512);
@@ -71,7 +71,7 @@ pub unsafe fn load_inv_interleaved_t2(arg: *const u64, out1: &mut __m512i, out2:
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx2")]
-#[inline(always)]
+#[inline]
 pub unsafe fn load_fwd_interleaved_t4(arg: *const u64, out1: &mut __m512i, out2: &mut __m512i) {
     let arg_512 = arg as *const __m512i;
     let vperm2_idx = _mm512_set_epi64(3, 2, 1, 0, 7, 6, 5, 4);
@@ -85,7 +85,7 @@ pub unsafe fn load_fwd_interleaved_t4(arg: *const u64, out1: &mut __m512i, out2:
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx2")]
-#[inline(always)]
+#[inline]
 pub unsafe fn load_inv_interleaved_t4(arg: *const u64, out1: &mut __m512i, out2: &mut __m512i) {
     let arg_512 = arg as *const __m512i;
     let v1 = _mm512_loadu_si512(arg_512);
@@ -101,7 +101,7 @@ pub unsafe fn load_inv_interleaved_t4(arg: *const u64, out1: &mut __m512i, out2:
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx2")]
-#[inline(always)]
+#[inline]
 pub unsafe fn write_fwd_interleaved_t1(arg1: __m512i, arg2: __m512i, out: *mut __m512i) {
     let vperm2_idx = _mm512_set_epi64(3, 2, 1, 0, 7, 6, 5, 4);
     let v_x_out_idx = _mm512_set_epi64(7, 3, 6, 2, 5, 1, 4, 0);
@@ -120,7 +120,7 @@ pub unsafe fn write_fwd_interleaved_t1(arg1: __m512i, arg2: __m512i, out: *mut _
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx2")]
-#[inline(always)]
+#[inline]
 pub unsafe fn write_inv_interleaved_t4(arg1: __m512i, arg2: __m512i, out: *mut __m512i) {
     let x0 = _mm512_extracti64x4_epi64(arg1, 0);
     let x1 = _mm512_extracti64x4_epi64(arg1, 1);
@@ -135,7 +135,7 @@ pub unsafe fn write_inv_interleaved_t4(arg1: __m512i, arg2: __m512i, out: *mut _
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx2")]
-#[inline(always)]
+#[inline]
 pub unsafe fn load_w_op_t2(arg: *const u64) -> __m512i {
     let vperm_w_idx = _mm512_set_epi64(3, 3, 2, 2, 1, 1, 0, 0);
     let v_w_256 = _mm256_loadu_si256(arg as *const __m256i);
@@ -146,7 +146,7 @@ pub unsafe fn load_w_op_t2(arg: *const u64) -> __m512i {
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx2")]
-#[inline(always)]
+#[inline]
 pub unsafe fn load_w_op_t4(arg: *const u64) -> __m512i {
     let vperm_w_idx = _mm512_set_epi64(1, 1, 1, 1, 0, 0, 0, 0);
     let v_w_128 = _mm_loadu_si128(arg as *const __m128i);

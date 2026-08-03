@@ -1,5 +1,4 @@
 #![allow(dead_code)]
-#![feature(target_feature_inline_always)]
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};

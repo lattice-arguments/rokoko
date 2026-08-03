@@ -984,7 +984,7 @@ fn inverse_transform_from_bit_reverse_radix2(
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 unsafe fn fwd_butterfly_avx512<const BITSHIFT: i32, const INPUT_LESS_THAN_MOD: bool>(
     x: &mut __m512i,
     y: &mut __m512i,
@@ -1023,7 +1023,7 @@ unsafe fn fwd_butterfly_avx512<const BITSHIFT: i32, const INPUT_LESS_THAN_MOD: b
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 unsafe fn fwd_t1<const BITSHIFT: i32>(
     operand: *mut u64,
     v_neg_modulus: __m512i,
@@ -1082,7 +1082,7 @@ unsafe fn fwd_t1<const BITSHIFT: i32>(
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 unsafe fn fwd_t2<const BITSHIFT: i32>(
     operand: *mut u64,
     v_neg_modulus: __m512i,
@@ -1139,7 +1139,7 @@ unsafe fn fwd_t2<const BITSHIFT: i32>(
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 unsafe fn fwd_t4<const BITSHIFT: i32>(
     operand: *mut u64,
     v_neg_modulus: __m512i,
@@ -1197,7 +1197,7 @@ unsafe fn fwd_t4<const BITSHIFT: i32>(
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 unsafe fn fwd_t8<const BITSHIFT: i32, const INPUT_LESS_THAN_MOD: bool>(
     result: *mut u64,
     operand: *const u64,
@@ -1447,7 +1447,7 @@ unsafe fn forward_transform_to_bit_reverse_avx512<const BITSHIFT: i32>(
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 unsafe fn inv_butterfly_avx512<const BITSHIFT: i32, const INPUT_LESS_THAN_MOD: bool>(
     x: &mut __m512i,
     y: &mut __m512i,
@@ -1488,7 +1488,7 @@ unsafe fn inv_butterfly_avx512<const BITSHIFT: i32, const INPUT_LESS_THAN_MOD: b
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 unsafe fn inv_t1<const BITSHIFT: i32, const INPUT_LESS_THAN_MOD: bool>(
     operand: *mut u64,
     v_neg_modulus: __m512i,
@@ -1549,7 +1549,7 @@ unsafe fn inv_t1<const BITSHIFT: i32, const INPUT_LESS_THAN_MOD: bool>(
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 unsafe fn inv_t2<const BITSHIFT: i32>(
     mut x: *mut u64,
     v_neg_modulus: __m512i,
@@ -1601,7 +1601,7 @@ unsafe fn inv_t2<const BITSHIFT: i32>(
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 unsafe fn inv_t4<const BITSHIFT: i32>(
     operand: *mut u64,
     v_neg_modulus: __m512i,
@@ -1653,7 +1653,7 @@ unsafe fn inv_t4<const BITSHIFT: i32>(
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline(always)]
+#[inline]
 unsafe fn inv_t8<const BITSHIFT: i32>(
     operand: *mut u64,
     v_neg_modulus: __m512i,
