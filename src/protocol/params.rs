@@ -70,16 +70,14 @@ const NB_P_26: [[f64; 2]; 9] = [
     [73660.94992599539, 17077273.72989793],
     [350510.5948127674, 836487.5791151952],
 ];
-const NB_P_28: [[f64; 2]; 9] = [
+const NB_P_28: [[f64; 2]; 7] = [
     [66427.98663966867, 2160.0013888884423],
     [181558.43011548652, 2705.682169065687],
     [95004.44916949942, 3133.253580545309],
     [52846.942182116836, 3145.1373578907487],
     [35438.889895142034, 3128.613750529138],
     [193799.4028705971, 193690.07834166416],
-    [1583993.8583391036, 1296847.5245818223],
-    [73668.6367459043, 18268958.675824028],
-    [349498.9501185948, 809458.9433127538],
+    [940552.7519878936, 2135851.482096309],
 ];
 const NB_P_30: [[f64; 2]; 9] = [
     [146947.061954297, 2201.3457247783685],
@@ -579,69 +577,14 @@ pub static P_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
     witness_decomposition_chunks: 2,
     witness_decomposition_base_log: 7,
 
-    next: Some(Box::new(AuxConfig::Sumcheck(P_6.clone()))),
-});
+    next: Some(Box::new(AuxConfig::Simple(P_LAST.clone()))),
 
-pub static P_6: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
-    witness_height: 2usize.pow(7),
-    witness_width: 2usize.pow(3),
-    projection_ratio: 2usize.pow(6),
-    projection_height: 2usize.pow(8),
-    basic_commitment_rank: 4,
-    nof_openings: 2,
-    commitment_recursion: AuxRecursionConfig {
-        decomposition_base_log: 15,
-        decomposition_chunks: 4,
-        rank: 2,
-        next: None,
-    },
-    opening_recursion: AuxRecursionConfig {
-        decomposition_base_log: 15,
-        decomposition_chunks: 4,
-        rank: 2,
-        next: None,
-    },
-    projection_recursion: AuxProjection::Fine {
-        nof_batches: 2,
-        recursion_constant_term: AuxRecursionConfig {
-            decomposition_base_log: 11,
-            decomposition_chunks: 2,
-            rank: 2,
-            next: None,
-        },
-        recursion_batched_projection: AuxRecursionConfig {
-            decomposition_base_log: 13,
-            decomposition_chunks: 4,
-            rank: 2,
-            next: None,
-        },
-    },
-
-    witness_decomposition_chunks: 1,
-    witness_decomposition_base_log: 17,
-
-    next: Some(Box::new(AuxConfig::Intermediate(P_INTERMEDIATE.clone()))),
-});
-
-pub static P_INTERMEDIATE: LazyLock<IntermediateConfig> = LazyLock::new(|| IntermediateConfig {
-    witness_height: 2usize.pow(7),
-    witness_width: 2usize.pow(2),
-    projection_ratio: 2usize.pow(6),
-    projection_height: 2usize.pow(8),
-    basic_commitment_rank: 4,
-    nof_openings: 2,
-    projection_nof_batches: 2,
-    witness_decomposition_base_log: 11,
-    witness_decomposition_chunks: 2,
-    norm_bound: f64::INFINITY,
-    projection_norm_bound: f64::INFINITY,
-    next: Some(Box::new(Config::Simple(P_LAST.clone()))),
 });
 
 pub static P_LAST: LazyLock<SimpleConfig> = LazyLock::new(|| SimpleConfig {
-    witness_height: 2usize.pow(5),
-    witness_width: 2usize.pow(3),
-    projection_ratio: 2usize.pow(4),
+    witness_height: 2usize.pow(8),
+    witness_width: 2usize.pow(2),
+    projection_ratio: 2usize.pow(7),
     projection_height: 2usize.pow(8),
     basic_commitment_rank: 4,
     projection_nof_batches: 2,
