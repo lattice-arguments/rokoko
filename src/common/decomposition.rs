@@ -183,6 +183,32 @@ pub fn decompose_bits(input: &[RingElement], radix: usize) -> Vec<RingElement> {
 
             d.to_representation(Representation::IncompleteNTT);
         }
+
+        #[cfg(feature = "debug-decomp")]
+        {
+            let mut recomposed = RingElement::all(0, Representation::IncompleteNTT);
+            for j in 0..n_bits {
+                let mut term = decomposed[index * radix + j].clone();
+                let shift =
+                    RingElement::constant(pow_mod(2, j as u64), Representation::IncompleteNTT);
+                term *= &shift;
+                recomposed += &term;
+            }
+            let el_incomplete_ntt = {
+                let mut temp_el = el.clone();
+                temp_el.to_representation(Representation::IncompleteNTT);
+                temp_el
+            };
+            if recomposed != el_incomplete_ntt {
+                panic!(
+                    "Recomposition failed (decompose_bits): index={} of {} radix={} n_bits={}",
+                    index,
+                    input.len(),
+                    radix,
+                    n_bits
+                );
+            }
+        }
     }
 
     decomposed
@@ -441,4 +467,29 @@ fn test_decompose_bits_preserves_input() {
     let _ = decompose_bits(&input, 64);
 
     debug_assert_eq!(input, before);
+}
+
+#[test]
+fn test_binariness_identity_flips_on_tampered_digit() {
+    let input = vec![RingElement::all(12345, Representation::IncompleteNTT)];
+    let radix = 64;
+    let decomposed = decompose_bits(&input, radix);
+
+    let ct_identity = |digits: &[RingElement]| -> u64 {
+        let mut sum = RingElement::zero(Representation::IncompleteNTT);
+        for d in digits {
+            let mut c_minus_one = d.clone();
+            c_minus_one -= &RingElement::constant(1, Representation::IncompleteNTT);
+            let mut term = RingElement::zero(Representation::IncompleteNTT);
+            term *= (d, &c_minus_one);
+            sum += &term;
+        }
+        sum.constant_term_from_incomplete_ntt()
+    };
+
+    debug_assert_eq!(ct_identity(&decomposed), 0);
+
+    let mut tampered = decomposed.clone();
+    tampered[0] = RingElement::all(2, Representation::IncompleteNTT);
+    debug_assert_ne!(ct_identity(&tampered), 0);
 }

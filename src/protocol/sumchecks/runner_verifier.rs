@@ -32,6 +32,7 @@ fn batch_claims(
     rcs_projection_1_constant_term_claims: Option<&[RingElement]>,
     norm_claim: &RingElement,
     most_inner_norm_claim: &RingElement,
+    binariness_claim: Option<&RingElement>,
     combination: &[RingElement],
 ) -> RingElement {
     let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
@@ -128,6 +129,13 @@ fn batch_claims(
     weighted_norm *= &combination[idx];
     batched_claim += &weighted_norm;
 
+    if let Some(binariness_claim) = binariness_claim {
+        idx += 1;
+        let mut weighted_binariness = binariness_claim.clone();
+        weighted_binariness *= &combination[idx];
+        batched_claim += &weighted_binariness;
+    }
+
     batched_claim
 }
 
@@ -203,6 +211,9 @@ pub fn sumcheck_verifier(
 
     hash_wrapper.update_with_ring_element(&round_proof.norm_claim);
     hash_wrapper.update_with_ring_element(&round_proof.most_inner_norm_claim);
+    if let Some(binariness_claim) = &round_proof.binariness_claim {
+        hash_wrapper.update_with_ring_element(binariness_claim);
+    }
     if let Some(constant_term_claims) = &round_proof.constant_term_claims {
         hash_wrapper.update_with_ring_element_slice(constant_term_claims);
     }
@@ -235,6 +246,7 @@ pub fn sumcheck_verifier(
         round_proof.constant_term_claims.as_deref(),
         &round_proof.norm_claim,
         &round_proof.most_inner_norm_claim,
+        round_proof.binariness_claim.as_ref(),
         &combination,
     );
 
@@ -243,6 +255,11 @@ pub fn sumcheck_verifier(
             let ct = ct_claim.constant_term_from_incomplete_ntt();
             assert_eq!(ct, 0);
         }
+    }
+
+    if let Some(binariness_claim) = &round_proof.binariness_claim {
+        let ct = binariness_claim.constant_term_from_incomplete_ntt();
+        assert_eq!(ct, 0);
     }
 
     let norm_ct = round_proof.norm_claim.constant_term_from_incomplete_ntt();

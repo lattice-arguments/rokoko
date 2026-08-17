@@ -59,6 +59,7 @@ pub fn sumcheck(
     Vec<Polynomial<QuadraticExtension>>,
     Vec<RingElement>,
     Option<Vec<RingElement>>,
+    Option<RingElement>,
 ) {
     let projection_matrix_flatter = match config.projection_recursion {
         Projection::Coarse(_) => {
@@ -120,6 +121,12 @@ pub fn sumcheck(
         .borrow_mut()
         .claim();
 
+    let binariness_claim = sumcheck_context
+        .norm_check_sumcheck
+        .binariness
+        .as_ref()
+        .map(|binariness| binariness.borrow_mut().claim());
+
     let constant_term_claims =
         sumcheck_context
             .fine_proj_sumchecks
@@ -135,6 +142,9 @@ pub fn sumcheck(
     // All prover claims entering the batched combination must be bound by the
     // transcript before the batching challenges are sampled.
     hash_wrapper.update_with_ring_element(&norm_inner_norm_claim);
+    if let Some(binariness_claim) = &binariness_claim {
+        hash_wrapper.update_with_ring_element(binariness_claim);
+    }
     if let Some(constant_term_claims) = &constant_term_claims {
         hash_wrapper.update_with_ring_element_slice(constant_term_claims);
     }
@@ -232,5 +242,6 @@ pub fn sumcheck(
         polys,
         evaluation_points,
         constant_term_claims,
+        binariness_claim,
     )
 }

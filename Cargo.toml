@@ -18,6 +18,7 @@ p-28 = []
 events = []
 profile = ["dep:sysinfo", "dep:time"]
 snark = []
+binary-top = []
 
 [dependencies]
 num = "0.4.3"

@@ -70,6 +70,7 @@ const NB_P_26: [[f64; 2]; 9] = [
     [73660.94992599539, 17077273.72989793],
     [350510.5948127674, 836487.5791151952],
 ];
+#[cfg(not(feature = "binary-top"))]
 const NB_P_28: [[f64; 2]; 9] = [
     [66427.98663966867, 2160.0013888884423],
     [181558.43011548652, 2705.682169065687],
@@ -80,6 +81,19 @@ const NB_P_28: [[f64; 2]; 9] = [
     [1583993.8583391036, 1296847.5245818223],
     [73668.6367459043, 18268958.675824028],
     [349498.9501185948, 809458.9433127538],
+];
+// same table; root norm_bound widened for the base-2^7 witness decomposition (see p_root_aux).
+#[cfg(feature = "binary-top")]
+const NB_P_28: [[f64; 2]; 9] = [
+    [101147.64119398946, 2160.0013888884423],
+    [181558.43011548652, 2705.682169065687],
+    [95004.44916949942, 3133.253580545309],
+    [52846.942182116836, 3145.1373578907487],
+    [35438.889895142034, 3128.613750529138],
+    [193799.4028705971, 193690.07834166416],
+    [1583993.8583391036, 1296847.5245818223],
+    [73668.6367459043, 18268958.675824028],
+    [349498.9501185948, 819066.3774364484],
 ];
 const NB_P_30: [[f64; 2]; 9] = [
     [146947.061954297, 2201.3457247783685],
@@ -271,6 +285,10 @@ pub fn p_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
         projection_recursion: AuxProjection::Skip,
 
         witness_decomposition_chunks: 4,
+        // same transcript-dependent margin issue as p_1; base 2^7 restores it.
+        #[cfg(feature = "binary-top")]
+        witness_decomposition_base_log: 7,
+        #[cfg(not(feature = "binary-top"))]
         witness_decomposition_base_log: size.pick(6, 6, 6, 7),
 
         next: Some(Box::new(AuxConfig::Sumcheck(p_1(size)))),

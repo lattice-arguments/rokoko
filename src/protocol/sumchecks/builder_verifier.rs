@@ -80,6 +80,28 @@ pub fn load_combiner_evaluation_data(
     combiner_evaluation
 }
 
+pub fn split_load_combiner_evaluation_data(
+    base_log: u64,
+    real_radix: usize,
+    slot_len: usize,
+    total_vars: usize,
+) -> ElephantCell<BasicEvaluationLinearSumcheck<RingElement>> {
+    let data = (0..slot_len)
+        .map(|i| {
+            if i < real_radix {
+                RingElement::constant(1u64 << (base_log * i as u64), Representation::IncompleteNTT)
+            } else {
+                RingElement::zero(Representation::IncompleteNTT)
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let prefix_size = total_vars - (data.len().ilog2() as usize);
+    let combiner_evaluation = basic_evaluation_linear(data.len(), prefix_size, 0);
+    combiner_evaluation.borrow_mut().load_from(&data);
+    combiner_evaluation
+}
+
 pub fn structured_row_ck_evaluation(
     crs: &VerifierCRS,
     total_vars: usize,
@@ -98,6 +120,37 @@ pub fn structured_row_ck_evaluation(
     let structured_row = crs.structured_ck_for_wit_dim(wit_dim)[i].clone();
     eval.borrow_mut().load_from(structured_row);
     eval
+}
+
+pub fn binary_top_ck_evaluation(
+    crs: &VerifierCRS,
+    total_vars: usize,
+    wit_dim: usize,
+    suffix: usize,
+) -> ElephantCell<BasicEvaluationLinearSumcheck<RingElement>> {
+    let prefix_size = total_vars - wit_dim.ilog2() as usize - suffix;
+    let eval = basic_evaluation_linear(wit_dim, prefix_size, suffix);
+    eval.borrow_mut().load_from(&crs.binary_top_ck);
+    eval
+}
+
+// mirrors builder.rs's push_most_inner_selectors
+fn push_most_inner_selectors(
+    tree: &commitment::RecursionConfig,
+    total_vars: usize,
+    most_inner_commitments_selectors: &mut Vec<ElephantCell<SelectorEqEvaluation>>,
+    binary_top_selectors: &mut Vec<ElephantCell<SelectorEqEvaluation>>,
+) {
+    let most_inner = tree.most_inner_config();
+    let most_inner_selector = selector_evaluation_from_prefix(&most_inner.prefix, total_vars);
+    if most_inner.binary_top {
+        binary_top_selectors.push(most_inner_selector.clone());
+        if let Some(parent) = tree.parent_of_most_inner() {
+            most_inner_commitments_selectors
+                .push(selector_evaluation_from_prefix(&parent.prefix, total_vars));
+        }
+    }
+    most_inner_commitments_selectors.push(most_inner_selector);
 }
 
 fn build_com_verify_verifier_context(
@@ -124,16 +177,27 @@ fn build_com_verify_verifier_context(
             })
             .collect::<Vec<_>>();
 
-        let combiner_eval = load_combiner_evaluation_data(
-            next.decomposition_base_log as u64,
-            next.decomposition_chunks,
-            total_vars,
-        );
+        let combiner_eval = if next.binary_top {
+            split_load_combiner_evaluation_data(
+                next.decomposition_base_log as u64,
+                crate::protocol::crs::binary_top_decomposition_chunks(),
+                crate::protocol::crs::BINARY_TOP_KEY_LEN,
+                total_vars,
+            )
+        } else {
+            load_combiner_evaluation_data(
+                next.decomposition_base_log as u64,
+                next.decomposition_chunks,
+                total_vars,
+            )
+        };
 
         let data_len = 1 << (total_vars - current.prefix.length);
-        let ck_evals = (0..current.rank)
-            .map(|i| structured_row_ck_evaluation(crs, total_vars, data_len, i, 0))
-            .collect::<Vec<_>>();
+        let mut ck_evals: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>> =
+            Vec::with_capacity(current.rank);
+        for i in 0..current.rank {
+            ck_evals.push(structured_row_ck_evaluation(crs, total_vars, data_len, i, 0));
+        }
 
         let data_selected_eval = ElephantCell::new(ProductSumcheckEvaluation::new(
             selector_eval.clone(),
@@ -201,9 +265,15 @@ fn build_com_verify_verifier_context(
 
     let selector_eval = selector_evaluation_from_prefix(&current.prefix, total_vars);
     let data_len = 1 << (total_vars - current.prefix.length);
-    let ck_evals = (0..current.rank)
-        .map(|i| structured_row_ck_evaluation(crs, total_vars, data_len, i, 0))
-        .collect::<Vec<_>>();
+    let mut ck_evals: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>> =
+        Vec::with_capacity(current.rank);
+    for i in 0..current.rank {
+        ck_evals.push(if current.binary_top {
+            binary_top_ck_evaluation(crs, total_vars, data_len, 0)
+        } else {
+            structured_row_ck_evaluation(crs, total_vars, data_len, i, 0)
+        });
+    }
 
     let outputs = ck_evals
         .iter()
@@ -815,47 +885,43 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
         ElephantCell::new(FakeEvaluationLinearSumcheck::<RingElement>::new());
 
     let mut most_inner_commitments_selectors = vec![];
+    let mut binary_top_selectors: Vec<ElephantCell<SelectorEqEvaluation>> = vec![];
 
-    let most_inner_commitment_recursion = selector_evaluation_from_prefix(
-        &config.commitment_recursion.most_inner_config().prefix,
+    push_most_inner_selectors(
+        &config.commitment_recursion,
         total_vars,
+        &mut most_inner_commitments_selectors,
+        &mut binary_top_selectors,
     );
-
-    most_inner_commitments_selectors.push(most_inner_commitment_recursion);
-
-    let most_inner_opening_recursion = selector_evaluation_from_prefix(
-        &config.opening_recursion.most_inner_config().prefix,
+    push_most_inner_selectors(
+        &config.opening_recursion,
         total_vars,
+        &mut most_inner_commitments_selectors,
+        &mut binary_top_selectors,
     );
-
-    most_inner_commitments_selectors.push(most_inner_opening_recursion);
 
     match &config.projection_recursion {
         Projection::Coarse(proj_config) => {
-            let most_inner_projection_recursion = selector_evaluation_from_prefix(
-                &proj_config.most_inner_config().prefix,
+            push_most_inner_selectors(
+                proj_config,
                 total_vars,
+                &mut most_inner_commitments_selectors,
+                &mut binary_top_selectors,
             );
-            most_inner_commitments_selectors.push(most_inner_projection_recursion);
         }
         Projection::Fine(proj_config) => {
-            let most_inner_constant_term_recursion = selector_evaluation_from_prefix(
-                &proj_config
-                    .recursion_constant_term
-                    .most_inner_config()
-                    .prefix,
+            push_most_inner_selectors(
+                &proj_config.recursion_constant_term,
                 total_vars,
+                &mut most_inner_commitments_selectors,
+                &mut binary_top_selectors,
             );
-            most_inner_commitments_selectors.push(most_inner_constant_term_recursion);
-
-            let most_inner_batched_projection_recursion = selector_evaluation_from_prefix(
-                &proj_config
-                    .recursion_batched_projection
-                    .most_inner_config()
-                    .prefix,
+            push_most_inner_selectors(
+                &proj_config.recursion_batched_projection,
                 total_vars,
+                &mut most_inner_commitments_selectors,
+                &mut binary_top_selectors,
             );
-            most_inner_commitments_selectors.push(most_inner_batched_projection_recursion);
         }
         Projection::Skip => {
             // Do nothing
@@ -882,11 +948,49 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
         output.clone(),
     ));
 
+    let binariness = if !binary_top_selectors.is_empty() {
+        let mut bits_selector: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
+            binary_top_selectors[0].clone();
+        for selector in binary_top_selectors.iter().skip(1) {
+            bits_selector = ElephantCell::new(SumSumcheckEvaluation::new(
+                bits_selector.clone(),
+                selector.clone(),
+            ));
+        }
+
+        let b_conj_b = ElephantCell::new(ProductSumcheckEvaluation::new(
+            bits_selector.clone(),
+            output.clone(),
+        ));
+
+        let ones = RingElement::all(1, Representation::IncompleteNTT);
+        let mut conj_ones = RingElement::zero(Representation::IncompleteNTT);
+        ones.conjugate_into(&mut conj_ones);
+        let conj_ones_evaluation = basic_evaluation_linear(1, total_vars, 0);
+        conj_ones_evaluation.borrow_mut().load_from(&[conj_ones]);
+
+        let b_conj_ones_raw = ElephantCell::new(ProductSumcheckEvaluation::new(
+            combined_witness_evaluation.clone(),
+            conj_ones_evaluation,
+        ));
+        let b_conj_ones = ElephantCell::new(ProductSumcheckEvaluation::new(
+            bits_selector,
+            b_conj_ones_raw,
+        ));
+
+        Some(ElephantCell::new(DiffSumcheckEvaluation::new(
+            b_conj_b, b_conj_ones,
+        )))
+    } else {
+        None
+    };
+
     let norm_check_evaluation = NormCheckVerifierContext {
         conjugated_combined_witness_evaluation: conjugated_combined_witness_evaluation.clone(),
         output,
         selectors: most_inner_commitments_selectors,
         output_2,
+        binariness,
     };
 
     let mut all_outputs: Vec<ElephantCell<EvalData>> = vec![];
@@ -921,6 +1025,9 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
     }
     all_outputs.push(norm_check_evaluation.output.clone());
     all_outputs.push(norm_check_evaluation.output_2.clone());
+    if let Some(binariness) = &norm_check_evaluation.binariness {
+        all_outputs.push(binariness.clone());
+    }
 
     let combiner_evaluation = ElephantCell::new(CombinerEvaluation::new(all_outputs));
     let field_combiner_evaluation = ElephantCell::new(RingToFieldCombinerEvaluation::new(

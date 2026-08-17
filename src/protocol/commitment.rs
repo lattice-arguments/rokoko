@@ -2,12 +2,12 @@ use std::ops::IndexMut;
 
 use crate::{
     common::{
-        decomposition::decompose,
+        decomposition::{decompose, decompose_bits},
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         ring_arithmetic::{Representation, RingElement},
     },
     protocol::{
-        crs::{CK, CRS},
+        crs::{BINARY_TOP_KEY_LEN, CK, CRS},
         project_coarse::Signed16RingElement,
     },
 };
@@ -88,6 +88,7 @@ pub struct RecursionConfig {
     pub rank: usize,
     pub prefix: Prefix,
     pub next: Option<Box<RecursionConfig>>,
+    pub binary_top: bool,
 }
 
 impl RecursionConfig {
@@ -95,6 +96,15 @@ impl RecursionConfig {
         match &self.next {
             Some(next_config) => next_config.most_inner_config(),
             None => self,
+        }
+    }
+
+    // digit layer backing the binary-top leaf, if any
+    pub fn parent_of_most_inner(&self) -> Option<&RecursionConfig> {
+        match &self.next {
+            Some(next_config) if next_config.next.is_none() => Some(self),
+            Some(next_config) => next_config.parent_of_most_inner(),
+            None => None,
         }
     }
 }
@@ -126,29 +136,56 @@ impl RecursiveCommitmentWithAux {
 
 pub type RecursiveCommitment = Vec<RingElement>;
 
+fn commit_binary_top(crs: &CRS, committed_data: &[RingElement]) -> Vec<RingElement> {
+    debug_assert_eq!(committed_data.len(), BINARY_TOP_KEY_LEN);
+
+    let mut commitment = RingElement::zero(Representation::IncompleteNTT);
+    let mut temp = RingElement::zero(Representation::IncompleteNTT);
+    for (ck_elem, data_elem) in crs.binary_top_ck.iter().zip(committed_data.iter()) {
+        temp *= (ck_elem, data_elem);
+        commitment += &temp;
+    }
+    vec![commitment]
+}
+
 #[tracing::instrument(skip_all, name = "commit::recursive_layer")]
 pub fn recursive_commit(
     crs: &CRS,
     config: &RecursionConfig,
     data: &Vec<RingElement>,
 ) -> RecursiveCommitmentWithAux {
-    let committed_data = decompose(
-        &data,
-        config.decomposition_base_log as u64,
-        config.decomposition_chunks,
+    let committed_data = if config.binary_top {
+        decompose_bits(&data, config.decomposition_chunks)
+    } else {
+        decompose(
+            &data,
+            config.decomposition_base_log as u64,
+            config.decomposition_chunks,
+        )
+    };
+
+    debug_assert!(
+        !config.binary_top
+            || committed_data[crate::protocol::crs::binary_top_decomposition_chunks()..]
+                .iter()
+                .all(|el| *el == RingElement::zero(Representation::IncompleteNTT))
     );
 
-    let ck = crs.ck_for_wit_dim(committed_data.len());
-
-    let mut commitment = vec![RingElement::zero(Representation::IncompleteNTT); config.rank];
-
-    let mut temp = RingElement::zero(Representation::IncompleteNTT);
-    for r in 0..config.rank {
-        for (elem, data_elem) in ck[r].preprocessed_row.iter().zip(committed_data.iter()) {
-            temp *= (elem, data_elem);
-            commitment[r] += &temp;
+    let commitment = if config.binary_top {
+        debug_assert_eq!(config.rank, 1);
+        commit_binary_top(crs, &committed_data)
+    } else {
+        let ck = crs.ck_for_wit_dim(committed_data.len());
+        let mut commitment = vec![RingElement::zero(Representation::IncompleteNTT); config.rank];
+        let mut temp = RingElement::zero(Representation::IncompleteNTT);
+        for r in 0..config.rank {
+            for (elem, data_elem) in ck[r].preprocessed_row.iter().zip(committed_data.iter()) {
+                temp *= (elem, data_elem);
+                commitment[r] += &temp;
+            }
         }
-    }
+        commitment
+    };
 
     let next = match &config.next {
         Some(next_config) => Some(Box::new(recursive_commit(crs, next_config, &commitment))),
@@ -193,6 +230,7 @@ mod tests {
                 length: 0,
             },
             next: None,
+            binary_top: false,
         };
 
         let recursive_commitment = recursive_commit(&crs, &config, &data);

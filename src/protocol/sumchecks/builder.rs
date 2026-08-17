@@ -5,7 +5,10 @@ use crate::protocol::intermediate_sumchecks::builder::init_intermediate_sumcheck
 use crate::protocol::sumcheck_utils::sum::SumSumcheck;
 use crate::protocol::sumchecks::context::{FineProjSumcheckContextWrapper, NextSumcheckContext};
 use crate::{
-    common::{config::NOF_BATCHES, ring_arithmetic::RingElement},
+    common::{
+        config::NOF_BATCHES,
+        ring_arithmetic::{Representation, RingElement},
+    },
     protocol::{
         commitment::{self, Prefix},
         config::Config,
@@ -13,7 +16,7 @@ use crate::{
         sumcheck_utils::{
             combiner::Combiner, common::HighOrderSumcheckData, diff::DiffSumcheck,
             elephant_cell::ElephantCell, linear::LinearSumcheck, product::ProductSumcheck,
-            ring_to_field_combiner::RingToFieldCombiner,
+            ring_to_field_combiner::RingToFieldCombiner, selector_eq::SelectorEq,
         },
         sumchecks::context::NormCheckSumcheckContext,
     },
@@ -26,8 +29,29 @@ use super::{
         CommitmentFoldSumcheckContext, FineProjSumcheckContext, InnerEvalFoldSumcheckContext,
         OuterEvalClaimSumcheckContext, SumcheckContext,
     },
-    helpers::{ck_sumcheck, composition_sumcheck, sumcheck_from_prefix},
+    helpers::{
+        binary_top_ck_sumcheck, ck_sumcheck, composition_sumcheck, split_composition_sumcheck,
+        sumcheck_from_prefix,
+    },
 };
+
+// keeps the binary-top leaf's parent digit layer under the tight most-inner bound too
+fn push_most_inner_selectors(
+    tree: &commitment::RecursionConfig,
+    total_vars: usize,
+    most_inner_commitments_selectors: &mut Vec<ElephantCell<SelectorEq<RingElement>>>,
+    binary_top_selectors: &mut Vec<ElephantCell<SelectorEq<RingElement>>>,
+) {
+    let most_inner = tree.most_inner_config();
+    let most_inner_selector = sumcheck_from_prefix(&most_inner.prefix, total_vars);
+    if most_inner.binary_top {
+        binary_top_selectors.push(most_inner_selector.clone());
+        if let Some(parent) = tree.parent_of_most_inner() {
+            most_inner_commitments_selectors.push(sumcheck_from_prefix(&parent.prefix, total_vars));
+        }
+    }
+    most_inner_commitments_selectors.push(most_inner_selector);
+}
 
 /// Builds sumcheck gadgets for recursive commitment verification.
 ///
@@ -73,11 +97,20 @@ fn build_com_verify_sumcheck_context(
             combined_witness_sumcheck.clone(),
         ));
 
-        let combiner_sumcheck = composition_sumcheck(
-            next.decomposition_base_log as u64,
-            next.decomposition_chunks,
-            total_vars,
-        );
+        let combiner_sumcheck = if next.binary_top {
+            split_composition_sumcheck(
+                next.decomposition_base_log as u64,
+                crs::binary_top_decomposition_chunks(),
+                crs::BINARY_TOP_KEY_LEN,
+                total_vars,
+            )
+        } else {
+            composition_sumcheck(
+                next.decomposition_base_log as u64,
+                next.decomposition_chunks,
+                total_vars,
+            )
+        };
 
         let recomposed_child_raw = ElephantCell::new(ProductSumcheck::new(
             combined_witness_sumcheck.clone(),
@@ -129,15 +162,14 @@ fn build_com_verify_sumcheck_context(
     // This is the base case that checks against the public commitment value
     let selector_sumcheck = sumcheck_from_prefix(&current.prefix, total_vars);
 
+    let output_wit_dim = 1 << (total_vars - current.prefix.length);
     let mut ck_sumchecks = Vec::with_capacity(current.rank);
     for i in 0..current.rank {
-        ck_sumchecks.push(ck_sumcheck(
-            crs,
-            total_vars,
-            1 << (total_vars - current.prefix.length),
-            i,
-            0,
-        ));
+        ck_sumchecks.push(if current.binary_top {
+            binary_top_ck_sumcheck(crs, total_vars, output_wit_dim, 0)
+        } else {
+            ck_sumcheck(crs, total_vars, output_wit_dim, i, 0)
+        });
     }
 
     let outputs = ck_sumchecks
@@ -724,44 +756,43 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     );
 
     let mut most_inner_commitments_selectors = Vec::new();
+    let mut binary_top_selectors: Vec<ElephantCell<SelectorEq<RingElement>>> = Vec::new();
 
-    let most_inner_commitment_recursion = sumcheck_from_prefix(
-        &config.commitment_recursion.most_inner_config().prefix,
+    push_most_inner_selectors(
+        &config.commitment_recursion,
         total_vars,
+        &mut most_inner_commitments_selectors,
+        &mut binary_top_selectors,
     );
-
-    most_inner_commitments_selectors.push(most_inner_commitment_recursion);
-
-    let most_inner_opening_recursion = sumcheck_from_prefix(
-        &config.opening_recursion.most_inner_config().prefix,
+    push_most_inner_selectors(
+        &config.opening_recursion,
         total_vars,
+        &mut most_inner_commitments_selectors,
+        &mut binary_top_selectors,
     );
-
-    most_inner_commitments_selectors.push(most_inner_opening_recursion);
 
     match config.projection_recursion {
         Projection::Coarse(ref proj_config) => {
-            let most_inner_projection_recursion =
-                sumcheck_from_prefix(&proj_config.most_inner_config().prefix, total_vars);
-            most_inner_commitments_selectors.push(most_inner_projection_recursion);
+            push_most_inner_selectors(
+                proj_config,
+                total_vars,
+                &mut most_inner_commitments_selectors,
+                &mut binary_top_selectors,
+            );
         }
         Projection::Fine(ref proj_config) => {
-            let most_inner_constant_term_recursion = sumcheck_from_prefix(
-                &proj_config
-                    .recursion_constant_term
-                    .most_inner_config()
-                    .prefix,
+            push_most_inner_selectors(
+                &proj_config.recursion_constant_term,
                 total_vars,
+                &mut most_inner_commitments_selectors,
+                &mut binary_top_selectors,
             );
-            most_inner_commitments_selectors.push(most_inner_constant_term_recursion);
-            let most_inner_batched_projection_recursion = sumcheck_from_prefix(
-                &proj_config
-                    .recursion_batched_projection
-                    .most_inner_config()
-                    .prefix,
+            push_most_inner_selectors(
+                &proj_config.recursion_batched_projection,
                 total_vars,
+                &mut most_inner_commitments_selectors,
+                &mut binary_top_selectors,
             );
-            most_inner_commitments_selectors.push(most_inner_batched_projection_recursion);
         }
         Projection::Skip => {
             // No com_verify sumcheck for projection
@@ -786,11 +817,41 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         output.clone(),
     ));
 
+    let binariness = if !binary_top_selectors.is_empty() {
+        let mut bits_selector: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>> =
+            binary_top_selectors[0].clone();
+        for selector in binary_top_selectors.iter().skip(1) {
+            bits_selector =
+                ElephantCell::new(SumSumcheck::new(bits_selector.clone(), selector.clone()));
+        }
+
+        let b_conj_b = ElephantCell::new(ProductSumcheck::new(bits_selector.clone(), output.clone()));
+
+        let ones = RingElement::all(1, Representation::IncompleteNTT);
+        let mut conj_ones = RingElement::zero(Representation::IncompleteNTT);
+        ones.conjugate_into(&mut conj_ones);
+        let conj_ones_sumcheck = ElephantCell::new(
+            LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(1, total_vars, 0),
+        );
+        conj_ones_sumcheck.borrow_mut().load_from(&[conj_ones]);
+
+        let b_conj_ones_raw = ElephantCell::new(ProductSumcheck::new(
+            combined_witness_sumcheck.clone(),
+            conj_ones_sumcheck,
+        ));
+        let b_conj_ones = ElephantCell::new(ProductSumcheck::new(bits_selector, b_conj_ones_raw));
+
+        Some(ElephantCell::new(DiffSumcheck::new(b_conj_b, b_conj_ones)))
+    } else {
+        None
+    };
+
     let norm_check_sumcheck = NormCheckSumcheckContext {
         conjugated_combined_witness: conjugated_combined_witness_sumcheck.clone(),
         output,
         selectors: most_inner_commitments_selectors,
         output_2,
+        binariness,
     };
 
     // ComVerify sumchecks: Three separate recursive commitment trees
@@ -876,6 +937,9 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
 
     all_outputs.push(norm_check_sumcheck.output.clone());
     all_outputs.push(norm_check_sumcheck.output_2.clone());
+    if let Some(binariness) = &norm_check_sumcheck.binariness {
+        all_outputs.push(binariness.clone());
+    }
 
     let combiner = ElephantCell::new(Combiner::new(all_outputs));
 

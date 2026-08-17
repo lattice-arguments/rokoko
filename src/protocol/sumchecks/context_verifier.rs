@@ -7,6 +7,7 @@ use crate::{
         intermediate_sumchecks::context_verifier::IntermediateVerifierSumcheckContext,
         sumcheck_utils::{
             combiner::CombinerEvaluation,
+            common::EvaluationSumcheckData,
             diff::DiffSumcheckEvaluation,
             elephant_cell::ElephantCell,
             linear::{
@@ -133,13 +134,13 @@ pub struct ComVerifyLayerVerifierContext {
     pub selector_evaluation: ElephantCell<SelectorEqEvaluation>,
     pub child_selector_evaluations: Vec<ElephantCell<SelectorEqEvaluation>>,
     pub combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
-    pub ck_evaluations: Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
+    pub ck_evaluations: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
     pub outputs: Vec<ElephantCell<DiffSumcheckEvaluation>>,
 }
 
 pub struct ComVerifyOutputLayerVerifierContext {
     pub selector_evaluation: ElephantCell<SelectorEqEvaluation>,
-    pub ck_evaluations: Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
+    pub ck_evaluations: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
     pub outputs: Vec<ElephantCell<ProductSumcheckEvaluation>>,
 }
 
@@ -150,4 +151,6 @@ pub struct NormCheckVerifierContext {
 
     pub selectors: Vec<ElephantCell<SelectorEqEvaluation>>,
     pub output_2: ElephantCell<ProductSumcheckEvaluation>,
+
+    pub binariness: Option<ElephantCell<DiffSumcheckEvaluation>>,
 }
