@@ -9,6 +9,7 @@ use crate::{
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
+        boundary::{BoundaryCapture, ProverBoundary},
         commitment::{
             commit_basic, recursive_commit, BasicCommitment, CommitmentWithAux,
             RecursiveCommitmentWithAux,
@@ -80,6 +81,7 @@ pub fn prover_round(
     sumcheck_context: &mut SumcheckContext,
     with_claims: bool,
     hash_wrapper: Option<HashWrapper>,
+    boundary: Option<BoundaryCapture<'_, ProverBoundary>>,
 ) -> (SumcheckRoundProof, Option<Vec<RingElement>>) {
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     let rc_commitment = &commitment_with_aux.rc_commitment_with_aux;
@@ -366,43 +368,80 @@ pub fn prover_round(
         constant_term_claims,
     ) = sumcheck_output;
 
+    let at_cut = boundary.as_ref().is_some_and(BoundaryCapture::is_at_cut);
+
     // Recurse: the sumcheck evaluation point splits into (outer, inner) =
     // (c_0, c_1), which become the next round's evaluation points.
     let (next_proof, next_round_commitment) = match (config.next.as_deref(), pending_commitment) {
-        (None, _) => (None, None),
+        (None, _) => {
+            assert!(
+                boundary.is_none(),
+                "round boundary cut requested past the end of the round chain"
+            );
+            (None, None)
+        }
         (
             Some(Config::Sumcheck(next_sumcheck_config)),
             Some(PendingNextCommitment::Recursive(rc)),
         ) => {
-            let (points_outer, points_inner) =
-                evaluation_points.split_at(next_sumcheck_config.witness_width.ilog2() as usize);
-            let most_inner_commitment = rc.most_inner_commitment().clone();
-            let next_commitment_with_aux = CommitmentWithAux::from_rc_commitment_with_aux(rc);
-            let next_context = match sumcheck_context.next.as_deref_mut() {
-                Some(NextSumcheckContext::Simple(next_ctx)) => next_ctx,
-                _ => panic!("Expected NextSumcheckContext::Simple in sumcheck_context.next"),
-            };
-            let proof = prover_round(
-                &crs,
-                next_sumcheck_config,
-                &next_commitment_with_aux,
-                &next_round_witness,
-                &evaluation_point_pair(points_inner),
-                &evaluation_point_pair(points_outer),
-                next_context,
-                false,
-                Some(hash_wrapper),
-            )
-            .0;
-            (
-                Some(RoundProof::Sumcheck(proof)),
-                Some(NextRoundCommitment::Recursive(most_inner_commitment)),
-            )
+            if at_cut {
+                // committing the next-round witness here keeps the chain monolithic: the
+                // boundary statement is the same one any next round proves, its commitment
+                // argued per recursion layer plus the norm check, and the sumcheck
+                // challenges must bind the committed witness before they are drawn
+                let most_inner_commitment = rc.most_inner_commitment().clone();
+                let capture = boundary.expect("round boundary cut requires a boundary slot");
+                *capture.slot = Some(ProverBoundary {
+                    config: next_sumcheck_config.clone(),
+                    witness: next_round_witness,
+                    commitment: rc,
+                    claims: [
+                        claim_over_witness.clone(),
+                        claim_over_witness_conjugate.clone(),
+                    ],
+                    evaluation_points,
+                    transcript: hash_wrapper,
+                });
+                (
+                    None,
+                    Some(NextRoundCommitment::Recursive(most_inner_commitment)),
+                )
+            } else {
+                let (points_outer, points_inner) = evaluation_points
+                    .split_at(next_sumcheck_config.witness_width.ilog2() as usize);
+                let most_inner_commitment = rc.most_inner_commitment().clone();
+                let next_commitment_with_aux = CommitmentWithAux::from_rc_commitment_with_aux(rc);
+                let next_context = match sumcheck_context.next.as_deref_mut() {
+                    Some(NextSumcheckContext::Simple(next_ctx)) => next_ctx,
+                    _ => panic!("Expected NextSumcheckContext::Simple in sumcheck_context.next"),
+                };
+                let proof = prover_round(
+                    &crs,
+                    next_sumcheck_config,
+                    &next_commitment_with_aux,
+                    &next_round_witness,
+                    &evaluation_point_pair(points_inner),
+                    &evaluation_point_pair(points_outer),
+                    next_context,
+                    false,
+                    Some(hash_wrapper),
+                    boundary.and_then(BoundaryCapture::advance),
+                )
+                .0;
+                (
+                    Some(RoundProof::Sumcheck(proof)),
+                    Some(NextRoundCommitment::Recursive(most_inner_commitment)),
+                )
+            }
         }
         (
             Some(Config::Simple(next_simple_config)),
             Some(PendingNextCommitment::Basic(basic_commitment)),
         ) => {
+            assert!(
+                boundary.is_none(),
+                "round boundary cut requires the next round to be a Sumcheck round"
+            );
             let (points_outer, points_inner) =
                 evaluation_points.split_at(next_simple_config.witness_width.ilog2() as usize);
             let proof = prover_round_simple(
@@ -422,6 +461,10 @@ pub fn prover_round(
             Some(Config::Intermediate(next_intermediate_config)),
             Some(PendingNextCommitment::Basic(basic_commitment)),
         ) => {
+            assert!(
+                boundary.is_none(),
+                "round boundary cut requires the next round to be a Sumcheck round"
+            );
             let (points_outer, points_inner) =
                 evaluation_points.split_at(next_intermediate_config.witness_width.ilog2() as usize);
             let next_context = match sumcheck_context.next.as_deref_mut() {

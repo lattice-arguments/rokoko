@@ -13,7 +13,7 @@ use crate::{
     },
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct FineProjectionConfig {
     pub nof_batches: usize,
     pub recursion_constant_term: RecursionConfig, // carries the norm claim
@@ -24,7 +24,7 @@ pub type CoarseProjectionConfig = RecursionConfig;
 
 /// Paper: Π^proj-c (ring elements) / Π^proj-f (coefficients); `Skip` in the
 /// first round, where extraction slack is tolerable.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Projection {
     Coarse(CoarseProjectionConfig),
     Fine(FineProjectionConfig),
@@ -216,7 +216,7 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
 
 pub static CONFIG: LazyLock<Config> = LazyLock::new(|| P.clone());
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Config {
     Sumcheck(SumcheckConfig),
     Intermediate(IntermediateConfig),
@@ -239,7 +239,7 @@ pub fn config_base_from_config(config: &Config) -> &dyn ConfigBase {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SumcheckConfig {
     pub witness_height: usize,
     pub witness_width: usize,
@@ -285,7 +285,7 @@ impl ConfigBase for SumcheckConfig {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct IntermediateConfig {
     pub witness_height: usize,
     pub witness_width: usize,
@@ -325,7 +325,7 @@ impl ConfigBase for IntermediateConfig {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SimpleConfig {
     pub witness_height: usize,
     pub witness_width: usize,

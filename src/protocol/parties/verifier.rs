@@ -11,6 +11,7 @@ use crate::{
     },
     hexl::bindings::{add_mod, eltwise_mult_mod, multiply_mod},
     protocol::{
+        boundary::{BoundaryCapture, VerifierBoundary},
         commitment::{commit_basic_internal, BasicCommitment},
         config::{
             Config, IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, RoundProof,
@@ -46,6 +47,7 @@ pub fn verifier_round(
     claims: &[RingElement],
     sumcheck_context_verifier: &mut VerifierSumcheckContext,
     hash_wrapper_verifier: Option<HashWrapper>,
+    boundary: Option<BoundaryCapture<'_, VerifierBoundary>>,
 ) {
     let mut hash_wrapper_verifier = hash_wrapper_verifier.unwrap_or_else(HashWrapper::new);
 
@@ -59,6 +61,37 @@ pub fn verifier_round(
         &claims,
         &mut hash_wrapper_verifier,
     );
+
+    let at_cut = boundary.as_ref().is_some_and(BoundaryCapture::is_at_cut);
+
+    if at_cut {
+        let next_config = match config.next.as_deref() {
+            Some(Config::Sumcheck(next_sumcheck_config)) => next_sumcheck_config.clone(),
+            _ => panic!("round boundary cut requires the next round to be a Sumcheck round"),
+        };
+        let next_round_commitment = round_proof
+            .next_round_commitment
+            .as_ref()
+            .expect("cut round must still carry the next-round commitment");
+        let commitment_root = match next_round_commitment {
+            NextRoundCommitment::Recursive(rc) => rc.clone(),
+            NextRoundCommitment::Simple(_) => {
+                panic!("round boundary cut requires a recursive next-round commitment")
+            }
+        };
+        let capture = boundary.expect("round boundary cut requires a boundary slot");
+        *capture.slot = Some(VerifierBoundary {
+            config: next_config,
+            commitment_root,
+            claims: [
+                round_proof.claim_over_witness.clone(),
+                round_proof.claim_over_witness_conjugate.conjugate(),
+            ],
+            evaluation_points,
+            transcript: hash_wrapper_verifier,
+        });
+        return;
+    }
 
     match &round_proof.next {
         Some(next_round_proof) => {
@@ -117,10 +150,15 @@ pub fn verifier_round(
                             _ => panic!("Expected Simple context for next round."),
                         },
                         Some(hash_wrapper_verifier),
+                        boundary.and_then(BoundaryCapture::advance),
                     );
                 }
 
                 RoundProof::Simple(next_simple_round_proof) => {
+                    assert!(
+                        boundary.is_none(),
+                        "round boundary cut requires the next round to be a Sumcheck round"
+                    );
                     let next_simple_config = match &config.next {
                         Some(next_config) => match next_config.as_ref() {
                             Config::Simple(next_simple_config) => next_simple_config,
@@ -163,6 +201,10 @@ pub fn verifier_round(
                     );
                 }
                 RoundProof::Intermediate(next_intermediate_round_proof) => {
+                    assert!(
+                        boundary.is_none(),
+                        "round boundary cut requires the next round to be a Sumcheck round"
+                    );
                     let next_intermediate_config = match &config.next {
                         Some(next_config) => match next_config.as_ref() {
                             Config::Intermediate(next_intermediate_config) => {
@@ -214,7 +256,12 @@ pub fn verifier_round(
                 }
             }
         }
-        None => {}
+        None => {
+            assert!(
+                boundary.is_none(),
+                "round boundary cut requested past the end of the round chain"
+            );
+        }
     }
 }
 

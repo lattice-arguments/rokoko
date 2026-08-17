@@ -1,3 +1,4 @@
+pub mod boundary;
 pub mod commitment;
 pub mod crs;
 // pub mod execution_simple;
