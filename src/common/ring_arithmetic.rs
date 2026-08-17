@@ -1278,6 +1278,25 @@ impl<'a> MulAssign<(&'a QuadraticExtension, &'a QuadraticExtension)> for Quadrat
     }
 }
 
+impl RingElement {
+    pub fn compact_size_in_bits(&self) -> usize {
+        let resident = self.size_in_bits();
+        let mut other = self.clone();
+        match self.representation {
+            Representation::IncompleteNTT => {
+                other.from_incomplete_ntt_to_even_odd_coefficients();
+                other.from_even_odd_coefficients_to_coefficients();
+            }
+            Representation::Coefficients => {
+                other.from_coefficients_to_even_odd_coefficients();
+                other.from_even_odd_coefficients_to_incomplete_ntt_representation();
+            }
+            _ => return resident,
+        }
+        resident.min(other.size_in_bits())
+    }
+}
+
 impl SizeableProof for RingElement {
     fn size_in_bits(&self) -> usize {
         let mut size = 0;

@@ -478,9 +478,9 @@ pub struct InitialSumcheckProof {
 
 impl crate::protocol::config::SizeableProof for InitialSumcheckProof {
     fn size_in_bits(&self) -> usize {
-        let mut size = self.witness_eval.size_in_bits();
+        let mut size = self.witness_eval.compact_size_in_bits();
         if let Some(conj_eval) = &self.conj_witness_eval {
-            size += conj_eval.size_in_bits();
+            size += conj_eval.compact_size_in_bits();
         }
         for p in &self.polys {
             for c in &p.coefficients[..p.num_coefficients] {
