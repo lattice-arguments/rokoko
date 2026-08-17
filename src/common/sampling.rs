@@ -78,6 +78,44 @@ impl AesCtrPublicSampler {
         }
     }
 
+    #[inline(always)]
+    fn next_u64_below(&mut self, bound: u64) -> u64 {
+        let threshold = u64::MAX - (u64::MAX % bound);
+        loop {
+            if self.pos >= AES_BUF_U64 {
+                self.refill();
+            }
+            let x = unsafe { *self.buf.get_unchecked(self.pos) };
+            self.pos += 1;
+            if x < threshold {
+                return x % bound;
+            }
+        }
+    }
+
+    pub fn fill_bounded_ring_element(
+        &mut self,
+        element: &mut RingElement,
+        bound: u64,
+        representation: Representation,
+    ) {
+        element.representation = Representation::Coefficients;
+        for i in 0..DEGREE {
+            let magnitude = self.next_u64_below(bound);
+            let sign = self.next_u64_below(2);
+            element.v[i] = if sign == 0 { magnitude } else { MOD_Q - magnitude };
+        }
+        unsafe {
+            crate::hexl::bindings::eltwise_reduce_mod(
+                element.v.as_mut_ptr(),
+                element.v.as_mut_ptr(),
+                DEGREE as u64,
+                MOD_Q,
+            );
+        }
+        element.to_representation(representation);
+    }
+
     pub fn fill_ring_element(&mut self, element: &mut RingElement, representation: Representation) {
         element.representation = Representation::IncompleteNTT;
         for i in 0..DEGREE {
@@ -97,6 +135,22 @@ pub fn sample_public_vector_from_seed(
     for _ in 0..size {
         let mut element = RingElement::new(representation);
         sampler.fill_ring_element(&mut element, representation);
+        vec.push(element);
+    }
+    vec
+}
+
+pub fn sample_public_bounded_vector_from_seed(
+    seed: &[u8],
+    size: usize,
+    bound: u64,
+    representation: Representation,
+) -> Vec<RingElement> {
+    let mut sampler = AesCtrPublicSampler::from_seed(seed);
+    let mut vec = Vec::with_capacity(size);
+    for _ in 0..size {
+        let mut element = RingElement::new(representation);
+        sampler.fill_bounded_ring_element(&mut element, bound, representation);
         vec.push(element);
     }
     vec

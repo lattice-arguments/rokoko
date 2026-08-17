@@ -1,7 +1,7 @@
 use crate::common::{
     matrix::HorizontallyAlignedMatrix,
     ring_arithmetic::{Representation, RingElement},
-    sampling::{sample_public_vector_from_seed, PUBLIC_CRS_SEED},
+    sampling::{sample_public_bounded_vector_from_seed, sample_public_vector_from_seed, PUBLIC_CRS_SEED},
     structured_row::{PreprocessedRow, StructuredRow},
 };
 use crate::protocol::config::SumcheckConfig;
@@ -9,17 +9,36 @@ use crate::protocol::config::SumcheckConfig;
 pub type CK = Vec<PreprocessedRow>;
 pub type SCK = Vec<StructuredRow>;
 
+pub const BINARY_TOP_KEY_LEN: usize = 64;
+pub const BINARY_TOP_COEFFICIENT_BOUND: u64 = 1 << 10;
+const BINARY_TOP_CRS_SEED: &[u8] = b"rokoko-CRS-v1/AES-256-CTR public seed/binary-top-key";
+
+pub fn binary_top_decomposition_chunks() -> usize {
+    (crate::common::config::MOD_Q.ilog2() + 1) as usize
+}
+
 /// Struct representing the Common Reference String (CRS).
 #[derive(Debug)]
 pub struct CRS {
     pub cks: Vec<CK>,             // Commitment keys for each witness length
     pub structured_cks: Vec<SCK>, // Structured commitment keys for each witness length
+    pub binary_top_ck: Vec<RingElement>,
 }
 
 /// Only the structured keys; the expanded rows are prover-side preprocessing.
 #[derive(Debug)]
 pub struct VerifierCRS {
     pub structured_cks: Vec<SCK>,
+    pub binary_top_ck: Vec<RingElement>,
+}
+
+fn gen_binary_top_ck() -> Vec<RingElement> {
+    sample_public_bounded_vector_from_seed(
+        BINARY_TOP_CRS_SEED,
+        BINARY_TOP_KEY_LEN,
+        BINARY_TOP_COEFFICIENT_BOUND,
+        Representation::IncompleteNTT,
+    )
 }
 
 impl VerifierCRS {
@@ -88,6 +107,7 @@ impl CRS {
         CRS {
             cks,
             structured_cks,
+            binary_top_ck: gen_binary_top_ck(),
         }
     }
 
@@ -105,6 +125,7 @@ impl CRS {
                 config.composed_witness_length,
                 config.basic_commitment_rank + 2,
             ),
+            binary_top_ck: gen_binary_top_ck(),
         }
     }
 }

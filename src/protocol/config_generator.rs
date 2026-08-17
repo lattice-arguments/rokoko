@@ -52,6 +52,22 @@ struct ComponentInfo {
     path: Vec<String>,
 }
 
+#[cfg(feature = "binary-top")]
+fn recursion_innermost_rank(config: &AuxRecursionConfig) -> usize {
+    match &config.next {
+        Some(next) => recursion_innermost_rank(next),
+        None => config.rank,
+    }
+}
+
+#[cfg(feature = "binary-top")]
+fn recursion_chain_depth(config: &AuxRecursionConfig) -> usize {
+    match &config.next {
+        Some(next) => 1 + recursion_chain_depth(next),
+        None => 0,
+    }
+}
+
 impl AuxSumcheckConfig {
     pub fn generate_config(&self) -> Config {
         self.generate_config_inner(0)
@@ -65,6 +81,29 @@ impl AuxSumcheckConfig {
         // Calculate required composed_witness_length (round up to nearest power of 2)
         let total_size: usize = components.iter().map(|c| c.size).sum();
         let composed_witness_length = total_size.next_power_of_two();
+
+        #[cfg(feature = "binary-top")]
+        let binary_top_engaged = {
+            let binary_top_size = recursion_innermost_rank(&self.commitment_recursion)
+                * crate::protocol::crs::BINARY_TOP_KEY_LEN;
+            if total_size + binary_top_size <= composed_witness_length {
+                let mut path = vec!["commitment_recursion".to_string()];
+                path.extend(
+                    std::iter::repeat("next".to_string())
+                        .take(recursion_chain_depth(&self.commitment_recursion) + 1),
+                );
+                components.push(ComponentInfo {
+                    name: "commitment_binary_top".to_string(),
+                    size: binary_top_size,
+                    path,
+                });
+                true
+            } else {
+                false
+            }
+        };
+        #[cfg(not(feature = "binary-top"))]
+        let binary_top_engaged = false;
 
         // a mismatch here only debug_asserts in the prover, then corrupts downstream
         if let Some(next) = self.next.as_deref() {
@@ -187,6 +226,7 @@ impl AuxSumcheckConfig {
             composed_witness_length,
             usage_ratio,
             depth,
+            binary_top_engaged,
         )
     }
 
@@ -300,6 +340,7 @@ impl AuxSumcheckConfig {
         composed_witness_length: usize,
         usage_ratio: f64,
         depth: usize,
+        binary_top_engaged: bool,
     ) -> Config {
         // Helper to find prefix by path
         let find_prefix = |path: &[String]| -> Prefix {
@@ -315,6 +356,7 @@ impl AuxSumcheckConfig {
             &self.commitment_recursion,
             assigned_prefixes,
             &["commitment_recursion".to_string()],
+            binary_top_engaged,
         );
 
         // Build opening recursion
@@ -322,6 +364,7 @@ impl AuxSumcheckConfig {
             &self.opening_recursion,
             assigned_prefixes,
             &["opening_recursion".to_string()],
+            false,
         );
 
         // Build projection recursion
@@ -330,6 +373,7 @@ impl AuxSumcheckConfig {
                 config,
                 assigned_prefixes,
                 &["projection_recursion".to_string()],
+                false,
             )),
             AuxProjection::Fine {
                 nof_batches,
@@ -343,6 +387,7 @@ impl AuxSumcheckConfig {
                         "projection_recursion".to_string(),
                         "constant_term".to_string(),
                     ],
+                    false,
                 );
 
                 let batched_projection = self.build_recursion_config(
@@ -352,6 +397,7 @@ impl AuxSumcheckConfig {
                         "projection_recursion".to_string(),
                         "batched_projection".to_string(),
                     ],
+                    false,
                 );
 
                 Projection::Fine(FineProjectionConfig {
@@ -398,6 +444,7 @@ impl AuxSumcheckConfig {
         aux_config: &AuxRecursionConfig,
         assigned_prefixes: &[(ComponentInfo, Prefix)],
         base_path: &[String],
+        binary_top: bool,
     ) -> RecursionConfig {
         let prefix = assigned_prefixes
             .iter()
@@ -412,7 +459,25 @@ impl AuxSumcheckConfig {
                 aux_next,
                 assigned_prefixes,
                 &next_path,
+                binary_top,
             )))
+        } else if binary_top {
+            let mut next_path = base_path.to_vec();
+            next_path.push("next".to_string());
+            let next_prefix = assigned_prefixes
+                .iter()
+                .find(|(comp, _)| comp.path == next_path)
+                .map(|(_, prefix)| prefix.clone())
+                .expect(&format!("Prefix not found for path: {:?}", next_path));
+
+            Some(Box::new(RecursionConfig {
+                decomposition_base_log: 1,
+                decomposition_chunks: crate::protocol::crs::binary_top_decomposition_chunks(),
+                rank: 1,
+                prefix: next_prefix,
+                next: None,
+                binary_top: true,
+            }))
         } else {
             None
         };
@@ -423,6 +488,7 @@ impl AuxSumcheckConfig {
             rank: aux_config.rank,
             prefix,
             next,
+            binary_top: false,
         }
     }
 }

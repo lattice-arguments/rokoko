@@ -7,7 +7,7 @@ use crate::{
         ring_arithmetic::{Representation, RingElement},
     },
     protocol::{
-        crs::{CK, CRS},
+        crs::{BINARY_TOP_KEY_LEN, CK, CRS},
         project_coarse::Signed16RingElement,
     },
 };
@@ -88,6 +88,7 @@ pub struct RecursionConfig {
     pub rank: usize,
     pub prefix: Prefix,
     pub next: Option<Box<RecursionConfig>>,
+    pub binary_top: bool,
 }
 
 impl RecursionConfig {
@@ -126,6 +127,20 @@ impl RecursiveCommitmentWithAux {
 
 pub type RecursiveCommitment = Vec<RingElement>;
 
+fn commit_binary_top(crs: &CRS, committed_data: &[RingElement]) -> Vec<RingElement> {
+    debug_assert!(committed_data.len() <= BINARY_TOP_KEY_LEN);
+    let mut padded = committed_data.to_vec();
+    padded.resize(BINARY_TOP_KEY_LEN, RingElement::zero(Representation::IncompleteNTT));
+
+    let mut commitment = RingElement::zero(Representation::IncompleteNTT);
+    let mut temp = RingElement::zero(Representation::IncompleteNTT);
+    for (ck_elem, data_elem) in crs.binary_top_ck.iter().zip(padded.iter()) {
+        temp *= (ck_elem, data_elem);
+        commitment += &temp;
+    }
+    vec![commitment]
+}
+
 #[tracing::instrument(skip_all, name = "commit::recursive_layer")]
 pub fn recursive_commit(
     crs: &CRS,
@@ -138,17 +153,21 @@ pub fn recursive_commit(
         config.decomposition_chunks,
     );
 
-    let ck = crs.ck_for_wit_dim(committed_data.len());
-
-    let mut commitment = vec![RingElement::zero(Representation::IncompleteNTT); config.rank];
-
-    let mut temp = RingElement::zero(Representation::IncompleteNTT);
-    for r in 0..config.rank {
-        for (elem, data_elem) in ck[r].preprocessed_row.iter().zip(committed_data.iter()) {
-            temp *= (elem, data_elem);
-            commitment[r] += &temp;
+    let commitment = if config.binary_top {
+        debug_assert_eq!(config.rank, 1);
+        commit_binary_top(crs, &committed_data)
+    } else {
+        let ck = crs.ck_for_wit_dim(committed_data.len());
+        let mut commitment = vec![RingElement::zero(Representation::IncompleteNTT); config.rank];
+        let mut temp = RingElement::zero(Representation::IncompleteNTT);
+        for r in 0..config.rank {
+            for (elem, data_elem) in ck[r].preprocessed_row.iter().zip(committed_data.iter()) {
+                temp *= (elem, data_elem);
+                commitment[r] += &temp;
+            }
         }
-    }
+        commitment
+    };
 
     let next = match &config.next {
         Some(next_config) => Some(Box::new(recursive_commit(crs, next_config, &commitment))),
@@ -193,6 +212,7 @@ mod tests {
                 length: 0,
             },
             next: None,
+            binary_top: false,
         };
 
         let recursive_commitment = recursive_commit(&crs, &config, &data);

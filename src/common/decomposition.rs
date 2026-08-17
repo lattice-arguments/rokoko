@@ -24,11 +24,7 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
     let mut decomposed =
         vec![RingElement::zero(Representation::IncompleteNTT); input.len() * radix];
 
-    if base_log == 1 {
-        assert_eq!(
-            radix, 1,
-            "balanced base-2 decomposition is not supported; use decompose_bits"
-        );
+    if base_log == 1 && radix == 1 {
         decomposed.clone_from_slice(input);
         return decomposed;
     }
