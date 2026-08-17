@@ -202,6 +202,31 @@ impl AuxSumcheckConfig {
             }
         }
 
+        #[cfg(debug_assertions)]
+        {
+            let ranges: Vec<(usize, usize)> = assigned_prefixes
+                .iter()
+                .map(|(comp, prefix)| {
+                    let start = prefix.prefix << comp.size.ilog2();
+                    (start, start + comp.size)
+                })
+                .collect();
+            for i in 0..ranges.len() {
+                for j in (i + 1)..ranges.len() {
+                    debug_assert!(
+                        ranges[i].0 >= ranges[j].1 || ranges[j].0 >= ranges[i].1,
+                        "prefix regions overlap: {} [{},{}) vs {} [{},{})",
+                        assigned_prefixes[i].0.name,
+                        ranges[i].0,
+                        ranges[i].1,
+                        assigned_prefixes[j].0.name,
+                        ranges[j].0,
+                        ranges[j].1,
+                    );
+                }
+            }
+        }
+
         // The ratio must cover the highest used index: the layout can leave
         // gaps, and downstream non_zero_end/used_cols cutoffs are prefixes.
         let used_memory = used_prefixes.len();
