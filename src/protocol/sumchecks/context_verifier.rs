@@ -151,4 +151,6 @@ pub struct NormCheckVerifierContext {
 
     pub selectors: Vec<ElephantCell<SelectorEqEvaluation>>,
     pub output_2: ElephantCell<ProductSumcheckEvaluation>,
+
+    pub binariness: Option<ElephantCell<DiffSumcheckEvaluation>>,
 }

@@ -5,7 +5,10 @@ use crate::protocol::intermediate_sumchecks::builder::init_intermediate_sumcheck
 use crate::protocol::sumcheck_utils::sum::SumSumcheck;
 use crate::protocol::sumchecks::context::{FineProjSumcheckContextWrapper, NextSumcheckContext};
 use crate::{
-    common::{config::NOF_BATCHES, ring_arithmetic::RingElement},
+    common::{
+        config::NOF_BATCHES,
+        ring_arithmetic::{Representation, RingElement},
+    },
     protocol::{
         commitment::{self, Prefix},
         config::Config,
@@ -26,7 +29,10 @@ use super::{
         CommitmentFoldSumcheckContext, FineProjSumcheckContext, InnerEvalFoldSumcheckContext,
         OuterEvalClaimSumcheckContext, SumcheckContext,
     },
-    helpers::{binary_top_ck_sumcheck, ck_sumcheck, composition_sumcheck, sumcheck_from_prefix},
+    helpers::{
+        binary_top_ck_sumcheck, ck_sumcheck, composition_sumcheck, split_composition_sumcheck,
+        sumcheck_from_prefix,
+    },
 };
 
 /// Builds sumcheck gadgets for recursive commitment verification.
@@ -73,15 +79,20 @@ fn build_com_verify_sumcheck_context(
             combined_witness_sumcheck.clone(),
         ));
 
-        let combiner_sumcheck = composition_sumcheck(
-            next.decomposition_base_log as u64,
-            if next.binary_top {
-                crs::BINARY_TOP_KEY_LEN
-            } else {
-                next.decomposition_chunks
-            },
-            total_vars,
-        );
+        let combiner_sumcheck = if next.binary_top {
+            split_composition_sumcheck(
+                next.decomposition_base_log as u64,
+                crs::binary_top_decomposition_chunks(),
+                crs::BINARY_TOP_KEY_LEN,
+                total_vars,
+            )
+        } else {
+            composition_sumcheck(
+                next.decomposition_base_log as u64,
+                next.decomposition_chunks,
+                total_vars,
+            )
+        };
 
         let recomposed_child_raw = ElephantCell::new(ProductSumcheck::new(
             combined_witness_sumcheck.clone(),
@@ -789,11 +800,35 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         output.clone(),
     ));
 
+    let binariness = if config.commitment_recursion.most_inner_config().binary_top {
+        let bits_selector = most_inner_commitments_selectors[0].clone();
+        let b_conj_b = ElephantCell::new(ProductSumcheck::new(bits_selector.clone(), output.clone()));
+
+        let ones = RingElement::all(1, Representation::IncompleteNTT);
+        let mut conj_ones = RingElement::zero(Representation::IncompleteNTT);
+        ones.conjugate_into(&mut conj_ones);
+        let conj_ones_sumcheck = ElephantCell::new(
+            LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(1, total_vars, 0),
+        );
+        conj_ones_sumcheck.borrow_mut().load_from(&[conj_ones]);
+
+        let b_conj_ones_raw = ElephantCell::new(ProductSumcheck::new(
+            combined_witness_sumcheck.clone(),
+            conj_ones_sumcheck,
+        ));
+        let b_conj_ones = ElephantCell::new(ProductSumcheck::new(bits_selector, b_conj_ones_raw));
+
+        Some(ElephantCell::new(DiffSumcheck::new(b_conj_b, b_conj_ones)))
+    } else {
+        None
+    };
+
     let norm_check_sumcheck = NormCheckSumcheckContext {
         conjugated_combined_witness: conjugated_combined_witness_sumcheck.clone(),
         output,
         selectors: most_inner_commitments_selectors,
         output_2,
+        binariness,
     };
 
     // ComVerify sumchecks: Three separate recursive commitment trees
@@ -879,6 +914,9 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
 
     all_outputs.push(norm_check_sumcheck.output.clone());
     all_outputs.push(norm_check_sumcheck.output_2.clone());
+    if let Some(binariness) = &norm_check_sumcheck.binariness {
+        all_outputs.push(binariness.clone());
+    }
 
     let combiner = ElephantCell::new(Combiner::new(all_outputs));
 

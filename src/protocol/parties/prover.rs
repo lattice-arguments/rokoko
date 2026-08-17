@@ -366,6 +366,7 @@ pub fn prover_round(
         sumcheck_transcript,
         evaluation_points,
         constant_term_claims,
+        binariness_claim,
     ) = sumcheck_output;
 
     let at_cut = boundary.as_ref().is_some_and(BoundaryCapture::is_at_cut);
@@ -507,6 +508,7 @@ pub fn prover_round(
             )
         }),
         constant_term_claims,
+        binariness_claim,
         next: next_proof.map(Box::new),
     };
 

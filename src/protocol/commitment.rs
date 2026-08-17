@@ -2,7 +2,7 @@ use std::ops::IndexMut;
 
 use crate::{
     common::{
-        decomposition::decompose,
+        decomposition::{decompose, decompose_bits},
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         ring_arithmetic::{Representation, RingElement},
     },
@@ -128,13 +128,11 @@ impl RecursiveCommitmentWithAux {
 pub type RecursiveCommitment = Vec<RingElement>;
 
 fn commit_binary_top(crs: &CRS, committed_data: &[RingElement]) -> Vec<RingElement> {
-    debug_assert!(committed_data.len() <= BINARY_TOP_KEY_LEN);
-    let mut padded = committed_data.to_vec();
-    padded.resize(BINARY_TOP_KEY_LEN, RingElement::zero(Representation::IncompleteNTT));
+    debug_assert_eq!(committed_data.len(), BINARY_TOP_KEY_LEN);
 
     let mut commitment = RingElement::zero(Representation::IncompleteNTT);
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
-    for (ck_elem, data_elem) in crs.binary_top_ck.iter().zip(padded.iter()) {
+    for (ck_elem, data_elem) in crs.binary_top_ck.iter().zip(committed_data.iter()) {
         temp *= (ck_elem, data_elem);
         commitment += &temp;
     }
@@ -147,10 +145,21 @@ pub fn recursive_commit(
     config: &RecursionConfig,
     data: &Vec<RingElement>,
 ) -> RecursiveCommitmentWithAux {
-    let committed_data = decompose(
-        &data,
-        config.decomposition_base_log as u64,
-        config.decomposition_chunks,
+    let committed_data = if config.binary_top {
+        decompose_bits(&data, config.decomposition_chunks)
+    } else {
+        decompose(
+            &data,
+            config.decomposition_base_log as u64,
+            config.decomposition_chunks,
+        )
+    };
+
+    debug_assert!(
+        !config.binary_top
+            || committed_data[crate::protocol::crs::binary_top_decomposition_chunks()..]
+                .iter()
+                .all(|el| *el == RingElement::zero(Representation::IncompleteNTT))
     );
 
     let commitment = if config.binary_top {

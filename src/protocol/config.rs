@@ -384,6 +384,7 @@ pub struct SumcheckRoundProof {
     pub rc_coarse_projection_inner: Option<Vec<RingElement>>,
     pub rc_fine_projection_inner: Option<(Vec<RingElement>, Vec<RingElement>)>,
     pub constant_term_claims: Option<Vec<RingElement>>,
+    pub binariness_claim: Option<RingElement>,
     pub next_round_commitment: Option<NextRoundCommitment>,
     pub next: Option<Box<RoundProof>>,
 }
@@ -464,6 +465,15 @@ impl SizeableProof for SumcheckRoundProof {
             tracing::debug!(
                 "Constant term claims size: {} KB, ",
                 to_kb(constant_term_claims_size)
+            );
+        }
+
+        if let Some(binariness_claim) = &self.binariness_claim {
+            let binariness_claim_size = binariness_claim.size_in_bits();
+            size += binariness_claim_size;
+            tracing::debug!(
+                "Binariness claim size: {} KB, ",
+                to_kb(binariness_claim_size)
             );
         }
 

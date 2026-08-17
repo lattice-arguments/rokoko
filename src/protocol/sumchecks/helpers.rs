@@ -51,6 +51,36 @@ pub(crate) fn composition_sumcheck(
     combiner_sumcheck
 }
 
+pub(crate) fn split_composition_sumcheck(
+    base_log: u64,
+    real_radix: usize,
+    slot_len: usize,
+    total_vars: usize,
+) -> ElephantCell<LinearSumcheck<RingElement>> {
+    let composition_basis = (0..slot_len)
+        .map(|i| {
+            if i < real_radix {
+                RingElement::constant(1u64 << (base_log * i as u64), Representation::IncompleteNTT)
+            } else {
+                RingElement::zero(Representation::IncompleteNTT)
+            }
+        })
+        .collect::<Vec<RingElement>>();
+    let combiner_sumcheck = ElephantCell::new(
+        LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+            slot_len,
+            total_vars - slot_len.ilog2() as usize,
+            0,
+        ),
+    );
+
+    combiner_sumcheck
+        .borrow_mut()
+        .load_from(&composition_basis);
+
+    combiner_sumcheck
+}
+
 /// Creates a selector (SelectorEq) that evaluates to 1 where the first `prefix.length`
 /// bits match `prefix.prefix`, and 0 elsewhere. Used to enforce constraints only on
 /// specific witness slices. Prefix padding ensures alignment with the global hypercube.

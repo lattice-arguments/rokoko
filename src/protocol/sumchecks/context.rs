@@ -280,6 +280,8 @@ pub struct NormCheckSumcheckContext {
     // we also give an opening to subvectors of the combined witness and its conjugate.
     pub selectors: Vec<ElephantCell<SelectorEq<RingElement>>>,
     pub output_2: ElephantCell<ProductSumcheck<RingElement>>,
+
+    pub binariness: Option<ElephantCell<DiffSumcheck<RingElement>>>,
 }
 
 /// FineProj: fine (coefficient-level) projection validity (paper: Pi^proj-f).

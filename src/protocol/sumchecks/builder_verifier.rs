@@ -80,6 +80,28 @@ pub fn load_combiner_evaluation_data(
     combiner_evaluation
 }
 
+pub fn split_load_combiner_evaluation_data(
+    base_log: u64,
+    real_radix: usize,
+    slot_len: usize,
+    total_vars: usize,
+) -> ElephantCell<BasicEvaluationLinearSumcheck<RingElement>> {
+    let data = (0..slot_len)
+        .map(|i| {
+            if i < real_radix {
+                RingElement::constant(1u64 << (base_log * i as u64), Representation::IncompleteNTT)
+            } else {
+                RingElement::zero(Representation::IncompleteNTT)
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let prefix_size = total_vars - (data.len().ilog2() as usize);
+    let combiner_evaluation = basic_evaluation_linear(data.len(), prefix_size, 0);
+    combiner_evaluation.borrow_mut().load_from(&data);
+    combiner_evaluation
+}
+
 pub fn structured_row_ck_evaluation(
     crs: &VerifierCRS,
     total_vars: usize,
@@ -136,15 +158,20 @@ fn build_com_verify_verifier_context(
             })
             .collect::<Vec<_>>();
 
-        let combiner_eval = load_combiner_evaluation_data(
-            next.decomposition_base_log as u64,
-            if next.binary_top {
-                crate::protocol::crs::BINARY_TOP_KEY_LEN
-            } else {
-                next.decomposition_chunks
-            },
-            total_vars,
-        );
+        let combiner_eval = if next.binary_top {
+            split_load_combiner_evaluation_data(
+                next.decomposition_base_log as u64,
+                crate::protocol::crs::binary_top_decomposition_chunks(),
+                crate::protocol::crs::BINARY_TOP_KEY_LEN,
+                total_vars,
+            )
+        } else {
+            load_combiner_evaluation_data(
+                next.decomposition_base_log as u64,
+                next.decomposition_chunks,
+                total_vars,
+            )
+        };
 
         let data_len = 1 << (total_vars - current.prefix.length);
         let mut ck_evals: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>> =
@@ -906,11 +933,41 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
         output.clone(),
     ));
 
+    let binariness = if config.commitment_recursion.most_inner_config().binary_top {
+        let bits_selector = most_inner_commitments_selectors[0].clone();
+        let b_conj_b = ElephantCell::new(ProductSumcheckEvaluation::new(
+            bits_selector.clone(),
+            output.clone(),
+        ));
+
+        let ones = RingElement::all(1, Representation::IncompleteNTT);
+        let mut conj_ones = RingElement::zero(Representation::IncompleteNTT);
+        ones.conjugate_into(&mut conj_ones);
+        let conj_ones_evaluation = basic_evaluation_linear(1, total_vars, 0);
+        conj_ones_evaluation.borrow_mut().load_from(&[conj_ones]);
+
+        let b_conj_ones_raw = ElephantCell::new(ProductSumcheckEvaluation::new(
+            combined_witness_evaluation.clone(),
+            conj_ones_evaluation,
+        ));
+        let b_conj_ones = ElephantCell::new(ProductSumcheckEvaluation::new(
+            bits_selector,
+            b_conj_ones_raw,
+        ));
+
+        Some(ElephantCell::new(DiffSumcheckEvaluation::new(
+            b_conj_b, b_conj_ones,
+        )))
+    } else {
+        None
+    };
+
     let norm_check_evaluation = NormCheckVerifierContext {
         conjugated_combined_witness_evaluation: conjugated_combined_witness_evaluation.clone(),
         output,
         selectors: most_inner_commitments_selectors,
         output_2,
+        binariness,
     };
 
     let mut all_outputs: Vec<ElephantCell<EvalData>> = vec![];
@@ -945,6 +1002,9 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
     }
     all_outputs.push(norm_check_evaluation.output.clone());
     all_outputs.push(norm_check_evaluation.output_2.clone());
+    if let Some(binariness) = &norm_check_evaluation.binariness {
+        all_outputs.push(binariness.clone());
+    }
 
     let combiner_evaluation = ElephantCell::new(CombinerEvaluation::new(all_outputs));
     let field_combiner_evaluation = ElephantCell::new(RingToFieldCombinerEvaluation::new(

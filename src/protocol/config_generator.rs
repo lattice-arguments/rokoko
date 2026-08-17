@@ -472,7 +472,7 @@ impl AuxSumcheckConfig {
 
             Some(Box::new(RecursionConfig {
                 decomposition_base_log: 1,
-                decomposition_chunks: crate::protocol::crs::binary_top_decomposition_chunks(),
+                decomposition_chunks: crate::protocol::crs::BINARY_TOP_KEY_LEN,
                 rank: 1,
                 prefix: next_prefix,
                 next: None,
