@@ -338,3 +338,44 @@ pub fn execute_snark() {
     println!("TOTAL Verifier time: {:?} ns", start.elapsed().as_nanos());
 }
 
+#[cfg(test)]
+mod tests {
+    use super::execute_to_boundary;
+    use crate::common::init_common;
+    use std::num::NonZeroUsize;
+
+    #[test]
+    fn round_boundary_extraction() {
+        init_common();
+        let mut run = execute_to_boundary(NonZeroUsize::new(3).unwrap());
+
+        assert_eq!(run.prover.witness.height, 256);
+        assert_eq!(run.prover.witness.width, 32);
+        assert_eq!(run.verifier.commitment_root.len(), 1);
+        assert_eq!(run.prover.claims.len(), 2);
+        assert_eq!(run.verifier.claims.len(), 2);
+        assert_eq!(run.prover.evaluation_points, run.verifier.evaluation_points);
+
+        let mut prover_bytes = [0u8; 16];
+        let mut verifier_bytes = [0u8; 16];
+        run.prover
+            .transcript
+            .fill_from_xof(b"round-boundary-test", &mut prover_bytes);
+        run.verifier
+            .transcript
+            .fill_from_xof(b"round-boundary-test", &mut verifier_bytes);
+        assert_eq!(prover_bytes, verifier_bytes);
+
+        assert_eq!(run.crs.cks.len(), run.verifier_crs.structured_cks.len());
+        let first_row = &run.verifier_crs.structured_cks[0][0];
+        assert_eq!(first_row.tensor_layers.len(), 1);
+
+        let run4 = execute_to_boundary(NonZeroUsize::new(4).unwrap());
+        assert_eq!(run4.prover.witness.height, 512);
+        assert_eq!(run4.prover.witness.width, 8);
+        assert_eq!(
+            run4.prover.evaluation_points,
+            run4.verifier.evaluation_points
+        );
+    }
+}
