@@ -49,6 +49,10 @@ pub fn l2_norm_coeffs(vec: &[RingElement]) -> f64 {
 
 pub fn assert_norm_bounded(label: &str, value: f64, bound: f64) {
     tracing::debug!("L2 norm of {label}: {value} (bound {bound})");
+    if std::env::var_os("ROKOKO_CALIBRATE").is_some() {
+        eprintln!("CALIBRATE {label}: {value} (bound {bound})");
+        return;
+    }
     assert!(
         value <= bound,
         "L2 norm of {label} = {value} exceeds the registered bound {bound}"
