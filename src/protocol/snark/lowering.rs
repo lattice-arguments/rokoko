@@ -664,17 +664,17 @@ impl<'a> ProverAssembler<'a> {
     fn leaf(&mut self, factor: &ClaimFactor) -> HighOrderCell {
         match factor {
             ClaimFactor::Witness => {
-                let data = self.witness;
+                let data = witness_for_level0(self.witness);
                 let cell = self.witness_pool.next(FULL_WITNESS_KEY, move || {
-                    LinearSumcheck::from_data(data.to_vec())
+                    LinearSumcheck::from_borrowed_level0(data, None)
                 });
                 cell as _
             }
             ClaimFactor::ConjWitness => {
-                let data = self.witness;
-                let cell = self
-                    .conj_pool
-                    .next(FULL_WITNESS_KEY, move || conjugated_oracle(data));
+                let data = witness_for_level0(self.witness);
+                let cell = self.conj_pool.next(FULL_WITNESS_KEY, move || {
+                    LinearSumcheck::from_borrowed_level0(data, Some(conjugate_element))
+                });
                 cell as _
             }
             ClaimFactor::WitnessSegment(_) | ClaimFactor::ConjWitnessSegment(_) => {
@@ -761,12 +761,18 @@ impl<'a> ProverAssembler<'a> {
     }
 }
 
+fn conjugate_element(e: &RingElement) -> RingElement {
+    e.conjugate()
+}
+
+/// The borrowed cells never leave `prove_claims`, which the witness outlives,
+/// so extending the lifetime is sound.
+fn witness_for_level0(witness: &[RingElement]) -> &'static [RingElement] {
+    unsafe { std::mem::transmute(witness) }
+}
+
 fn conjugated_oracle(witness: &[RingElement]) -> LinearSumcheck<RingElement> {
-    let mut data = Vec::with_capacity(witness.len());
-    for element in witness {
-        data.push(element.conjugate());
-    }
-    LinearSumcheck::from_data(data)
+    LinearSumcheck::from_borrowed_level0(witness_for_level0(witness), Some(conjugate_element))
 }
 
 /// Verifier-side mirror: lowers the same canonical [`ClaimExpr`] to evaluation
@@ -1187,9 +1193,9 @@ pub fn prove_claims(
 
     // ensure the full-witness oracle exists: z_0 always seeds the chain
     if asm.witness_pool.first_cell(&FULL_WITNESS_KEY).is_none() {
-        let data = asm.witness;
+        let data = witness_for_level0(asm.witness);
         asm.witness_pool.next(FULL_WITNESS_KEY, move || {
-            LinearSumcheck::from_data(data.to_vec())
+            LinearSumcheck::from_borrowed_level0(data, None)
         });
     }
     let pooled: Vec<ElephantCell<LinearSumcheck<RingElement>>> = asm

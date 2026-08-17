@@ -10,6 +10,7 @@ use crate::common::{
 /// Designed to be implementable by `RingElement` now and other element types (e.g. `QuadraticExtension`) later.
 pub trait SumcheckElement:
     Clone
+    + 'static
     + for<'a> AddAssign<&'a Self>
     + for<'a> SubAssign<&'a Self>
     + for<'a> MulAssign<&'a Self>

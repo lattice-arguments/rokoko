@@ -19,6 +19,14 @@ use crate::{
 #[cfg(test)]
 use crate::common::{config::MOD_Q, structured_row::PreprocessedRow};
 
+/// Level-0 view over caller-owned data: the first data fold reads through it
+/// (applying `map` per element when given) and materializes the owned
+/// half-size table, so the full-size level-0 copy never exists.
+pub struct BorrowedLevel0<E: 'static> {
+    data: &'static [E],
+    map: Option<fn(&E) -> E>,
+}
+
 /// Standard linear sumcheck over a vector that represents a multilinear extension.
 pub struct LinearSumcheck<E: SumcheckElement = RingElement> {
     pub data: Vec<E>,
@@ -30,6 +38,7 @@ pub struct LinearSumcheck<E: SumcheckElement = RingElement> {
     // data[non_zero_end..] is guaranteed zero. Used to skip work in
     // partial_evaluate, non_zero_range, and batched Karatsuba.
     non_zero_end: usize,
+    borrowed: Option<BorrowedLevel0<E>>,
 }
 
 impl<E: SumcheckElement> LinearSumcheck<E> {
@@ -59,6 +68,23 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
             poly_scratch: RefCell::new(Polynomial::new(2)),
             suffix: suffix_size,
             non_zero_end: count,
+            borrowed: None,
+        }
+    }
+
+    /// No prefix/suffix; the caller guarantees `data` outlives every use of
+    /// this sumcheck (the snark lowering drops its cells before returning).
+    pub fn from_borrowed_level0(data: &'static [E], map: Option<fn(&E) -> E>) -> Self {
+        let count = data.len();
+        assert!(count.is_power_of_two() && count > 1);
+        LinearSumcheck {
+            data: Vec::new(),
+            variable_count: count.ilog2() as usize,
+            index_mask: count - 1,
+            poly_scratch: RefCell::new(Polynomial::new(2)),
+            suffix: 0,
+            non_zero_end: count,
+            borrowed: Some(BorrowedLevel0 { data, map }),
         }
     }
     pub fn from_data(data: Vec<E>) -> Self {
@@ -78,6 +104,7 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
             poly_scratch: RefCell::new(Polynomial::new(2)),
             suffix: suffix_size,
             non_zero_end: count,
+            borrowed: None,
         }
     }
 
@@ -138,6 +165,11 @@ impl<E: SumcheckElement> Index<HypercubePoint> for LinearSumcheck<E> {
         //
         // During data rounds the point selects which even/odd pair we look at.
         // self[p] returns data[2*p_masked] (the val-at-0 side of the pair).
+        if let Some(b) = &self.borrowed {
+            assert!(b.map.is_none(), "mapped borrowed level-0 has no by-ref reads");
+            let p = index.masked(b.data.len() / 2 - 1).coordinates;
+            return &b.data[2 * p];
+        }
         if self.data.len() == 1 {
             return &self.data[0];
         }
@@ -181,6 +213,9 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
         // LS-first: suffix variables are folded first. While suffix > 0,
         // we're in a dummy LS round — the polynomial is constant (just
         // the data value at this point).
+        if self.borrowed.is_some() {
+            return None;
+        }
         if self.suffix > 0 {
             return Some(&self[point]);
         }
@@ -201,6 +236,26 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
     ) {
         // LS-first: current variable is the least-significant (bit 0 of index).
         // For data round: data[2p] = value@0, data[2p+1] = value@1.
+
+        if let Some(b) = &self.borrowed {
+            let p = point.masked(b.data.len() / 2 - 1).coordinates;
+            let (e0, e1) = (&b.data[2 * p], &b.data[2 * p + 1]);
+            match b.map {
+                None => {
+                    polynomial.coefficients[0].set_from(e0);
+                    polynomial.coefficients[1].set_from(e1);
+                    polynomial.coefficients[1] -= e0;
+                }
+                Some(map) => {
+                    let m0 = map(e0);
+                    polynomial.coefficients[0].set_from(&m0);
+                    polynomial.coefficients[1].set_from(&map(e1));
+                    polynomial.coefficients[1] -= &m0;
+                }
+            }
+            polynomial.num_coefficients = 2;
+            return;
+        }
 
         // Suffix round (LS dummies, folded first under LS-first): constant.
         if self.suffix > 0 {
@@ -228,6 +283,9 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
 
     fn is_univariate_polynomial_zero_at_point(&self, point: HypercubePoint) -> bool {
         // For suffix/prefix rounds we intentionally expose no sparse range.
+        if self.borrowed.is_some() {
+            return false;
+        }
         if self.suffix > 0 || self.data.len() <= 1 {
             return false;
         }
@@ -249,6 +307,9 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
     }
 
     fn dependence_window_vars(&self) -> usize {
+        if let Some(b) = &self.borrowed {
+            return b.data.len().ilog2() as usize - 1;
+        }
         if self.suffix > 0 {
             return self.suffix - 1 + self.data.len().ilog2() as usize;
         }
@@ -270,6 +331,13 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
         // for the current variable count (no prefix/suffix remaining).
         // For sumchecks with prefix variables, data.len() < 2^variable_count
         // during early rounds, so this correctly returns None.
+        if let Some(b) = &self.borrowed {
+            // A mapped view can't hand out raw slices; per-point path applies the map.
+            return match b.map {
+                None => Some(b.data),
+                Some(_) => None,
+            };
+        }
         if self.suffix > 0 {
             return None;
         }
@@ -286,6 +354,9 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
 
     fn non_zero_range(&self) -> Option<(usize, usize)> {
         // LS-first: during suffix rounds or prefix rounds, no meaningful range.
+        if self.borrowed.is_some() {
+            return None;
+        }
         if self.suffix > 0 {
             return None;
         }
@@ -320,6 +391,39 @@ impl<E: SumcheckElement> SumcheckBaseData for LinearSumcheck<E> {
     fn partial_evaluate(&mut self, value: &E) {
         // LS-first folding: suffix (LS dummies) are consumed first,
         // then actual data variables, then prefix (MS dummies) last.
+
+        // First fold of a borrowed level 0: materialize the owned half-size
+        // table directly, so the full-size copy never exists.
+        if let Some(b) = self.borrowed.take() {
+            let d = b.data;
+            let half = d.len() / 2;
+            let mut folded: Vec<E> = Vec::with_capacity(half);
+            match b.map {
+                None => {
+                    for i in 0..half {
+                        let mut e = d[2 * i + 1].clone();
+                        e -= &d[2 * i];
+                        e *= value;
+                        e += &d[2 * i];
+                        folded.push(e);
+                    }
+                }
+                Some(map) => {
+                    for i in 0..half {
+                        let m0 = map(&d[2 * i]);
+                        let mut e = map(&d[2 * i + 1]);
+                        e -= &m0;
+                        e *= value;
+                        e += &m0;
+                        folded.push(e);
+                    }
+                }
+            }
+            self.data = folded;
+            self.non_zero_end = half;
+            self.variable_count -= 1;
+            return;
+        }
 
         // Suffix round: LS dummy variable, data is constant across it.
         if self.suffix > 0 {
