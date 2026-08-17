@@ -39,7 +39,8 @@ fn check_recursive_commitment(
     let ell_inf_norm = norms::inf_norm(&rc.committed_data);
     let ell_2_norm = norms::l2_norm(&rc.committed_data);
 
-    let current_extracted_norm = match config.next {
+    let current_extracted_norm = match &config.next {
+        Some(next) if next.binary_top => extracted_norm_most_inner,
         Some(_) => extracted_norm,
         None => extracted_norm_most_inner,
     };
@@ -72,6 +73,24 @@ fn check_recursive_commitment(
     }
 }
 
+// adds the parent digit layer when a binary_top leaf is attached, matching the most_inner_norm_claim union
+fn most_inner_data_ell_2_sq(rc: &RecursiveCommitmentWithAux, config: &RecursionConfig) -> u64 {
+    let leaf_sq = norms::l2_norm(&rc.most_inner_commitment_with_aux().committed_data).powf(2.0) as u64;
+    if !config.most_inner_config().binary_top {
+        return leaf_sq;
+    }
+    let mut current_rc = rc;
+    let mut current_config = config;
+    while let (Some(next_rc), Some(next_config)) = (&current_rc.next, &current_config.next) {
+        if next_config.next.is_none() {
+            return leaf_sq + norms::l2_norm(&current_rc.committed_data).powf(2.0) as u64;
+        }
+        current_rc = next_rc;
+        current_config = next_config;
+    }
+    leaf_sq
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn check_sumcheck_round(
     config: &SumcheckConfig,
@@ -92,24 +111,22 @@ pub fn check_sumcheck_round(
     let recommited_ell_2_norm = norms::l2_norm(next_round_data);
 
     let most_inner_commitment_data_ell_2 = {
-        let commitment_data = &rc_commitment
-            .most_inner_commitment_with_aux()
-            .committed_data;
-        let norm_commitment_data_ell_2_sq = norms::l2_norm(commitment_data).powf(2.0) as u64;
+        let norm_commitment_data_ell_2_sq =
+            most_inner_data_ell_2_sq(rc_commitment, &config.commitment_recursion);
+        let norm_opening_data_ell_2_sq =
+            most_inner_data_ell_2_sq(rc_opening, &config.opening_recursion);
 
-        let opening_data = &rc_opening.most_inner_commitment_with_aux().committed_data;
-        let norm_opening_data_ell_2_sq = norms::l2_norm(opening_data).powf(2.0) as u64;
-
-        let norm_projection_data_ell_2_sq = match (rc_coarse_projection, rc_fine_projection) {
-            (Some(rc_proj), _) => {
-                let proj_data = &rc_proj.most_inner_commitment_with_aux().committed_data;
-                norms::l2_norm(proj_data).powf(2.0) as u64
+        let norm_projection_data_ell_2_sq = match (
+            rc_coarse_projection,
+            rc_fine_projection,
+            &config.projection_recursion,
+        ) {
+            (Some(rc_proj), _, Projection::Coarse(proj_config)) => {
+                most_inner_data_ell_2_sq(rc_proj, proj_config)
             }
-            (_, Some((rc_ct, rc_batched))) => {
-                let proj_ct_data = &rc_ct.most_inner_commitment_with_aux().committed_data;
-                let proj_batched_data = &rc_batched.most_inner_commitment_with_aux().committed_data;
-                norms::l2_norm(proj_ct_data).powf(2.0) as u64
-                    + norms::l2_norm(proj_batched_data).powf(2.0) as u64
+            (_, Some((rc_ct, rc_batched)), Projection::Fine(proj_config)) => {
+                most_inner_data_ell_2_sq(rc_ct, &proj_config.recursion_constant_term)
+                    + most_inner_data_ell_2_sq(rc_batched, &proj_config.recursion_batched_projection)
             }
             _ => 0,
         };

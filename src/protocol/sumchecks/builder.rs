@@ -35,6 +35,24 @@ use super::{
     },
 };
 
+// keeps the binary-top leaf's parent digit layer under the tight most-inner bound too
+fn push_most_inner_selectors(
+    tree: &commitment::RecursionConfig,
+    total_vars: usize,
+    most_inner_commitments_selectors: &mut Vec<ElephantCell<SelectorEq<RingElement>>>,
+    binary_top_selectors: &mut Vec<ElephantCell<SelectorEq<RingElement>>>,
+) {
+    let most_inner = tree.most_inner_config();
+    let most_inner_selector = sumcheck_from_prefix(&most_inner.prefix, total_vars);
+    if most_inner.binary_top {
+        binary_top_selectors.push(most_inner_selector.clone());
+        if let Some(parent) = tree.parent_of_most_inner() {
+            most_inner_commitments_selectors.push(sumcheck_from_prefix(&parent.prefix, total_vars));
+        }
+    }
+    most_inner_commitments_selectors.push(most_inner_selector);
+}
+
 /// Builds sumcheck gadgets for recursive commitment verification.
 ///
 /// For each internal layer i, proves: CK_i · witness_i = compose(child_commitment_{i+1})
@@ -740,56 +758,41 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     let mut most_inner_commitments_selectors = Vec::new();
     let mut binary_top_selectors: Vec<ElephantCell<SelectorEq<RingElement>>> = Vec::new();
 
-    let most_inner_commitment_recursion = sumcheck_from_prefix(
-        &config.commitment_recursion.most_inner_config().prefix,
+    push_most_inner_selectors(
+        &config.commitment_recursion,
         total_vars,
+        &mut most_inner_commitments_selectors,
+        &mut binary_top_selectors,
     );
-    if config.commitment_recursion.most_inner_config().binary_top {
-        binary_top_selectors.push(most_inner_commitment_recursion.clone());
-    }
-    most_inner_commitments_selectors.push(most_inner_commitment_recursion);
-
-    let most_inner_opening_recursion = sumcheck_from_prefix(
-        &config.opening_recursion.most_inner_config().prefix,
+    push_most_inner_selectors(
+        &config.opening_recursion,
         total_vars,
+        &mut most_inner_commitments_selectors,
+        &mut binary_top_selectors,
     );
-    if config.opening_recursion.most_inner_config().binary_top {
-        binary_top_selectors.push(most_inner_opening_recursion.clone());
-    }
-    most_inner_commitments_selectors.push(most_inner_opening_recursion);
 
     match config.projection_recursion {
         Projection::Coarse(ref proj_config) => {
-            let most_inner_projection_recursion =
-                sumcheck_from_prefix(&proj_config.most_inner_config().prefix, total_vars);
-            if proj_config.most_inner_config().binary_top {
-                binary_top_selectors.push(most_inner_projection_recursion.clone());
-            }
-            most_inner_commitments_selectors.push(most_inner_projection_recursion);
+            push_most_inner_selectors(
+                proj_config,
+                total_vars,
+                &mut most_inner_commitments_selectors,
+                &mut binary_top_selectors,
+            );
         }
         Projection::Fine(ref proj_config) => {
-            let most_inner_constant_term_recursion = sumcheck_from_prefix(
-                &proj_config
-                    .recursion_constant_term
-                    .most_inner_config()
-                    .prefix,
+            push_most_inner_selectors(
+                &proj_config.recursion_constant_term,
                 total_vars,
+                &mut most_inner_commitments_selectors,
+                &mut binary_top_selectors,
             );
-            if proj_config.recursion_constant_term.most_inner_config().binary_top {
-                binary_top_selectors.push(most_inner_constant_term_recursion.clone());
-            }
-            most_inner_commitments_selectors.push(most_inner_constant_term_recursion);
-            let most_inner_batched_projection_recursion = sumcheck_from_prefix(
-                &proj_config
-                    .recursion_batched_projection
-                    .most_inner_config()
-                    .prefix,
+            push_most_inner_selectors(
+                &proj_config.recursion_batched_projection,
                 total_vars,
+                &mut most_inner_commitments_selectors,
+                &mut binary_top_selectors,
             );
-            if proj_config.recursion_batched_projection.most_inner_config().binary_top {
-                binary_top_selectors.push(most_inner_batched_projection_recursion.clone());
-            }
-            most_inner_commitments_selectors.push(most_inner_batched_projection_recursion);
         }
         Projection::Skip => {
             // No com_verify sumcheck for projection

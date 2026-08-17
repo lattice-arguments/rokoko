@@ -98,6 +98,15 @@ impl RecursionConfig {
             None => self,
         }
     }
+
+    // digit layer backing the binary-top leaf, if any
+    pub fn parent_of_most_inner(&self) -> Option<&RecursionConfig> {
+        match &self.next {
+            Some(next_config) if next_config.next.is_none() => Some(self),
+            Some(next_config) => next_config.parent_of_most_inner(),
+            None => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
