@@ -866,19 +866,24 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
         ElephantCell::new(FakeEvaluationLinearSumcheck::<RingElement>::new());
 
     let mut most_inner_commitments_selectors = vec![];
+    let mut binary_top_selectors: Vec<ElephantCell<SelectorEqEvaluation>> = vec![];
 
     let most_inner_commitment_recursion = selector_evaluation_from_prefix(
         &config.commitment_recursion.most_inner_config().prefix,
         total_vars,
     );
-
+    if config.commitment_recursion.most_inner_config().binary_top {
+        binary_top_selectors.push(most_inner_commitment_recursion.clone());
+    }
     most_inner_commitments_selectors.push(most_inner_commitment_recursion);
 
     let most_inner_opening_recursion = selector_evaluation_from_prefix(
         &config.opening_recursion.most_inner_config().prefix,
         total_vars,
     );
-
+    if config.opening_recursion.most_inner_config().binary_top {
+        binary_top_selectors.push(most_inner_opening_recursion.clone());
+    }
     most_inner_commitments_selectors.push(most_inner_opening_recursion);
 
     match &config.projection_recursion {
@@ -887,6 +892,9 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 &proj_config.most_inner_config().prefix,
                 total_vars,
             );
+            if proj_config.most_inner_config().binary_top {
+                binary_top_selectors.push(most_inner_projection_recursion.clone());
+            }
             most_inner_commitments_selectors.push(most_inner_projection_recursion);
         }
         Projection::Fine(proj_config) => {
@@ -897,6 +905,9 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                     .prefix,
                 total_vars,
             );
+            if proj_config.recursion_constant_term.most_inner_config().binary_top {
+                binary_top_selectors.push(most_inner_constant_term_recursion.clone());
+            }
             most_inner_commitments_selectors.push(most_inner_constant_term_recursion);
 
             let most_inner_batched_projection_recursion = selector_evaluation_from_prefix(
@@ -906,6 +917,9 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                     .prefix,
                 total_vars,
             );
+            if proj_config.recursion_batched_projection.most_inner_config().binary_top {
+                binary_top_selectors.push(most_inner_batched_projection_recursion.clone());
+            }
             most_inner_commitments_selectors.push(most_inner_batched_projection_recursion);
         }
         Projection::Skip => {
@@ -933,8 +947,16 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
         output.clone(),
     ));
 
-    let binariness = if config.commitment_recursion.most_inner_config().binary_top {
-        let bits_selector = most_inner_commitments_selectors[0].clone();
+    let binariness = if !binary_top_selectors.is_empty() {
+        let mut bits_selector: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
+            binary_top_selectors[0].clone();
+        for selector in binary_top_selectors.iter().skip(1) {
+            bits_selector = ElephantCell::new(SumSumcheckEvaluation::new(
+                bits_selector.clone(),
+                selector.clone(),
+            ));
+        }
+
         let b_conj_b = ElephantCell::new(ProductSumcheckEvaluation::new(
             bits_selector.clone(),
             output.clone(),

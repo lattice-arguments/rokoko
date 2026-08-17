@@ -68,6 +68,38 @@ fn recursion_chain_depth(config: &AuxRecursionConfig) -> usize {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+struct BinaryTopEngagement {
+    commitment: bool,
+    opening: bool,
+    projection_coarse: bool,
+    projection_ct: bool,
+    projection_bp: bool,
+}
+
+#[cfg(feature = "binary-top")]
+fn try_engage_binary_top(
+    config: &AuxRecursionConfig,
+    running_total: &mut usize,
+    composed_witness_length: usize,
+    mut path: Vec<String>,
+    name: &str,
+    components: &mut Vec<ComponentInfo>,
+) -> bool {
+    let binary_top_size = recursion_innermost_rank(config) * crate::protocol::crs::BINARY_TOP_KEY_LEN;
+    if *running_total + binary_top_size > composed_witness_length {
+        return false;
+    }
+    path.extend(std::iter::repeat("next".to_string()).take(recursion_chain_depth(config) + 1));
+    components.push(ComponentInfo {
+        name: name.to_string(),
+        size: binary_top_size,
+        path,
+    });
+    *running_total += binary_top_size;
+    true
+}
+
 impl AuxSumcheckConfig {
     pub fn generate_config(&self) -> Config {
         self.generate_config_inner(0)
@@ -83,27 +115,71 @@ impl AuxSumcheckConfig {
         let composed_witness_length = total_size.next_power_of_two();
 
         #[cfg(feature = "binary-top")]
-        let binary_top_engaged = {
-            let binary_top_size = recursion_innermost_rank(&self.commitment_recursion)
-                * crate::protocol::crs::BINARY_TOP_KEY_LEN;
-            if total_size + binary_top_size <= composed_witness_length {
-                let mut path = vec!["commitment_recursion".to_string()];
-                path.extend(
-                    std::iter::repeat("next".to_string())
-                        .take(recursion_chain_depth(&self.commitment_recursion) + 1),
-                );
-                components.push(ComponentInfo {
-                    name: "commitment_binary_top".to_string(),
-                    size: binary_top_size,
-                    path,
-                });
-                true
-            } else {
-                false
+        let binary_top_engagement = {
+            let mut running_total = total_size;
+            let commitment = try_engage_binary_top(
+                &self.commitment_recursion,
+                &mut running_total,
+                composed_witness_length,
+                vec!["commitment_recursion".to_string()],
+                "commitment_binary_top",
+                &mut components,
+            );
+            let opening = try_engage_binary_top(
+                &self.opening_recursion,
+                &mut running_total,
+                composed_witness_length,
+                vec!["opening_recursion".to_string()],
+                "opening_binary_top",
+                &mut components,
+            );
+            let (projection_coarse, projection_ct, projection_bp) = match &self.projection_recursion {
+                AuxProjection::Coarse(config) => {
+                    let engaged = try_engage_binary_top(
+                        config,
+                        &mut running_total,
+                        composed_witness_length,
+                        vec!["projection_recursion".to_string()],
+                        "projection_binary_top",
+                        &mut components,
+                    );
+                    (engaged, false, false)
+                }
+                AuxProjection::Fine {
+                    recursion_constant_term,
+                    recursion_batched_projection,
+                    ..
+                } => {
+                    let ct = try_engage_binary_top(
+                        recursion_constant_term,
+                        &mut running_total,
+                        composed_witness_length,
+                        vec!["projection_recursion".to_string(), "constant_term".to_string()],
+                        "projection_ct_binary_top",
+                        &mut components,
+                    );
+                    let bp = try_engage_binary_top(
+                        recursion_batched_projection,
+                        &mut running_total,
+                        composed_witness_length,
+                        vec!["projection_recursion".to_string(), "batched_projection".to_string()],
+                        "projection_bp_binary_top",
+                        &mut components,
+                    );
+                    (false, ct, bp)
+                }
+                AuxProjection::Skip => (false, false, false),
+            };
+            BinaryTopEngagement {
+                commitment,
+                opening,
+                projection_coarse,
+                projection_ct,
+                projection_bp,
             }
         };
         #[cfg(not(feature = "binary-top"))]
-        let binary_top_engaged = false;
+        let binary_top_engagement = BinaryTopEngagement::default();
 
         // a mismatch here only debug_asserts in the prover, then corrupts downstream
         if let Some(next) = self.next.as_deref() {
@@ -251,7 +327,7 @@ impl AuxSumcheckConfig {
             composed_witness_length,
             usage_ratio,
             depth,
-            binary_top_engaged,
+            binary_top_engagement,
         )
     }
 
@@ -365,7 +441,7 @@ impl AuxSumcheckConfig {
         composed_witness_length: usize,
         usage_ratio: f64,
         depth: usize,
-        binary_top_engaged: bool,
+        binary_top_engagement: BinaryTopEngagement,
     ) -> Config {
         // Helper to find prefix by path
         let find_prefix = |path: &[String]| -> Prefix {
@@ -381,7 +457,7 @@ impl AuxSumcheckConfig {
             &self.commitment_recursion,
             assigned_prefixes,
             &["commitment_recursion".to_string()],
-            binary_top_engaged,
+            binary_top_engagement.commitment,
         );
 
         // Build opening recursion
@@ -389,7 +465,7 @@ impl AuxSumcheckConfig {
             &self.opening_recursion,
             assigned_prefixes,
             &["opening_recursion".to_string()],
-            false,
+            binary_top_engagement.opening,
         );
 
         // Build projection recursion
@@ -398,7 +474,7 @@ impl AuxSumcheckConfig {
                 config,
                 assigned_prefixes,
                 &["projection_recursion".to_string()],
-                false,
+                binary_top_engagement.projection_coarse,
             )),
             AuxProjection::Fine {
                 nof_batches,
@@ -412,7 +488,7 @@ impl AuxSumcheckConfig {
                         "projection_recursion".to_string(),
                         "constant_term".to_string(),
                     ],
-                    false,
+                    binary_top_engagement.projection_ct,
                 );
 
                 let batched_projection = self.build_recursion_config(
@@ -422,7 +498,7 @@ impl AuxSumcheckConfig {
                         "projection_recursion".to_string(),
                         "batched_projection".to_string(),
                     ],
-                    false,
+                    binary_top_engagement.projection_bp,
                 );
 
                 Projection::Fine(FineProjectionConfig {

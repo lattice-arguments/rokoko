@@ -469,7 +469,7 @@ impl SizeableProof for SumcheckRoundProof {
         }
 
         if let Some(binariness_claim) = &self.binariness_claim {
-            let binariness_claim_size = binariness_claim.size_in_bits();
+            let binariness_claim_size = binariness_claim.compact_size_in_bits();
             size += binariness_claim_size;
             tracing::debug!(
                 "Binariness claim size: {} KB, ",
