@@ -8,7 +8,7 @@ use crate::{
         sampling::sample_random_short_vector,
     },
     protocol::{
-        config::{Config, IntermediateConfig, SimpleConfig},
+        config::{Config, SimpleConfig},
         config_generator::{AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig},
     },
 };
@@ -576,7 +576,6 @@ pub static P_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
 
     witness_decomposition_chunks: 2,
     witness_decomposition_base_log: 7,
-
     next: Some(Box::new(AuxConfig::Simple(P_LAST.clone()))),
 
 });

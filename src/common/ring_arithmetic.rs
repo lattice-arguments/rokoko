@@ -1304,11 +1304,13 @@ impl SizeableProof for RingElement {
             if *v > MOD_Q {
                 panic!("Value exceeds modulus in size_in_bits calculation");
             }
-            let centered = if *v > MOD_Q / 2 { MOD_Q - *v } else { *v };
-            if centered == 0 {
+            if *v % MOD_Q == 0 {
                 continue; // zero contributes 0 bits
             }
-            size += centered.ilog2() as usize + 1; // +1 for the sign bit
+            let size_0 = v.ilog2() as usize + 1;
+            let centered = if *v > MOD_Q / 2 { MOD_Q - *v } else { *v };
+            let size_1 = centered.ilog2() as usize + 2; // +1 for the sign bit
+            size += size_0.min(size_1);
         }
         size
     }
