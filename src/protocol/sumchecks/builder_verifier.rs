@@ -100,6 +100,18 @@ pub fn structured_row_ck_evaluation(
     eval
 }
 
+pub fn binary_top_ck_evaluation(
+    crs: &VerifierCRS,
+    total_vars: usize,
+    wit_dim: usize,
+    suffix: usize,
+) -> ElephantCell<BasicEvaluationLinearSumcheck<RingElement>> {
+    let prefix_size = total_vars - wit_dim.ilog2() as usize - suffix;
+    let eval = basic_evaluation_linear(wit_dim, prefix_size, suffix);
+    eval.borrow_mut().load_from(&crs.binary_top_ck);
+    eval
+}
+
 fn build_com_verify_verifier_context(
     crs: &VerifierCRS,
     total_vars: usize,
@@ -126,14 +138,20 @@ fn build_com_verify_verifier_context(
 
         let combiner_eval = load_combiner_evaluation_data(
             next.decomposition_base_log as u64,
-            next.decomposition_chunks,
+            if next.binary_top {
+                crate::protocol::crs::BINARY_TOP_KEY_LEN
+            } else {
+                next.decomposition_chunks
+            },
             total_vars,
         );
 
         let data_len = 1 << (total_vars - current.prefix.length);
-        let ck_evals = (0..current.rank)
-            .map(|i| structured_row_ck_evaluation(crs, total_vars, data_len, i, 0))
-            .collect::<Vec<_>>();
+        let mut ck_evals: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>> =
+            Vec::with_capacity(current.rank);
+        for i in 0..current.rank {
+            ck_evals.push(structured_row_ck_evaluation(crs, total_vars, data_len, i, 0));
+        }
 
         let data_selected_eval = ElephantCell::new(ProductSumcheckEvaluation::new(
             selector_eval.clone(),
@@ -201,9 +219,15 @@ fn build_com_verify_verifier_context(
 
     let selector_eval = selector_evaluation_from_prefix(&current.prefix, total_vars);
     let data_len = 1 << (total_vars - current.prefix.length);
-    let ck_evals = (0..current.rank)
-        .map(|i| structured_row_ck_evaluation(crs, total_vars, data_len, i, 0))
-        .collect::<Vec<_>>();
+    let mut ck_evals: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>> =
+        Vec::with_capacity(current.rank);
+    for i in 0..current.rank {
+        ck_evals.push(if current.binary_top {
+            binary_top_ck_evaluation(crs, total_vars, data_len, 0)
+        } else {
+            structured_row_ck_evaluation(crs, total_vars, data_len, i, 0)
+        });
+    }
 
     let outputs = ck_evals
         .iter()

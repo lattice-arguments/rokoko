@@ -93,6 +93,25 @@ pub(crate) fn ck_sumcheck(
     sumcheck
 }
 
+pub(crate) fn binary_top_ck_sumcheck(
+    crs: &CRS,
+    total_vars: usize,
+    wit_dim: usize,
+    sufix: usize,
+) -> ElephantCell<LinearSumcheck<RingElement>> {
+    let sumcheck = ElephantCell::new(
+        LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+            wit_dim,
+            total_vars - wit_dim.ilog2() as usize - sufix,
+            sufix,
+        ),
+    );
+
+    sumcheck.borrow_mut().load_from(&crs.binary_top_ck);
+
+    sumcheck
+}
+
 pub fn tensor_product_u64(a: &Vec<u64>, b: &Vec<u64>) -> Vec<u64> {
     let mut result: Vec<u64> = vec![0u64; a.len() * b.len()];
     let mut idx = 0;

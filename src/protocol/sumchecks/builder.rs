@@ -26,7 +26,7 @@ use super::{
         CommitmentFoldSumcheckContext, FineProjSumcheckContext, InnerEvalFoldSumcheckContext,
         OuterEvalClaimSumcheckContext, SumcheckContext,
     },
-    helpers::{ck_sumcheck, composition_sumcheck, sumcheck_from_prefix},
+    helpers::{binary_top_ck_sumcheck, ck_sumcheck, composition_sumcheck, sumcheck_from_prefix},
 };
 
 /// Builds sumcheck gadgets for recursive commitment verification.
@@ -75,7 +75,11 @@ fn build_com_verify_sumcheck_context(
 
         let combiner_sumcheck = composition_sumcheck(
             next.decomposition_base_log as u64,
-            next.decomposition_chunks,
+            if next.binary_top {
+                crs::BINARY_TOP_KEY_LEN
+            } else {
+                next.decomposition_chunks
+            },
             total_vars,
         );
 
@@ -129,15 +133,14 @@ fn build_com_verify_sumcheck_context(
     // This is the base case that checks against the public commitment value
     let selector_sumcheck = sumcheck_from_prefix(&current.prefix, total_vars);
 
+    let output_wit_dim = 1 << (total_vars - current.prefix.length);
     let mut ck_sumchecks = Vec::with_capacity(current.rank);
     for i in 0..current.rank {
-        ck_sumchecks.push(ck_sumcheck(
-            crs,
-            total_vars,
-            1 << (total_vars - current.prefix.length),
-            i,
-            0,
-        ));
+        ck_sumchecks.push(if current.binary_top {
+            binary_top_ck_sumcheck(crs, total_vars, output_wit_dim, 0)
+        } else {
+            ck_sumcheck(crs, total_vars, output_wit_dim, i, 0)
+        });
     }
 
     let outputs = ck_sumchecks
