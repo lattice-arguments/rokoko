@@ -10,12 +10,14 @@ pub type CK = Vec<PreprocessedRow>;
 pub type SCK = Vec<StructuredRow>;
 
 /// Struct representing the Common Reference String (CRS).
+#[derive(Debug)]
 pub struct CRS {
     pub cks: Vec<CK>,             // Commitment keys for each witness length
     pub structured_cks: Vec<SCK>, // Structured commitment keys for each witness length
 }
 
 /// Only the structured keys; the expanded rows are prover-side preprocessing.
+#[derive(Debug)]
 pub struct VerifierCRS {
     pub structured_cks: Vec<SCK>,
 }

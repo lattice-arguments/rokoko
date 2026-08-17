@@ -81,7 +81,7 @@ pub struct Prefix {
     pub length: usize,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RecursionConfig {
     pub decomposition_base_log: usize,
     pub decomposition_chunks: usize,
@@ -99,7 +99,7 @@ impl RecursionConfig {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RecursiveCommitmentWithAux {
     pub decomposition_base_log: usize,
     pub decomposition_chunks: usize,

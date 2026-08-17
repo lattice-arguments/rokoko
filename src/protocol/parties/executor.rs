@@ -1,8 +1,11 @@
+use std::num::NonZeroUsize;
+
 use crate::{
     common::{matrix::VerticallyAlignedMatrix, ring_arithmetic::RingElement},
     protocol::{
+        boundary::{BoundaryCapture, ProverBoundary, VerifierBoundary},
         config::{to_kb, Config, SizeableProof, CONFIG},
-        crs::CRS,
+        crs::{VerifierCRS, CRS},
         evaluation_point_sampler::{sample_initial_evaluation_points, InitialEvaluationPoints},
         open::claim,
         params::{decompose_witness, witness_sampler, WITNESS_CONFIG},
@@ -12,7 +15,23 @@ use crate::{
     },
 };
 
-pub fn execute() {
+pub struct BoundaryRun {
+    pub prover: ProverBoundary,
+    pub verifier: VerifierBoundary,
+    pub crs: CRS,
+    pub verifier_crs: VerifierCRS,
+    pub proof_size_bits: usize,
+}
+
+fn run(
+    cut: Option<NonZeroUsize>,
+) -> (
+    usize,
+    Option<ProverBoundary>,
+    Option<VerifierBoundary>,
+    CRS,
+    VerifierCRS,
+) {
     // check_prefixing_correctness(&CONFIG);
     let config = match &*CONFIG {
         Config::Sumcheck(config) => config,
@@ -50,8 +69,11 @@ pub fn execute() {
     let commit_duration = start.elapsed().as_nanos();
     println!("TOTAL Commit time: {:?} ns", commit_duration);
 
+    let boundary_note = if cut.is_some() { " (to boundary)" } else { "" };
+
     let start = std::time::Instant::now();
 
+    let mut prover_boundary = None;
     let prover_span = tracing::info_span!("prover").entered();
     let (proof, claims) = prover_round(
         &crs,
@@ -63,6 +85,10 @@ pub fn execute() {
         &mut sumcheck_context,
         true,
         None,
+        cut.map(|cut| BoundaryCapture {
+            cut,
+            slot: &mut prover_boundary,
+        }),
     );
     drop(prover_span);
     let claims = claims.expect("Prover round must return claims when with_claims is true.");
@@ -72,11 +98,12 @@ pub fn execute() {
     }
 
     let prover_duration = start.elapsed().as_nanos();
-    println!("TOTAL Prover time: {:?} ns", prover_duration);
+    println!("TOTAL Prover time{}: {:?} ns", boundary_note, prover_duration);
 
     let proof_size_bits = proof.size_in_bits();
-    tracing::debug!("Total proof size: {} KB", to_kb(proof_size_bits));
+    tracing::debug!("Total proof size{}: {} KB", boundary_note, to_kb(proof_size_bits));
     let start = std::time::Instant::now();
+    let mut verifier_boundary = None;
     let verifier_span = tracing::info_span!("verifier").entered();
     verifier_round(
         &verifier_crs,
@@ -88,11 +115,42 @@ pub fn execute() {
         &claims,
         &mut sumcheck_context_verifier,
         None,
+        cut.map(|cut| BoundaryCapture {
+            cut,
+            slot: &mut verifier_boundary,
+        }),
     );
     drop(verifier_span);
 
     let verifier_duration = start.elapsed().as_nanos();
-    println!("TOTAL Verifier time: {:?} ns", verifier_duration);
+    println!(
+        "TOTAL Verifier time{}: {:?} ns",
+        boundary_note, verifier_duration
+    );
+
+    (
+        proof_size_bits,
+        prover_boundary,
+        verifier_boundary,
+        crs,
+        verifier_crs,
+    )
+}
+
+pub fn execute() {
+    run(None);
+}
+
+pub fn execute_to_boundary(cut: NonZeroUsize) -> BoundaryRun {
+    let (proof_size_bits, prover_boundary, verifier_boundary, crs, verifier_crs) = run(Some(cut));
+    BoundaryRun {
+        prover: prover_boundary.expect("execute_to_boundary must populate the prover boundary"),
+        verifier: verifier_boundary
+            .expect("execute_to_boundary must populate the verifier boundary"),
+        crs,
+        verifier_crs,
+        proof_size_bits,
+    }
 }
 
 fn check_prover_claims_match_witness(
@@ -240,6 +298,7 @@ pub fn execute_snark() {
         &mut sumcheck_context,
         false,
         Some(hash_wrapper),
+        None,
     );
     drop(_prover_span);
     println!("TOTAL Prover time: {:?} ns", start.elapsed().as_nanos());
@@ -273,7 +332,9 @@ pub fn execute_snark() {
         &chain_inputs_verifier.claims,
         &mut sumcheck_context_verifier,
         Some(hash_wrapper_verifier),
+        None,
     );
     drop(_verifier_span);
     println!("TOTAL Verifier time: {:?} ns", start.elapsed().as_nanos());
 }
+
