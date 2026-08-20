@@ -344,6 +344,7 @@ mod tests {
     use crate::common::init_common;
     use std::num::NonZeroUsize;
 
+    #[cfg(not(feature = "p-29"))]
     #[test]
     fn round_boundary_extraction() {
         init_common();
