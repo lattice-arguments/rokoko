@@ -164,52 +164,62 @@ pub fn compute_j_batched_collectively(
 
         const DEGREE_BLOCKS: usize = DEGREE / 8;
 
+        const HALF_BLOCKS: usize = DEGREE_BLOCKS / 2;
         for i in 0..inner_width_ring {
             let base_index = i * DEGREE;
             let row_ptrs: [*mut i64; NOF_BATCHES] =
                 std::array::from_fn(|b| j_batched[b][i].v.as_mut_ptr() as *mut i64);
-            let mut loaded_rows: [[__m512i; DEGREE_BLOCKS]; NOF_BATCHES] =
-                std::array::from_fn(|b| {
-                    std::array::from_fn(|j_| unsafe { _mm512_load_epi64(row_ptrs[b].add(j_ * 8)) })
-                });
-            for k in 0..projection_matrix.projection_height {
-                unsafe {
-                    let row_base = k * projection_matrix.width;
-                    let kpos_row = projection_matrix.pos_masks.data.as_ptr().add(row_base);
-                    let kinc_row = projection_matrix.non_zero_masks.data.as_ptr().add(row_base);
-                    let base_chunk = base_index >> 3;
-
-                    let coeff_vecs: [__m512i; NOF_BATCHES] =
-                        std::array::from_fn(|b| _mm512_set1_epi64(c_1_values[b][k] as i64));
-
-                    for j_ in 0..DEGREE_BLOCKS {
-                        let chunk = base_chunk + j_;
-                        let k_pos = *kpos_row.add(chunk);
-                        let k_inc = *kinc_row.add(chunk);
-                        let add: __mmask8 = (k_inc & k_pos) as __mmask8;
-                        let sub: __mmask8 = (k_inc & !k_pos) as __mmask8;
-                        for b in 0..NOF_BATCHES {
-                            let coeff_vec = coeff_vecs[b];
-                            loaded_rows[b][j_] = _mm512_mask_add_epi64(
-                                loaded_rows[b][j_],
-                                add,
-                                loaded_rows[b][j_],
-                                coeff_vec,
-                            );
-                            loaded_rows[b][j_] = _mm512_mask_sub_epi64(
-                                loaded_rows[b][j_],
-                                sub,
-                                loaded_rows[b][j_],
-                                coeff_vec,
-                            );
+            for half in 0..2 {
+                let block_offset = half * HALF_BLOCKS;
+                let mut loaded: [[__m512i; HALF_BLOCKS]; NOF_BATCHES] =
+                    std::array::from_fn(|b| {
+                        std::array::from_fn(|j_| unsafe {
+                            _mm512_load_epi64(row_ptrs[b].add((block_offset + j_) * 8))
+                        })
+                    });
+                for k in 0..projection_matrix.projection_height {
+                    unsafe {
+                        let row_base = k * projection_matrix.width;
+                        let chunk = (base_index >> 3) + block_offset;
+                        let pos8 = (projection_matrix.pos_masks.data.as_ptr().add(row_base + chunk)
+                            as *const u64)
+                            .read_unaligned();
+                        let inc8 = (projection_matrix
+                            .non_zero_masks
+                            .data
+                            .as_ptr()
+                            .add(row_base + chunk) as *const u64)
+                            .read_unaligned();
+                        let add8 = inc8 & pos8;
+                        let sub8 = inc8 & !pos8;
+                        let coeff_vecs: [__m512i; NOF_BATCHES] =
+                            std::array::from_fn(|b| _mm512_set1_epi64(c_1_values[b][k] as i64));
+                        for j_ in 0..HALF_BLOCKS {
+                            let add: __mmask8 = (add8 >> (8 * j_)) as u8;
+                            let sub: __mmask8 = (sub8 >> (8 * j_)) as u8;
+                            for b in 0..NOF_BATCHES {
+                                let coeff_vec = coeff_vecs[b];
+                                loaded[b][j_] = _mm512_mask_add_epi64(
+                                    loaded[b][j_],
+                                    add,
+                                    loaded[b][j_],
+                                    coeff_vec,
+                                );
+                                loaded[b][j_] = _mm512_mask_sub_epi64(
+                                    loaded[b][j_],
+                                    sub,
+                                    loaded[b][j_],
+                                    coeff_vec,
+                                );
+                            }
                         }
                     }
                 }
-            }
-            for (b, row) in loaded_rows.iter().enumerate() {
-                for (j_, res) in row.iter().enumerate() {
-                    unsafe {
-                        _mm512_store_epi64(row_ptrs[b].add(j_ * 8), *res);
+                for (b, row) in loaded.iter().enumerate() {
+                    for (j_, res) in row.iter().enumerate() {
+                        unsafe {
+                            _mm512_store_epi64(row_ptrs[b].add((block_offset + j_) * 8), *res);
+                        }
                     }
                 }
             }
