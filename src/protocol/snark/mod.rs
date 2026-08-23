@@ -6,6 +6,7 @@ pub use crate::common::hash::HashWrapper as Transcript;
 pub use lowering::InitialSumcheckProof as ClaimsProof;
 pub use lowering::SnarkClaim as Claim;
 pub use lowering::{prove_claims, verify_claims, ChainInputs, ClaimExpr, WitnessShape};
+pub use lowering::{embed_qe, eq_layers_qe, qe_one_minus, tensor_at};
 
 use lowering::{ClaimFactor, Coeffs, PublicFactor, SnarkClaim, Weights};
 
