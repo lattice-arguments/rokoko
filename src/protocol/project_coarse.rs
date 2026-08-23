@@ -219,7 +219,7 @@ pub fn project(
 // (built left to right), which lets the kernel walk them with a cursor and
 // stop at a tile boundary with one compare.
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-fn signed_offset_lists(
+pub fn signed_offset_lists(
     projection_matrix: &ProjectionMatrix,
 ) -> (Vec<u32>, Vec<usize>, Vec<u32>, Vec<usize>) {
     let h = projection_matrix.projection_height;
