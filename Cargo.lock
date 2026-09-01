@@ -668,6 +668,7 @@ dependencies = [
  "mimalloc",
  "num",
  "rand",
+ "rayon",
  "sysinfo",
  "time",
  "tracing",

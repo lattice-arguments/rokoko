@@ -1,10 +1,14 @@
 use crate::{
     common::{matrix::VerticallyAlignedMatrix, ring_arithmetic::RingElement},
-    protocol::{
-        commitment::{commit_basic, recursive_commit, CommitmentWithAux},
-        config::SumcheckConfig,
-        crs::CRS,
-    },
+    protocol::{commitment::CommitmentWithAux, config::SumcheckConfig, crs::CRS},
+};
+
+#[cfg(not(feature = "parallel-commitment"))]
+use crate::protocol::commitment::{commit_basic, recursive_commit};
+
+#[cfg(feature = "parallel-commitment")]
+use crate::protocol::commitment::{
+    commit_basic_parallel as commit_basic, recursive_commit_parallel as recursive_commit,
 };
 
 pub fn commit(

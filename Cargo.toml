@@ -16,6 +16,7 @@ p-29 = []
 p-26 = []
 p-28 = []
 events = []
+parallel-commitment = ["dep:rayon"]
 profile = ["dep:sysinfo", "dep:time"]
 snark = []
 
@@ -38,6 +39,7 @@ sysinfo = { version = "0.32", default-features = false, features = [
     "system",
 ], optional = true }
 mimalloc = "0.1"
+rayon = { version = "1.10", optional = true }
 
 [dev-dependencies]
 criterion = "0.7.0"

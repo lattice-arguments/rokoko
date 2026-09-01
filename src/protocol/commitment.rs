@@ -1,5 +1,8 @@
 use std::ops::IndexMut;
 
+#[cfg(feature = "parallel-commitment")]
+use rayon::prelude::*;
+
 use crate::{
     common::{
         decomposition::decompose,
@@ -51,15 +54,68 @@ pub fn commit_basic_internal(
         height: rank.next_power_of_two(),
     };
 
-    let mut temp = RingElement::zero(Representation::IncompleteNTT);
     for (i, row) in ck.iter().take(rank).enumerate() {
         for col in 0..witness.used_cols {
-            for (elem, w_elem) in row.preprocessed_row.iter().zip(witness.col(col).iter()) {
-                temp *= (elem, w_elem);
-                *commitment.index_mut((i, col)) += &temp;
-            }
+            inner_product_into(
+                commitment.index_mut((i, col)),
+                &row.preprocessed_row,
+                witness.col(col),
+            );
         }
     }
+    commitment
+}
+
+/// Accumulates `sum_k ck_row[k] * operand[k]` into `acc`.
+fn inner_product_into(acc: &mut RingElement, ck_row: &[RingElement], operand: &[RingElement]) {
+    let mut temp = RingElement::zero(Representation::IncompleteNTT);
+    for (elem, op_elem) in ck_row.iter().zip(operand.iter()) {
+        temp *= (elem, op_elem);
+        *acc += &temp;
+    }
+}
+
+/// `commit_basic_internal` with the output cells spread over a rayon pool.
+///
+/// Every cell `(i, col)` is an independent inner product accumulated in the
+/// same order as the serial loop, so the commitment is bit-identical.
+#[cfg(feature = "parallel-commitment")]
+#[tracing::instrument(skip_all, name = "commit::basic_internal_parallel")]
+pub fn commit_basic_internal_parallel(
+    ck: &CK,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    rank: usize,
+) -> BasicCommitment {
+    if rank == 0 {
+        return HorizontallyAlignedMatrix {
+            data: vec![RingElement::zero(Representation::IncompleteNTT); 0 * witness.width],
+            width: witness.width,
+            height: 0,
+        };
+    }
+    let mut commitment = HorizontallyAlignedMatrix {
+        data: vec![
+            RingElement::zero(Representation::IncompleteNTT);
+            rank.next_power_of_two() * witness.width
+        ],
+        width: witness.width,
+        height: rank.next_power_of_two(),
+    };
+
+    let width = commitment.width;
+    let used_cols = witness.used_cols;
+    commitment
+        .data
+        .par_chunks_mut(width)
+        .take(rank)
+        .enumerate()
+        .for_each(|(i, commitment_row)| {
+            let ck_row = &ck[i].preprocessed_row;
+            commitment_row[..used_cols]
+                .par_iter_mut()
+                .enumerate()
+                .for_each(|(col, acc)| inner_product_into(acc, ck_row, witness.col(col)));
+        });
     commitment
 }
 
@@ -73,6 +129,16 @@ pub fn commit_basic(
     let commitment = commit_basic_internal(ck, witness, rank);
 
     commitment
+}
+
+#[cfg(feature = "parallel-commitment")]
+pub fn commit_basic_parallel(
+    crs: &CRS,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    rank: usize,
+) -> BasicCommitment {
+    let ck = crs.ck_for_wit_dim(witness.height);
+    commit_basic_internal_parallel(ck, witness, rank)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -142,16 +208,55 @@ pub fn recursive_commit(
 
     let mut commitment = vec![RingElement::zero(Representation::IncompleteNTT); config.rank];
 
-    let mut temp = RingElement::zero(Representation::IncompleteNTT);
     for r in 0..config.rank {
-        for (elem, data_elem) in ck[r].preprocessed_row.iter().zip(committed_data.iter()) {
-            temp *= (elem, data_elem);
-            commitment[r] += &temp;
-        }
+        inner_product_into(&mut commitment[r], &ck[r].preprocessed_row, &committed_data);
     }
 
     let next = match &config.next {
         Some(next_config) => Some(Box::new(recursive_commit(crs, next_config, &commitment))),
+        None => None,
+    };
+
+    RecursiveCommitmentWithAux {
+        decomposition_base_log: config.decomposition_base_log,
+        decomposition_chunks: config.decomposition_chunks,
+        committed_data,
+        commitment,
+        next,
+    }
+}
+
+/// `recursive_commit` with the rank rows of each layer spread over a rayon
+/// pool. Each row is an independent inner product accumulated in the same
+/// order as the serial loop, so every layer is bit-identical.
+#[cfg(feature = "parallel-commitment")]
+#[tracing::instrument(skip_all, name = "commit::recursive_layer_parallel")]
+pub fn recursive_commit_parallel(
+    crs: &CRS,
+    config: &RecursionConfig,
+    data: &Vec<RingElement>,
+) -> RecursiveCommitmentWithAux {
+    let committed_data = decompose(
+        &data,
+        config.decomposition_base_log as u64,
+        config.decomposition_chunks,
+    );
+
+    let ck = crs.ck_for_wit_dim(committed_data.len());
+
+    let mut commitment = vec![RingElement::zero(Representation::IncompleteNTT); config.rank];
+
+    commitment
+        .par_iter_mut()
+        .enumerate()
+        .for_each(|(r, acc)| inner_product_into(acc, &ck[r].preprocessed_row, &committed_data));
+
+    let next = match &config.next {
+        Some(next_config) => Some(Box::new(recursive_commit_parallel(
+            crs,
+            next_config,
+            &commitment,
+        ))),
         None => None,
     };
 
