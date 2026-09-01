@@ -389,4 +389,290 @@ mod tests {
             run4.verifier.evaluation_points
         );
     }
+
+    /// Prove and verify one round of `config` end to end. The input witness is decomposed into
+    /// two element-major chunks, which is the top-level hypercube and independent of the round's
+    /// own `witness_decomposition_chunks`.
+    fn round_trip(config: &crate::protocol::config::SumcheckConfig) {
+        use crate::common::{
+            decomposition::decompose, matrix::VerticallyAlignedMatrix,
+            ring_arithmetic::Representation, sampling::sample_random_short_vector,
+        };
+        use crate::protocol::{
+            crs::CRS,
+            evaluation_point_sampler::sample_initial_evaluation_points,
+            parties::{commiter::commit, prover::prover_round, verifier::verifier_round},
+            sumcheck::init_sumcheck,
+            sumchecks::builder_verifier::init_verifier,
+        };
+
+        let crs = CRS::gen_prover_crs(config);
+        let verifier_crs = CRS::gen_verifier_crs(config);
+        let mut sumcheck_context = init_sumcheck(&crs, config);
+        let mut sumcheck_context_verifier = init_verifier(&verifier_crs, config);
+
+        let input_chunks = 2;
+        let base_log = 15;
+        let height = config.witness_height / input_chunks;
+        let width = config.witness_width;
+
+        let sampled = (0..config.nof_openings)
+            .map(|_| sample_initial_evaluation_points(height, width, base_log, input_chunks))
+            .collect::<Vec<_>>();
+        let inner = sampled
+            .iter()
+            .flat_map(|points| points.inner.iter().cloned())
+            .collect::<Vec<_>>();
+        let outer = sampled
+            .iter()
+            .flat_map(|points| points.outer.iter().cloned())
+            .collect::<Vec<_>>();
+
+        let raw =
+            sample_random_short_vector(height * width, 1u64 << 12, Representation::IncompleteNTT);
+        let witness = VerticallyAlignedMatrix {
+            height: config.witness_height,
+            width,
+            used_cols: width,
+            data: decompose(&raw, base_log as u64, input_chunks),
+        };
+
+        let (commitment_with_aux, rc_commitment) = commit(&crs, config, &witness);
+
+        let (proof, claims) = prover_round(
+            &crs,
+            config,
+            &commitment_with_aux,
+            &witness,
+            &inner,
+            &outer,
+            &mut sumcheck_context,
+            true,
+            None,
+            None,
+        );
+        let claims = claims.expect("prover must return claims");
+        assert_eq!(claims.len(), config.nof_openings);
+
+        verifier_round(
+            &verifier_crs,
+            config,
+            &rc_commitment,
+            &proof,
+            &inner,
+            &outer,
+            &claims,
+            &mut sumcheck_context_verifier,
+            None,
+            None,
+        );
+    }
+
+    /// A round with a non-power-of-two number of openings: the opening commitment is padded to
+    /// four rows, three of which are placed, one placement each.
+    #[test]
+    fn three_openings_round_trip() {
+        use crate::protocol::config_generator::{
+            AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig,
+        };
+        use crate::protocol::config::SimpleConfig;
+
+        init_common();
+
+        let aux = AuxSumcheckConfig {
+            witness_height: 1024,
+            witness_width: 16,
+            projection_ratio: 32,
+            projection_height: 256,
+            basic_commitment_rank: 3,
+            nof_openings: 3,
+            commitment_recursion: AuxRecursionConfig {
+                decomposition_base_log: 15,
+                decomposition_chunks: 4,
+                rank: 1,
+                next: Some(Box::new(AuxRecursionConfig {
+                    decomposition_base_log: 7,
+                    decomposition_chunks: 8,
+                    rank: 1,
+                    next: None,
+                })),
+            },
+            opening_recursion: AuxRecursionConfig {
+                decomposition_base_log: 15,
+                decomposition_chunks: 4,
+                rank: 1,
+                next: None,
+            },
+            projection_recursion: AuxProjection::Fine {
+                nof_batches: 2,
+                recursion_constant_term: AuxRecursionConfig {
+                    decomposition_base_log: 15,
+                    decomposition_chunks: 2,
+                    rank: 1,
+                    next: None,
+                },
+                recursion_batched_projection: AuxRecursionConfig {
+                    decomposition_base_log: 15,
+                    decomposition_chunks: 4,
+                    rank: 1,
+                    next: None,
+                },
+            },
+            witness_decomposition_chunks: 2,
+            witness_decomposition_base_log: 15,
+            next: Some(Box::new(AuxConfig::Simple(SimpleConfig {
+                witness_height: 256,
+                witness_width: 16,
+                projection_ratio: 128,
+                projection_height: 256,
+                projection_nof_batches: 2,
+                basic_commitment_rank: 2,
+                witness_norm_bound: f64::INFINITY,
+                projection_norm_bound: f64::INFINITY,
+            }))),
+        };
+
+        let generated = aux.generate_config();
+        let config = match &generated {
+            crate::protocol::config::Config::Sumcheck(config) => config,
+            _ => panic!("expected a sumcheck config"),
+        };
+
+        assert_eq!(config.opening_recursion.placements.len(), 3);
+        assert_eq!(config.opening_recursion.segments(), 4);
+
+        round_trip(config);
+    }
+
+    /// A round whose folded witness is decomposed into three digit planes: the component is two
+    /// dyadic blocks and the recomposition is a weighted sum over the planes.
+    #[test]
+    fn three_decomposition_chunks_round_trip() {
+        use crate::protocol::config_generator::{
+            AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig,
+        };
+        use crate::protocol::config::SimpleConfig;
+
+        init_common();
+
+        let aux = AuxSumcheckConfig {
+            witness_height: 512,
+            witness_width: 16,
+            projection_ratio: 32,
+            projection_height: 256,
+            basic_commitment_rank: 3,
+            nof_openings: 1,
+            commitment_recursion: AuxRecursionConfig {
+                decomposition_base_log: 15,
+                decomposition_chunks: 4,
+                rank: 1,
+                next: Some(Box::new(AuxRecursionConfig {
+                    decomposition_base_log: 7,
+                    decomposition_chunks: 8,
+                    rank: 1,
+                    next: None,
+                })),
+            },
+            opening_recursion: AuxRecursionConfig {
+                decomposition_base_log: 15,
+                decomposition_chunks: 4,
+                rank: 1,
+                next: None,
+            },
+            projection_recursion: AuxProjection::Fine {
+                nof_batches: 2,
+                recursion_constant_term: AuxRecursionConfig {
+                    decomposition_base_log: 15,
+                    decomposition_chunks: 2,
+                    rank: 1,
+                    next: None,
+                },
+                recursion_batched_projection: AuxRecursionConfig {
+                    decomposition_base_log: 15,
+                    decomposition_chunks: 4,
+                    rank: 1,
+                    next: None,
+                },
+            },
+            witness_decomposition_chunks: 3,
+            witness_decomposition_base_log: 15,
+            next: Some(Box::new(AuxConfig::Simple(SimpleConfig {
+                witness_height: 256,
+                witness_width: 16,
+                projection_ratio: 128,
+                projection_height: 256,
+                projection_nof_batches: 2,
+                basic_commitment_rank: 2,
+                witness_norm_bound: f64::INFINITY,
+                projection_norm_bound: f64::INFINITY,
+            }))),
+        };
+
+        let generated = aux.generate_config();
+        let config = match &generated {
+            crate::protocol::config::Config::Sumcheck(config) => config,
+            _ => panic!("expected a sumcheck config"),
+        };
+
+        // 512 * 3 is not a power of two, so the folded witness is two dyadic blocks.
+        assert_eq!(config.folded_witness_placement.size, 1536);
+        assert_eq!(config.folded_witness_placement.blocks.len(), 2);
+        assert_eq!(
+            config.folded_witness_placement.blocks[1].length,
+            config.folded_witness_placement.blocks[0].length + 1
+        );
+
+        round_trip(config);
+    }
+
+    /// A component whose size is not a power of two occupies the blocks of its binary
+    /// decomposition rather than one block of the next size up: three openings cost three
+    /// opening rows, not four.
+    #[test]
+    fn non_power_of_two_component_does_not_round_up() {
+        use crate::protocol::config_generator::{
+            AuxProjection, AuxRecursionConfig, AuxSumcheckConfig,
+        };
+
+        init_common();
+
+        let layout = |nof_openings: usize| AuxSumcheckConfig {
+            witness_height: 256,
+            witness_width: 256,
+            projection_ratio: 32,
+            projection_height: 8,
+            basic_commitment_rank: 1,
+            nof_openings,
+            commitment_recursion: AuxRecursionConfig {
+                decomposition_base_log: 15,
+                decomposition_chunks: 2,
+                rank: 1,
+                next: None,
+            },
+            opening_recursion: AuxRecursionConfig {
+                decomposition_base_log: 15,
+                decomposition_chunks: 4,
+                rank: 1,
+                next: None,
+            },
+            projection_recursion: AuxProjection::Skip,
+            witness_decomposition_chunks: 2,
+            witness_decomposition_base_log: 15,
+            next: None,
+        };
+
+        let composed = |nof_openings: usize| match layout(nof_openings).generate_config() {
+            crate::protocol::config::Config::Sumcheck(config) => config.composed_witness_length,
+            _ => panic!("expected a sumcheck config"),
+        };
+
+        // folded witness 256*2, one commitment row 256*2, and `nof_openings` opening rows 256*4.
+        let demanded = |nof_openings: usize| 512 + 512 + nof_openings * 1024;
+
+        assert_eq!(demanded(3), 4096);
+        assert_eq!(composed(3), 4096);
+
+        assert_eq!(demanded(4), 5120);
+        assert_eq!(composed(4), 8192);
+    }
 }

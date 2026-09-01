@@ -6,7 +6,9 @@ use crate::{
         ring_arithmetic::{QuadraticExtension, RingElement},
     },
     protocol::{
-        commitment::{Prefix, RecursionConfig, RecursiveCommitment, RecursiveCommitmentWithAux},
+        commitment::{
+            Placement, Prefix, RecursionConfig, RecursiveCommitment, RecursiveCommitmentWithAux,
+        },
         config_generator::{AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig},
         params::P,
         sumcheck_utils::polynomial::Polynomial,
@@ -253,7 +255,7 @@ pub struct SumcheckConfig {
 
     pub witness_decomposition_base_log: usize,
     pub witness_decomposition_chunks: usize,
-    pub folded_witness_prefix: Prefix,
+    pub folded_witness_placement: Placement,
 
     pub basic_commitment_rank: usize,
     pub composed_witness_length: usize,
@@ -659,11 +661,6 @@ impl SizeableProof for IntermediateRoundProof {
 }
 
 #[inline]
-pub fn paste_by_prefix(dest: &mut Vec<RingElement>, src: &Vec<RingElement>, prefix: &Prefix) {
-    paste_slice_by_prefix(dest, src, prefix);
-}
-
-#[inline]
 pub fn paste_slice_by_prefix(dest: &mut Vec<RingElement>, src: &[RingElement], prefix: &Prefix) {
     debug_assert_eq!(
         src.len().next_power_of_two(),
@@ -678,19 +675,30 @@ pub fn paste_slice_by_prefix(dest: &mut Vec<RingElement>, src: &[RingElement], p
     }
 }
 
+/// Pastes one component: each of its dyadic blocks lands at that block's prefix.
+#[inline]
+pub fn paste_placement(dest: &mut Vec<RingElement>, src: &[RingElement], placement: &Placement) {
+    debug_assert_eq!(src.len(), placement.size, "component length mismatch");
+    for (offset, size, prefix) in placement.blocks_with_offsets() {
+        paste_slice_by_prefix(dest, &src[offset..offset + size], &prefix);
+    }
+}
+
 pub fn paste_recursive_commitment(
     dest: &mut Vec<RingElement>,
     commitment: &RecursiveCommitmentWithAux,
     config: &RecursionConfig,
 ) {
-    // The commitment covers a power-of-two number of row segments; the ones past the real rows
-    // are identically zero, so only the placed segments reach the next round's witness.
-    let segment_len = commitment.committed_data.len() / config.segments();
-    for (segment, prefix) in config.prefixes.iter().enumerate() {
-        paste_slice_by_prefix(
+    // The commitment covers a power-of-two number of rows and digit planes; the ones past the
+    // real rows and planes are identically zero, so only the placed ones reach the next round's
+    // witness.
+    let row_stride = config.row_len() * config.padded_chunks();
+    for (row, placement) in config.placements.iter().enumerate() {
+        let start = row * row_stride;
+        paste_placement(
             dest,
-            &commitment.committed_data[segment * segment_len..(segment + 1) * segment_len],
-            prefix,
+            &commitment.committed_data[start..start + placement.size],
+            placement,
         );
     }
 

@@ -6,8 +6,11 @@ use crate::{
             combiner::Combiner,
             common::{HighOrderSumcheckData, SumcheckBaseData},
             diff::DiffSumcheck,
-            elephant_cell::ElephantCell, linear::LinearSumcheck, product::ProductSumcheck,
-            ring_to_field_combiner::RingToFieldCombiner, selector_eq::SelectorEq,
+            elephant_cell::ElephantCell,
+            linear::LinearSumcheck,
+            product::ProductSumcheck,
+            ring_to_field_combiner::RingToFieldCombiner,
+            selector_eq::SelectorEq,
         },
     },
 };
@@ -20,12 +23,12 @@ use crate::{
 /// Note: `coarse_proj_sumcheck` and `fine_proj_sumchecks` are mutually exclusive - only one is used
 pub struct SumcheckContext {
     pub combined_witness_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
-    pub folded_witness_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
-    pub folded_witness_combiner_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    /// Every selector the round uses, each registered once at construction and folded once per
+    /// round. Selectors are shared across constraints, so they are folded from here rather than
+    /// from the constraint contexts.
+    pub selectors: Vec<ElephantCell<SelectorEq<RingElement>>>,
     pub folding_challenges_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
-    pub basic_commitment_combiner_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub commitment_key_rows_sumcheck: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
-    pub opening_combiner_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub commitment_fold_sumchecks: Vec<CommitmentFoldSumcheckContext>,
     pub inner_eval_fold_sumchecks: Vec<InnerEvalFoldSumcheckContext>,
     pub outer_eval_claim_sumchecks: Vec<OuterEvalClaimSumcheckContext>,
@@ -48,37 +51,18 @@ impl SumcheckContext {
         self.combined_witness_sumcheck
             .borrow_mut()
             .partial_evaluate(r);
-        self.folded_witness_selector_sumcheck
-            .borrow_mut()
-            .partial_evaluate(r);
-        self.folded_witness_combiner_sumcheck
-            .borrow_mut()
-            .partial_evaluate(r);
+        for selector in self.selectors.iter() {
+            selector.borrow_mut().partial_evaluate(r);
+        }
         self.folding_challenges_sumcheck
-            .borrow_mut()
-            .partial_evaluate(r);
-        self.basic_commitment_combiner_sumcheck
             .borrow_mut()
             .partial_evaluate(r);
         for ck_row_sc in self.commitment_key_rows_sumcheck.iter() {
             ck_row_sc.borrow_mut().partial_evaluate(r);
         }
-        for commitment_fold_sc in self.commitment_fold_sumchecks.iter() {
-            commitment_fold_sc
-                .basic_commitment_row_sumcheck
-                .borrow_mut()
-                .partial_evaluate(r);
-        }
-        self.opening_combiner_sumcheck
-            .borrow_mut()
-            .partial_evaluate(r);
         for inner_eval_fold_sc in self.inner_eval_fold_sumchecks.iter() {
             inner_eval_fold_sc
                 .inner_evaluation_sumcheck
-                .borrow_mut()
-                .partial_evaluate(r);
-            inner_eval_fold_sc
-                .opening_selector_sumcheck
                 .borrow_mut()
                 .partial_evaluate(r);
         }
@@ -90,10 +74,6 @@ impl SumcheckContext {
         }
 
         if let Some(coarse_proj_sc) = &mut self.coarse_proj_sumcheck {
-            coarse_proj_sc
-                .projection_combiner_sumcheck
-                .borrow_mut()
-                .partial_evaluate(r);
             coarse_proj_sc
                 .lhs_flatter_0_sumcheck
                 .borrow_mut()
@@ -110,31 +90,15 @@ impl SumcheckContext {
                 .rhs_projection_flatter_sumcheck
                 .borrow_mut()
                 .partial_evaluate(r);
-            coarse_proj_sc
-                .projection_selector_sumcheck
-                .borrow_mut()
-                .partial_evaluate(r);
         }
 
         if let Some(fine_proj_sumchecks) = &mut self.fine_proj_sumchecks {
-            fine_proj_sumchecks
-                .projection_combiner_sumcheck
-                .borrow_mut()
-                .partial_evaluate(r);
             fine_proj_sumchecks
                 .rhs_fold_challenge_sumcheck
                 .borrow_mut()
                 .partial_evaluate(r);
             fine_proj_sumchecks
                 .lhs_scalar_consistency_sumcheck
-                .borrow_mut()
-                .partial_evaluate(r);
-            fine_proj_sumchecks
-                .projection_constant_terms_embedded_selector_sumcheck
-                .borrow_mut()
-                .partial_evaluate(r);
-            fine_proj_sumchecks
-                .projection_constant_terms_embedded_combiner_sumcheck
                 .borrow_mut()
                 .partial_evaluate(r);
 
@@ -145,10 +109,6 @@ impl SumcheckContext {
                     .partial_evaluate(r);
                 fine_proj_sc
                     .lhs_flatter_1_times_matrix_sumcheck
-                    .borrow_mut()
-                    .partial_evaluate(r);
-                fine_proj_sc
-                    .projection_selector_sumcheck
                     .borrow_mut()
                     .partial_evaluate(r);
                 fine_proj_sc
@@ -173,9 +133,6 @@ impl SumcheckContext {
             .conjugated_combined_witness
             .borrow_mut()
             .partial_evaluate(r);
-        for norm_check_sc in self.norm_check_sumcheck.selectors.iter() {
-            norm_check_sc.borrow_mut().partial_evaluate(r);
-        }
     }
 }
 
@@ -188,7 +145,6 @@ impl SumcheckContext {
 ///   LHS: selector · (recomposed_folded_witness · CK_row)
 ///   RHS: commitment_selector · (recomposed_commitment · fold_challenge)
 pub struct CommitmentFoldSumcheckContext {
-    pub basic_commitment_row_sumcheck: ElephantCell<SelectorEq<RingElement>>,
     pub output: ElephantCell<DiffSumcheck<RingElement>>,
 }
 
@@ -201,7 +157,6 @@ pub struct CommitmentFoldSumcheckContext {
 ///   RHS: opening_selector · (recomposed_opening_rhs · fold_challenge)
 pub struct InnerEvalFoldSumcheckContext {
     pub inner_evaluation_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
-    pub opening_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
     pub output: ElephantCell<DiffSumcheck<RingElement>>,
 }
 
@@ -215,7 +170,7 @@ pub struct InnerEvalFoldSumcheckContext {
 /// This is a product (not difference) since the result equals the public claimed_evaluation.
 pub struct OuterEvalClaimSumcheckContext {
     pub outer_evaluation_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
-    pub output: ElephantCell<ProductSumcheck<RingElement>>,
+    pub output: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
 }
 
 /// CoarseProj: Projection image consistency constraint.
@@ -229,12 +184,10 @@ pub struct OuterEvalClaimSumcheckContext {
 /// projection_coeffs is derived from the projection matrix and a random flattening point.
 /// fold_tensor = fold_challenge ⊗ projection_flattener ensures fold-then-project commutativity.
 pub struct CoarseProjSumcheckContext {
-    pub projection_combiner_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub lhs_flatter_0_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub lhs_flatter_1_times_matrix_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub rhs_fold_challenge_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub rhs_projection_flatter_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
-    pub projection_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
     pub output: ElephantCell<DiffSumcheck<RingElement>>,
 }
 
@@ -248,11 +201,7 @@ pub struct CoarseProjSumcheckContext {
 /// - `ck_sumchecks`: commitment key rows cut into the matching row segments, `rank` x segments
 /// - `outputs`: DiffSumchecks proving the constraint for each CK row, summed over the segments
 pub struct ComVerifyLayerSumcheckContext {
-    pub selector_sumchecks: Vec<ElephantCell<SelectorEq<RingElement>>>,
-    pub child_selector_sumcheck: Option<Vec<ElephantCell<SelectorEq<RingElement>>>>,
-    pub combiner_sumcheck: Option<ElephantCell<LinearSumcheck<RingElement>>>,
-    pub data_selected_sumchecks: Vec<ElephantCell<ProductSumcheck<RingElement>>>,
-    pub commitment_sumcheck: Option<ElephantCell<LinearSumcheck<RingElement>>>,
+    /// The commitment key rows cut into one slice per placed (row, plane), `rank` x slices.
     pub ck_sumchecks: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
     pub outputs: Vec<ElephantCell<DiffSumcheck<RingElement>>>,
 }
@@ -261,7 +210,6 @@ pub struct ComVerifyLayerSumcheckContext {
 ///
 /// Uses ProductSumchecks (not DiffSumchecks) since we check against a known public value.
 pub struct ComVerifyOutputLayerSumcheckContext {
-    pub selector_sumchecks: Vec<ElephantCell<SelectorEq<RingElement>>>,
     pub ck_sumchecks: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
     pub outputs: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>>,
 }
@@ -281,7 +229,6 @@ pub struct NormCheckSumcheckContext {
     pub output: ElephantCell<ProductSumcheck<RingElement>>,
 
     // we also give an opening to subvectors of the combined witness and its conjugate.
-    pub selectors: Vec<ElephantCell<SelectorEq<RingElement>>>,
     pub output_2: ElephantCell<ProductSumcheck<RingElement>>,
 }
 
@@ -297,7 +244,6 @@ pub struct NormCheckSumcheckContext {
 pub struct FineProjSumcheckContext {
     pub lhs_flatter_0_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub lhs_flatter_1_times_matrix_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
-    pub projection_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
     pub output: ElephantCell<DiffSumcheck<RingElement>>,
 
     pub lhs_consistency_flatter_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
@@ -312,39 +258,17 @@ pub struct FineProjSumcheckContext {
 /// (combiner, constant) and constant term embeddings used across all batches.
 pub struct FineProjSumcheckContextWrapper {
     pub sumchecks: [FineProjSumcheckContext; NOF_BATCHES],
-    pub projection_combiner_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
-    pub projection_constant_terms_embedded_combiner_sumcheck:
-        ElephantCell<LinearSumcheck<RingElement>>,
     pub rhs_fold_challenge_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
-    pub projection_constant_terms_embedded_selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
     pub lhs_scalar_consistency_sumcheck: ElephantCell<LinearSumcheck<RingElement>>, // for 1 as to scale over all variables
 }
 
 fn partial_evaluate_com_verify(ctx: &mut ComVerifySumcheckContext, r: &RingElement) {
     for layer in ctx.layers.iter_mut() {
-        for selector in layer.selector_sumchecks.iter() {
-            selector.borrow_mut().partial_evaluate(r);
-        }
-        if let Some(child_sel) = &layer.child_selector_sumcheck {
-            for sel in child_sel.iter() {
-                sel.borrow_mut().partial_evaluate(r);
-            }
-        }
-        if let Some(comb) = &layer.combiner_sumcheck {
-            comb.borrow_mut().partial_evaluate(r);
-        }
-        if let Some(commitment_sumcheck) = &layer.commitment_sumcheck {
-            commitment_sumcheck.borrow_mut().partial_evaluate(r);
-        }
         for ck in layer.ck_sumchecks.iter() {
             ck.borrow_mut().partial_evaluate(r);
         }
     }
 
-    // Fold the output (leaf) layer
-    for selector in ctx.output_layer.selector_sumchecks.iter() {
-        selector.borrow_mut().partial_evaluate(r);
-    }
     for ck in ctx.output_layer.ck_sumchecks.iter() {
         ck.borrow_mut().partial_evaluate(r);
     }
