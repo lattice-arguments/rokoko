@@ -38,6 +38,16 @@ pub fn commit_basic_internal(
     witness: &VerticallyAlignedMatrix<RingElement>,
     rank: usize,
 ) -> BasicCommitment {
+    commit_basic_internal_with(ck, witness, rank, false)
+}
+
+/// One commitment per (key row, witness column); the cells are independent accumulations.
+fn commit_basic_internal_with(
+    ck: &CK,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    rank: usize,
+    parallel: bool,
+) -> BasicCommitment {
     if rank == 0 {
         return HorizontallyAlignedMatrix {
             data: vec![RingElement::zero(Representation::IncompleteNTT); 0 * witness.width],
@@ -53,6 +63,26 @@ pub fn commit_basic_internal(
         width: witness.width,
         height: rank.next_power_of_two(),
     };
+
+    #[cfg(feature = "parallel-commitment")]
+    if parallel {
+        let width = commitment.width;
+        let used_cols = witness.used_cols;
+        commitment
+            .data
+            .par_chunks_mut(width)
+            .take(rank)
+            .enumerate()
+            .for_each(|(i, commitment_row)| {
+                let ck_row = &ck[i].preprocessed_row;
+                commitment_row[..used_cols]
+                    .par_iter_mut()
+                    .enumerate()
+                    .for_each(|(col, acc)| inner_product_into(acc, ck_row, witness.col(col)));
+            });
+        return commitment;
+    }
+    let _ = parallel;
 
     for (i, row) in ck.iter().take(rank).enumerate() {
         for col in 0..witness.used_cols {
@@ -66,7 +96,41 @@ pub fn commit_basic_internal(
     commitment
 }
 
+#[cfg(feature = "parallel-commitment")]
+pub fn commit_basic_parallel(
+    crs: &CRS,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    rank: usize,
+) -> BasicCommitment {
+    commit_basic_internal_with(crs.ck_for_wit_dim(witness.height), witness, rank, true)
+}
+
 /// Accumulates `sum_k ck_row[k] * operand[k]` into `acc`.
+/// Accumulates `rank` independent inner products against the same operand.
+///
+/// Each output accumulates over `k` in ascending order regardless of who computes it, so which
+/// thread takes which row does not affect the result.
+fn accumulate_rows(
+    commitment: &mut [RingElement],
+    ck: &CK,
+    operand: &[RingElement],
+    rank: usize,
+    parallel: bool,
+) {
+    #[cfg(feature = "parallel-commitment")]
+    if parallel {
+        commitment[..rank]
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(r, acc)| inner_product_into(acc, &ck[r].preprocessed_row, operand));
+        return;
+    }
+    let _ = parallel;
+    for r in 0..rank {
+        inner_product_into(&mut commitment[r], &ck[r].preprocessed_row, operand);
+    }
+}
+
 fn inner_product_into(acc: &mut RingElement, ck_row: &[RingElement], operand: &[RingElement]) {
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
     for (elem, op_elem) in ck_row.iter().zip(operand.iter()) {
@@ -75,49 +139,6 @@ fn inner_product_into(acc: &mut RingElement, ck_row: &[RingElement], operand: &[
     }
 }
 
-/// `commit_basic_internal` with the output cells spread over a rayon pool.
-///
-/// Every cell `(i, col)` is an independent inner product accumulated in the
-/// same order as the serial loop, so the commitment is bit-identical.
-#[cfg(feature = "parallel-commitment")]
-#[tracing::instrument(skip_all, name = "commit::basic_internal_parallel")]
-pub fn commit_basic_internal_parallel(
-    ck: &CK,
-    witness: &VerticallyAlignedMatrix<RingElement>,
-    rank: usize,
-) -> BasicCommitment {
-    if rank == 0 {
-        return HorizontallyAlignedMatrix {
-            data: vec![RingElement::zero(Representation::IncompleteNTT); 0 * witness.width],
-            width: witness.width,
-            height: 0,
-        };
-    }
-    let mut commitment = HorizontallyAlignedMatrix {
-        data: vec![
-            RingElement::zero(Representation::IncompleteNTT);
-            rank.next_power_of_two() * witness.width
-        ],
-        width: witness.width,
-        height: rank.next_power_of_two(),
-    };
-
-    let width = commitment.width;
-    let used_cols = witness.used_cols;
-    commitment
-        .data
-        .par_chunks_mut(width)
-        .take(rank)
-        .enumerate()
-        .for_each(|(i, commitment_row)| {
-            let ck_row = &ck[i].preprocessed_row;
-            commitment_row[..used_cols]
-                .par_iter_mut()
-                .enumerate()
-                .for_each(|(col, acc)| inner_product_into(acc, ck_row, witness.col(col)));
-        });
-    commitment
-}
 
 // this is first level commit for FW = Y
 pub fn commit_basic(
@@ -131,15 +152,6 @@ pub fn commit_basic(
     commitment
 }
 
-#[cfg(feature = "parallel-commitment")]
-pub fn commit_basic_parallel(
-    crs: &CRS,
-    witness: &VerticallyAlignedMatrix<RingElement>,
-    rank: usize,
-) -> BasicCommitment {
-    let ck = crs.ck_for_wit_dim(witness.height);
-    commit_basic_internal_parallel(ck, witness, rank)
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Prefix {
@@ -324,6 +336,25 @@ pub fn recursive_commit(
     config: &RecursionConfig,
     data: &Vec<RingElement>,
 ) -> RecursiveCommitmentWithAux {
+    recursive_commit_with(crs, config, data, false)
+}
+
+#[cfg(feature = "parallel-commitment")]
+#[tracing::instrument(skip_all, name = "commit::recursive_layer_parallel")]
+pub fn recursive_commit_parallel(
+    crs: &CRS,
+    config: &RecursionConfig,
+    data: &Vec<RingElement>,
+) -> RecursiveCommitmentWithAux {
+    recursive_commit_with(crs, config, data, true)
+}
+
+fn recursive_commit_with(
+    crs: &CRS,
+    config: &RecursionConfig,
+    data: &Vec<RingElement>,
+    parallel: bool,
+) -> RecursiveCommitmentWithAux {
     // A commitment's input length must be a power of two, so the input is padded up to
     // `segments()` rows of `padded_chunks()` digit planes. Only the real rows are decomposed:
     // decomposing a zero row does not give zero digits, and the padding has to be genuinely zero
@@ -349,14 +380,11 @@ pub fn recursive_commit(
 
     let mut commitment = vec![RingElement::zero(Representation::IncompleteNTT); config.rank];
 
-    for r in 0..config.rank {
-        inner_product_into(&mut commitment[r], &ck[r].preprocessed_row, &committed_data);
-    }
+    accumulate_rows(&mut commitment, ck, &committed_data, config.rank, parallel);
 
-    let next = match &config.next {
-        Some(next_config) => Some(Box::new(recursive_commit(crs, next_config, &commitment))),
-        None => None,
-    };
+    let next = config.next.as_ref().map(|next_config| {
+        Box::new(recursive_commit_with(crs, next_config, &commitment, parallel))
+    });
 
     RecursiveCommitmentWithAux {
         decomposition_base_log: config.decomposition_base_log,
@@ -367,48 +395,6 @@ pub fn recursive_commit(
     }
 }
 
-/// `recursive_commit` with the rank rows of each layer spread over a rayon
-/// pool. Each row is an independent inner product accumulated in the same
-/// order as the serial loop, so every layer is bit-identical.
-#[cfg(feature = "parallel-commitment")]
-#[tracing::instrument(skip_all, name = "commit::recursive_layer_parallel")]
-pub fn recursive_commit_parallel(
-    crs: &CRS,
-    config: &RecursionConfig,
-    data: &Vec<RingElement>,
-) -> RecursiveCommitmentWithAux {
-    let committed_data = decompose(
-        &data,
-        config.decomposition_base_log as u64,
-        config.decomposition_chunks,
-    );
-
-    let ck = crs.ck_for_wit_dim(committed_data.len());
-
-    let mut commitment = vec![RingElement::zero(Representation::IncompleteNTT); config.rank];
-
-    commitment
-        .par_iter_mut()
-        .enumerate()
-        .for_each(|(r, acc)| inner_product_into(acc, &ck[r].preprocessed_row, &committed_data));
-
-    let next = match &config.next {
-        Some(next_config) => Some(Box::new(recursive_commit_parallel(
-            crs,
-            next_config,
-            &commitment,
-        ))),
-        None => None,
-    };
-
-    RecursiveCommitmentWithAux {
-        decomposition_base_log: config.decomposition_base_log,
-        decomposition_chunks: config.decomposition_chunks,
-        committed_data,
-        commitment,
-        next,
-    }
-}
 
 #[cfg(test)]
 mod tests {
