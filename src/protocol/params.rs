@@ -158,6 +158,7 @@ fn assign_norm_bounds(config: &mut Config, bounds: &[[f64; 2]]) {
 
 pub fn p_exact_norm_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
     AuxSumcheckConfig {
+        exact_projection_norm: false,
         witness_height: size.pick(
             2usize.pow(13),
             2usize.pow(14),
@@ -197,6 +198,7 @@ pub fn p_exact_norm_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumche
 
 pub fn p_int(size: SizeConfig) -> AuxSumcheckConfig {
     AuxSumcheckConfig {
+        exact_projection_norm: false,
         witness_height: size.pick(
             2usize.pow(14),
             2usize.pow(15),
@@ -236,6 +238,7 @@ pub fn p_int(size: SizeConfig) -> AuxSumcheckConfig {
 
 pub fn p_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
     AuxSumcheckConfig {
+        exact_projection_norm: false,
         witness_height: size.pick(
             2usize.pow(13),
             2usize.pow(14),
@@ -270,6 +273,7 @@ pub fn p_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
 
 pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
     AuxSumcheckConfig {
+        exact_projection_norm: false,
         witness_height: size.pick(
             2usize.pow(13),
             2usize.pow(13),
@@ -313,6 +317,7 @@ pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
 
 pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
     AuxSumcheckConfig {
+        exact_projection_norm: false,
         witness_height: size.pick(
             2usize.pow(10),
             2usize.pow(10),
@@ -453,6 +458,7 @@ pub static P_TWO_EVALS: LazyLock<Config> = LazyLock::new(|| match compiled_size(
 });
 
 pub static P_3: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
+    exact_projection_norm: false,
     witness_height: 2usize.pow(8),
     witness_width: 2usize.pow(5),
     projection_ratio: 2usize.pow(6),
@@ -494,6 +500,7 @@ pub static P_3: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
 });
 
 pub static P_4: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
+    exact_projection_norm: false,
     witness_height: 2usize.pow(9),
     witness_width: 2usize.pow(3),
     projection_ratio: 2usize.pow(5),
@@ -535,6 +542,7 @@ pub static P_4: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
 });
 
 pub static P_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
+    exact_projection_norm: false,
     witness_height: 2usize.pow(8),
     witness_width: 2usize.pow(3),
     projection_ratio: 2usize.pow(6),

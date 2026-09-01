@@ -40,7 +40,9 @@ use super::loader::load_sumcheck_data;
 /// - **ComVerify**: Recursive commitment trees (commitment, opening, projection recursions)
 ///   - Internal layers: `CK_i · selected_witness_i = compose(child_commitment_{i+1})`
 ///   - Output layer: `selector · (CK_leaf · witness) = public_commitment`
-/// - **NormCheck**: `<combined_witness, conjugated_combined_witness> = norm_claim`
+/// - **NormCheck**: `<combined_witness, conjugated_combined_witness> = norm_claim`, plus the same
+///   inner product scoped to the most-inner commitments and, when the round asks for it, to the
+///   projection recursion's level-0 placements
 #[tracing::instrument(skip_all, name = "sumcheck")]
 pub fn sumcheck(
     config: &SumcheckConfig,
@@ -56,6 +58,7 @@ pub fn sumcheck(
     RingElement,
     RingElement,
     RingElement,
+    Option<RingElement>,
     Vec<Polynomial<QuadraticExtension>>,
     Vec<RingElement>,
     Option<Vec<RingElement>>,
@@ -120,6 +123,12 @@ pub fn sumcheck(
         .borrow_mut()
         .claim();
 
+    let projection_norm_claim = sumcheck_context
+        .norm_check_sumcheck
+        .output_3
+        .as_ref()
+        .map(|output_3| output_3.borrow_mut().claim());
+
     let constant_term_claims =
         sumcheck_context
             .fine_proj_sumchecks
@@ -135,6 +144,9 @@ pub fn sumcheck(
     // All prover claims entering the batched combination must be bound by the
     // transcript before the batching challenges are sampled.
     hash_wrapper.update_with_ring_element(&norm_inner_norm_claim);
+    if let Some(projection_norm_claim) = &projection_norm_claim {
+        hash_wrapper.update_with_ring_element(projection_norm_claim);
+    }
     if let Some(constant_term_claims) = &constant_term_claims {
         hash_wrapper.update_with_ring_element_slice(constant_term_claims);
     }
@@ -229,6 +241,7 @@ pub fn sumcheck(
         claim_over_witness_conjugate,
         norm_claim,
         norm_inner_norm_claim,
+        projection_norm_claim,
         polys,
         evaluation_points,
         constant_term_claims,
