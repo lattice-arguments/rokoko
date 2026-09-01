@@ -31,7 +31,7 @@ use crate::{
             InnerEvalFoldVerifierContext, NextVerifierSumcheckContext, NormCheckVerifierContext,
             OuterEvalClaimVerifierContext, VerifierSumcheckContext,
         },
-        sumchecks::helpers::{block_recomposition_weights, plane_weight, row_committed_pieces},
+        sumchecks::helpers::{block_recomposition_weights, row_committed_pieces},
     },
 };
 
@@ -48,29 +48,6 @@ fn selector_evaluation_from_prefix(
     ))
 }
 
-/// Verifier dual of `plane_selectors`: one evaluation per digit plane of a placed component,
-/// scaled by its radix weight.
-fn plane_selector_evaluations(
-    placement: &Placement,
-    chunks: usize,
-    base_log: usize,
-    total_vars: usize,
-    parts: usize,
-    part: usize,
-) -> Vec<ElephantCell<SelectorEqEvaluation>> {
-    (0..chunks)
-        .map(|plane| {
-            let prefix = placement.slice(plane * parts + part, chunks * parts);
-            ElephantCell::new(SelectorEqEvaluation::new_scaled(
-                prefix.prefix,
-                prefix.length,
-                total_vars,
-                plane_weight(base_log, plane),
-            ))
-        })
-        .collect()
-}
-
 fn sum_of_evaluations(terms: Vec<ElephantCell<EvalData>>) -> ElephantCell<EvalData> {
     terms
         .into_iter()
@@ -78,58 +55,26 @@ fn sum_of_evaluations(terms: Vec<ElephantCell<EvalData>>) -> ElephantCell<EvalDa
         .expect("a component has at least one placed plane")
 }
 
-fn weighted_sum_evaluation(
-    selectors: &[ElephantCell<SelectorEqEvaluation>],
-    payload: ElephantCell<EvalData>,
-) -> ElephantCell<EvalData> {
-    sum_of_evaluations(
-        selectors
-            .iter()
-            .map(|selector| {
-                ElephantCell::new(ProductSumcheckEvaluation::new(
-                    selector.clone(),
-                    payload.clone(),
-                )) as ElephantCell<EvalData>
-            })
-            .collect(),
-    )
-}
-
-/// Verifier dual of `Recomposition`: the factor `SUM_j 2^{base_log . j} . selector_j` a placed
-/// component is recomposed by, in whichever of the two forms the placement admits.
-enum RecompositionEvaluation {
-    Planes(Vec<ElephantCell<SelectorEqEvaluation>>),
-    Block(ElephantCell<EvalData>),
+/// Verifier dual of `Recomposition`.
+struct RecompositionEvaluation {
+    factor: ElephantCell<EvalData>,
 }
 
 impl RecompositionEvaluation {
     /// Dual of `Recomposition::factor`.
     fn factor(&self) -> ElephantCell<EvalData> {
-        match self {
-            RecompositionEvaluation::Planes(planes) => sum_of_evaluations(
-                planes
-                    .iter()
-                    .map(|plane| plane.clone() as ElephantCell<EvalData>)
-                    .collect(),
-            ),
-            RecompositionEvaluation::Block(factor) => factor.clone(),
-        }
+        self.factor.clone()
     }
 
     /// Dual of `Recomposition::times`.
     fn times(&self, payload: ElephantCell<EvalData>) -> ElephantCell<EvalData> {
-        match self {
-            RecompositionEvaluation::Planes(planes) => weighted_sum_evaluation(planes, payload),
-            RecompositionEvaluation::Block(factor) => {
-                ElephantCell::new(ProductSumcheckEvaluation::new(factor.clone(), payload))
-                    as ElephantCell<EvalData>
-            }
-        }
+        ElephantCell::new(ProductSumcheckEvaluation::new(self.factor.clone(), payload))
+            as ElephantCell<EvalData>
     }
 }
 
 /// Dual of `FoldedLeaves::recomposition`. The verifier folds nothing, so the leaves need no
-/// registry; the two sides agree on which form a placement takes through
+/// registry; the two sides get the same blocks and weights from
 /// `block_recomposition_weights`.
 fn recomposition_evaluation(
     placement: &Placement,
@@ -139,8 +84,9 @@ fn recomposition_evaluation(
     parts: usize,
     part: usize,
 ) -> RecompositionEvaluation {
-    match block_recomposition_weights(placement, chunks, base_log, parts, part) {
-        Some((prefix, weights)) => {
+    let terms = block_recomposition_weights(placement, chunks, base_log, parts, part)
+        .into_iter()
+        .map(|(prefix, weights)| {
             let block = selector_evaluation_from_prefix(&prefix, total_vars);
             let weights_evaluation = basic_evaluation_linear(
                 weights.len(),
@@ -149,14 +95,13 @@ fn recomposition_evaluation(
             );
             weights_evaluation.borrow_mut().load_from(&weights);
 
-            RecompositionEvaluation::Block(ElephantCell::new(ProductSumcheckEvaluation::new(
-                block,
-                weights_evaluation,
-            )) as ElephantCell<EvalData>)
-        }
-        None => RecompositionEvaluation::Planes(plane_selector_evaluations(
-            placement, chunks, base_log, total_vars, parts, part,
-        )),
+            ElephantCell::new(ProductSumcheckEvaluation::new(block, weights_evaluation))
+                as ElephantCell<EvalData>
+        })
+        .collect();
+
+    RecompositionEvaluation {
+        factor: sum_of_evaluations(terms),
     }
 }
 
@@ -301,10 +246,10 @@ fn ck_over_pieces_evaluation(
                 piece.ck_slice,
             );
             ck_evals.push(ck.clone());
-            terms.push(ElephantCell::new(ProductSumcheckEvaluation::new(
-                ck,
-                piece.data.clone(),
-            )) as ElephantCell<EvalData>);
+            terms.push(
+                ElephantCell::new(ProductSumcheckEvaluation::new(ck, piece.data.clone()))
+                    as ElephantCell<EvalData>,
+            );
         }
     }
 
