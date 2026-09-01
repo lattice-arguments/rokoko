@@ -52,8 +52,13 @@ fn check_recursive_commitment(
         None => extracted_norm_most_inner,
     };
 
+    // `m` is the SIS dimension and a larger one makes the instance easier, so it counts only what
+    // a cheating prover can choose. The commitment covers `segments()` row slots, but only
+    // `prefixes.len()` of them are pasted into the next round's witness and the com-verify
+    // constraint sums over exactly those; the padding slots enter no relation.
+    let placed = rc.committed_data.len() / config.segments() * config.prefixes.len();
     let hardness = estimate_rsis_security(&RSISParameters {
-        m: rc.committed_data.len() as u64,
+        m: placed as u64,
         n: config.rank as u64,
         length_bound: current_extracted_norm.ceil() as u64,
     });
