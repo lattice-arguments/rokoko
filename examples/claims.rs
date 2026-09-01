@@ -27,7 +27,7 @@ fn main() {
     let witness = layout.finish();
 
     let prices: Vec<u64> = (1..=512).collect();
-    let revenue = (table(prices.clone()).on(balances_at) * witness_in(balances_at)).sum(&witness);
+    let revenue = (table(prices.clone()).on(balances_at.vars()) * witness_in(balances_at)).sum(&witness);
     let energy = (witness_in(everything) * witness_in(everything).conjugate()).sum(&witness);
 
     let build_claims = |transcript: &mut Transcript| -> Vec<Claim> {
@@ -37,11 +37,11 @@ fn main() {
 
         vec![
             Claim::sums_to(
-                table(prices.clone()).on(balances_at) * witness_in(balances_at),
+                table(prices.clone()).on(balances_at.vars()) * witness_in(balances_at),
                 revenue.clone(),
             ),
             Claim::sums_to_zero(
-                eq(&spot_check).on(balances_at) * (witness_in(balances_at) - witness_in(mirror_at)),
+                eq(&spot_check).on(balances_at.vars()) * (witness_in(balances_at) - witness_in(mirror_at)),
             ),
             Claim::sums_to(
                 eq(&audit_point).on(total_index)
