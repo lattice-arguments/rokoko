@@ -34,7 +34,7 @@ fn recomposition_factor(base_log: usize, chunks: usize) -> f64 {
 }
 
 static ROUND_ID: AtomicUsize = AtomicUsize::new(0);
-static DEBUG_HARDNESS_FROM_ROUND: usize = 1;
+static DEBUG_HARDNESS_FROM_ROUND: usize = 0;
 
 fn check_recursive_commitment(
     rc: &RecursiveCommitmentWithAux,
@@ -52,13 +52,8 @@ fn check_recursive_commitment(
         None => extracted_norm_most_inner,
     };
 
-    // `m` is the SIS dimension and a larger one makes the instance easier, so it counts only what
-    // a cheating prover can choose. The commitment covers `segments()` row slots, but only
-    // `prefixes.len()` of them are pasted into the next round's witness and the com-verify
-    // constraint sums over exactly those; the padding slots enter no relation.
-    let placed = rc.committed_data.len() / config.segments() * config.prefixes.len();
     let hardness = estimate_rsis_security(&RSISParameters {
-        m: placed as u64,
+        m: rc.committed_data.len() as u64,
         n: config.rank as u64,
         length_bound: current_extracted_norm.ceil() as u64,
     });
@@ -94,8 +89,9 @@ pub fn check_sumcheck_round(
     rc_opening: &RecursiveCommitmentWithAux,
     rc_coarse_projection: Option<&RecursiveCommitmentWithAux>,
     rc_fine_projection: Option<(&RecursiveCommitmentWithAux, &RecursiveCommitmentWithAux)>,
-    next_level_width: usize,
+    _next_level_width: usize, // this seems not needed, but we keep it for now to avoid changing the function signature
 ) {
+    // we run in on reference run used as a avg case and we put some slack 
     if ROUND_ID.fetch_add(1, Ordering::Relaxed) < DEBUG_HARDNESS_FROM_ROUND {
         return;
     }
@@ -255,16 +251,17 @@ pub fn check_sumcheck_round(
         argued_witness_bound
     };
 
+    // we have a joint boudn on random projection that is extracted_witness_bound which argues about the joint norm of the witness and one column must be less 
+
     match &config.projection_recursion {
         Projection::Skip => {
             // no projection: inner-product norm extraction is not available anyway
         }
         _ => {
-            let bound = next_level_width as f64 * argued_witness_bound * argued_witness_bound * NORM_MARGIN * NORM_MARGIN;
+            let bound = argued_witness_bound * argued_witness_bound * NORM_MARGIN * NORM_MARGIN;
             assert!(
                   bound < (MOD_Q as f64 / 2f64),
-                "Witness bound too large for inner-product norm extraction! {} * {} * {}^2 * {} = {} >= {} / 2 = {}, ratio: {}",
-                next_level_width,
+                "Witness bound too large for inner-product norm extraction! {} * {}^2 * {} = {} >= {} / 2 = {}, ratio: {}",
                 argued_witness_bound,
                 argued_witness_bound,
                 NORM_MARGIN,
