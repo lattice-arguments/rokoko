@@ -101,7 +101,7 @@ fn run(
     println!("TOTAL Prover time{}: {:?} ns", boundary_note, prover_duration);
 
     let proof_size_bits = proof.size_in_bits();
-    tracing::debug!("Total proof size{}: {} KB", boundary_note, to_kb(proof_size_bits));
+    println!("Total proof size{}: {} KB", boundary_note, to_kb(proof_size_bits));
     let start = std::time::Instant::now();
     let mut verifier_boundary = None;
     let verifier_span = tracing::info_span!("verifier").entered();
