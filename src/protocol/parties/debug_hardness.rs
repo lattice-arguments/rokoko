@@ -323,7 +323,8 @@ pub fn check_sumcheck_round(
         argued_witness_bound
     };
 
-    // we have a joint boudn on random projection that is extracted_witness_bound which argues about the joint norm of the witness and one column must be less 
+    // we have a joint boudn on random projection from the next round extraction (i.e. not per column) 
+    // that is extracted_witness_bound which argues about the joint norm of the witness and one column must be less that that.
 
     match &config.projection_recursion {
         Projection::Skip => {
@@ -350,6 +351,16 @@ pub fn check_sumcheck_round(
         n: config.basic_commitment_rank as u64,
         length_bound: worse_bound.ceil() as u64,
     });
+    let c = basic_commitment_security.as_ref().unwrap();
+    if c.secpar < 128.0 {
+        println!(
+            "WARNING! "
+        );
+    } else if c.secpar > 140.0 {
+        println!(
+            "LOOK OVERSECURE! "
+        );
+    }
     println!(
         "Basic commitment estimated security for extraction: {:?} with rank {}",
         basic_commitment_security, config.basic_commitment_rank

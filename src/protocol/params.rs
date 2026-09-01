@@ -60,23 +60,23 @@ pub fn compiled_size() -> SizeConfig {
 pub const NORM_MARGIN: f64 = 1.85; // verifier accepts norms up to this factor times the expected bound
 
 const NB_P_26: [[f64; 3]; 7] = [
-    [49979.34016171082, 2203.3345184061363, f64::INFINITY],
-    [75821.94466643546, 2728.295072018421, f64::INFINITY],
-    [48348.772807590474, 3132.952441388155, f64::INFINITY],
-    [37505.568799846245, 3120.744462464045, f64::INFINITY],
-    [20822.858209189246, 3119.3183550256617, f64::INFINITY],
-    [19930.12486162593, 18750.42316855809, f64::INFINITY],
-    [93839.12984464424, 223946.7505502145, f64::INFINITY],
+    [53005.60869379768, 2187.258786700833, f64::INFINITY],
+    [75795.76230238733, 2714.218487889286, f64::INFINITY],
+    [42347.903572668154, 3132.204335607752, f64::INFINITY],
+    [37207.207420068495, 3114.7304859329324, f64::INFINITY],
+    [21489.53142811634, 3131.9711045921226, f64::INFINITY],
+    [19936.88313152284, 18768.604210222988, f64::INFINITY],
+    [93674.81073372926, 224590.90958674173, f64::INFINITY],
 ];
 
 const NB_P_28: [[f64; 3]; 7] = [
-    [70793.45617357582, 2229.429523443161, f64::INFINITY],
-    [96950.81363763793, 2748.438829590355, f64::INFINITY],
-    [52740.724407235815, 3146.077875704923, f64::INFINITY],
-    [38649.83142265953, 3130.1356200650475, f64::INFINITY],
-    [20831.25339483921, 3122.3247749073125, f64::INFINITY],
-    [19939.37388686014, 18769.862253090723, f64::INFINITY],
-    [93765.42948229908, 236164.29947178724, f64::INFINITY],
+    [75086.2198009728, 2222.9271243115463, f64::INFINITY],
+    [97049.38765391568, 2710.4818759770374, f64::INFINITY],
+    [53543.95118031541, 3122.0562134593283, f64::INFINITY],
+    [39527.95458912591, 3159.0519147364453, f64::INFINITY],
+    [21491.85138604862, 3129.8618180360613, f64::INFINITY],
+    [20026.54103933078, 18844.89355236585, f64::INFINITY],
+    [94471.88754333217, 227110.0547906235, f64::INFINITY],
 ];
 
 const NB_P_30: [[f64; 3]; 7] = [
@@ -101,14 +101,14 @@ const NB_P_EN_26: [[f64; 3]; 8] = [
 ];
 
 const NB_P_EN_28: [[f64; 3]; 8] = [
-    [316140.5607273448, 2710.5032743016563, f64::INFINITY],
-    [147581.0541092589, 2714.6966681380813, f64::INFINITY],
-    [181869.85245773967, 2717.038093218422, f64::INFINITY],
-    [95340.00619362263, 3156.4337471266526, f64::INFINITY],
-    [53130.39420143615, 3134.5771644673227, f64::INFINITY],
-    [35536.13603080672, 3143.189940172245, f64::INFINITY],
-    [195785.91413837718, 195676.68320727433, f64::INFINITY],
-    [957901.1175105706, 2400647.839785128, f64::INFINITY],
+    [316064.95526552765, 2726.532229774664, 19255784.083067354],
+    [146363.3975111264, 2698.7339624349784, 3580972.197575122],
+    [97279.68811113654, 2717.1343360238925, f64::INFINITY],
+    [53533.04769952856, 3103.0016113434426, f64::INFINITY],
+    [38637.24035176425, 3136.247120365358, f64::INFINITY],
+    [20909.072169754447, 3142.1613580464004, f64::INFINITY],
+    [19882.262069492997, 18697.192837428833, f64::INFINITY],
+    [93275.05554005314, 237003.21750980514, f64::INFINITY],
 ];
 
 const NB_P_EN_29: [[f64; 3]; 8] = [
@@ -159,7 +159,7 @@ fn assign_norm_bounds(config: &mut Config, bounds: &[[f64; 3]]) {
 
 pub fn p_exact_norm_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
     AuxSumcheckConfig {
-        exact_projection_norm: false,
+        exact_projection_norm: true,
         witness_height: size.pick(
             2usize.pow(13),
             2usize.pow(14),
@@ -199,7 +199,7 @@ pub fn p_exact_norm_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumche
 
 pub fn p_int(size: SizeConfig) -> AuxSumcheckConfig {
     AuxSumcheckConfig {
-        exact_projection_norm: false,
+        exact_projection_norm: true,
         witness_height: size.pick(
             2usize.pow(14),
             2usize.pow(15),
@@ -249,7 +249,7 @@ pub fn p_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
         witness_width: size.pick(2usize.pow(7), 2usize.pow(8), 2usize.pow(8), 2usize.pow(9)),
         projection_ratio: 1,              // no-op
         projection_height: 2usize.pow(8), // no-op,
-        basic_commitment_rank: size.pick(8, 8, 8, 10),
+        basic_commitment_rank: size.pick(10, 10, 10, 12),
         nof_openings,
         commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
@@ -284,7 +284,7 @@ pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
         witness_width: size.pick(2usize.pow(3), 2usize.pow(4), 2usize.pow(4), 2usize.pow(4)),
         projection_ratio: 2usize.pow(5),
         projection_height: 2usize.pow(8),
-        basic_commitment_rank: size.pick(5, 5, 6, 6),
+        basic_commitment_rank: size.pick(6, 6, 6, 6),
         nof_openings: 2,
         commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
@@ -326,9 +326,9 @@ pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
             2usize.pow(11),
         ),
         witness_width: 2usize.pow(5),
-        projection_ratio: size.pick(2usize.pow(5), 2usize.pow(5), 2usize.pow(8), 2usize.pow(8)),
+        projection_ratio: size.pick(2usize.pow(6), 2usize.pow(5), 2usize.pow(8), 2usize.pow(8)),
         projection_height: 2usize.pow(8),
-        basic_commitment_rank: 5,
+        basic_commitment_rank: 6,
         nof_openings: 2,
         commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
@@ -464,7 +464,7 @@ pub static P_3: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
     witness_width: 2usize.pow(5),
     projection_ratio: 2usize.pow(6),
     projection_height: 2usize.pow(8),
-    basic_commitment_rank: 5,
+    basic_commitment_rank: 6,
     nof_openings: 2,
     commitment_recursion: AuxRecursionConfig {
         decomposition_base_log: 7,
@@ -506,7 +506,7 @@ pub static P_4: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
     witness_width: 2usize.pow(3),
     projection_ratio: 2usize.pow(5),
     projection_height: 2usize.pow(8),
-    basic_commitment_rank: 4,
+    basic_commitment_rank: 5,
     nof_openings: 2,
     commitment_recursion: AuxRecursionConfig {
         decomposition_base_log: 7,
@@ -590,7 +590,7 @@ pub static P_LAST: LazyLock<SimpleConfig> = LazyLock::new(|| SimpleConfig {
     witness_width: 2usize.pow(2),
     projection_ratio: 2usize.pow(7),
     projection_height: 2usize.pow(8),
-    basic_commitment_rank: 3,
+    basic_commitment_rank: 4,
     projection_nof_batches: 2,
     witness_norm_bound: f64::INFINITY,
     projection_norm_bound: f64::INFINITY,
