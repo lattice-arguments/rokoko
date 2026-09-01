@@ -344,6 +344,16 @@ mod tests {
     use crate::common::init_common;
     use std::num::NonZeroUsize;
 
+    /// The boundary tests stop a few rounds in, so they never reach the last sumcheck round,
+    /// whose recursions are single levels and whose level 0 is therefore itself a leaf. Only a
+    /// whole-chain run covers it.
+    #[cfg(not(feature = "p-29"))]
+    #[test]
+    fn full_chain_verifies() {
+        init_common();
+        super::execute();
+    }
+
     #[cfg(not(feature = "p-29"))]
     #[test]
     fn round_boundary_extraction() {

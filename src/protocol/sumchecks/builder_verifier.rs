@@ -240,30 +240,47 @@ fn build_com_verify_verifier_context(
         current = next;
     }
 
-    let selector_eval = selector_evaluation_from_prefix(&current.prefix(), total_vars);
-    let data_len = 1 << (total_vars - current.prefix().length);
-    let ck_evals = (0..current.rank)
-        .map(|i| structured_row_ck_evaluation(crs, total_vars, data_len, i, 0))
+    let placed = current.prefixes.len();
+    let segments = current.segments();
+    let data_len = segments * (1 << (total_vars - current.prefixes[0].length));
+
+    let selector_evals = current
+        .prefixes
+        .iter()
+        .map(|prefix| selector_evaluation_from_prefix(prefix, total_vars))
         .collect::<Vec<_>>();
 
-    let outputs = ck_evals
-        .iter()
-        .map(|ck_eval| {
-            let witness_with_ck = ElephantCell::new(ProductSumcheckEvaluation::new(
-                combined_witness_eval.clone(),
-                ck_eval.clone(),
+    let mut ck_evals = Vec::with_capacity(current.rank * placed);
+    for i in 0..current.rank {
+        for segment in 0..placed {
+            ck_evals.push(structured_row_ck_segment_evaluation(
+                crs, total_vars, data_len, i, segments, segment,
             ));
-            ElephantCell::new(ProductSumcheckEvaluation::new(
-                selector_eval.clone(),
-                witness_with_ck,
-            ))
+        }
+    }
+
+    let outputs = (0..current.rank)
+        .map(|i| {
+            (0..placed)
+                .map(|segment| {
+                    let witness_with_ck = ElephantCell::new(ProductSumcheckEvaluation::new(
+                        combined_witness_eval.clone(),
+                        ck_evals[i * placed + segment].clone(),
+                    ));
+                    ElephantCell::new(ProductSumcheckEvaluation::new(
+                        selector_evals[segment].clone(),
+                        witness_with_ck,
+                    )) as ElephantCell<EvalData>
+                })
+                .reduce(|acc, term| ElephantCell::new(SumSumcheckEvaluation::new(acc, term)))
+                .expect("every level places at least one row")
         })
         .collect::<Vec<_>>();
 
     ComVerifyVerifierContext {
         layers,
         output_layer: ComVerifyOutputLayerVerifierContext {
-            selector_evaluation: selector_eval,
+            selector_evaluations: selector_evals,
             ck_evaluations: ck_evals,
             outputs,
         },
@@ -851,46 +868,24 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
 
     let mut most_inner_commitments_selectors = vec![];
 
-    let most_inner_commitment_recursion = selector_evaluation_from_prefix(
-        &config.commitment_recursion.most_inner_config().prefix(),
-        total_vars,
-    );
+    // Mirrors the prover: every row block of a most-inner level enters the norm claim.
+    let mut push_most_inner = |recursion: &commitment::RecursionConfig| {
+        for prefix in recursion.most_inner_config().prefixes.iter() {
+            most_inner_commitments_selectors
+                .push(selector_evaluation_from_prefix(prefix, total_vars));
+        }
+    };
 
-    most_inner_commitments_selectors.push(most_inner_commitment_recursion);
-
-    let most_inner_opening_recursion = selector_evaluation_from_prefix(
-        &config.opening_recursion.most_inner_config().prefix(),
-        total_vars,
-    );
-
-    most_inner_commitments_selectors.push(most_inner_opening_recursion);
+    push_most_inner(&config.commitment_recursion);
+    push_most_inner(&config.opening_recursion);
 
     match &config.projection_recursion {
         Projection::Coarse(proj_config) => {
-            let most_inner_projection_recursion = selector_evaluation_from_prefix(
-                &proj_config.most_inner_config().prefix(),
-                total_vars,
-            );
-            most_inner_commitments_selectors.push(most_inner_projection_recursion);
+            push_most_inner(proj_config);
         }
         Projection::Fine(proj_config) => {
-            let most_inner_constant_term_recursion = selector_evaluation_from_prefix(
-                &proj_config
-                    .recursion_constant_term
-                    .most_inner_config()
-                    .prefix(),
-                total_vars,
-            );
-            most_inner_commitments_selectors.push(most_inner_constant_term_recursion);
-
-            let most_inner_batched_projection_recursion = selector_evaluation_from_prefix(
-                &proj_config
-                    .recursion_batched_projection
-                    .most_inner_config()
-                    .prefix(),
-                total_vars,
-            );
-            most_inner_commitments_selectors.push(most_inner_batched_projection_recursion);
+            push_most_inner(&proj_config.recursion_constant_term);
+            push_most_inner(&proj_config.recursion_batched_projection);
         }
         Projection::Skip => {
             // Do nothing
