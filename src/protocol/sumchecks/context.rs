@@ -3,7 +3,9 @@ use crate::{
     protocol::{
         intermediate_sumchecks::context::IntermediateSumcheckContext,
         sumcheck_utils::{
-            combiner::Combiner, common::SumcheckBaseData, diff::DiffSumcheck,
+            combiner::Combiner,
+            common::{HighOrderSumcheckData, SumcheckBaseData},
+            diff::DiffSumcheck,
             elephant_cell::ElephantCell, linear::LinearSumcheck, product::ProductSumcheck,
             ring_to_field_combiner::RingToFieldCombiner, selector_eq::SelectorEq,
         },
@@ -259,9 +261,9 @@ pub struct ComVerifyLayerSumcheckContext {
 ///
 /// Uses ProductSumchecks (not DiffSumchecks) since we check against a known public value.
 pub struct ComVerifyOutputLayerSumcheckContext {
-    pub selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
+    pub selector_sumchecks: Vec<ElephantCell<SelectorEq<RingElement>>>,
     pub ck_sumchecks: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
-    pub outputs: Vec<ElephantCell<ProductSumcheck<RingElement>>>,
+    pub outputs: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>>,
 }
 
 /// ComVerify: Complete recursive commitment verification structure.
@@ -340,10 +342,9 @@ fn partial_evaluate_com_verify(ctx: &mut ComVerifySumcheckContext, r: &RingEleme
     }
 
     // Fold the output (leaf) layer
-    ctx.output_layer
-        .selector_sumcheck
-        .borrow_mut()
-        .partial_evaluate(r);
+    for selector in ctx.output_layer.selector_sumchecks.iter() {
+        selector.borrow_mut().partial_evaluate(r);
+    }
     for ck in ctx.output_layer.ck_sumchecks.iter() {
         ck.borrow_mut().partial_evaluate(r);
     }

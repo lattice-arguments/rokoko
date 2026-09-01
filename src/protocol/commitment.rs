@@ -109,7 +109,9 @@ impl RecursionConfig {
 
     /// The single prefix of a level whose input is placed as one block.
     pub fn prefix(&self) -> Prefix {
-        debug_assert_eq!(self.prefixes.len(), 1, "this level has one prefix per row");
+        // Checked in release too: on a multi-row level this would return one row's prefix and
+        // the caller would constrain that row alone, which is a wrong proof rather than a crash.
+        assert_eq!(self.prefixes.len(), 1, "this level has one prefix per row");
         self.prefixes[0]
     }
 

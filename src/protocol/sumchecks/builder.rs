@@ -156,38 +156,50 @@ fn build_com_verify_sumcheck_context(
     }
 
     // Build the output (leaf) layer
-    // This is the base case that checks against the public commitment value
-    let selector_sumcheck = sumcheck_from_prefix(&current.prefix(), total_vars);
+    // This is the base case that checks against the public commitment value.
+    // A level is placed one block per row whether or not it is the leaf, so the leaf sums the
+    // segments back up exactly as an internal layer does.
+    let placed = current.prefixes.len();
+    let segments = current.segments();
+    let data_len = segments * (1 << (total_vars - current.prefixes[0].length));
 
-    let mut ck_sumchecks = Vec::with_capacity(current.rank);
+    let selector_sumchecks = current
+        .prefixes
+        .iter()
+        .map(|prefix| sumcheck_from_prefix(prefix, total_vars))
+        .collect::<Vec<_>>();
+
+    let mut ck_sumchecks = Vec::with_capacity(current.rank * placed);
     for i in 0..current.rank {
-        ck_sumchecks.push(ck_sumcheck(
-            crs,
-            total_vars,
-            1 << (total_vars - current.prefix().length),
-            i,
-            0,
-        ));
+        for segment in 0..placed {
+            ck_sumchecks.push(ck_segment_sumcheck(
+                crs, total_vars, data_len, i, segments, segment,
+            ));
+        }
     }
 
-    let outputs = ck_sumchecks
-        .iter()
-        .map(|ck_row| {
-            let output = ElephantCell::new(ProductSumcheck::new(
-                selector_sumcheck.clone(),
-                ElephantCell::new(ProductSumcheck::new(
-                    combined_witness_sumcheck.clone(),
-                    ck_row.clone(),
-                )),
-            ));
-            output
+    let outputs = (0..current.rank)
+        .map(|i| {
+            (0..placed)
+                .map(|segment| {
+                    ElephantCell::new(ProductSumcheck::new(
+                        selector_sumchecks[segment].clone(),
+                        ElephantCell::new(ProductSumcheck::new(
+                            combined_witness_sumcheck.clone(),
+                            ck_sumchecks[i * placed + segment].clone(),
+                        )),
+                    ))
+                        as ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>
+                })
+                .reduce(|acc, term| ElephantCell::new(SumSumcheck::new(acc, term)))
+                .expect("every level places at least one row")
         })
         .collect::<Vec<_>>();
 
     ComVerifySumcheckContext {
         layers,
         output_layer: ComVerifyOutputLayerSumcheckContext {
-            selector_sumcheck,
+            selector_sumchecks,
             ck_sumchecks,
             outputs,
         },
@@ -747,43 +759,24 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
 
     let mut most_inner_commitments_selectors = Vec::new();
 
-    let most_inner_commitment_recursion = sumcheck_from_prefix(
-        &config.commitment_recursion.most_inner_config().prefix(),
-        total_vars,
-    );
+    // A most-inner level is placed one block per row like any other, so the norm claim covers
+    // every one of them: a selector per row, all summed into `sum_of_selectors`.
+    let mut push_most_inner = |recursion: &commitment::RecursionConfig| {
+        for prefix in recursion.most_inner_config().prefixes.iter() {
+            most_inner_commitments_selectors.push(sumcheck_from_prefix(prefix, total_vars));
+        }
+    };
 
-    most_inner_commitments_selectors.push(most_inner_commitment_recursion);
-
-    let most_inner_opening_recursion = sumcheck_from_prefix(
-        &config.opening_recursion.most_inner_config().prefix(),
-        total_vars,
-    );
-
-    most_inner_commitments_selectors.push(most_inner_opening_recursion);
+    push_most_inner(&config.commitment_recursion);
+    push_most_inner(&config.opening_recursion);
 
     match config.projection_recursion {
         Projection::Coarse(ref proj_config) => {
-            let most_inner_projection_recursion =
-                sumcheck_from_prefix(&proj_config.most_inner_config().prefix(), total_vars);
-            most_inner_commitments_selectors.push(most_inner_projection_recursion);
+            push_most_inner(proj_config);
         }
         Projection::Fine(ref proj_config) => {
-            let most_inner_constant_term_recursion = sumcheck_from_prefix(
-                &proj_config
-                    .recursion_constant_term
-                    .most_inner_config()
-                    .prefix(),
-                total_vars,
-            );
-            most_inner_commitments_selectors.push(most_inner_constant_term_recursion);
-            let most_inner_batched_projection_recursion = sumcheck_from_prefix(
-                &proj_config
-                    .recursion_batched_projection
-                    .most_inner_config()
-                    .prefix(),
-                total_vars,
-            );
-            most_inner_commitments_selectors.push(most_inner_batched_projection_recursion);
+            push_most_inner(&proj_config.recursion_constant_term);
+            push_most_inner(&proj_config.recursion_batched_projection);
         }
         Projection::Skip => {
             // No com_verify sumcheck for projection
