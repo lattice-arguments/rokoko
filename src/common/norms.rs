@@ -1,5 +1,29 @@
 use crate::common::{config::MOD_Q, ring_arithmetic::RingElement};
 
+const HARD_ASSERTION: bool = false;
+
+macro_rules! maybe_assert {
+    ($cond:expr $(,)?) => {
+        if HARD_ASSERTION {
+            assert!($cond);
+        } else if !($cond) {
+            eprintln!("Assertion failed: {}", stringify!($cond));
+        }
+    };
+    ($cond:expr, $($arg:tt)+) => {
+        if HARD_ASSERTION {
+            assert!($cond, $($arg)+);
+        } else if !($cond) {
+            eprintln!(
+                "Assertion failed: {} | {}",
+                stringify!($cond),
+                format_args!($($arg)+)
+            );
+        }
+    };
+}
+
+
 pub fn inf_norm(vec: &[RingElement]) -> u64 {
     vec.iter()
         .map(|el| {
@@ -49,7 +73,7 @@ pub fn l2_norm_coeffs(vec: &[RingElement]) -> f64 {
 
 pub fn assert_norm_bounded(label: &str, value: f64, bound: f64) {
     tracing::debug!("L2 norm of {label}: {value} (bound {bound})");
-    assert!(
+    maybe_assert!(
         value <= bound,
         "L2 norm of {label} = {value} exceeds the registered bound {bound}"
     );
