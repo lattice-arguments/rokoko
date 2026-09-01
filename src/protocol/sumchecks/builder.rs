@@ -683,10 +683,39 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         output.clone(),
     ));
 
+    // SUM_j 2^{2 . base_log . j} . <d_j, conj d_j> over the projection recursion's own digit
+    // planes. The recomposed image is SUM_j 2^{base_log . j} d_j, so Cauchy-Schwarz turns this
+    // claim into a bound on the image itself, up to sqrt(chunks).
+    let output_3 = config.projection_norm_scope().map(|recursion| {
+        let projection_planes = plane_selectors(
+            recursion.placement(),
+            recursion.decomposition_chunks,
+            2 * recursion.decomposition_base_log,
+            total_vars,
+            1,
+            0,
+        );
+        selectors.extend(projection_planes.iter().cloned());
+
+        let mut sum_of_projection_planes: Data = projection_planes[0].clone();
+        for selector in projection_planes.iter().skip(1) {
+            sum_of_projection_planes = ElephantCell::new(SumSumcheck::new(
+                sum_of_projection_planes.clone(),
+                selector.clone(),
+            ));
+        }
+
+        ElephantCell::new(ProductSumcheck::new(
+            sum_of_projection_planes,
+            output.clone(),
+        ))
+    });
+
     let norm_check_sumcheck = NormCheckSumcheckContext {
         conjugated_combined_witness: conjugated_combined_witness_sumcheck.clone(),
         output,
         output_2,
+        output_3,
     };
 
     // ComVerify sumchecks: Three separate recursive commitment trees
@@ -777,6 +806,9 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
 
     all_outputs.push(norm_check_sumcheck.output.clone());
     all_outputs.push(norm_check_sumcheck.output_2.clone());
+    if let Some(output_3) = &norm_check_sumcheck.output_3 {
+        all_outputs.push(output_3.clone());
+    }
 
     let combiner = ElephantCell::new(Combiner::new(all_outputs));
 

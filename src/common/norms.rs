@@ -89,20 +89,34 @@ pub mod calibration {
 
     static MEASURED: Mutex<Vec<(String, f64, f64)>> = Mutex::new(Vec::new());
 
-    /// Which column of a round's `[f64; 2]` a measurement belongs to, matching the field order
+    /// Where a measurement belongs in a round's row. `Column` matches the field order
     /// `assign_norm_bounds` assigns: `[norm_bound, most_inner_norm_bound]` for a sumcheck round,
     /// `[norm_bound, projection_norm_bound]` for an intermediate one, and
-    /// `[witness_norm_bound, projection_norm_bound]` for a simple one.
-    fn column(label: &str) -> usize {
+    /// `[witness_norm_bound, projection_norm_bound]` for a simple one. `Projection` is the exact
+    /// projection-image claim, which a sumcheck round makes on top of its two columns and which
+    /// no `NB_*` column holds.
+    enum Slot {
+        Column(usize),
+        Projection,
+    }
+
+    fn slot(label: &str) -> Slot {
         match label {
             "norm claim via inner-product"
             | "norm claim via inner-product (intermediate)"
-            | "folded witness in simple verifier" => 0,
+            | "folded witness in simple verifier" => Slot::Column(0),
             "most inner norm claim via inner-product"
             | "projection image in intermediate verifier"
-            | "projection image in simple verifier" => 1,
-            other => panic!("calibration: unknown norm label {other:?}; add it to `column`"),
+            | "projection image in simple verifier" => Slot::Column(1),
+            "projection image norm claim via inner-product" => Slot::Projection,
+            other => panic!("calibration: unknown norm label {other:?}; add it to `slot`"),
         }
+    }
+
+    /// One round's measurements: the two calibrated columns plus the optional projection claim.
+    struct Row {
+        columns: [(f64, f64); 2],
+        projection: Option<(f64, f64)>,
     }
 
     pub(super) fn record(label: &str, value: f64, bound: f64) {
@@ -115,39 +129,63 @@ pub mod calibration {
     /// Print what this run measured, as a table of headroom against the registered bounds and as
     /// an array literal to paste over the chain's `NB_*` constant. The literal holds the raw
     /// measurements; `assign_norm_bounds` applies `NORM_MARGIN` on top.
+    ///
+    /// A round contributes a variable number of measurements, so rows are cut at each column-0
+    /// label rather than by counting.
     pub fn print_table() {
         let measured = MEASURED.lock().unwrap();
         if measured.is_empty() {
             println!("\ncalibration: no norms were measured");
             return;
         }
-        assert_eq!(
-            measured.len() % 2,
-            0,
-            "calibration: {} measurements do not pair into rounds",
-            measured.len()
-        );
 
-        let mut rows: Vec<[(f64, f64); 2]> = Vec::new();
-        for pair in measured.chunks(2) {
-            let mut row = [(f64::NAN, f64::NAN); 2];
-            for (label, value, bound) in pair {
-                let col = column(label);
-                assert!(
-                    row[col].0.is_nan(),
-                    "calibration: two measurements for column {col} in one round ({label})"
-                );
-                row[col] = (*value, *bound);
+        let mut rows: Vec<Row> = Vec::new();
+        for (label, value, bound) in measured.iter() {
+            match slot(label) {
+                Slot::Column(0) => rows.push(Row {
+                    columns: [(*value, *bound), (f64::NAN, f64::NAN)],
+                    projection: None,
+                }),
+                Slot::Column(col) => {
+                    let row = rows.last_mut().unwrap_or_else(|| {
+                        panic!("calibration: {label:?} arrived before its round's first column")
+                    });
+                    assert!(
+                        row.columns[col].0.is_nan(),
+                        "calibration: two measurements for column {col} in one round ({label})"
+                    );
+                    row.columns[col] = (*value, *bound);
+                }
+                Slot::Projection => {
+                    let row = rows.last_mut().unwrap_or_else(|| {
+                        panic!("calibration: {label:?} arrived before its round's first column")
+                    });
+                    assert!(
+                        row.projection.is_none(),
+                        "calibration: two projection measurements in one round"
+                    );
+                    row.projection = Some((*value, *bound));
+                }
             }
-            rows.push(row);
         }
 
         println!("\n=== calibration: measured norms vs registered bounds ===");
         for (i, row) in rows.iter().enumerate() {
-            for (col, (value, bound)) in row.iter().enumerate() {
+            for (col, (value, bound)) in row.columns.iter().enumerate() {
+                if value.is_nan() {
+                    println!("round {i} col {col}: not measured");
+                    continue;
+                }
                 let flag = if value > bound { "  OVER" } else { "" };
                 println!(
                     "round {i} col {col}: measured {value:.6}  bound {bound:.6}  ratio {:.4}{flag}",
+                    value / bound
+                );
+            }
+            if let Some((value, bound)) = row.projection {
+                let flag = if value > bound { "  OVER" } else { "" };
+                println!(
+                    "round {i} projection: measured {value:.6}  bound {bound:.6}  ratio {:.4}{flag}",
                     value / bound
                 );
             }
@@ -156,8 +194,20 @@ pub mod calibration {
         println!("\n=== calibration: paste over this chain's NB_* constant ===");
         println!("[[f64; 2]; {}] = [", rows.len());
         for row in rows.iter() {
-            println!("    [{}, {}],", row[0].0, row[1].0);
+            println!("    [{}, {}],", row.columns[0].0, row.columns[1].0);
         }
         println!("];");
+
+        let projections: Vec<(usize, f64)> = rows
+            .iter()
+            .enumerate()
+            .filter_map(|(i, row)| row.projection.map(|(value, _)| (i, value)))
+            .collect();
+        if !projections.is_empty() {
+            println!("\n=== calibration: exact projection-image norms (no NB_* column) ===");
+            for (i, value) in projections {
+                println!("    round {i}: {value}");
+            }
+        }
     }
 }
