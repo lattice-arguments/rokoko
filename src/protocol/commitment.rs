@@ -81,12 +81,21 @@ pub struct Prefix {
     pub length: usize,
 }
 
+/// One recursion level: a single Ajtai commitment over this level's input, whose `rank` output
+/// elements are the next level's input.
+///
+/// `prefixes` says where the level's decomposed input lives in the next round's witness, one
+/// prefix per row. A commitment's input length must be a power of two (`ck_for_wit_dim` indexes
+/// the key by `ilog2`), so an `r x width` input is committed over `r.next_power_of_two()` rows.
+/// The prover leaves the padding rows zero, so only the `prefixes.len()` real rows are placed and
+/// the padding costs the round nothing.
 #[derive(Clone, Debug)]
 pub struct RecursionConfig {
     pub decomposition_base_log: usize,
     pub decomposition_chunks: usize,
     pub rank: usize,
-    pub prefix: Prefix,
+    /// One prefix per row segment of this level's input, in row order.
+    pub prefixes: Vec<Prefix>,
     pub next: Option<Box<RecursionConfig>>,
 }
 
@@ -96,6 +105,18 @@ impl RecursionConfig {
             Some(next_config) => next_config.most_inner_config(),
             None => self,
         }
+    }
+
+    /// The single prefix of a level whose input is placed as one block.
+    pub fn prefix(&self) -> Prefix {
+        debug_assert_eq!(self.prefixes.len(), 1, "this level has one prefix per row");
+        self.prefixes[0]
+    }
+
+    /// How many row segments the padded input is cut into: the real rows plus the zero padding
+    /// that is committed but never placed.
+    pub fn segments(&self) -> usize {
+        self.prefixes.len().next_power_of_two()
     }
 }
 
@@ -132,11 +153,22 @@ pub fn recursive_commit(
     config: &RecursionConfig,
     data: &Vec<RingElement>,
 ) -> RecursiveCommitmentWithAux {
-    let committed_data = decompose(
-        &data,
+    // A commitment's input length must be a power of two, so the input is padded up to
+    // `segments()` rows. Only the real rows are decomposed: decomposing a zero row does not give
+    // zero digits, and the padding has to be genuinely zero for the next round to be allowed to
+    // leave it out of its witness.
+    let row_len = data.len() / config.segments();
+    let real = decompose(
+        &data[..config.prefixes.len() * row_len],
         config.decomposition_base_log as u64,
         config.decomposition_chunks,
     );
+
+    let mut committed_data = vec![
+        RingElement::zero(Representation::IncompleteNTT);
+        data.len() * config.decomposition_chunks
+    ];
+    committed_data[..real.len()].clone_from_slice(&real);
 
     let ck = crs.ck_for_wit_dim(committed_data.len());
 
@@ -188,10 +220,10 @@ mod tests {
             decomposition_base_log: 3, // base 8
             decomposition_chunks: 4,
             rank: 2,
-            prefix: Prefix {
+            prefixes: vec![Prefix {
                 prefix: 0,
                 length: 0,
-            },
+            }],
             next: None,
         };
 

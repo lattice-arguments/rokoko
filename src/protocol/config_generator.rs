@@ -199,13 +199,16 @@ impl AuxSumcheckConfig {
             path: vec!["folded_witness".to_string()],
         });
 
-        // Commitment recursion chain
+        // Commitment recursion chain. A commitment's input length must be a power of two, so the
+        // prover pads the basic commitment up to `rank.next_power_of_two()` rows; the padding rows
+        // are zero and are never placed, so the round is charged for the real rows only.
         self.collect_recursion_components(
             &self.commitment_recursion,
             "commitment",
-            self.basic_commitment_rank.next_power_of_two() * self.witness_width, // It seems that we cannot fit into 4 rank, but 8 seems too large, so we use next power of two for simplicity
+            self.witness_width,
             components,
             vec!["commitment_recursion".to_string()],
+            self.basic_commitment_rank,
         );
 
         // Opening recursion chain
@@ -215,6 +218,7 @@ impl AuxSumcheckConfig {
             self.nof_openings * self.witness_width,
             components,
             vec!["opening_recursion".to_string()],
+            1,
         );
 
         // Projection recursion
@@ -227,6 +231,7 @@ impl AuxSumcheckConfig {
                     base_size,
                     components,
                     vec!["projection_recursion".to_string()],
+                    1,
                 );
             }
             AuxProjection::Fine {
@@ -245,6 +250,7 @@ impl AuxSumcheckConfig {
                         "projection_recursion".to_string(),
                         "constant_term".to_string(),
                     ],
+                    1,
                 );
 
                 let batched_size = self.witness_width * nof_batches;
@@ -257,6 +263,7 @@ impl AuxSumcheckConfig {
                         "projection_recursion".to_string(),
                         "batched_projection".to_string(),
                     ],
+                    1,
                 );
             }
             AuxProjection::Skip => {
@@ -265,6 +272,8 @@ impl AuxSumcheckConfig {
         }
     }
 
+    /// `base_size` is the input length of one row of this level's input; the level lays down
+    /// `rows` independent blocks of that size, each addressed by its own prefix.
     fn collect_recursion_components(
         &self,
         config: &AuxRecursionConfig,
@@ -272,6 +281,7 @@ impl AuxSumcheckConfig {
         base_size: usize,
         components: &mut Vec<ComponentInfo>,
         mut path: Vec<String>,
+        rows: usize,
     ) {
         let size = base_size * config.decomposition_chunks;
         let depth = path.iter().filter(|s| *s == "next").count();
@@ -282,11 +292,23 @@ impl AuxSumcheckConfig {
             format!("{}_level_{}", name_prefix, depth)
         };
 
-        components.push(ComponentInfo {
-            name,
-            size,
-            path: path.clone(),
-        });
+        if rows == 1 {
+            components.push(ComponentInfo {
+                name,
+                size,
+                path: path.clone(),
+            });
+        } else {
+            for row in 0..rows {
+                let mut row_path = path.clone();
+                row_path.push(format!("row_{}", row));
+                components.push(ComponentInfo {
+                    name: format!("{}_row_{}", name, row),
+                    size,
+                    path: row_path,
+                });
+            }
+        }
 
         if let Some(next) = &config.next {
             path.push("next".to_string());
@@ -298,6 +320,7 @@ impl AuxSumcheckConfig {
                 config.rank.next_power_of_two(),
                 components,
                 path,
+                1,
             );
         }
     }
@@ -323,6 +346,7 @@ impl AuxSumcheckConfig {
             &self.commitment_recursion,
             assigned_prefixes,
             &["commitment_recursion".to_string()],
+            self.basic_commitment_rank,
         );
 
         // Build opening recursion
@@ -330,6 +354,7 @@ impl AuxSumcheckConfig {
             &self.opening_recursion,
             assigned_prefixes,
             &["opening_recursion".to_string()],
+            1,
         );
 
         // Build projection recursion
@@ -338,6 +363,7 @@ impl AuxSumcheckConfig {
                 config,
                 assigned_prefixes,
                 &["projection_recursion".to_string()],
+                1,
             )),
             AuxProjection::Fine {
                 nof_batches,
@@ -351,6 +377,7 @@ impl AuxSumcheckConfig {
                         "projection_recursion".to_string(),
                         "constant_term".to_string(),
                     ],
+                    1,
                 );
 
                 let batched_projection = self.build_recursion_config(
@@ -360,6 +387,7 @@ impl AuxSumcheckConfig {
                         "projection_recursion".to_string(),
                         "batched_projection".to_string(),
                     ],
+                    1,
                 );
 
                 Projection::Fine(FineProjectionConfig {
@@ -406,12 +434,27 @@ impl AuxSumcheckConfig {
         aux_config: &AuxRecursionConfig,
         assigned_prefixes: &[(ComponentInfo, Prefix)],
         base_path: &[String],
+        rows: usize,
     ) -> RecursionConfig {
-        let prefix = assigned_prefixes
-            .iter()
-            .find(|(comp, _)| comp.path == base_path)
-            .map(|(_, prefix)| prefix.clone())
-            .expect(&format!("Prefix not found for path: {:?}", base_path));
+        let find = |path: &[String]| -> Prefix {
+            assigned_prefixes
+                .iter()
+                .find(|(comp, _)| comp.path == path)
+                .map(|(_, prefix)| prefix.clone())
+                .expect(&format!("Prefix not found for path: {:?}", path))
+        };
+
+        let prefixes = if rows == 1 {
+            vec![find(base_path)]
+        } else {
+            (0..rows)
+                .map(|row| {
+                    let mut row_path = base_path.to_vec();
+                    row_path.push(format!("row_{}", row));
+                    find(&row_path)
+                })
+                .collect()
+        };
 
         let next = if let Some(aux_next) = &aux_config.next {
             let mut next_path = base_path.to_vec();
@@ -420,6 +463,7 @@ impl AuxSumcheckConfig {
                 aux_next,
                 assigned_prefixes,
                 &next_path,
+                1,
             )))
         } else {
             None
@@ -429,7 +473,7 @@ impl AuxSumcheckConfig {
             decomposition_base_log: aux_config.decomposition_base_log,
             decomposition_chunks: aux_config.decomposition_chunks,
             rank: aux_config.rank,
-            prefix,
+            prefixes,
             next,
         }
     }

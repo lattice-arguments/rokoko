@@ -130,7 +130,7 @@ pub struct ComVerifyVerifierContext {
 }
 
 pub struct ComVerifyLayerVerifierContext {
-    pub selector_evaluation: ElephantCell<SelectorEqEvaluation>,
+    pub selector_evaluations: Vec<ElephantCell<SelectorEqEvaluation>>,
     pub child_selector_evaluations: Vec<ElephantCell<SelectorEqEvaluation>>,
     pub combiner_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub ck_evaluations: Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,

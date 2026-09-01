@@ -26,7 +26,7 @@ use super::{
         CommitmentFoldSumcheckContext, FineProjSumcheckContext, InnerEvalFoldSumcheckContext,
         OuterEvalClaimSumcheckContext, SumcheckContext,
     },
-    helpers::{ck_sumcheck, composition_sumcheck, sumcheck_from_prefix},
+    helpers::{ck_segment_sumcheck, ck_sumcheck, composition_sumcheck, sumcheck_from_prefix},
 };
 
 /// Builds sumcheck gadgets for recursive commitment verification.
@@ -50,15 +50,33 @@ fn build_com_verify_sumcheck_context(
     let mut layers = Vec::new();
     let mut current = config;
     while let Some(next) = current.next.as_deref() {
-        let selector_sumcheck = sumcheck_from_prefix(&current.prefix, total_vars);
+        // The level's input is placed one block per row, so a CK row meets it in as many dyadic
+        // segments and the constraint sums the segments back up.
+        debug_assert!(
+            current
+                .prefixes
+                .iter()
+                .all(|p| p.length == current.prefixes[0].length),
+            "row blocks of one level are equally sized"
+        );
+        let placed = current.prefixes.len();
+        let segments = current.segments();
+        let segment_len = 1 << (total_vars - current.prefixes[0].length);
+        let data_len = segments * segment_len;
+
+        let selector_sumchecks = current
+            .prefixes
+            .iter()
+            .map(|prefix| sumcheck_from_prefix(prefix, total_vars))
+            .collect::<Vec<_>>();
 
         let child_selector_sumchecks = (0..current.rank)
             .into_iter()
             .map(|i| {
                 sumcheck_from_prefix(
                     &Prefix {
-                        prefix: next.prefix.prefix * current.rank.next_power_of_two() + i,
-                        length: next.prefix.length
+                        prefix: next.prefix().prefix * current.rank.next_power_of_two() + i,
+                        length: next.prefix().length
                             + current.rank.next_power_of_two().ilog2() as usize,
                     },
                     total_vars,
@@ -66,12 +84,15 @@ fn build_com_verify_sumcheck_context(
             })
             .collect::<Vec<_>>();
 
-        let data_len = 1 << (total_vars - current.prefix.length);
-
-        let data_selected_sumcheck = ElephantCell::new(ProductSumcheck::new(
-            selector_sumcheck.clone(),
-            combined_witness_sumcheck.clone(),
-        ));
+        let data_selected_sumchecks = selector_sumchecks
+            .iter()
+            .map(|selector| {
+                ElephantCell::new(ProductSumcheck::new(
+                    selector.clone(),
+                    combined_witness_sumcheck.clone(),
+                ))
+            })
+            .collect::<Vec<_>>();
 
         let combiner_sumcheck = composition_sumcheck(
             next.decomposition_base_log as u64,
@@ -94,17 +115,27 @@ fn build_com_verify_sumcheck_context(
             })
             .collect::<Vec<_>>();
 
-        let mut ck_sumchecks = Vec::with_capacity(current.rank);
+        let mut ck_sumchecks = Vec::with_capacity(current.rank * placed);
         for i in 0..current.rank {
-            ck_sumchecks.push(ck_sumcheck(crs, total_vars, data_len, i, 0));
+            for segment in 0..placed {
+                ck_sumchecks.push(ck_segment_sumcheck(
+                    crs, total_vars, data_len, i, segments, segment,
+                ));
+            }
         }
 
         let outputs = (0..current.rank)
             .map(|i| {
-                let lhs = ElephantCell::new(ProductSumcheck::new(
-                    ck_sumchecks[i].clone(),
-                    data_selected_sumcheck.clone(),
-                ));
+                let lhs = (0..placed)
+                    .map(|segment| {
+                        ElephantCell::new(ProductSumcheck::new(
+                            ck_sumchecks[i * placed + segment].clone(),
+                            data_selected_sumchecks[segment].clone(),
+                        ))
+                            as ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>
+                    })
+                    .reduce(|acc, term| ElephantCell::new(SumSumcheck::new(acc, term)))
+                    .expect("every level places at least one row");
 
                 let rhs = recomposed_child_sumchecks[i].clone();
                 ElephantCell::new(DiffSumcheck::new(lhs, rhs))
@@ -112,11 +143,10 @@ fn build_com_verify_sumcheck_context(
             .collect::<Vec<_>>();
 
         layers.push(ComVerifyLayerSumcheckContext {
-            selector_sumcheck,
+            selector_sumchecks,
             child_selector_sumcheck: Some(child_selector_sumchecks),
             combiner_sumcheck: Some(combiner_sumcheck),
-            data_selected_sumcheck,
-            // rhs_sumcheck: recomposed_child_sumcheck,
+            data_selected_sumchecks,
             commitment_sumcheck: None,
             ck_sumchecks,
             outputs,
@@ -127,14 +157,14 @@ fn build_com_verify_sumcheck_context(
 
     // Build the output (leaf) layer
     // This is the base case that checks against the public commitment value
-    let selector_sumcheck = sumcheck_from_prefix(&current.prefix, total_vars);
+    let selector_sumcheck = sumcheck_from_prefix(&current.prefix(), total_vars);
 
     let mut ck_sumchecks = Vec::with_capacity(current.rank);
     for i in 0..current.rank {
         ck_sumchecks.push(ck_sumcheck(
             crs,
             total_vars,
-            1 << (total_vars - current.prefix.length),
+            1 << (total_vars - current.prefix().length),
             i,
             0,
         ));
@@ -230,16 +260,8 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     // CK \cdot folded_witness - commitment \cdot fold_challenge = 0
     let commitment_fold_sumchecks = (0..config.basic_commitment_rank)
         .map(|i| {
-            let basic_commitment_row_sumcheck = sumcheck_from_prefix(
-                &Prefix {
-                    prefix: config.commitment_recursion.prefix.prefix
-                        * config.basic_commitment_rank.next_power_of_two()
-                        + i,
-                    length: config.commitment_recursion.prefix.length
-                        + config.basic_commitment_rank.next_power_of_two().ilog2() as usize,
-                },
-                total_vars,
-            );
+            let basic_commitment_row_sumcheck =
+                sumcheck_from_prefix(&config.commitment_recursion.prefixes[i], total_vars);
 
             let ctxt = CommitmentFoldSumcheckContext {
                 basic_commitment_row_sumcheck: basic_commitment_row_sumcheck.clone(),
@@ -287,8 +309,8 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         .map(|i| {
             let opening_selector_sumcheck = sumcheck_from_prefix(
                 &Prefix {
-                    prefix: config.opening_recursion.prefix.prefix * config.nof_openings + i,
-                    length: config.opening_recursion.prefix.length
+                    prefix: config.opening_recursion.prefix().prefix * config.nof_openings + i,
+                    length: config.opening_recursion.prefix().length
                         + config.nof_openings.ilog2() as usize,
                 },
                 total_vars,
@@ -374,7 +396,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     let coarse_proj_sumcheck = match &config.projection_recursion {
         Projection::Coarse(projection_recursion) => {
             let projection_selector_sumcheck =
-                sumcheck_from_prefix(&projection_recursion.prefix, total_vars);
+                sumcheck_from_prefix(&projection_recursion.prefix(), total_vars);
 
             let projection_combiner_sumcheck = composition_sumcheck(
                 projection_recursion.decomposition_base_log as u64,
@@ -525,7 +547,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                     projection_constant_terms_embedded_combiner_sumcheck.clone(),
                 ));
             let projection_constant_terms_embedded_selector_sumcheck = sumcheck_from_prefix(
-                &projection_recursion.recursion_constant_term.prefix,
+                &projection_recursion.recursion_constant_term.prefix(),
                 total_vars,
             );
 
@@ -594,13 +616,13 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                     &Prefix {
                         prefix: projection_recursion
                             .recursion_batched_projection
-                            .prefix
+                            .prefix()
                             .prefix
                             * NOF_BATCHES
                             + i,
                         length: projection_recursion
                             .recursion_batched_projection
-                            .prefix
+                            .prefix()
                             .length
                             + NOF_BATCHES.ilog2() as usize,
                     },
@@ -726,14 +748,14 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     let mut most_inner_commitments_selectors = Vec::new();
 
     let most_inner_commitment_recursion = sumcheck_from_prefix(
-        &config.commitment_recursion.most_inner_config().prefix,
+        &config.commitment_recursion.most_inner_config().prefix(),
         total_vars,
     );
 
     most_inner_commitments_selectors.push(most_inner_commitment_recursion);
 
     let most_inner_opening_recursion = sumcheck_from_prefix(
-        &config.opening_recursion.most_inner_config().prefix,
+        &config.opening_recursion.most_inner_config().prefix(),
         total_vars,
     );
 
@@ -742,7 +764,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     match config.projection_recursion {
         Projection::Coarse(ref proj_config) => {
             let most_inner_projection_recursion =
-                sumcheck_from_prefix(&proj_config.most_inner_config().prefix, total_vars);
+                sumcheck_from_prefix(&proj_config.most_inner_config().prefix(), total_vars);
             most_inner_commitments_selectors.push(most_inner_projection_recursion);
         }
         Projection::Fine(ref proj_config) => {
@@ -750,7 +772,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                 &proj_config
                     .recursion_constant_term
                     .most_inner_config()
-                    .prefix,
+                    .prefix(),
                 total_vars,
             );
             most_inner_commitments_selectors.push(most_inner_constant_term_recursion);
@@ -758,7 +780,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                 &proj_config
                     .recursion_batched_projection
                     .most_inner_config()
-                    .prefix,
+                    .prefix(),
                 total_vars,
             );
             most_inner_commitments_selectors.push(most_inner_batched_projection_recursion);

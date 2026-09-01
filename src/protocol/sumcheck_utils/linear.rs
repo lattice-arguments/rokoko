@@ -505,6 +505,9 @@ pub struct StructuredRowEvaluationLinearSumcheck<E: SumcheckElement = RingElemen
     variable_count: usize,
     suffix: usize,
     prefix: usize,
+    /// Constant the tensor product is multiplied by. Restricting a tensor row to a dyadic slice
+    /// fixes its leading layers, and what they contribute is exactly this scalar.
+    scale: E,
     result: E,
     scratch: E,
 }
@@ -524,17 +527,23 @@ impl<E: SumcheckElement> StructuredRowEvaluationLinearSumcheck<E> {
             variable_count: count.ilog2() as usize + prefix_size + suffix_size,
             suffix: suffix_size,
             prefix: prefix_size,
+            scale: E::one(),
             result: E::one(),
             scratch: E::zero(),
         }
     }
 
     pub fn load_from(&mut self, src: StructuredRow<E>) {
+        self.load_scaled_from(src, E::one());
+    }
+
+    pub fn load_scaled_from(&mut self, src: StructuredRow<E>, scale: E) {
         debug_assert!(src.tensor_layers.len() == self.variable_count - self.suffix - self.prefix);
         // Normalize once to LS-first so evaluate() can zip directly with LS-first challenges.
         let mut normalized = src;
         normalized.tensor_layers.reverse();
         self.data = Some(normalized);
+        self.scale = scale;
     }
 }
 
@@ -544,7 +553,7 @@ impl<E: SumcheckElement + 'static> EvaluationSumcheckData
     type Element = E;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
-        self.result.set_from(&*E::one_ref());
+        self.result.set_from(&self.scale);
         if point.len() != self.variable_count {
             panic!(
                 "Point has incorrect number of variables, expected {}, got {}",

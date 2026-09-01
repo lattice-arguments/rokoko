@@ -65,6 +65,24 @@ pub(crate) fn sumcheck_from_prefix(
     ))
 }
 
+fn ck_row_sumcheck(
+    row: &[RingElement],
+    total_vars: usize,
+    sufix: usize,
+) -> ElephantCell<LinearSumcheck<RingElement>> {
+    let sumcheck = ElephantCell::new(
+        LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+            row.len(),
+            total_vars - row.len().ilog2() as usize - sufix,
+            sufix,
+        ),
+    );
+
+    sumcheck.borrow_mut().load_from(row);
+
+    sumcheck
+}
+
 /// Loads the i-th row of the commitment key into a linear sumcheck with appropriate padding:
 /// - `wit_dim`: dimension for this CK row (varies for recursive layers)
 /// - `sufix`: trailing variables for decomposition chunks
@@ -78,19 +96,30 @@ pub(crate) fn ck_sumcheck(
     i: usize,
     sufix: usize,
 ) -> ElephantCell<LinearSumcheck<RingElement>> {
-    let ck = crs.ck_for_wit_dim(wit_dim);
+    ck_row_sumcheck(
+        &crs.ck_for_wit_dim(wit_dim)[i].preprocessed_row,
+        total_vars,
+        sufix,
+    )
+}
 
-    let sumcheck = ElephantCell::new(
-        LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
-            wit_dim,
-            total_vars - wit_dim.ilog2() as usize - sufix,
-            sufix,
-        ),
-    );
-
-    sumcheck.borrow_mut().load_from(&ck[i].preprocessed_row);
-
-    sumcheck
+/// The `segment`-th of `segments` equal dyadic slices of the `i`-th commitment key row: the part
+/// of the row that meets one separately placed row block of the commitment's input.
+/// `segments == 1` reproduces `ck_sumcheck`.
+pub(crate) fn ck_segment_sumcheck(
+    crs: &CRS,
+    total_vars: usize,
+    wit_dim: usize,
+    i: usize,
+    segments: usize,
+    segment: usize,
+) -> ElephantCell<LinearSumcheck<RingElement>> {
+    let len = wit_dim / segments;
+    ck_row_sumcheck(
+        &crs.ck_for_wit_dim(wit_dim)[i].preprocessed_row[segment * len..(segment + 1) * len],
+        total_vars,
+        0,
+    )
 }
 
 pub fn tensor_product_u64(a: &Vec<u64>, b: &Vec<u64>) -> Vec<u64> {
