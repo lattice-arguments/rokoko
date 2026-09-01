@@ -3,6 +3,7 @@ use crate::{
         arithmetic::ONE_QUAD,
         config::{DEGREE, NOF_BATCHES},
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        structured_row::StructuredRow,
     },
     protocol::{
         commitment::{self, Prefix},
@@ -100,6 +101,42 @@ pub fn structured_row_ck_evaluation(
     eval
 }
 
+/// The `segment`-th of `segments` equal dyadic slices of the `i`-th commitment key row, the
+/// verifier's counterpart to `ck_segment_sumcheck`. Layers are MS-first, so the leading
+/// `log2(segments)` of them pick the segment: what they contribute at this index is a constant,
+/// and the slice is still a tensor row over the layers below. `segments == 1` reproduces
+/// `structured_row_ck_evaluation` exactly.
+pub fn structured_row_ck_segment_evaluation(
+    crs: &VerifierCRS,
+    total_vars: usize,
+    wit_dim: usize,
+    i: usize,
+    segments: usize,
+    segment: usize,
+) -> ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>> {
+    let segment_len = wit_dim / segments;
+    let fixed = segments.ilog2() as usize;
+    let row = crs.structured_ck_for_wit_dim(wit_dim)[i].clone();
+
+    let scale = StructuredRow {
+        tensor_layers: row.tensor_layers[..fixed].to_vec(),
+    }
+    .at(segment);
+    let sliced = StructuredRow {
+        tensor_layers: row.tensor_layers[fixed..].to_vec(),
+    };
+
+    let eval = ElephantCell::new(
+        StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
+            segment_len,
+            total_vars - segment_len.ilog2() as usize,
+            0,
+        ),
+    );
+    eval.borrow_mut().load_scaled_from(sliced, scale);
+    eval
+}
+
 fn build_com_verify_verifier_context(
     crs: &VerifierCRS,
     total_vars: usize,
@@ -110,13 +147,23 @@ fn build_com_verify_verifier_context(
     let mut current = config;
 
     while let Some(next) = current.next.as_deref() {
-        let selector_eval = selector_evaluation_from_prefix(&current.prefix, total_vars);
+        let placed = current.prefixes.len();
+        let segments = current.segments();
+        let segment_len = 1 << (total_vars - current.prefixes[0].length);
+        let data_len = segments * segment_len;
+
+        let selector_evals = current
+            .prefixes
+            .iter()
+            .map(|prefix| selector_evaluation_from_prefix(prefix, total_vars))
+            .collect::<Vec<_>>();
+
         let child_selectors_evals = (0..current.rank)
             .map(|i| {
                 selector_evaluation_from_prefix(
                     &Prefix {
-                        prefix: next.prefix.prefix * current.rank.next_power_of_two() + i,
-                        length: next.prefix.length
+                        prefix: next.prefix().prefix * current.rank.next_power_of_two() + i,
+                        length: next.prefix().length
                             + current.rank.next_power_of_two().ilog2() as usize,
                     },
                     total_vars,
@@ -130,28 +177,30 @@ fn build_com_verify_verifier_context(
             total_vars,
         );
 
-        let data_len = 1 << (total_vars - current.prefix.length);
-        let ck_evals = (0..current.rank)
-            .map(|i| structured_row_ck_evaluation(crs, total_vars, data_len, i, 0))
-            .collect::<Vec<_>>();
+        let mut ck_evals = Vec::with_capacity(current.rank * placed);
+        for i in 0..current.rank {
+            for segment in 0..placed {
+                ck_evals.push(structured_row_ck_segment_evaluation(
+                    crs, total_vars, data_len, i, segments, segment,
+                ));
+            }
+        }
 
-        let data_selected_eval = ElephantCell::new(ProductSumcheckEvaluation::new(
-            selector_eval.clone(),
-            combined_witness_eval.clone(),
-        ));
+        let data_selected_evals = selector_evals
+            .iter()
+            .map(|selector| {
+                ElephantCell::new(ProductSumcheckEvaluation::new(
+                    selector.clone(),
+                    combined_witness_eval.clone(),
+                ))
+            })
+            .collect::<Vec<_>>();
 
         let recomposed_combiner = ElephantCell::new(ProductSumcheckEvaluation::new(
             combined_witness_eval.clone(),
             combiner_eval.clone(),
         ));
-        // let recomposed_child_raw_eval = ElephantCell::new(DiffSumcheckEvaluation::new(
-        //     recomposed_combiner.clone(),
-        //     combiner_constant_eval.clone(),
-        // ));
-        // let recomposed_child_evals  = ElephantCell::new(ProductSumcheckEvaluation::new(
-        //     child_selector_eval.clone(),
-        //     recomposed_child_raw_eval.clone(),
-        // ));
+
         let recomposed_child_evals = (0..current.rank)
             .map(|i| {
                 ElephantCell::new(ProductSumcheckEvaluation::new(
@@ -163,10 +212,16 @@ fn build_com_verify_verifier_context(
 
         let outputs = (0..current.rank)
             .map(|i| {
-                let ck_with_data = ElephantCell::new(ProductSumcheckEvaluation::new(
-                    ck_evals[i].clone(),
-                    data_selected_eval.clone(),
-                ));
+                let ck_with_data = (0..placed)
+                    .map(|segment| {
+                        ElephantCell::new(ProductSumcheckEvaluation::new(
+                            ck_evals[i * placed + segment].clone(),
+                            data_selected_evals[segment].clone(),
+                        )) as ElephantCell<EvalData>
+                    })
+                    .reduce(|acc, term| ElephantCell::new(SumSumcheckEvaluation::new(acc, term)))
+                    .expect("every level places at least one row");
+
                 ElephantCell::new(DiffSumcheckEvaluation::new(
                     ck_with_data,
                     recomposed_child_evals[i].clone(),
@@ -174,22 +229,8 @@ fn build_com_verify_verifier_context(
             })
             .collect::<Vec<_>>();
 
-        // ck_evals
-        //     .iter()
-        //     .map(|ck_eval| {
-        //         let ck_with_data = ElephantCell::new(ProductSumcheckEvaluation::new(
-        //             ck_eval.clone(),
-        //             data_selected_eval.clone(),
-        //         ));
-        //         ElephantCell::new(DiffSumcheckEvaluation::new(
-        //             ck_with_data,
-        //             recomposed_child_evals[i].clone(),
-        //         ))
-        //     })
-        //     .collect::<Vec<_>>();
-
         layers.push(ComVerifyLayerVerifierContext {
-            selector_evaluation: selector_eval,
+            selector_evaluations: selector_evals,
             child_selector_evaluations: child_selectors_evals,
             combiner_evaluation: combiner_eval,
             ck_evaluations: ck_evals,
@@ -199,8 +240,8 @@ fn build_com_verify_verifier_context(
         current = next;
     }
 
-    let selector_eval = selector_evaluation_from_prefix(&current.prefix, total_vars);
-    let data_len = 1 << (total_vars - current.prefix.length);
+    let selector_eval = selector_evaluation_from_prefix(&current.prefix(), total_vars);
+    let data_len = 1 << (total_vars - current.prefix().length);
     let ck_evals = (0..current.rank)
         .map(|i| structured_row_ck_evaluation(crs, total_vars, data_len, i, 0))
         .collect::<Vec<_>>();
@@ -280,8 +321,8 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
         .map(|i| {
             selector_evaluation_from_prefix(
                 &Prefix {
-                    prefix: config.opening_recursion.prefix.prefix * config.nof_openings + i,
-                    length: config.opening_recursion.prefix.length
+                    prefix: config.opening_recursion.prefix().prefix * config.nof_openings + i,
+                    length: config.opening_recursion.prefix().length
                         + config.nof_openings.ilog2() as usize,
                 },
                 total_vars,
@@ -338,13 +379,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
     let commitment_fold_evaluations = (0..config.basic_commitment_rank)
         .map(|i| {
             let row_selector = selector_evaluation_from_prefix(
-                &Prefix {
-                    prefix: config.commitment_recursion.prefix.prefix
-                        * config.basic_commitment_rank.next_power_of_two()
-                        + i,
-                    length: config.commitment_recursion.prefix.length
-                        + config.basic_commitment_rank.next_power_of_two().ilog2() as usize,
-                },
+                &config.commitment_recursion.prefixes[i],
                 total_vars,
             );
 
@@ -431,7 +466,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                     total_vars,
                 );
                 let projection_selector_evaluation =
-                    selector_evaluation_from_prefix(&projection_recursion.prefix, total_vars);
+                    selector_evaluation_from_prefix(&projection_recursion.prefix(), total_vars);
 
                 let projection_height_flat = config.witness_height / config.projection_ratio;
 
@@ -588,7 +623,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
 
             let projection_constant_terms_embedded_selector_evaluation =
                 selector_evaluation_from_prefix(
-                    &proj_config.recursion_constant_term.prefix,
+                    &proj_config.recursion_constant_term.prefix(),
                     total_vars,
                 );
 
@@ -631,10 +666,10 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 );
                 let projection_selector_evaluation = selector_evaluation_from_prefix(
                     &Prefix {
-                        prefix: proj_config.recursion_batched_projection.prefix.prefix
+                        prefix: proj_config.recursion_batched_projection.prefix().prefix
                             * NOF_BATCHES
                             + i,
-                        length: proj_config.recursion_batched_projection.prefix.length
+                        length: proj_config.recursion_batched_projection.prefix().length
                             + NOF_BATCHES.ilog2() as usize,
                     },
                     total_vars,
@@ -817,14 +852,14 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
     let mut most_inner_commitments_selectors = vec![];
 
     let most_inner_commitment_recursion = selector_evaluation_from_prefix(
-        &config.commitment_recursion.most_inner_config().prefix,
+        &config.commitment_recursion.most_inner_config().prefix(),
         total_vars,
     );
 
     most_inner_commitments_selectors.push(most_inner_commitment_recursion);
 
     let most_inner_opening_recursion = selector_evaluation_from_prefix(
-        &config.opening_recursion.most_inner_config().prefix,
+        &config.opening_recursion.most_inner_config().prefix(),
         total_vars,
     );
 
@@ -833,7 +868,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
     match &config.projection_recursion {
         Projection::Coarse(proj_config) => {
             let most_inner_projection_recursion = selector_evaluation_from_prefix(
-                &proj_config.most_inner_config().prefix,
+                &proj_config.most_inner_config().prefix(),
                 total_vars,
             );
             most_inner_commitments_selectors.push(most_inner_projection_recursion);
@@ -843,7 +878,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 &proj_config
                     .recursion_constant_term
                     .most_inner_config()
-                    .prefix,
+                    .prefix(),
                 total_vars,
             );
             most_inner_commitments_selectors.push(most_inner_constant_term_recursion);
@@ -852,7 +887,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 &proj_config
                     .recursion_batched_projection
                     .most_inner_config()
-                    .prefix,
+                    .prefix(),
                 total_vars,
             );
             most_inner_commitments_selectors.push(most_inner_batched_projection_recursion);

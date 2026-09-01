@@ -57,7 +57,7 @@ pub fn compiled_size() -> SizeConfig {
     SizeConfig::Medium
 }
 
-pub const NORM_MARGIN: f64 = 1.02;
+pub const NORM_MARGIN: f64 = 1.2;
 
 const NB_P_26: [[f64; 2]; 7] = [
     [46889.51181234456, 2242.093664412796],

@@ -241,14 +241,15 @@ pub struct CoarseProjSumcheckContext {
 /// For each internal layer i, proves: `CK_i · selected_witness_i = compose(child_commitment_{i+1})`
 ///
 /// Key fields:
-/// - `selector_sumcheck`, `child_selector_sumcheck`: select layer and child data slices
-/// - `ck_sumchecks`: commitment key rows (one per rank)
-/// - `outputs`: DiffSumchecks proving the constraint for each CK row
+/// - `selector_sumchecks`, `child_selector_sumcheck`: select layer and child data slices, one
+///   selector per placed row block of the layer's input and one child selector per CK row
+/// - `ck_sumchecks`: commitment key rows cut into the matching row segments, `rank` x segments
+/// - `outputs`: DiffSumchecks proving the constraint for each CK row, summed over the segments
 pub struct ComVerifyLayerSumcheckContext {
-    pub selector_sumcheck: ElephantCell<SelectorEq<RingElement>>,
+    pub selector_sumchecks: Vec<ElephantCell<SelectorEq<RingElement>>>,
     pub child_selector_sumcheck: Option<Vec<ElephantCell<SelectorEq<RingElement>>>>,
     pub combiner_sumcheck: Option<ElephantCell<LinearSumcheck<RingElement>>>,
-    pub data_selected_sumcheck: ElephantCell<ProductSumcheck<RingElement>>,
+    pub data_selected_sumchecks: Vec<ElephantCell<ProductSumcheck<RingElement>>>,
     pub commitment_sumcheck: Option<ElephantCell<LinearSumcheck<RingElement>>>,
     pub ck_sumchecks: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
     pub outputs: Vec<ElephantCell<DiffSumcheck<RingElement>>>,
@@ -319,7 +320,9 @@ pub struct FineProjSumcheckContextWrapper {
 
 fn partial_evaluate_com_verify(ctx: &mut ComVerifySumcheckContext, r: &RingElement) {
     for layer in ctx.layers.iter_mut() {
-        layer.selector_sumcheck.borrow_mut().partial_evaluate(r);
+        for selector in layer.selector_sumchecks.iter() {
+            selector.borrow_mut().partial_evaluate(r);
+        }
         if let Some(child_sel) = &layer.child_selector_sumcheck {
             for sel in child_sel.iter() {
                 sel.borrow_mut().partial_evaluate(r);

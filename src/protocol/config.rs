@@ -660,6 +660,11 @@ impl SizeableProof for IntermediateRoundProof {
 
 #[inline]
 pub fn paste_by_prefix(dest: &mut Vec<RingElement>, src: &Vec<RingElement>, prefix: &Prefix) {
+    paste_slice_by_prefix(dest, src, prefix);
+}
+
+#[inline]
+pub fn paste_slice_by_prefix(dest: &mut Vec<RingElement>, src: &[RingElement], prefix: &Prefix) {
     debug_assert_eq!(
         src.len().next_power_of_two(),
         1 << dest.len().ilog2() as usize - prefix.length,
@@ -678,7 +683,16 @@ pub fn paste_recursive_commitment(
     commitment: &RecursiveCommitmentWithAux,
     config: &RecursionConfig,
 ) {
-    paste_by_prefix(dest, &commitment.committed_data, &config.prefix);
+    // The commitment covers a power-of-two number of row segments; the ones past the real rows
+    // are identically zero, so only the placed segments reach the next round's witness.
+    let segment_len = commitment.committed_data.len() / config.segments();
+    for (segment, prefix) in config.prefixes.iter().enumerate() {
+        paste_slice_by_prefix(
+            dest,
+            &commitment.committed_data[segment * segment_len..(segment + 1) * segment_len],
+            prefix,
+        );
+    }
 
     if let (Some(next_commitment), Some(next_config)) = (&commitment.next, &config.next) {
         paste_recursive_commitment(dest, next_commitment, next_config);
