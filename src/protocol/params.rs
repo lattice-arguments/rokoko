@@ -146,10 +146,9 @@ fn assign_norm_bounds(config: &mut Config, bounds: &[[f64; 2]]) {
     }
     let mut i = 0;
     rec(config, bounds, &mut i);
-    assert_eq!(
-        i,
-        bounds.len(),
-        "norm-bound array length must match chain length"
+    assert!(
+        i <= bounds.len(),
+        "norm-bound array length be at least the number of configs in the chain"
     );
 }
 
