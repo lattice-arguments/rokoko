@@ -103,6 +103,9 @@ fn main() {
         println!("Running executor...");
         execute();
     }
+    #[cfg(feature = "calibration")]
+    rokoko::common::norms::calibration::print_table();
+
     drop(tracing_guards);
     #[cfg(feature = "profile")]
     rokoko::tracing::print_artifact_paths(rokoko::tracing::run_dir());
