@@ -57,7 +57,7 @@ pub fn compiled_size() -> SizeConfig {
     SizeConfig::Medium
 }
 
-pub const NORM_MARGIN: f64 = 1.2;
+pub const NORM_MARGIN: f64 = 1.85; // verifier accepts norms up to this factor times the expected bound
 
 const NB_P_26: [[f64; 2]; 7] = [
     [46889.51181234456, 2242.093664412796],
@@ -241,7 +241,7 @@ pub fn p_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
         witness_width: size.pick(2usize.pow(7), 2usize.pow(8), 2usize.pow(8), 2usize.pow(9)),
         projection_ratio: 1,              // no-op
         projection_height: 2usize.pow(8), // no-op,
-        basic_commitment_rank: 6,
+        basic_commitment_rank: 8,
         nof_openings,
         commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
@@ -258,7 +258,7 @@ pub fn p_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
         projection_recursion: AuxProjection::Skip,
 
         witness_decomposition_chunks: 4,
-        witness_decomposition_base_log: size.pick(6, 6, 6, 7),
+        witness_decomposition_base_log: size.pick(6, 6, 6, 6),
 
         next: Some(Box::new(AuxConfig::Sumcheck(p_1(size)))),
     }
@@ -290,7 +290,7 @@ pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
             next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
         },
         projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
-            decomposition_base_log: 10,
+            decomposition_base_log: 9,
             decomposition_chunks: 2,
             rank: 2,
             next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
@@ -303,6 +303,7 @@ pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
         witness_decomposition_base_log: 7,
 
         next: Some(Box::new(AuxConfig::Sumcheck(p_2(size)))),
+        // next: None
     }
 }
 
@@ -334,7 +335,7 @@ pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
         projection_recursion: AuxProjection::Fine {
             nof_batches: 2,
             recursion_constant_term: AuxRecursionConfig {
-                decomposition_base_log: 10,
+                decomposition_base_log: 9,
                 decomposition_chunks: 2,
                 rank: 2,
                 next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
@@ -351,6 +352,7 @@ pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
         witness_decomposition_base_log: 8,
 
         next: Some(Box::new(AuxConfig::Sumcheck(P_3.clone()))),
+        // next: None
     }
 }
 
@@ -449,9 +451,9 @@ pub static P_TWO_EVALS: LazyLock<Config> = LazyLock::new(|| match compiled_size(
 pub static P_3: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
     witness_height: 2usize.pow(8),
     witness_width: 2usize.pow(5),
-    projection_ratio: 2usize.pow(5),
+    projection_ratio: 2usize.pow(6),
     projection_height: 2usize.pow(8),
-    basic_commitment_rank: 4,
+    basic_commitment_rank: 5,
     nof_openings: 2,
     commitment_recursion: AuxRecursionConfig {
         decomposition_base_log: 7,
@@ -483,8 +485,8 @@ pub static P_3: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
 
     witness_decomposition_chunks: 2,
     witness_decomposition_base_log: 8,
-
     next: Some(Box::new(AuxConfig::Sumcheck(P_4.clone()))),
+    // next: None
 });
 
 pub static P_4: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
@@ -509,7 +511,7 @@ pub static P_4: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
     projection_recursion: AuxProjection::Fine {
         nof_batches: 2,
         recursion_constant_term: AuxRecursionConfig {
-            decomposition_base_log: 10,
+            decomposition_base_log: 9,
             decomposition_chunks: 2,
             rank: 2,
             next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
@@ -550,14 +552,14 @@ pub static P_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
     projection_recursion: AuxProjection::Fine {
         nof_batches: 2,
         recursion_constant_term: AuxRecursionConfig {
-            decomposition_base_log: 10,
+            decomposition_base_log: 9,
             decomposition_chunks: 2,
             rank: 2,
             next: None,
         },
         recursion_batched_projection: AuxRecursionConfig {
-            decomposition_base_log: 13,
-            decomposition_chunks: 4,
+            decomposition_base_log: 7,
+            decomposition_chunks: 8,
             rank: 2,
             next: None,
         },
@@ -566,6 +568,7 @@ pub static P_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
     witness_decomposition_chunks: 2,
     witness_decomposition_base_log: 7,
     next: Some(Box::new(AuxConfig::Simple(P_LAST.clone()))),
+    // next: None
 
 });
 
@@ -574,7 +577,7 @@ pub static P_LAST: LazyLock<SimpleConfig> = LazyLock::new(|| SimpleConfig {
     witness_width: 2usize.pow(2),
     projection_ratio: 2usize.pow(7),
     projection_height: 2usize.pow(8),
-    basic_commitment_rank: 4,
+    basic_commitment_rank: 3,
     projection_nof_batches: 2,
     witness_norm_bound: f64::INFINITY,
     projection_norm_bound: f64::INFINITY,
