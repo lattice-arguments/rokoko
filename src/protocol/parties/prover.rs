@@ -41,8 +41,10 @@ pub fn outer_eval_claims(
     evaluation_points_outer: &Vec<StructuredRow>,
 ) -> Vec<RingElement> {
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
-    let mut result = vec![RingElement::zero(Representation::IncompleteNTT); rhs.height];
-    for i in 0..rhs.height {
+    // rhs.height is the commitment's padded row count; there is one claim per evaluation point.
+    let nof_openings = evaluation_points_outer.len();
+    let mut result = vec![RingElement::zero(Representation::IncompleteNTT); nof_openings];
+    for i in 0..nof_openings {
         let preprocessed_row_outer =
             PreprocessedRow::from_structured_row(&evaluation_points_outer[i]);
         for col in 0..rhs.width {
