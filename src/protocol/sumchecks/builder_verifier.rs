@@ -31,7 +31,7 @@ use crate::{
             InnerEvalFoldVerifierContext, NextVerifierSumcheckContext, NormCheckVerifierContext,
             OuterEvalClaimVerifierContext, VerifierSumcheckContext,
         },
-        sumchecks::helpers::{block_recomposition_weights, row_committed_pieces},
+        sumchecks::helpers::{block_recomposition_weights, row_committed_pieces, BlockWeights},
     },
 };
 
@@ -52,7 +52,7 @@ fn sum_of_evaluations(terms: Vec<ElephantCell<EvalData>>) -> ElephantCell<EvalDa
     terms
         .into_iter()
         .reduce(|acc, term| ElephantCell::new(SumSumcheckEvaluation::new(acc, term)))
-        .expect("a component has at least one placed plane")
+        .expect("a component has at least one placed block")
 }
 
 /// Verifier dual of `Recomposition`.
@@ -84,15 +84,16 @@ fn recomposition_evaluation(
     parts: usize,
     part: usize,
 ) -> RecompositionEvaluation {
-    let terms = block_recomposition_weights(placement, chunks, base_log, parts, part)
+    let terms = block_recomposition_weights(placement, chunks, base_log, total_vars, parts, part)
         .into_iter()
-        .map(|(prefix, weights)| {
+        .map(|block_weights| {
+            let BlockWeights {
+                prefix,
+                weights,
+                suffix,
+            } = block_weights;
             let block = selector_evaluation_from_prefix(&prefix, total_vars);
-            let weights_evaluation = basic_evaluation_linear(
-                weights.len(),
-                prefix.length,
-                total_vars - prefix.length - weights.len().ilog2() as usize,
-            );
+            let weights_evaluation = basic_evaluation_linear(weights.len(), prefix.length, suffix);
             weights_evaluation.borrow_mut().load_from(&weights);
 
             ElephantCell::new(ProductSumcheckEvaluation::new(block, weights_evaluation))

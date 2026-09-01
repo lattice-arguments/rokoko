@@ -77,6 +77,17 @@ fn recomposition_factor(base_log: usize, chunks: usize) -> f64 {
         .sqrt()
 }
 
+/// The length bound an estimate is asked for, as the estimator takes it. `as u64` turns a NaN
+/// into zero, which the estimator reads as a bound nothing can meet and answers with security the
+/// data does not have, so every bound crosses into it through here.
+fn length_bound(norm: f64) -> u64 {
+    assert!(
+        norm.is_finite() && norm >= 0.0,
+        "{norm} is not a length bound the estimator can be given"
+    );
+    norm.ceil() as u64
+}
+
 static ROUND_ID: AtomicUsize = AtomicUsize::new(0);
 static DEBUG_HARDNESS_FROM_ROUND: usize = 0;
 
@@ -99,7 +110,7 @@ fn check_recursive_commitment(
     let hardness = estimate_rsis_security(&RSISParameters {
         m: rc.committed_data.len() as u64,
         n: config.rank as u64,
-        length_bound: current_extracted_norm.ceil() as u64,
+        length_bound: length_bound(current_extracted_norm),
     });
     let indent = "  ".repeat(depth);
     println!(
@@ -145,31 +156,27 @@ pub fn check_sumcheck_round(
     let recommited_ell_inf_norm = norms::inf_norm(next_round_data);
     let recommited_ell_2_norm = norms::l2_norm(next_round_data);
 
+    // The squares are accumulated in f64: a squared L_2 norm of this data does not fit a u64.
     let most_inner_commitment_data_ell_2 = {
+        let squared = |data: &[RingElement]| norms::l2_norm(data).powi(2);
+
         let commitment_data = &rc_commitment
             .most_inner_commitment_with_aux()
             .committed_data;
-        let norm_commitment_data_ell_2_sq = norms::l2_norm(commitment_data).powf(2.0) as u64;
+        let norm_commitment_data_ell_2_sq = squared(commitment_data);
 
         let opening_data = &rc_opening.most_inner_commitment_with_aux().committed_data;
-        let norm_opening_data_ell_2_sq = norms::l2_norm(opening_data).powf(2.0) as u64;
+        let norm_opening_data_ell_2_sq = squared(opening_data);
 
         let norm_projection_data_ell_2_sq = match (rc_coarse_projection, rc_fine_projection) {
-            (Some(rc_proj), _) => {
-                let proj_data = &rc_proj.most_inner_commitment_with_aux().committed_data;
-                norms::l2_norm(proj_data).powf(2.0) as u64
-            }
+            (Some(rc_proj), _) => squared(&rc_proj.most_inner_commitment_with_aux().committed_data),
             (_, Some((rc_ct, rc_batched))) => {
-                let proj_ct_data = &rc_ct.most_inner_commitment_with_aux().committed_data;
-                let proj_batched_data = &rc_batched.most_inner_commitment_with_aux().committed_data;
-                norms::l2_norm(proj_ct_data).powf(2.0) as u64
-                    + norms::l2_norm(proj_batched_data).powf(2.0) as u64
+                squared(&rc_ct.most_inner_commitment_with_aux().committed_data)
+                    + squared(&rc_batched.most_inner_commitment_with_aux().committed_data)
             }
-            _ => 0,
+            _ => 0.0,
         };
-        ((norm_commitment_data_ell_2_sq
-            + norm_opening_data_ell_2_sq
-            + norm_projection_data_ell_2_sq) as f64)
+        (norm_commitment_data_ell_2_sq + norm_opening_data_ell_2_sq + norm_projection_data_ell_2_sq)
             .sqrt()
     };
     println!(
@@ -178,8 +185,16 @@ pub fn check_sumcheck_round(
     );
 
     // the packed vector minus the most-inner commitment data: decomposed folded witness etc.
-    let recommited_ell_2_norm_rest =
-        (recommited_ell_2_norm.powf(2.0) - most_inner_commitment_data_ell_2.powf(2.0)).sqrt();
+    // A non-finite difference would reach the estimator as `length_bound: 0` -- the `as u64` cast
+    // of a NaN -- and be reported as security this data does not have, so it fails loudly here
+    // instead; float slack alone is allowed to take the difference below zero.
+    let rest_squared = recommited_ell_2_norm.powi(2) - most_inner_commitment_data_ell_2.powi(2);
+    assert!(
+        rest_squared.is_finite(),
+        "norm accounting is not finite: packed vector {recommited_ell_2_norm}, \
+         most inner commitment data {most_inner_commitment_data_ell_2}"
+    );
+    let recommited_ell_2_norm_rest = rest_squared.max(0.0).sqrt();
 
     check_recursive_commitment(
         rc_commitment,
@@ -349,7 +364,7 @@ pub fn check_sumcheck_round(
     let basic_commitment_security = estimate_rsis_security(&RSISParameters {
         m: config.witness_height as u64,
         n: config.basic_commitment_rank as u64,
-        length_bound: worse_bound.ceil() as u64,
+        length_bound: length_bound(worse_bound),
     });
     println!(
         "Basic commitment estimated security for extraction: {:?} with rank {}",
@@ -462,7 +477,7 @@ pub fn check_simple_round(
     let basic_commitment_security = estimate_rsis_security(&RSISParameters {
         m: config.witness_height as u64,
         n: config.basic_commitment_rank as u64,
-        length_bound: worse_bound.ceil() as u64,
+        length_bound: length_bound(worse_bound),
     });
     println!(
         "Basic commitment estimated security for extraction: {:?} with rank {}",

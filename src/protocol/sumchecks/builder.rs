@@ -63,7 +63,7 @@ fn selected_input_pieces(
                 .into_iter()
                 .map(|(prefix, ck_slices, ck_slice)| {
                     let selector = sumcheck_from_prefix(&prefix, total_vars);
-                    leaves.push_selector(selector.clone());
+                    leaves.selectors.push(selector.clone());
                     InputPiece {
                         ck_slices,
                         ck_slice,
@@ -123,20 +123,11 @@ fn build_com_verify_sumcheck_context(
     let mut layers = Vec::new();
     let mut current = config;
     while let Some(next) = current.next.as_deref() {
-        debug_assert!(
-            current
-                .placements
-                .iter()
-                .all(|p| p.size == current.placements[0].size),
-            "row components of one level are equally sized"
-        );
-
         let data_selected =
             selected_input_pieces(total_vars, current, &combined_witness_sumcheck, leaves);
 
-        let mut ck_sumchecks = Vec::with_capacity(
-            current.rank * current.placements.len() * current.decomposition_chunks,
-        );
+        let mut ck_sumchecks =
+            Vec::with_capacity(current.rank * data_selected.iter().map(Vec::len).sum::<usize>());
 
         let outputs = (0..current.rank)
             .map(|i| {
@@ -177,9 +168,8 @@ fn build_com_verify_sumcheck_context(
     // This is the base case that checks against the public commitment value
     let data_selected =
         selected_input_pieces(total_vars, current, &combined_witness_sumcheck, leaves);
-    let mut ck_sumchecks = Vec::with_capacity(
-        current.rank * current.placements.len() * current.decomposition_chunks,
-    );
+    let mut ck_sumchecks =
+        Vec::with_capacity(current.rank * data_selected.iter().map(Vec::len).sum::<usize>());
     let outputs = (0..current.rank)
         .map(|i| ck_over_pieces(crs, total_vars, current, i, &data_selected, &mut ck_sumchecks))
         .collect::<Vec<_>>();
@@ -636,7 +626,9 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         }
     }
 
-    leaves.extend_selectors(most_inner_commitments_selectors.iter().cloned());
+    leaves
+        .selectors
+        .extend(most_inner_commitments_selectors.iter().cloned());
 
     let mut sum_of_selectors: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>> =
         most_inner_commitments_selectors[0].clone();
