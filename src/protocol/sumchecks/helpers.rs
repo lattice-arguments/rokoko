@@ -1,8 +1,6 @@
-use num::range;
-
 use crate::{
     common::{
-        arithmetic::HALF_WAY_MOD_Q,
+        arithmetic::{pow_mod, HALF_WAY_MOD_Q},
         config::{HALF_DEGREE, MOD_Q},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
@@ -11,44 +9,110 @@ use crate::{
     },
     hexl::bindings::{eltwise_reduce_mod, multiply_mod},
     protocol::{
-        commitment::Prefix,
+        commitment::{Placement, Prefix},
         crs::CRS,
         sumcheck_utils::{
-            elephant_cell::ElephantCell, linear::LinearSumcheck, selector_eq::SelectorEq,
+            common::HighOrderSumcheckData, elephant_cell::ElephantCell, linear::LinearSumcheck,
+            product::ProductSumcheck, selector_eq::SelectorEq, sum::SumSumcheck,
         },
     },
 };
 
-/// Builds the sumcheck carrying radix weights (1, base, base^2, ...) used to
-/// recompose a base-`2^{base_log}` decomposition; prefix padding enables
-/// composition without re-indexing the hypercube.
+/// Builds the sumcheck carrying radix weights (1, base, base^2, ...) used to recompose a
+/// base-`2^{base_log}` decomposition laid out element-major, with the digit index on the low
+/// variables. The layout allocator places digit-major instead (see `plane_selectors`); this is
+/// for the intermediate round, whose witness is one flat element-major hypercube.
 pub(crate) fn composition_sumcheck(
     base_log: u64,
     chunks: usize,
     total_vars: usize,
 ) -> ElephantCell<LinearSumcheck<RingElement>> {
-    let conmposition_basis = range(0, chunks)
+    let composition_basis = (0..chunks)
         .map(|i| {
-            // Basis element corresponding to 2^{base_log * i}
-            RingElement::constant(
-                1u64 << (base_log as u64 * i as u64),
-                Representation::IncompleteNTT,
-            )
+            RingElement::constant(pow_mod(2, base_log * i as u64), Representation::IncompleteNTT)
         })
         .collect::<Vec<RingElement>>();
     let combiner_sumcheck = ElephantCell::new(
         LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
-            conmposition_basis.len(),
-            total_vars - conmposition_basis.len().ilog2() as usize,
+            composition_basis.len(),
+            total_vars - composition_basis.len().ilog2() as usize,
             0,
         ),
     );
 
-    combiner_sumcheck
-        .borrow_mut()
-        .load_from(&conmposition_basis);
+    combiner_sumcheck.borrow_mut().load_from(&composition_basis);
 
     combiner_sumcheck
+}
+
+/// The radix weight `2^{base_log * plane}` of a digit plane, reduced mod q: an unreduced shift
+/// wraps once `base_log * plane >= 50`.
+pub(crate) fn plane_weight(base_log: usize, plane: usize) -> RingElement {
+    RingElement::constant(
+        pow_mod(2, (base_log * plane) as u64),
+        Representation::IncompleteNTT,
+    )
+}
+
+/// One selector per digit plane of a placed component, each scaled by its radix weight, so that
+/// `SUM_j scaled_j * W` recomposes the component out of its planes. `parts`/`part` address one of
+/// `parts` equal pieces of every plane -- an opening, a projection batch, one commitment element
+/// -- and `(1, 0)` takes the whole plane.
+pub(crate) fn plane_selectors(
+    placement: &Placement,
+    chunks: usize,
+    base_log: usize,
+    total_vars: usize,
+    parts: usize,
+    part: usize,
+) -> Vec<ElephantCell<SelectorEq<RingElement>>> {
+    (0..chunks)
+        .map(|plane| {
+            let prefix = placement.slice(plane * parts + part, chunks * parts);
+            ElephantCell::new(SelectorEq::<RingElement>::new_scaled(
+                prefix.prefix,
+                prefix.length,
+                total_vars,
+                plane_weight(base_log, plane),
+            ))
+        })
+        .collect()
+}
+
+/// The same planes unscaled: the raw digits, as a commitment key row meets them.
+pub(crate) fn raw_plane_selectors(
+    placement: &Placement,
+    chunks: usize,
+    total_vars: usize,
+) -> Vec<ElephantCell<SelectorEq<RingElement>>> {
+    (0..chunks)
+        .map(|plane| sumcheck_from_prefix(&placement.slice(plane, chunks), total_vars))
+        .collect()
+}
+
+/// `SUM_j selector_j * payload`, the shape every recomposed component enters a constraint in.
+pub(crate) fn weighted_sum(
+    selectors: &[ElephantCell<SelectorEq<RingElement>>],
+    payload: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
+) -> ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>> {
+    sum_of(
+        selectors
+            .iter()
+            .map(|selector| {
+                ElephantCell::new(ProductSumcheck::new(selector.clone(), payload.clone()))
+                    as ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>
+            })
+            .collect(),
+    )
+}
+
+pub(crate) fn sum_of(
+    terms: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>>,
+) -> ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>> {
+    terms
+        .into_iter()
+        .reduce(|acc, term| ElephantCell::new(SumSumcheck::new(acc, term)))
+        .expect("a component has at least one placed plane")
 }
 
 /// Creates a selector (SelectorEq) that evaluates to 1 where the first `prefix.length`

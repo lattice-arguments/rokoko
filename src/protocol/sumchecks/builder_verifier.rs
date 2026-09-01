@@ -6,7 +6,7 @@ use crate::{
         structured_row::StructuredRow,
     },
     protocol::{
-        commitment::{self, Prefix},
+        commitment::{self, Placement, Prefix},
         config::{Config, Projection, SumcheckConfig},
         crs::VerifierCRS,
         intermediate_sumchecks::builder_verifier::init_intermediate_verifier,
@@ -24,6 +24,7 @@ use crate::{
             selector_eq::SelectorEqEvaluation,
             sum::SumSumcheckEvaluation,
         },
+        sumchecks::helpers::plane_weight,
         sumchecks::context_verifier::{
             CoarseProjVerifierContext, ComVerifyLayerVerifierContext,
             ComVerifyOutputLayerVerifierContext, ComVerifyVerifierContext,
@@ -45,6 +46,63 @@ fn selector_evaluation_from_prefix(
         prefix.length,
         total_vars,
     ))
+}
+
+/// Verifier dual of `plane_selectors`: one evaluation per digit plane of a placed component,
+/// scaled by its radix weight.
+fn plane_selector_evaluations(
+    placement: &Placement,
+    chunks: usize,
+    base_log: usize,
+    total_vars: usize,
+    parts: usize,
+    part: usize,
+) -> Vec<ElephantCell<SelectorEqEvaluation>> {
+    (0..chunks)
+        .map(|plane| {
+            let prefix = placement.slice(plane * parts + part, chunks * parts);
+            ElephantCell::new(SelectorEqEvaluation::new_scaled(
+                prefix.prefix,
+                prefix.length,
+                total_vars,
+                plane_weight(base_log, plane),
+            ))
+        })
+        .collect()
+}
+
+fn raw_plane_selector_evaluations(
+    placement: &Placement,
+    chunks: usize,
+    total_vars: usize,
+) -> Vec<ElephantCell<SelectorEqEvaluation>> {
+    (0..chunks)
+        .map(|plane| selector_evaluation_from_prefix(&placement.slice(plane, chunks), total_vars))
+        .collect()
+}
+
+fn sum_of_evaluations(terms: Vec<ElephantCell<EvalData>>) -> ElephantCell<EvalData> {
+    terms
+        .into_iter()
+        .reduce(|acc, term| ElephantCell::new(SumSumcheckEvaluation::new(acc, term)))
+        .expect("a component has at least one placed plane")
+}
+
+fn weighted_sum_evaluation(
+    selectors: &[ElephantCell<SelectorEqEvaluation>],
+    payload: ElephantCell<EvalData>,
+) -> ElephantCell<EvalData> {
+    sum_of_evaluations(
+        selectors
+            .iter()
+            .map(|selector| {
+                ElephantCell::new(ProductSumcheckEvaluation::new(
+                    selector.clone(),
+                    payload.clone(),
+                )) as ElephantCell<EvalData>
+            })
+            .collect(),
+    )
 }
 
 pub fn basic_evaluation_linear(
@@ -137,6 +195,59 @@ pub fn structured_row_ck_segment_evaluation(
     eval
 }
 
+fn placed_plane_product_evaluations(
+    total_vars: usize,
+    config: &commitment::RecursionConfig,
+    witness: &ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
+) -> Vec<Vec<ElephantCell<EvalData>>> {
+    config
+        .placements
+        .iter()
+        .map(|placement| {
+            raw_plane_selector_evaluations(placement, config.decomposition_chunks, total_vars)
+                .into_iter()
+                .map(|selector| {
+                    ElephantCell::new(ProductSumcheckEvaluation::new(selector, witness.clone()))
+                        as ElephantCell<EvalData>
+                })
+                .collect()
+        })
+        .collect()
+}
+
+fn ck_over_planes_evaluation(
+    crs: &VerifierCRS,
+    total_vars: usize,
+    config: &commitment::RecursionConfig,
+    i: usize,
+    data_selected: &[Vec<ElephantCell<EvalData>>],
+    ck_evals: &mut Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
+) -> ElephantCell<EvalData> {
+    let committed_len = config.committed_len();
+    let slices = config.slices();
+    let mut terms: Vec<ElephantCell<EvalData>> = Vec::new();
+
+    for row in 0..config.placements.len() {
+        for plane in 0..config.decomposition_chunks {
+            let ck = structured_row_ck_segment_evaluation(
+                crs,
+                total_vars,
+                committed_len,
+                i,
+                slices,
+                config.slice_index(row, plane),
+            );
+            ck_evals.push(ck.clone());
+            terms.push(ElephantCell::new(ProductSumcheckEvaluation::new(
+                ck,
+                data_selected[row][plane].clone(),
+            )) as ElephantCell<EvalData>);
+        }
+    }
+
+    sum_of_evaluations(terms)
+}
+
 fn build_com_verify_verifier_context(
     crs: &VerifierCRS,
     total_vars: usize,
@@ -147,92 +258,37 @@ fn build_com_verify_verifier_context(
     let mut current = config;
 
     while let Some(next) = current.next.as_deref() {
-        let placed = current.prefixes.len();
-        let segments = current.segments();
-        let segment_len = 1 << (total_vars - current.prefixes[0].length);
-        let data_len = segments * segment_len;
+        let data_selected =
+            placed_plane_product_evaluations(total_vars, current, &combined_witness_eval);
 
-        let selector_evals = current
-            .prefixes
-            .iter()
-            .map(|prefix| selector_evaluation_from_prefix(prefix, total_vars))
-            .collect::<Vec<_>>();
-
-        let child_selectors_evals = (0..current.rank)
-            .map(|i| {
-                selector_evaluation_from_prefix(
-                    &Prefix {
-                        prefix: next.prefix().prefix * current.rank.next_power_of_two() + i,
-                        length: next.prefix().length
-                            + current.rank.next_power_of_two().ilog2() as usize,
-                    },
-                    total_vars,
-                )
-            })
-            .collect::<Vec<_>>();
-
-        let combiner_eval = load_combiner_evaluation_data(
-            next.decomposition_base_log as u64,
-            next.decomposition_chunks,
-            total_vars,
-        );
-
-        let mut ck_evals = Vec::with_capacity(current.rank * placed);
-        for i in 0..current.rank {
-            for segment in 0..placed {
-                ck_evals.push(structured_row_ck_segment_evaluation(
-                    crs, total_vars, data_len, i, segments, segment,
-                ));
-            }
-        }
-
-        let data_selected_evals = selector_evals
-            .iter()
-            .map(|selector| {
-                ElephantCell::new(ProductSumcheckEvaluation::new(
-                    selector.clone(),
-                    combined_witness_eval.clone(),
-                ))
-            })
-            .collect::<Vec<_>>();
-
-        let recomposed_combiner = ElephantCell::new(ProductSumcheckEvaluation::new(
-            combined_witness_eval.clone(),
-            combiner_eval.clone(),
-        ));
-
-        let recomposed_child_evals = (0..current.rank)
-            .map(|i| {
-                ElephantCell::new(ProductSumcheckEvaluation::new(
-                    child_selectors_evals[i].clone(),
-                    recomposed_combiner.clone(),
-                ))
-            })
-            .collect::<Vec<_>>();
-
+        let mut ck_evals = Vec::new();
         let outputs = (0..current.rank)
             .map(|i| {
-                let ck_with_data = (0..placed)
-                    .map(|segment| {
-                        ElephantCell::new(ProductSumcheckEvaluation::new(
-                            ck_evals[i * placed + segment].clone(),
-                            data_selected_evals[segment].clone(),
-                        )) as ElephantCell<EvalData>
-                    })
-                    .reduce(|acc, term| ElephantCell::new(SumSumcheckEvaluation::new(acc, term)))
-                    .expect("every level places at least one row");
+                let ck_with_data = ck_over_planes_evaluation(
+                    crs,
+                    total_vars,
+                    current,
+                    i,
+                    &data_selected,
+                    &mut ck_evals,
+                );
 
-                ElephantCell::new(DiffSumcheckEvaluation::new(
-                    ck_with_data,
-                    recomposed_child_evals[i].clone(),
-                ))
+                let child_planes = plane_selector_evaluations(
+                    next.placement(),
+                    next.decomposition_chunks,
+                    next.decomposition_base_log,
+                    total_vars,
+                    current.rank,
+                    i,
+                );
+                let recomposed_child =
+                    weighted_sum_evaluation(&child_planes, combined_witness_eval.clone());
+
+                ElephantCell::new(DiffSumcheckEvaluation::new(ck_with_data, recomposed_child))
             })
             .collect::<Vec<_>>();
 
         layers.push(ComVerifyLayerVerifierContext {
-            selector_evaluations: selector_evals,
-            child_selector_evaluations: child_selectors_evals,
-            combiner_evaluation: combiner_eval,
             ck_evaluations: ck_evals,
             outputs,
         });
@@ -240,47 +296,18 @@ fn build_com_verify_verifier_context(
         current = next;
     }
 
-    let placed = current.prefixes.len();
-    let segments = current.segments();
-    let data_len = segments * (1 << (total_vars - current.prefixes[0].length));
-
-    let selector_evals = current
-        .prefixes
-        .iter()
-        .map(|prefix| selector_evaluation_from_prefix(prefix, total_vars))
-        .collect::<Vec<_>>();
-
-    let mut ck_evals = Vec::with_capacity(current.rank * placed);
-    for i in 0..current.rank {
-        for segment in 0..placed {
-            ck_evals.push(structured_row_ck_segment_evaluation(
-                crs, total_vars, data_len, i, segments, segment,
-            ));
-        }
-    }
-
+    let data_selected =
+        placed_plane_product_evaluations(total_vars, current, &combined_witness_eval);
+    let mut ck_evals = Vec::new();
     let outputs = (0..current.rank)
         .map(|i| {
-            (0..placed)
-                .map(|segment| {
-                    let witness_with_ck = ElephantCell::new(ProductSumcheckEvaluation::new(
-                        combined_witness_eval.clone(),
-                        ck_evals[i * placed + segment].clone(),
-                    ));
-                    ElephantCell::new(ProductSumcheckEvaluation::new(
-                        selector_evals[segment].clone(),
-                        witness_with_ck,
-                    )) as ElephantCell<EvalData>
-                })
-                .reduce(|acc, term| ElephantCell::new(SumSumcheckEvaluation::new(acc, term)))
-                .expect("every level places at least one row")
+            ck_over_planes_evaluation(crs, total_vars, current, i, &data_selected, &mut ck_evals)
         })
         .collect::<Vec<_>>();
 
     ComVerifyVerifierContext {
         layers,
         output_layer: ComVerifyOutputLayerVerifierContext {
-            selector_evaluations: selector_evals,
             ck_evaluations: ck_evals,
             outputs,
         },
@@ -292,161 +319,95 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
 
     let combined_witness_evaluation =
         ElephantCell::new(FakeEvaluationLinearSumcheck::<RingElement>::new());
+    let witness = combined_witness_evaluation.clone() as ElephantCell<EvalData>;
 
-    let folded_witness_selector_evaluation =
-        selector_evaluation_from_prefix(&config.folded_witness_prefix, total_vars);
-
-    let folded_witness_combiner_evaluation = load_combiner_evaluation_data(
-        config.witness_decomposition_base_log as u64,
+    let folded_witness_planes = plane_selector_evaluations(
+        &config.folded_witness_placement,
         config.witness_decomposition_chunks,
+        config.witness_decomposition_base_log,
         total_vars,
-    );
-
-    let basic_commitment_combiner_evaluation = load_combiner_evaluation_data(
-        config.commitment_recursion.decomposition_base_log as u64,
-        config.commitment_recursion.decomposition_chunks,
-        total_vars,
-    );
-
-    let opening_combiner_evaluation = load_combiner_evaluation_data(
-        config.opening_recursion.decomposition_base_log as u64,
-        config.opening_recursion.decomposition_chunks,
-        total_vars,
+        1,
+        0,
     );
 
     let folding_challenges_evaluation = basic_evaluation_linear(
         config.witness_width,
-        total_vars
-            - config.witness_width.ilog2() as usize
-            - config.commitment_recursion.decomposition_chunks.ilog2() as usize,
-        config.commitment_recursion.decomposition_chunks.ilog2() as usize,
+        total_vars - config.witness_width.ilog2() as usize,
+        0,
     );
 
-    let commitment_key_rows_evaluation = (0..config.basic_commitment_rank)
-        .map(|i| {
-            structured_row_ck_evaluation(
-                crs,
-                total_vars,
-                config.witness_height,
-                i,
-                config.witness_decomposition_chunks.ilog2() as usize,
-            )
-        })
-        .collect::<Vec<_>>();
-
-    let opening_selector_evaluations = (0..config.nof_openings)
-        .map(|i| {
-            selector_evaluation_from_prefix(
-                &Prefix {
-                    prefix: config.opening_recursion.prefix().prefix * config.nof_openings + i,
-                    length: config.opening_recursion.prefix().length
-                        + config.nof_openings.ilog2() as usize,
-                },
-                total_vars,
-            )
-        })
-        .collect::<Vec<_>>();
-
-    let inner_evaluation_structured = (0..config.nof_openings)
-        .map(|_| {
-            ElephantCell::new(
-                StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
-                    config.witness_height,
-                    total_vars
-                        - config.witness_height.ilog2() as usize
-                        - config.witness_decomposition_chunks.ilog2() as usize,
-                    config.witness_decomposition_chunks.ilog2() as usize,
-                ),
-            )
-        })
-        .collect::<Vec<_>>();
-
-    let outer_evaluation_structured = (0..config.nof_openings)
-        .map(|_| {
-            ElephantCell::new(
-                StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
-                    config.witness_width,
-                    total_vars
-                        - config.witness_width.ilog2() as usize
-                        - config.opening_recursion.decomposition_chunks.ilog2() as usize,
-                    config.opening_recursion.decomposition_chunks.ilog2() as usize,
-                ),
-            )
-        })
-        .collect::<Vec<_>>();
-
-    let recomposed_folded_witness = ElephantCell::new(ProductSumcheckEvaluation::new(
-        combined_witness_evaluation.clone(),
-        folded_witness_combiner_evaluation.clone(),
-    ));
-    let recomposed_opening = ElephantCell::new(ProductSumcheckEvaluation::new(
-        combined_witness_evaluation.clone(),
-        opening_combiner_evaluation.clone(),
-    ));
-    let basic_commitment_combiner_product = ElephantCell::new(ProductSumcheckEvaluation::new(
-        combined_witness_evaluation.clone(),
-        basic_commitment_combiner_evaluation.clone(),
-    ));
-
-    let folding_with_commitment_diff = ElephantCell::new(ProductSumcheckEvaluation::new(
+    let witness_with_folding_challenges = ElephantCell::new(ProductSumcheckEvaluation::new(
+        witness.clone(),
         folding_challenges_evaluation.clone(),
-        basic_commitment_combiner_product.clone(),
-    ));
+    )) as ElephantCell<EvalData>;
+
+    let commitment_key_rows_evaluation = (0..config.basic_commitment_rank)
+        .map(|i| structured_row_ck_evaluation(crs, total_vars, config.witness_height, i, 0))
+        .collect::<Vec<_>>();
 
     let commitment_fold_evaluations = (0..config.basic_commitment_rank)
         .map(|i| {
-            let row_selector = selector_evaluation_from_prefix(
-                &config.commitment_recursion.prefixes[i],
+            let row_planes = plane_selector_evaluations(
+                &config.commitment_recursion.placements[i],
+                config.commitment_recursion.decomposition_chunks,
+                config.commitment_recursion.decomposition_base_log,
                 total_vars,
+                1,
+                0,
             );
 
-            let ck_with_folded = ElephantCell::new(ProductSumcheckEvaluation::new(
-                commitment_key_rows_evaluation[i].clone(),
-                recomposed_folded_witness.clone(),
-            ));
-            let lhs = ElephantCell::new(ProductSumcheckEvaluation::new(
-                folded_witness_selector_evaluation.clone(),
-                ck_with_folded.clone(),
-            ));
+            let lhs = weighted_sum_evaluation(
+                &folded_witness_planes,
+                ElephantCell::new(ProductSumcheckEvaluation::new(
+                    witness.clone(),
+                    commitment_key_rows_evaluation[i].clone(),
+                )) as ElephantCell<EvalData>,
+            );
 
-            let rhs = ElephantCell::new(ProductSumcheckEvaluation::new(
-                row_selector.clone(),
-                folding_with_commitment_diff.clone(),
-            ));
+            let rhs = weighted_sum_evaluation(&row_planes, witness_with_folding_challenges.clone());
 
             CommitmentFoldVerifierContext {
-                basic_commitment_row_evaluation: row_selector,
                 output: ElephantCell::new(DiffSumcheckEvaluation::new(lhs, rhs)),
             }
         })
         .collect::<Vec<_>>();
 
+    let opening_planes = (0..config.nof_openings)
+        .map(|i| {
+            plane_selector_evaluations(
+                &config.opening_recursion.placements[i],
+                config.opening_recursion.decomposition_chunks,
+                config.opening_recursion.decomposition_base_log,
+                total_vars,
+                1,
+                0,
+            )
+        })
+        .collect::<Vec<_>>();
+
     let inner_eval_fold_evaluations = (0..config.nof_openings)
         .map(|i| {
-            let inner_evaluation = inner_evaluation_structured[i].clone();
-            let opening_selector = opening_selector_evaluations[i].clone();
+            let inner_evaluation = ElephantCell::new(
+                StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
+                    config.witness_height,
+                    total_vars - config.witness_height.ilog2() as usize,
+                    0,
+                ),
+            );
 
-            let lhs_inner = ElephantCell::new(ProductSumcheckEvaluation::new(
-                recomposed_folded_witness.clone(),
-                inner_evaluation.clone(),
-            ));
-            let lhs = ElephantCell::new(ProductSumcheckEvaluation::new(
-                folded_witness_selector_evaluation.clone(),
-                lhs_inner.clone(),
-            ));
+            let lhs = weighted_sum_evaluation(
+                &folded_witness_planes,
+                ElephantCell::new(ProductSumcheckEvaluation::new(
+                    witness.clone(),
+                    inner_evaluation.clone(),
+                )) as ElephantCell<EvalData>,
+            );
 
-            let rhs_inner = ElephantCell::new(ProductSumcheckEvaluation::new(
-                recomposed_opening.clone(),
-                folding_challenges_evaluation.clone(),
-            ));
-            let rhs = ElephantCell::new(ProductSumcheckEvaluation::new(
-                opening_selector.clone(),
-                rhs_inner.clone(),
-            ));
+            let rhs =
+                weighted_sum_evaluation(&opening_planes[i], witness_with_folding_challenges.clone());
 
             InnerEvalFoldVerifierContext {
                 inner_evaluation,
-                opening_selector_evaluation: opening_selector,
                 output: ElephantCell::new(DiffSumcheckEvaluation::new(lhs, rhs)),
             }
         })
@@ -454,17 +415,21 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
 
     let outer_eval_claim_evaluations = (0..config.nof_openings)
         .map(|i| {
-            let opening_selector = opening_selector_evaluations[i].clone();
-            let outer_evaluation = outer_evaluation_structured[i].clone();
+            let outer_evaluation = ElephantCell::new(
+                StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
+                    config.witness_width,
+                    total_vars - config.witness_width.ilog2() as usize,
+                    0,
+                ),
+            );
 
-            let inner_product = ElephantCell::new(ProductSumcheckEvaluation::new(
-                recomposed_opening.clone(),
-                outer_evaluation.clone(),
-            ));
-            let output = ElephantCell::new(ProductSumcheckEvaluation::new(
-                opening_selector.clone(),
-                inner_product.clone(),
-            ));
+            let output = weighted_sum_evaluation(
+                &opening_planes[i],
+                ElephantCell::new(ProductSumcheckEvaluation::new(
+                    witness.clone(),
+                    outer_evaluation.clone(),
+                )) as ElephantCell<EvalData>,
+            );
 
             OuterEvalClaimVerifierContext {
                 outer_evaluation,
@@ -477,13 +442,14 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
     let coarse_proj_evaluation = {
         match &config.projection_recursion {
             Projection::Coarse(projection_recursion) => {
-                let projection_combiner_evaluation = load_combiner_evaluation_data(
-                    projection_recursion.decomposition_base_log as u64,
+                let projection_planes = plane_selector_evaluations(
+                    projection_recursion.placement(),
                     projection_recursion.decomposition_chunks,
+                    projection_recursion.decomposition_base_log,
                     total_vars,
+                    1,
+                    0,
                 );
-                let projection_selector_evaluation =
-                    selector_evaluation_from_prefix(&projection_recursion.prefix(), total_vars);
 
                 let projection_height_flat = config.witness_height / config.projection_ratio;
 
@@ -495,22 +461,16 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 let lhs_flatter_0_evaluation = ElephantCell::new(
                     StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
                         blocks,
-                        total_vars
-                            - blocks.ilog2() as usize
-                            - inner_width.ilog2() as usize
-                            - config.witness_decomposition_chunks.ilog2() as usize,
-                        inner_width.ilog2() as usize
-                            + config.witness_decomposition_chunks.ilog2() as usize,
+                        total_vars - blocks.ilog2() as usize - inner_width.ilog2() as usize,
+                        inner_width.ilog2() as usize,
                     ),
                 );
 
                 let lhs_flatter_1_times_matrix_evaluation_field = ElephantCell::new(
                 BasicEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
                     inner_width,
-                    total_vars
-                        - inner_width.ilog2() as usize
-                        - config.witness_decomposition_chunks.ilog2() as usize,
-                    config.witness_decomposition_chunks.ilog2() as usize,
+                    total_vars - inner_width.ilog2() as usize,
+                    0,
                 ),
             );
 
@@ -525,10 +485,8 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 let rhs_projection_flatter_evaluation = ElephantCell::new(
                     StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
                         projection_height_flat,
-                        total_vars
-                            - projection_height_flat.ilog2() as usize
-                            - projection_recursion.decomposition_chunks.ilog2() as usize,
-                        projection_recursion.decomposition_chunks.ilog2() as usize,
+                        total_vars - projection_height_flat.ilog2() as usize,
+                        0,
                     ),
                 );
 
@@ -536,16 +494,9 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                     config.witness_width,
                     total_vars
                         - config.witness_width.ilog2() as usize
-                        - projection_height_flat.ilog2() as usize
-                        - projection_recursion.decomposition_chunks.ilog2() as usize,
-                    projection_height_flat.ilog2() as usize
-                        + projection_recursion.decomposition_chunks.ilog2() as usize,
+                        - projection_height_flat.ilog2() as usize,
+                    projection_height_flat.ilog2() as usize,
                 );
-
-                let recomposed_projection = ElephantCell::new(ProductSumcheckEvaluation::new(
-                    combined_witness_evaluation.clone(),
-                    projection_combiner_evaluation.clone(),
-                ));
 
                 let lhs_projection_coeff_product =
                     ElephantCell::new(ProductSumcheckEvaluation::new(
@@ -558,32 +509,28 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                     rhs_fold_challenge_evaluation.clone(),
                 ));
 
-                let coarse_proj_lhs_inner = ElephantCell::new(ProductSumcheckEvaluation::new(
-                    recomposed_folded_witness.clone(),
-                    lhs_projection_coeff_product,
-                ));
-                let coarse_proj_lhs = ElephantCell::new(ProductSumcheckEvaluation::new(
-                    folded_witness_selector_evaluation.clone(),
-                    coarse_proj_lhs_inner.clone(),
-                ));
+                let coarse_proj_lhs = weighted_sum_evaluation(
+                    &folded_witness_planes,
+                    ElephantCell::new(ProductSumcheckEvaluation::new(
+                        witness.clone(),
+                        lhs_projection_coeff_product,
+                    )) as ElephantCell<EvalData>,
+                );
 
-                let coarse_proj_rhs_inner = ElephantCell::new(ProductSumcheckEvaluation::new(
-                    recomposed_projection.clone(),
-                    rhs_fold_tensor_product,
-                ));
-                let coarse_proj_rhs = ElephantCell::new(ProductSumcheckEvaluation::new(
-                    projection_selector_evaluation.clone(),
-                    coarse_proj_rhs_inner.clone(),
-                ));
+                let coarse_proj_rhs = weighted_sum_evaluation(
+                    &projection_planes,
+                    ElephantCell::new(ProductSumcheckEvaluation::new(
+                        witness.clone(),
+                        rhs_fold_tensor_product,
+                    )) as ElephantCell<EvalData>,
+                );
 
                 Some(CoarseProjVerifierContext {
-                    projection_combiner_evaluation,
                     lhs_flatter_0_evaluation,
                     lhs_flatter_1_times_matrix_evaluation_field,
                     lhs_flatter_1_times_matrix_evaluation,
                     rhs_projection_flatter_evaluation,
                     rhs_fold_challenge_evaluation,
-                    projection_selector_evaluation,
                     output: ElephantCell::new(DiffSumcheckEvaluation::new(
                         coarse_proj_lhs,
                         coarse_proj_rhs,
@@ -597,52 +544,26 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
 
     let fine_proj_evaluations = match &config.projection_recursion {
         Projection::Fine(proj_config) => {
-            let projection_combiner_evaluation = load_combiner_evaluation_data(
-                proj_config
-                    .recursion_batched_projection
-                    .decomposition_base_log as u64,
-                proj_config
-                    .recursion_batched_projection
-                    .decomposition_chunks,
-                total_vars,
-            );
             let rhs_fold_challenge_evaluation = basic_evaluation_linear(
                 config.witness_width,
-                total_vars
-                    - config.witness_width.ilog2() as usize
-                    - proj_config
-                        .recursion_batched_projection
-                        .decomposition_chunks
-                        .ilog2() as usize,
-                proj_config
-                    .recursion_batched_projection
-                    .decomposition_chunks
-                    .ilog2() as usize,
+                total_vars - config.witness_width.ilog2() as usize,
+                0,
             );
 
-            let projection_constant_terms_embedded_combiner_evaluation =
-                load_combiner_evaluation_data(
-                    proj_config.recursion_constant_term.decomposition_base_log as u64,
-                    proj_config.recursion_constant_term.decomposition_chunks,
-                    total_vars,
-                );
-
-            let recomposed_projection = ElephantCell::new(ProductSumcheckEvaluation::new(
-                combined_witness_evaluation.clone(),
-                projection_combiner_evaluation.clone(),
-            ));
-
-            let recomposed_projection_constant_terms_embedded =
+            let witness_with_rhs_fold_challenge =
                 ElephantCell::new(ProductSumcheckEvaluation::new(
-                    combined_witness_evaluation.clone(),
-                    projection_constant_terms_embedded_combiner_evaluation.clone(),
-                ));
+                    witness.clone(),
+                    rhs_fold_challenge_evaluation.clone(),
+                )) as ElephantCell<EvalData>;
 
-            let projection_constant_terms_embedded_selector_evaluation =
-                selector_evaluation_from_prefix(
-                    &proj_config.recursion_constant_term.prefix(),
-                    total_vars,
-                );
+            let projection_constant_terms_embedded_planes = plane_selector_evaluations(
+                proj_config.recursion_constant_term.placement(),
+                proj_config.recursion_constant_term.decomposition_chunks,
+                proj_config.recursion_constant_term.decomposition_base_log,
+                total_vars,
+                1,
+                0,
+            );
 
             let lhs_scalar_consistency_evaluation_field = ElephantCell::new(
                 BasicEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
@@ -658,6 +579,18 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 RingToFieldWrapperEvaluation::new(lhs_scalar_consistency_evaluation_field.clone()),
             );
 
+            let batched_planes: [Vec<ElephantCell<SelectorEqEvaluation>>; NOF_BATCHES] =
+                std::array::from_fn(|i| {
+                    plane_selector_evaluations(
+                        proj_config.recursion_batched_projection.placement(),
+                        proj_config.recursion_batched_projection.decomposition_chunks,
+                        proj_config.recursion_batched_projection.decomposition_base_log,
+                        total_vars,
+                        NOF_BATCHES,
+                        i,
+                    )
+                });
+
             let contexts: [FineProjVerifierContext; NOF_BATCHES] = std::array::from_fn(|i| {
                 // Split coefficients into block indices (elder vars) and within-block (LS vars)
                 let height = config.projection_height;
@@ -666,30 +599,14 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 let lhs_flatter_0_evaluation_field = ElephantCell::new(
                     StructuredRowEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
                         blocks,
-                        total_vars
-                            - blocks.ilog2() as usize
-                            - inner_width.ilog2() as usize
-                            - config.witness_decomposition_chunks.ilog2() as usize,
-                        inner_width.ilog2() as usize
-                            + config.witness_decomposition_chunks.ilog2() as usize,
+                        total_vars - blocks.ilog2() as usize - inner_width.ilog2() as usize,
+                        inner_width.ilog2() as usize,
                     ),
                 );
                 let lhs_flatter_1_times_matrix_evaluation = basic_evaluation_linear(
                     inner_width,
-                    total_vars
-                        - inner_width.ilog2() as usize
-                        - config.witness_decomposition_chunks.ilog2() as usize,
-                    config.witness_decomposition_chunks.ilog2() as usize,
-                );
-                let projection_selector_evaluation = selector_evaluation_from_prefix(
-                    &Prefix {
-                        prefix: proj_config.recursion_batched_projection.prefix().prefix
-                            * NOF_BATCHES
-                            + i,
-                        length: proj_config.recursion_batched_projection.prefix().length
-                            + NOF_BATCHES.ilog2() as usize,
-                    },
-                    total_vars,
+                    total_vars - inner_width.ilog2() as usize,
+                    0,
                 );
 
                 let lhs_flatter_0_evaluation = ElephantCell::new(
@@ -701,37 +618,26 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                     lhs_flatter_1_times_matrix_evaluation.clone(),
                 ));
 
-                let lhs = ElephantCell::new(ProductSumcheckEvaluation::new(
-                    folded_witness_selector_evaluation.clone(),
+                let lhs = weighted_sum_evaluation(
+                    &folded_witness_planes,
                     ElephantCell::new(ProductSumcheckEvaluation::new(
-                        recomposed_folded_witness.clone(),
+                        witness.clone(),
                         projection_coeff_product.clone(),
-                    )),
-                ));
+                    )) as ElephantCell<EvalData>,
+                );
 
-                let rhs = ElephantCell::new(ProductSumcheckEvaluation::new(
-                    projection_selector_evaluation.clone(),
-                    ElephantCell::new(ProductSumcheckEvaluation::new(
-                        recomposed_projection.clone(),
-                        rhs_fold_challenge_evaluation.clone(),
-                    )),
-                ));
+                let rhs = weighted_sum_evaluation(
+                    &batched_planes[i],
+                    witness_with_rhs_fold_challenge.clone(),
+                );
 
                 let output = ElephantCell::new(DiffSumcheckEvaluation::new(lhs, rhs));
 
                 let lhs_consistency_flatter_evaluation_field = ElephantCell::new(
                     StructuredRowEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
                         config.witness_width,
-                        total_vars
-                            - config.witness_width.ilog2() as usize
-                            - proj_config
-                                .recursion_batched_projection
-                                .decomposition_chunks
-                                .ilog2() as usize,
-                        proj_config
-                            .recursion_batched_projection
-                            .decomposition_chunks
-                            .ilog2() as usize,
+                        total_vars - config.witness_width.ilog2() as usize,
+                        0,
                     ),
                 );
 
@@ -742,13 +648,13 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
 
                 let lhs = ElephantCell::new(ProductSumcheckEvaluation::new(
                     lhs_scalar_consistency_evaluation.clone(),
-                    ElephantCell::new(ProductSumcheckEvaluation::new(
-                        projection_selector_evaluation.clone(),
+                    weighted_sum_evaluation(
+                        &batched_planes[i],
                         ElephantCell::new(ProductSumcheckEvaluation::new(
                             lhs_consistency_flatter_evaluation.clone(),
-                            recomposed_projection.clone(),
-                        )),
-                    )),
+                            witness.clone(),
+                        )) as ElephantCell<EvalData>,
+                    ),
                 ));
 
                 // c_2 \otimes c_0 \otimes e_0
@@ -758,16 +664,8 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 let rhs_consistency_flatter_evaluation_field = ElephantCell::new(
                     StructuredRowEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
                         rhs_flatter_len,
-                        total_vars
-                            - rhs_flatter_len.ilog2() as usize
-                            - proj_config
-                                .recursion_constant_term
-                                .decomposition_chunks
-                                .ilog2() as usize,
-                        proj_config
-                            .recursion_constant_term
-                            .decomposition_chunks
-                            .ilog2() as usize,
+                        total_vars - rhs_flatter_len.ilog2() as usize,
+                        0,
                     ),
                 );
 
@@ -784,13 +682,13 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
 
                 let rhs = ElephantCell::new(ProductSumcheckEvaluation::new(
                     rhs_scalar_consistency_evaluation.clone(),
-                    ElephantCell::new(ProductSumcheckEvaluation::new(
-                        projection_constant_terms_embedded_selector_evaluation.clone(),
+                    weighted_sum_evaluation(
+                        &projection_constant_terms_embedded_planes,
                         ElephantCell::new(ProductSumcheckEvaluation::new(
                             rhs_consistency_flatter_evaluation.clone(),
-                            recomposed_projection_constant_terms_embedded.clone(),
-                        )),
-                    )),
+                            witness.clone(),
+                        )) as ElephantCell<EvalData>,
+                    ),
                 ));
 
                 let output_consistency = ElephantCell::new(DiffSumcheckEvaluation::new(lhs, rhs));
@@ -799,7 +697,6 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                     lhs_flatter_0_evaluation_field,
                     lhs_flatter_0_evaluation,
                     lhs_flatter_1_times_matrix_evaluation,
-                    projection_selector_evaluation,
                     output,
                     lhs_consistency_flatter_evaluation_field,
                     lhs_consistency_flatter_evaluation,
@@ -811,7 +708,6 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
             });
             Some(FineProjVerifierContextWrapper {
                 sumchecks: contexts,
-                projection_combiner_evaluation,
                 rhs_fold_challenge_evaluation,
                 lhs_scalar_consistency_evaluation_field,
                 lhs_scalar_consistency_evaluation,
@@ -866,26 +762,38 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
     let conjugated_combined_witness_evaluation =
         ElephantCell::new(FakeEvaluationLinearSumcheck::<RingElement>::new());
 
-    let mut most_inner_commitments_selectors = vec![];
-
-    // Mirrors the prover: every row block of a most-inner level enters the norm claim.
-    let mut push_most_inner = |recursion: &commitment::RecursionConfig| {
-        for prefix in recursion.most_inner_config().prefixes.iter() {
-            most_inner_commitments_selectors
-                .push(selector_evaluation_from_prefix(prefix, total_vars));
+    let mut most_inner_commitments_selectors: Vec<ElephantCell<SelectorEqEvaluation>> = vec![];
+    let push_most_inner = |recursion: &commitment::RecursionConfig,
+                               out: &mut Vec<ElephantCell<SelectorEqEvaluation>>| {
+        for placement in &recursion.most_inner_config().placements {
+            for block in &placement.blocks {
+                out.push(selector_evaluation_from_prefix(block, total_vars));
+            }
         }
     };
 
-    push_most_inner(&config.commitment_recursion);
-    push_most_inner(&config.opening_recursion);
+    push_most_inner(
+        &config.commitment_recursion,
+        &mut most_inner_commitments_selectors,
+    );
+    push_most_inner(
+        &config.opening_recursion,
+        &mut most_inner_commitments_selectors,
+    );
 
     match &config.projection_recursion {
         Projection::Coarse(proj_config) => {
-            push_most_inner(proj_config);
+            push_most_inner(proj_config, &mut most_inner_commitments_selectors);
         }
         Projection::Fine(proj_config) => {
-            push_most_inner(&proj_config.recursion_constant_term);
-            push_most_inner(&proj_config.recursion_batched_projection);
+            push_most_inner(
+                &proj_config.recursion_constant_term,
+                &mut most_inner_commitments_selectors,
+            );
+            push_most_inner(
+                &proj_config.recursion_batched_projection,
+                &mut most_inner_commitments_selectors,
+            );
         }
         Projection::Skip => {
             // Do nothing
@@ -959,12 +867,8 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
 
     VerifierSumcheckContext {
         combined_witness_evaluation,
-        folded_witness_selector_evaluation,
-        folded_witness_combiner_evaluation,
         folding_challenges_evaluation,
-        basic_commitment_combiner_evaluation,
         commitment_key_rows_evaluation,
-        opening_combiner_evaluation,
         commitment_fold_evaluations,
         inner_eval_fold_evaluations,
         outer_eval_claim_evaluations,

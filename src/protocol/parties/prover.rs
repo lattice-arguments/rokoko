@@ -1,7 +1,7 @@
 use crate::{
     common::{
         config::NOF_BATCHES,
-        decomposition::decompose,
+        decomposition::{decompose, decompose_chunks_into},
         hash::HashWrapper,
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         projection_matrix::ProjectionMatrix,
@@ -15,7 +15,7 @@ use crate::{
             RecursiveCommitmentWithAux,
         },
         config::{
-            config_base_from_config, paste_by_prefix, paste_recursive_commitment, Config,
+            config_base_from_config, paste_placement, paste_recursive_commitment, Config,
             IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, Projection,
             RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof,
         },
@@ -40,11 +40,13 @@ pub fn outer_eval_claims(
     rhs: &HorizontallyAlignedMatrix<RingElement>,
     evaluation_points_outer: &Vec<StructuredRow>,
 ) -> Vec<RingElement> {
+    // One claim per real opening: `rhs` is padded up to a power-of-two number of rows and the
+    // padding rows carry no claim.
+    let openings = evaluation_points_outer.len();
+    debug_assert!(openings <= rhs.height);
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
-    // rhs.height is the commitment's padded row count; there is one claim per evaluation point.
-    let nof_openings = evaluation_points_outer.len();
-    let mut result = vec![RingElement::zero(Representation::IncompleteNTT); nof_openings];
-    for i in 0..nof_openings {
+    let mut result = vec![RingElement::zero(Representation::IncompleteNTT); openings];
+    for i in 0..openings {
         let preprocessed_row_outer =
             PreprocessedRow::from_structured_row(&evaluation_points_outer[i]);
         for col in 0..rhs.width {
@@ -234,19 +236,27 @@ pub fn prover_round(
     let mut next_round_data =
         vec![RingElement::zero(Representation::IncompleteNTT); config.composed_witness_length];
 
+    // Digit-major: plane j of the folded witness is one contiguous block, so a radix that is
+    // not a power of two still addresses dyadically.
     let folded_witness_decomposed = {
         let _s = tracing::info_span!("prover_round::decompose").entered();
-        decompose(
+        let mut planes = vec![
+            RingElement::zero(Representation::IncompleteNTT);
+            folded_witness.data.len() * config.witness_decomposition_chunks
+        ];
+        decompose_chunks_into(
+            &mut planes,
             &folded_witness.data,
             config.witness_decomposition_base_log as u64,
             config.witness_decomposition_chunks,
-        )
+        );
+        planes
     };
 
-    paste_by_prefix(
+    paste_placement(
         &mut next_round_data,
         &folded_witness_decomposed,
-        &config.folded_witness_prefix,
+        &config.folded_witness_placement,
     );
 
     match &config.projection_recursion {
