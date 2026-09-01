@@ -54,8 +54,7 @@ impl<E: SumcheckElement> SelectorEq<E> {
         )
     }
 
-    /// `scale * eq(x, selector)`. Carrying the scale here rather than as another factor keeps a
-    /// weighted sum of selectors (a digit-plane recomposition) at the degree of a plain selector.
+    /// `scale * eq(x, selector)`: the selector's running claim starts at `scale` rather than one.
     pub fn new_scaled(
         selector: usize,
         selector_variable_count: usize,
