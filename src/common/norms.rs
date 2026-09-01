@@ -93,8 +93,7 @@ pub mod calibration {
     /// `assign_norm_bounds` assigns: `[norm_bound, most_inner_norm_bound]` for a sumcheck round,
     /// `[norm_bound, projection_norm_bound]` for an intermediate one, and
     /// `[witness_norm_bound, projection_norm_bound]` for a simple one. `Projection` is the exact
-    /// projection-image claim, which a sumcheck round makes on top of its two columns and which
-    /// no `NB_*` column holds.
+    /// projection-image claim a sumcheck round makes, and fills the third column.
     enum Slot {
         Column(usize),
         Projection,
@@ -192,22 +191,18 @@ pub mod calibration {
         }
 
         println!("\n=== calibration: paste over this chain's NB_* constant ===");
-        println!("[[f64; 2]; {}] = [", rows.len());
+        println!("[[f64; 3]; {}] = [", rows.len());
         for row in rows.iter() {
-            println!("    [{}, {}],", row.columns[0].0, row.columns[1].0);
+            // A round that makes no projection claim leaves its upper bound unset.
+            let projection = match row.projection {
+                Some((value, _)) => value.to_string(),
+                None => "f64::INFINITY".to_string(),
+            };
+            println!(
+                "    [{}, {}, {}],",
+                row.columns[0].0, row.columns[1].0, projection
+            );
         }
         println!("];");
-
-        let projections: Vec<(usize, f64)> = rows
-            .iter()
-            .enumerate()
-            .filter_map(|(i, row)| row.projection.map(|(value, _)| (i, value)))
-            .collect();
-        if !projections.is_empty() {
-            println!("\n=== calibration: exact projection-image norms (no NB_* column) ===");
-            for (i, value) in projections {
-                println!("    round {i}: {value}");
-            }
-        }
     }
 }
