@@ -290,7 +290,15 @@ impl AuxSumcheckConfig {
 
         if let Some(next) = &config.next {
             path.push("next".to_string());
-            self.collect_recursion_components(next, name_prefix, config.rank, components, path);
+            // The child selector divides this block into `rank.next_power_of_two()` sub-blocks
+            // (see the com-verify builders), so reserve that many.
+            self.collect_recursion_components(
+                next,
+                name_prefix,
+                config.rank.next_power_of_two(),
+                components,
+                path,
+            );
         }
     }
 
