@@ -375,6 +375,7 @@ pub fn prover_round(
         claim_over_witness_conjugate,
         norm_claim,
         most_inner_norm_claim,
+        projection_norm_claim,
         sumcheck_transcript,
         evaluation_points,
         constant_term_claims,
@@ -507,6 +508,7 @@ pub fn prover_round(
         claim_over_witness_conjugate,
         norm_claim,
         most_inner_norm_claim,
+        projection_norm_claim,
         next_round_commitment,
         rc_opening_inner: rc_opening.most_inner_commitment().clone(),
         rc_coarse_projection_inner: rc_coarse_projection

@@ -230,6 +230,10 @@ pub struct NormCheckSumcheckContext {
 
     // we also give an opening to subvectors of the combined witness and its conjugate.
     pub output_2: ElephantCell<ProductSumcheck<RingElement>>,
+
+    /// The same inner product scoped to the projection recursion's level-0 placements, present
+    /// when the round's config asks for the exact projection-image norm.
+    pub output_3: Option<ElephantCell<ProductSumcheck<RingElement>>>,
 }
 
 /// FineProj: fine (coefficient-level) projection validity (paper: Pi^proj-f).

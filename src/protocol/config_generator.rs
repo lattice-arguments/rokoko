@@ -42,6 +42,8 @@ pub struct AuxSumcheckConfig {
     pub projection_recursion: AuxProjection,
     pub witness_decomposition_base_log: usize,
     pub witness_decomposition_chunks: usize,
+    /// Adds the exact projection-image norm claim to the generated round.
+    pub exact_projection_norm: bool,
     pub next: Option<Box<AuxConfig>>,
 }
 
@@ -438,6 +440,8 @@ impl AuxSumcheckConfig {
             composed_witness_length,
             norm_bound: f64::INFINITY,
             most_inner_norm_bound: f64::INFINITY,
+            projection_norm_bound: f64::INFINITY,
+            exact_projection_norm: self.exact_projection_norm,
             next: self.next.as_ref().map(|next| {
                 Box::new(match next.as_ref() {
                     AuxConfig::Sumcheck(cfg) => cfg.generate_config_inner(depth + 1),
@@ -504,6 +508,7 @@ mod tests {
 
     fn toy_config_aux() -> AuxSumcheckConfig {
         AuxSumcheckConfig {
+            exact_projection_norm: false,
             witness_height: 512,
             witness_width: 16,
             projection_ratio: 32,
@@ -547,6 +552,7 @@ mod tests {
     #[test]
     fn test_toy_config_ii_generation() {
         let aux_config = AuxSumcheckConfig {
+            exact_projection_norm: false,
             witness_height: 512,
             witness_width: 16,
             projection_ratio: 64,

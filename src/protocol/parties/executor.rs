@@ -480,6 +480,7 @@ mod tests {
         init_common();
 
         let aux = AuxSumcheckConfig {
+            exact_projection_norm: false,
             witness_height: 1024,
             witness_width: 16,
             projection_ratio: 32,
@@ -556,6 +557,7 @@ mod tests {
         init_common();
 
         let aux = AuxSumcheckConfig {
+            exact_projection_norm: false,
             witness_height: 512,
             witness_width: 16,
             projection_ratio: 32,
@@ -637,6 +639,7 @@ mod tests {
         init_common();
 
         let layout = |nof_openings: usize| AuxSumcheckConfig {
+            exact_projection_norm: false,
             witness_height: 256,
             witness_width: 256,
             projection_ratio: 32,

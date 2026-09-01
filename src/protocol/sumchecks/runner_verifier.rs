@@ -32,6 +32,7 @@ fn batch_claims(
     rcs_projection_1_constant_term_claims: Option<&[RingElement]>,
     norm_claim: &RingElement,
     most_inner_norm_claim: &RingElement,
+    projection_norm_claim: Option<&RingElement>,
     combination: &[RingElement],
 ) -> RingElement {
     let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
@@ -127,6 +128,21 @@ fn batch_claims(
     let mut weighted_norm = most_inner_norm_claim.clone();
     weighted_norm *= &combination[idx];
     batched_claim += &weighted_norm;
+    idx += 1;
+
+    if let Some(projection_norm_claim) = projection_norm_claim {
+        let mut weighted_norm = projection_norm_claim.clone();
+        weighted_norm *= &combination[idx];
+        batched_claim += &weighted_norm;
+        idx += 1;
+    }
+
+    debug_assert_eq!(
+        idx,
+        combination.len(),
+        "batched claim walked {idx} of {} combiner outputs",
+        combination.len()
+    );
 
     batched_claim
 }
@@ -201,8 +217,24 @@ pub fn sumcheck_verifier(
         Projection::Skip => None,
     };
 
+    let projection_norm_claim = match (
+        config.projection_norm_scope(),
+        round_proof.projection_norm_claim.as_ref(),
+    ) {
+        (Some(_), Some(claim)) => Some(claim),
+        (None, None) => None,
+        (scope, claim) => panic!(
+            "projection norm claim presence {} does not match the round's config {}",
+            claim.is_some(),
+            scope.is_some()
+        ),
+    };
+
     hash_wrapper.update_with_ring_element(&round_proof.norm_claim);
     hash_wrapper.update_with_ring_element(&round_proof.most_inner_norm_claim);
+    if let Some(projection_norm_claim) = projection_norm_claim {
+        hash_wrapper.update_with_ring_element(projection_norm_claim);
+    }
     if let Some(constant_term_claims) = &round_proof.constant_term_claims {
         hash_wrapper.update_with_ring_element_slice(constant_term_claims);
     }
@@ -235,6 +267,7 @@ pub fn sumcheck_verifier(
         round_proof.constant_term_claims.as_deref(),
         &round_proof.norm_claim,
         &round_proof.most_inner_norm_claim,
+        projection_norm_claim,
         &combination,
     );
 
@@ -260,6 +293,15 @@ pub fn sumcheck_verifier(
         (most_inner_norm_ct as f64).sqrt(),
         config.most_inner_norm_bound,
     );
+
+    if let Some(projection_norm_claim) = projection_norm_claim {
+        let projection_norm_ct = projection_norm_claim.constant_term_from_incomplete_ntt();
+        assert_norm_bounded(
+            "projection image norm claim via inner-product",
+            (projection_norm_ct as f64).sqrt(),
+            config.projection_norm_bound,
+        );
+    }
 
     let mut batched_claim_over_field = {
         let batched_claim = {

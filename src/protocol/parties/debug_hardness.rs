@@ -9,13 +9,14 @@ use crate::{
         config::MOD_Q,
         estimator::{estimate_rsis_security, RSISParameters},
         norms,
-        ring_arithmetic::RingElement,
+        ring_arithmetic::{Representation, RingElement},
         short_challenge::T_OP_NORM_BOUND,
     },
     protocol::{
         commitment::{RecursionConfig, RecursiveCommitmentWithAux},
         config::{IntermediateConfig, Projection, SimpleConfig, SumcheckConfig},
         params::NORM_MARGIN,
+        sumchecks::helpers::plane_weight,
     },
 };
 
@@ -25,6 +26,49 @@ const JL_ALPHA_RP: f64 = 5.477225575051661;
 /// Rewinding slack: factor 4 for the difference quotient in extraction,
 /// factor 2 for ISIS-to-SIS.
 const EXTRACTION_SLACK: f64 = 8.0;
+
+/// The L_2 norm of the level's undecomposed input, recomposed out of its digit planes. This is
+/// what the recomposition factor bounds, so printing it shows how much of that factor is slack.
+fn recomposed_input_l2(rc: &RecursiveCommitmentWithAux, config: &RecursionConfig) -> f64 {
+    let row_len = rc.committed_data.len() / config.padded_chunks();
+    let mut recomposed = vec![RingElement::zero(Representation::IncompleteNTT); row_len];
+    let mut term = RingElement::zero(Representation::IncompleteNTT);
+    for plane in 0..config.decomposition_chunks {
+        let weight = plane_weight(config.decomposition_base_log, plane);
+        for element in 0..row_len {
+            term.set_from(&rc.committed_data[plane * row_len + element]);
+            term *= &weight;
+            recomposed[element] += &term;
+        }
+    }
+
+    let mut sum = 0f64;
+    for element in recomposed.iter_mut() {
+        element.from_incomplete_ntt_to_even_odd_coefficients();
+        for &x in element.v.iter() {
+            let centered = if x < MOD_Q / 2 { x } else { MOD_Q - x } as f64;
+            sum += centered * centered;
+        }
+    }
+    sum.sqrt()
+}
+
+/// What the projection norm claim measures: sqrt(SUM_j 2^{2 . base_log . j} . ||d_j||^2) over
+/// the level's own digit planes, taken from the composed witness the round commits to.
+fn weighted_plane_norm(composed_witness: &[RingElement], config: &RecursionConfig) -> f64 {
+    let total_vars = composed_witness.len().ilog2() as usize;
+    let placement = config.placement();
+    let mut sum = 0f64;
+    for plane in 0..config.decomposition_chunks {
+        let prefix = placement.slice(plane, config.decomposition_chunks);
+        let length = 1 << (total_vars - prefix.length);
+        let start = prefix.prefix << (total_vars - prefix.length);
+        let weight = 2f64.powi((config.decomposition_base_log * plane) as i32);
+        let plane_norm = norms::l2_norm(&composed_witness[start..start + length]);
+        sum += weight * weight * plane_norm * plane_norm;
+    }
+    sum.sqrt()
+}
 
 fn recomposition_factor(base_log: usize, chunks: usize) -> f64 {
     (0..chunks as i32)
@@ -205,9 +249,10 @@ pub fn check_sumcheck_round(
 
     let extracted_witness_bound = recomposed_witness_bound * T_OP_NORM_BOUND * EXTRACTION_SLACK;
 
-    // The decomposed projection image is the outermost block of its own recursion, so it sits in
-    // the rest; only a single-level recursion puts it among the most inner commitment data, and
-    // then that aggregate - not the whole witness - is the containing bound.
+    // Without the round's own projection claim the image is only covered by a containing
+    // aggregate: the decomposed projection image is the outermost block of its own recursion and
+    // so sits in the rest, unless a single-level recursion puts it among the most inner
+    // commitment data.
     let projection_block_norm = |proj_config: &RecursionConfig| {
         if proj_config.next.is_some() {
             recommited_ell_2_norm_rest
@@ -216,23 +261,50 @@ pub fn check_sumcheck_round(
         }
     };
 
-    let recomposed_projection_bound = match &config.projection_recursion {
-        Projection::Coarse(proj_config) => {
-            projection_block_norm(proj_config)
-                * recomposition_factor(
-                    proj_config.decomposition_base_log,
-                    proj_config.decomposition_chunks,
-                )
+    if let Some(proj_config) = config.projection_norm_scope() {
+        let recomposed = match (rc_coarse_projection, rc_fine_projection) {
+            (Some(rc_proj), _) => recomposed_input_l2(rc_proj, proj_config),
+            (_, Some((rc_ct, _))) => recomposed_input_l2(rc_ct, proj_config),
+            _ => 0.0,
+        };
+        let claim = weighted_plane_norm(next_round_data, proj_config);
+        let factor = recomposition_factor(
+            proj_config.decomposition_base_log,
+            proj_config.decomposition_chunks,
+        );
+        println!(
+            "Projection image L_2 {recomposed}: claimed bound {}, aggregate bound {}",
+            claim * (proj_config.decomposition_chunks as f64).sqrt(),
+            recommited_ell_2_norm_rest * factor
+        );
+    }
+
+    // The claim carries SUM_j 2^{2 . base_log . j} . ||d_j||^2; Cauchy-Schwarz over the
+    // `chunks` planes turns it into a bound on the recomposed image. Lacking that per-plane
+    // split, the aggregate path pays the full recomposition factor.
+    let recomposed_projection_bound = match config.projection_norm_scope() {
+        Some(proj_config) => {
+            weighted_plane_norm(next_round_data, proj_config)
+                * (proj_config.decomposition_chunks as f64).sqrt()
         }
-        Projection::Fine(proj_config) => {
-            let constant_term = &proj_config.recursion_constant_term;
-            projection_block_norm(constant_term)
-                * recomposition_factor(
-                    constant_term.decomposition_base_log,
-                    constant_term.decomposition_chunks,
-                )
-        }
-        Projection::Skip => 0.0, // not used
+        None => match &config.projection_recursion {
+            Projection::Coarse(proj_config) => {
+                projection_block_norm(proj_config)
+                    * recomposition_factor(
+                        proj_config.decomposition_base_log,
+                        proj_config.decomposition_chunks,
+                    )
+            }
+            Projection::Fine(proj_config) => {
+                let constant_term = &proj_config.recursion_constant_term;
+                projection_block_norm(constant_term)
+                    * recomposition_factor(
+                        constant_term.decomposition_base_log,
+                        constant_term.decomposition_chunks,
+                    )
+            }
+            Projection::Skip => 0.0, // not used
+        },
     };
 
     let argued_witness_bound = recomposed_projection_bound / JL_ALPHA_RP;
