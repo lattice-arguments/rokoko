@@ -351,16 +351,6 @@ pub fn check_sumcheck_round(
         n: config.basic_commitment_rank as u64,
         length_bound: worse_bound.ceil() as u64,
     });
-    let c = basic_commitment_security.as_ref().unwrap();
-    if c.secpar < 128.0 {
-        println!(
-            "WARNING! "
-        );
-    } else if c.secpar > 140.0 {
-        println!(
-            "LOOK OVERSECURE! "
-        );
-    }
     println!(
         "Basic commitment estimated security for extraction: {:?} with rank {}",
         basic_commitment_security, config.basic_commitment_rank
@@ -375,69 +365,69 @@ pub fn check_intermediate_round(
 ) {
     println!("Debug hardness check for intermediate round is broken, but we don't use it! Fix it if you need it.");
     std::process::exit(1);
-    println!("=== Debug Hardness Check for Intermediate Round ===");
+//     println!("=== Debug Hardness Check for Intermediate Round ===");
 
-    let recommited_ell_2_norm = norms::l2_norm(next_round_witness_data);
-    let recommited_ell_inf_norm = norms::inf_norm(next_round_witness_data);
-    println!(
-        "Next round witness norms: L_2 = {}, L_inf = {}, bit_len = {}, MOD_Q = {}",
-        recommited_ell_2_norm,
-        recommited_ell_inf_norm,
-        recommited_ell_inf_norm.ilog2(),
-        MOD_Q
-    );
+//     let recommited_ell_2_norm = norms::l2_norm(next_round_witness_data);
+//     let recommited_ell_inf_norm = norms::inf_norm(next_round_witness_data);
+//     println!(
+//         "Next round witness norms: L_2 = {}, L_inf = {}, bit_len = {}, MOD_Q = {}",
+//         recommited_ell_2_norm,
+//         recommited_ell_inf_norm,
+//         recommited_ell_inf_norm.ilog2(),
+//         MOD_Q
+//     );
 
-    let folded_witness_ell_2_norm = norms::l2_norm(folded_witness_data);
-    let folded_witness_inf_norm = norms::inf_norm(folded_witness_data);
-    println!(
-        "Folded witness norms: L_2 = {}, L_inf = {}, bit_len = {}, MOD_Q = {}",
-        folded_witness_ell_2_norm,
-        folded_witness_inf_norm,
-        folded_witness_inf_norm.ilog2(),
-        MOD_Q
-    );
+//     let folded_witness_ell_2_norm = norms::l2_norm(folded_witness_data);
+//     let folded_witness_inf_norm = norms::inf_norm(folded_witness_data);
+//     println!(
+//         "Folded witness norms: L_2 = {}, L_inf = {}, bit_len = {}, MOD_Q = {}",
+//         folded_witness_ell_2_norm,
+//         folded_witness_inf_norm,
+//         folded_witness_inf_norm.ilog2(),
+//         MOD_Q
+//     );
 
-    let recomposed_witness_bound = recommited_ell_2_norm
-        * (config
-            .witness_decomposition_base_log
-            .pow((config.witness_decomposition_chunks - 1) as u32)) as f64;
+//     let recomposed_witness_bound = recommited_ell_2_norm
+//         * (config
+//             .witness_decomposition_base_log
+//             .pow((config.witness_decomposition_chunks - 1) as u32)) as f64;
 
-    println!("Folded witness norm: {}", recomposed_witness_bound);
+//     println!("Folded witness norm: {}", recomposed_witness_bound);
 
-    let projection_l2_norm = norms::l2_norm_coeffs(projection_image_ct_data);
+//     let projection_l2_norm = norms::l2_norm_coeffs(projection_image_ct_data);
 
-    let extracted_witness_bound = recomposed_witness_bound * T_OP_NORM_BOUND * EXTRACTION_SLACK;
+//     let extracted_witness_bound = recomposed_witness_bound * T_OP_NORM_BOUND * EXTRACTION_SLACK;
 
-    let argued_witness_bound = projection_l2_norm / JL_ALPHA_RP;
+//     let argued_witness_bound = projection_l2_norm / JL_ALPHA_RP;
 
-    assert!(
-        argued_witness_bound * argued_witness_bound < (MOD_Q as f64 / 2f64),
-        "Projection-argued witness bound too large for inner-product norm extraction!"
-    );
+//     assert!(
+//         argued_witness_bound * argued_witness_bound < (MOD_Q as f64 / 2f64),
+//         "Projection-argued witness bound too large for inner-product norm extraction!"
+//     );
 
-    let worse_bound = if extracted_witness_bound > argued_witness_bound {
-        println!(
-            "Using extracted witness bound {} for security estimation.",
-            extracted_witness_bound
-        );
-        extracted_witness_bound
-    } else {
-        println!(
-            "Using projection-argued witness bound {} for security estimation.",
-            argued_witness_bound
-        );
-        argued_witness_bound
-    };
+//     let worse_bound = if extracted_witness_bound > argued_witness_bound {
+//         println!(
+//             "Using extracted witness bound {} for security estimation.",
+//             extracted_witness_bound
+//         );
+//         extracted_witness_bound
+//     } else {
+//         println!(
+//             "Using projection-argued witness bound {} for security estimation.",
+//             argued_witness_bound
+//         );
+//         argued_witness_bound
+//     };
 
-    let basic_commitment_security = estimate_rsis_security(&RSISParameters {
-        m: config.witness_height as u64,
-        n: config.basic_commitment_rank as u64,
-        length_bound: worse_bound.ceil() as u64,
-    });
-    println!(
-        "Basic commitment estimated security for extraction: {:?} with rank {}",
-        basic_commitment_security, config.basic_commitment_rank
-    );
+//     let basic_commitment_security = estimate_rsis_security(&RSISParameters {
+//         m: config.witness_height as u64,
+//         n: config.basic_commitment_rank as u64,
+//         length_bound: worse_bound.ceil() as u64,
+//     });
+//     println!(
+//         "Basic commitment estimated security for extraction: {:?} with rank {}",
+//         basic_commitment_security, config.basic_commitment_rank
+//     );
 }
 
 pub fn check_simple_round(
