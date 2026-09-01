@@ -46,26 +46,11 @@ impl<E: SumcheckElement> SelectorEq<E> {
         selector_variable_count: usize,
         total_variable_count: usize,
     ) -> Self {
-        Self::new_scaled(
-            selector,
-            selector_variable_count,
-            total_variable_count,
-            E::one(),
-        )
-    }
-
-    /// `scale * eq(x, selector)`: the selector's running claim starts at `scale` rather than one.
-    pub fn new_scaled(
-        selector: usize,
-        selector_variable_count: usize,
-        total_variable_count: usize,
-        scale: E,
-    ) -> Self {
         SelectorEq {
             selector,
             selector_variable_count,
             total_variable_count,
-            current_claim: scale,
+            current_claim: E::one(),
             temp_product: RefCell::new(E::zero()),
             scratch_poly: RefCell::new(Polynomial::new(2)),
         }
@@ -250,7 +235,6 @@ pub struct SelectorEqEvaluation {
     selector: usize,
     selector_variable_count: usize,
     total_variable_count: usize,
-    scale: RingElement,
     result: RingElement,
     scratch: RingElement,
     evaluated: bool,
@@ -262,26 +246,10 @@ impl SelectorEqEvaluation {
         selector_variable_count: usize,
         total_variable_count: usize,
     ) -> Self {
-        Self::new_scaled(
-            selector,
-            selector_variable_count,
-            total_variable_count,
-            RingElement::constant(1, Representation::IncompleteNTT),
-        )
-    }
-
-    /// Verifier dual of `SelectorEq::new_scaled`.
-    pub fn new_scaled(
-        selector: usize,
-        selector_variable_count: usize,
-        total_variable_count: usize,
-        scale: RingElement,
-    ) -> Self {
         SelectorEqEvaluation {
             selector,
             selector_variable_count,
             total_variable_count,
-            scale,
             result: RingElement::constant(1, Representation::IncompleteNTT),
             scratch: RingElement::zero(Representation::IncompleteNTT),
             evaluated: false,
@@ -301,8 +269,8 @@ impl EvaluationSumcheckData for SelectorEqEvaluation {
             panic!("Point has incorrect number of variables");
         }
 
-        self.result.set_from(&self.scale);
-
+        // The loop below multiplies into `result`, which `new` leaves at one and the
+        // `evaluated` early return keeps to a single pass.
         // LS-first: the selector variables are folded LAST.
         // point layout: [non-selector LS vars..., selector vars from LSB to MSB...]
         // Selector challenges start at index (total_variable_count - selector_variable_count).

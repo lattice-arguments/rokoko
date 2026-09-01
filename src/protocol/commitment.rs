@@ -207,27 +207,21 @@ impl RecursionConfig {
 
     /// The length of one row of this level's (undecomposed) input.
     pub fn row_len(&self) -> usize {
+        // Checked in release too: one length speaks for every row, and a level whose rows
+        // differed in size would give both parties the same wrong key segments and the same
+        // wrong row stride, which is a wrong proof rather than a crash.
+        assert!(
+            self.placements
+                .iter()
+                .all(|placement| placement.size == self.placements[0].size),
+            "row components of one level are equally sized"
+        );
         self.placements[0].size / self.decomposition_chunks
     }
 
     /// The length of the padded vector this level actually commits to.
     pub fn committed_len(&self) -> usize {
         self.row_len() * self.segments() * self.padded_chunks()
-    }
-
-    /// How many equal dyadic slices the committed vector is cut into: one per (row, plane).
-    pub fn slices(&self) -> usize {
-        self.segments() * self.padded_chunks()
-    }
-
-    /// The index of row `row`'s plane `plane` among `slices()`.
-    pub fn slice_index(&self, row: usize, plane: usize) -> usize {
-        row * self.padded_chunks() + plane
-    }
-
-    /// The prefix of row `row`'s digit plane `plane` in the next round's witness.
-    pub fn plane(&self, row: usize, plane: usize) -> Prefix {
-        self.placements[row].slice(plane, self.decomposition_chunks)
     }
 }
 

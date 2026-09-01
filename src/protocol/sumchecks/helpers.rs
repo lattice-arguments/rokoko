@@ -93,7 +93,17 @@ pub(crate) fn sum_of(
         .expect("a component has at least one placed block")
 }
 
-/// The prefix and radix weight vector of each dyadic block of a placed component. A block holds
+/// One dyadic block of a placed component as a recomposition term: where the block sits, the
+/// radix weights it carries, and the variables below them. `prefix.length`, `weights.len()` and
+/// `suffix` are the geometry the linear sumcheck over the weights is laid out on, and they add up
+/// to `total_vars`.
+pub(crate) struct BlockWeights {
+    pub prefix: Prefix,
+    pub weights: Vec<RingElement>,
+    pub suffix: usize,
+}
+
+/// The dyadic blocks of a placed component, each with the radix weights it carries. A block holds
 /// a power-of-two run of the component's slices at a slice-aligned offset, so the weights it
 /// carries are a function of the block's own low bits alone. `parts`/`part` address one of
 /// `parts` equal pieces of every plane -- an opening, a projection batch, one commitment element
@@ -102,16 +112,17 @@ pub(crate) fn block_recomposition_weights(
     placement: &Placement,
     chunks: usize,
     base_log: usize,
+    total_vars: usize,
     parts: usize,
     part: usize,
-) -> Vec<(Prefix, Vec<RingElement>)> {
+) -> Vec<BlockWeights> {
     let slice_len = placement.size / (chunks * parts);
 
     placement
         .blocks_with_offsets()
         .into_iter()
         .map(|(offset, size, prefix)| {
-            let weights = (offset / slice_len..(offset + size) / slice_len)
+            let weights: Vec<RingElement> = (offset / slice_len..(offset + size) / slice_len)
                 .map(|slice| {
                     if slice % parts == part {
                         plane_weight(base_log, slice / parts)
@@ -120,7 +131,12 @@ pub(crate) fn block_recomposition_weights(
                     }
                 })
                 .collect();
-            (prefix, weights)
+            let suffix = total_vars - prefix.length - weights.len().ilog2() as usize;
+            BlockWeights {
+                prefix,
+                weights,
+                suffix,
+            }
         })
         .collect()
 }
@@ -146,9 +162,10 @@ impl Recomposition {
     }
 }
 
-/// The leaves a round folds once per sumcheck round: every selector it uses and the radix
-/// weights of the recompositions that carry them on their own factor. A leaf shared by several
-/// constraints is created once and registered once.
+/// The registry of leaves a round folds once per sumcheck round: every selector it uses and the
+/// radix weights of the recompositions that carry them on their own factor. The same block
+/// selector is registered once per part a component is recomposed in; a `SelectorEq` folds in
+/// O(1), so the repeats cost the round a pointer each.
 pub(crate) struct FoldedLeaves {
     pub selectors: Vec<ElephantCell<SelectorEq<RingElement>>>,
     pub weights: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
@@ -162,17 +179,6 @@ impl FoldedLeaves {
         }
     }
 
-    pub(crate) fn push_selector(&mut self, selector: ElephantCell<SelectorEq<RingElement>>) {
-        self.selectors.push(selector);
-    }
-
-    pub(crate) fn extend_selectors(
-        &mut self,
-        selectors: impl IntoIterator<Item = ElephantCell<SelectorEq<RingElement>>>,
-    ) {
-        self.selectors.extend(selectors);
-    }
-
     /// Builds the recomposition of a placed component and registers its leaves.
     pub(crate) fn recomposition(
         &mut self,
@@ -183,30 +189,36 @@ impl FoldedLeaves {
         parts: usize,
         part: usize,
     ) -> Recomposition {
-        let terms = block_recomposition_weights(placement, chunks, base_log, parts, part)
-            .into_iter()
-            .map(|(prefix, weights)| {
-                let block = sumcheck_from_prefix(&prefix, total_vars);
-                let weights_sumcheck = ElephantCell::new(
-                    LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
-                        weights.len(),
-                        prefix.length,
-                        total_vars - prefix.length - weights.len().ilog2() as usize,
-                    ),
-                );
-                weights_sumcheck.borrow_mut().load_from(&weights);
+        let terms =
+            block_recomposition_weights(placement, chunks, base_log, total_vars, parts, part)
+                .into_iter()
+                .map(|block_weights| {
+                    let BlockWeights {
+                        prefix,
+                        weights,
+                        suffix,
+                    } = block_weights;
+                    let block = sumcheck_from_prefix(&prefix, total_vars);
+                    let weights_sumcheck = ElephantCell::new(
+                        LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                            weights.len(),
+                            prefix.length,
+                            suffix,
+                        ),
+                    );
+                    weights_sumcheck.borrow_mut().load_from(&weights);
 
-                let factor = ElephantCell::new(ProductSumcheck::new(
-                    block.clone() as Data,
-                    weights_sumcheck.clone() as Data,
-                )) as Data;
+                    let factor = ElephantCell::new(ProductSumcheck::new(
+                        block.clone() as Data,
+                        weights_sumcheck.clone() as Data,
+                    )) as Data;
 
-                self.selectors.push(block);
-                self.weights.push(weights_sumcheck);
+                    self.selectors.push(block);
+                    self.weights.push(weights_sumcheck);
 
-                factor
-            })
-            .collect();
+                    factor
+                })
+                .collect();
 
         Recomposition {
             factor: sum_of(terms),
