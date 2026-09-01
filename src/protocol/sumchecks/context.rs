@@ -27,6 +27,9 @@ pub struct SumcheckContext {
     /// round. Selectors are shared across constraints, so they are folded from here rather than
     /// from the constraint contexts.
     pub selectors: Vec<ElephantCell<SelectorEq<RingElement>>>,
+    /// The radix weights of the recompositions that carry them on a factor of their own, one
+    /// per such recomposition.
+    pub recomposition_weights: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
     pub folding_challenges_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub commitment_key_rows_sumcheck: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
     pub commitment_fold_sumchecks: Vec<CommitmentFoldSumcheckContext>,
@@ -53,6 +56,9 @@ impl SumcheckContext {
             .partial_evaluate(r);
         for selector in self.selectors.iter() {
             selector.borrow_mut().partial_evaluate(r);
+        }
+        for weights in self.recomposition_weights.iter() {
+            weights.borrow_mut().partial_evaluate(r);
         }
         self.folding_challenges_sumcheck
             .borrow_mut()
@@ -201,7 +207,8 @@ pub struct CoarseProjSumcheckContext {
 /// - `ck_sumchecks`: commitment key rows cut into the matching row segments, `rank` x segments
 /// - `outputs`: DiffSumchecks proving the constraint for each CK row, summed over the segments
 pub struct ComVerifyLayerSumcheckContext {
-    /// The commitment key rows cut into one slice per placed (row, plane), `rank` x slices.
+    /// The commitment key rows cut into one slice per placed piece of the level's input,
+    /// `rank` x pieces.
     pub ck_sumchecks: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
     pub outputs: Vec<ElephantCell<DiffSumcheck<RingElement>>>,
 }

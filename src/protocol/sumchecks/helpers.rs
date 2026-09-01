@@ -9,7 +9,7 @@ use crate::{
     },
     hexl::bindings::{eltwise_reduce_mod, multiply_mod},
     protocol::{
-        commitment::{Placement, Prefix},
+        commitment::{Placement, Prefix, RecursionConfig},
         crs::CRS,
         sumcheck_utils::{
             common::HighOrderSumcheckData, elephant_cell::ElephantCell, linear::LinearSumcheck,
@@ -17,6 +17,8 @@ use crate::{
         },
     },
 };
+
+type Data = ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>;
 
 /// Builds the sumcheck carrying radix weights (1, base, base^2, ...) used to recompose a
 /// base-`2^{base_log}` decomposition laid out element-major, with the digit index on the low
@@ -79,14 +81,32 @@ pub(crate) fn plane_selectors(
         .collect()
 }
 
-/// The same planes unscaled: the raw digits, as a commitment key row meets them.
-pub(crate) fn raw_plane_selectors(
-    placement: &Placement,
-    chunks: usize,
-    total_vars: usize,
-) -> Vec<ElephantCell<SelectorEq<RingElement>>> {
-    (0..chunks)
-        .map(|plane| sumcheck_from_prefix(&placement.slice(plane, chunks), total_vars))
+/// The pieces of a level's row that a commitment key row meets separately: the row's prefix in
+/// the next round's witness paired with the dyadic slice of the key row covering it, as
+/// `(prefix, slices, slice)`.
+///
+/// One piece per digit plane in general. A single-block placement with a power-of-two plane
+/// count needs only one: digit-major lays the planes out contiguously and in order inside the
+/// block, in the same order the commitment ran over them, so the whole row is one aligned run
+/// on both sides.
+pub(crate) fn row_committed_pieces(
+    config: &RecursionConfig,
+    row: usize,
+) -> Vec<(Prefix, usize, usize)> {
+    let placement = &config.placements[row];
+
+    if placement.blocks.len() == 1 && config.decomposition_chunks.is_power_of_two() {
+        return vec![(placement.blocks[0], config.segments(), row)];
+    }
+
+    (0..config.decomposition_chunks)
+        .map(|plane| {
+            (
+                placement.slice(plane, config.decomposition_chunks),
+                config.slices(),
+                config.slice_index(row, plane),
+            )
+        })
         .collect()
 }
 
@@ -113,6 +133,131 @@ pub(crate) fn sum_of(
         .into_iter()
         .reduce(|acc, term| ElephantCell::new(SumSumcheck::new(acc, term)))
         .expect("a component has at least one placed plane")
+}
+
+/// The block prefix and radix weight vector of the single-block form of a recomposition, when
+/// the component admits it: one dyadic block and a power-of-two digit count put the plane index
+/// in an aligned bit field of the within-block offset, so the whole weighting is a function of
+/// those bits alone. The vector addresses the `chunks * parts` slices of the block and is zero
+/// outside the `part`-th piece of each plane.
+pub(crate) fn block_recomposition_weights(
+    placement: &Placement,
+    chunks: usize,
+    base_log: usize,
+    parts: usize,
+    part: usize,
+) -> Option<(Prefix, Vec<RingElement>)> {
+    if placement.blocks.len() != 1 || !chunks.is_power_of_two() {
+        return None;
+    }
+
+    let mut weights = vec![RingElement::zero(Representation::IncompleteNTT); chunks * parts];
+    for plane in 0..chunks {
+        weights[plane * parts + part] = plane_weight(base_log, plane);
+    }
+
+    Some((placement.blocks[0], weights))
+}
+
+/// The factor `SUM_j 2^{base_log . j} . selector_j` a placed component is recomposed by.
+pub(crate) enum Recomposition {
+    /// One scaled selector per digit plane, distributed over whatever the recomposition meets.
+    Planes(Vec<ElephantCell<SelectorEq<RingElement>>>),
+    /// The block selector times the radix weights, which live on disjoint variables: the block
+    /// address above, the plane index below. One product in place of `chunks` of them.
+    Block { factor: Data },
+}
+
+impl Recomposition {
+    /// The recomposition on its own, as a single sumcheck node.
+    pub(crate) fn factor(&self) -> Data {
+        match self {
+            Recomposition::Planes(planes) => {
+                sum_of(planes.iter().map(|plane| plane.clone() as Data).collect())
+            }
+            Recomposition::Block { factor } => factor.clone(),
+        }
+    }
+
+    /// The recomposed component times `payload`, the shape it enters a constraint in.
+    pub(crate) fn times(&self, payload: Data) -> Data {
+        match self {
+            Recomposition::Planes(planes) => weighted_sum(planes, payload),
+            Recomposition::Block { factor } => {
+                ElephantCell::new(ProductSumcheck::new(factor.clone(), payload)) as Data
+            }
+        }
+    }
+}
+
+/// The leaves a round folds once per sumcheck round: every selector it uses and the radix
+/// weights of the recompositions that carry them on their own factor. A leaf shared by several
+/// constraints is created once and registered once.
+pub(crate) struct FoldedLeaves {
+    pub selectors: Vec<ElephantCell<SelectorEq<RingElement>>>,
+    pub weights: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
+}
+
+impl FoldedLeaves {
+    pub(crate) fn new() -> Self {
+        FoldedLeaves {
+            selectors: Vec::new(),
+            weights: Vec::new(),
+        }
+    }
+
+    pub(crate) fn push_selector(&mut self, selector: ElephantCell<SelectorEq<RingElement>>) {
+        self.selectors.push(selector);
+    }
+
+    pub(crate) fn extend_selectors(
+        &mut self,
+        selectors: impl IntoIterator<Item = ElephantCell<SelectorEq<RingElement>>>,
+    ) {
+        self.selectors.extend(selectors);
+    }
+
+    /// Builds the recomposition of a placed component and registers its leaves. `parts`/`part`
+    /// address one of `parts` equal pieces of every plane -- an opening, a projection batch, one
+    /// commitment element -- and `(1, 0)` takes the whole plane.
+    pub(crate) fn recomposition(
+        &mut self,
+        placement: &Placement,
+        chunks: usize,
+        base_log: usize,
+        total_vars: usize,
+        parts: usize,
+        part: usize,
+    ) -> Recomposition {
+        match block_recomposition_weights(placement, chunks, base_log, parts, part) {
+            Some((prefix, weights)) => {
+                let block = sumcheck_from_prefix(&prefix, total_vars);
+                let weights_sumcheck = ElephantCell::new(
+                    LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                        weights.len(),
+                        prefix.length,
+                        total_vars - prefix.length - weights.len().ilog2() as usize,
+                    ),
+                );
+                weights_sumcheck.borrow_mut().load_from(&weights);
+
+                let factor = ElephantCell::new(ProductSumcheck::new(
+                    block.clone() as Data,
+                    weights_sumcheck.clone() as Data,
+                )) as Data;
+
+                self.selectors.push(block);
+                self.weights.push(weights_sumcheck);
+
+                Recomposition::Block { factor }
+            }
+            None => {
+                let planes = plane_selectors(placement, chunks, base_log, total_vars, parts, part);
+                self.selectors.extend(planes.iter().cloned());
+                Recomposition::Planes(planes)
+            }
+        }
+    }
 }
 
 /// Creates a selector (SelectorEq) that evaluates to 1 where the first `prefix.length`
