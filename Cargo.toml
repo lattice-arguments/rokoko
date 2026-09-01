@@ -9,6 +9,8 @@ default = ["unsafe-sumcheck", "incomplete-rexl"]
 incomplete-rexl = ["dep:incomplete-rexl"]
 unsafe-sumcheck = []
 debug-hardness = []
+# Measure the norm schedule instead of enforcing it; prints a paste-ready NB_* table.
+calibration = []
 debug-decomp = []
 debug-fs = []
 p-30 = []
