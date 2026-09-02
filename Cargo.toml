@@ -10,7 +10,9 @@ incomplete-rexl = ["dep:incomplete-rexl"]
 unsafe-sumcheck = []
 debug-hardness = []
 # Measure the norm schedule instead of enforcing it; prints a paste-ready NB_* table.
-calibration = []
+calibration = ["soft-norms"]
+# Report a norm over its bound instead of rejecting the proof.
+soft-norms = []
 debug-decomp = []
 debug-fs = []
 p-30 = []

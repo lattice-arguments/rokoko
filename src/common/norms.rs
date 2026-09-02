@@ -1,6 +1,7 @@
 use crate::common::{config::MOD_Q, ring_arithmetic::RingElement};
 
-const HARD_ASSERTION: bool = false;
+/// A norm over its bound rejects the proof; `soft-norms` only reports it, for calibration.
+const HARD_ASSERTION: bool = !cfg!(feature = "soft-norms");
 
 macro_rules! maybe_assert {
     ($cond:expr $(,)?) => {
