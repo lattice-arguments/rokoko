@@ -1,4 +1,14 @@
-//! Proof serialisation. `docs/wire.md` has the code and why it is the one it is.
+//! Proof serialisation. A coefficient is split into its octave `b = bitlen(|c|)`, coded with an
+//! interleaved rANS against a histogram measured on the proof being sent — one per field role,
+//! quantised and written in the header, so nothing is read from the norm schedule — and a raw
+//! `b`-bit field holding the mantissa and the sign. Uniform residues land on the octave law
+//! `Pr[b = k] = 2^(k-50)`, of entropy 2, and so pay `ceil(log2 q)` exactly; the folded witness
+//! and the norm claims pay their own scale, and zero carries no field at all. Ring elements are
+//! coded in the representation they are held in unless the coefficient one saves more than a bit
+//! per coefficient, and shapes travel as varints rather than being re-derived from `Config`. At
+//! p-26 this is 112.1 KB against the 100.4 KB `size_in_bits` reports, and about 10 kB of that
+//! gap is unreachable: that accounting charges `log2|c|`, the ideal code length for a scale-free
+//! source, whereas the entropy floor of the coefficients actually sent is 110.7 KB.
 
 use crate::common::config::{DEGREE, MOD_Q};
 use crate::common::matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix};
