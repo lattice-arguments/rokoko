@@ -16,3 +16,4 @@ pub mod snark;
 pub mod sumcheck;
 pub mod sumcheck_utils;
 pub mod sumchecks;
+pub mod wire;

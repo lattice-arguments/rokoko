@@ -12,6 +12,7 @@ use crate::{
         parties::{commiter::commit, prover::prover_round, verifier::verifier_round},
         sumcheck::init_sumcheck,
         sumchecks::builder_verifier::init_verifier,
+        wire,
     },
 };
 
@@ -102,6 +103,20 @@ fn run(
 
     let proof_size_bits = proof.size_in_bits();
     println!("Total proof size{}: {} KB", boundary_note, to_kb(proof_size_bits));
+
+    let start = std::time::Instant::now();
+    let bytes = wire::to_bytes(&proof);
+    let serialise = start.elapsed();
+    let start = std::time::Instant::now();
+    let proof = wire::from_bytes(&bytes).expect("the proof must deserialise");
+    let deserialise = start.elapsed();
+    println!(
+        "Wire proof size: {} KB (serialise {:.3} ms, deserialise {:.3} ms)",
+        bytes.len() as f64 / 1024.0,
+        serialise.as_secs_f64() * 1e3,
+        deserialise.as_secs_f64() * 1e3
+    );
+
     let start = std::time::Instant::now();
     let mut verifier_boundary = None;
     let verifier_span = tracing::info_span!("verifier").entered();
@@ -303,8 +318,24 @@ pub fn execute_snark() {
     drop(_prover_span);
     println!("TOTAL Prover time: {:?} ns", start.elapsed().as_nanos());
 
-    let proof_size_bits = proof.size_in_bits();
-    tracing::debug!("Total proof size: {} KB", to_kb(proof_size_bits));
+    let proof_size_bits = proof.size_in_bits() + initial_proof.size_in_bits();
+    println!("Total proof size: {} KB", to_kb(proof_size_bits));
+
+    let start = std::time::Instant::now();
+    let bytes = wire::to_bytes(&proof);
+    let initial_bytes = wire::initial_to_bytes(&initial_proof);
+    let serialise = start.elapsed();
+    let start = std::time::Instant::now();
+    let proof = wire::from_bytes(&bytes).expect("the proof must deserialise");
+    let initial_proof =
+        wire::initial_from_bytes(&initial_bytes).expect("the initial proof must deserialise");
+    let deserialise = start.elapsed();
+    println!(
+        "Wire proof size: {} KB (serialise {:.3} ms, deserialise {:.3} ms)",
+        (bytes.len() + initial_bytes.len()) as f64 / 1024.0,
+        serialise.as_secs_f64() * 1e3,
+        deserialise.as_secs_f64() * 1e3
+    );
 
     let start = std::time::Instant::now();
     let _verifier_span = tracing::info_span!("verifier").entered();
