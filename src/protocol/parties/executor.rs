@@ -71,12 +71,20 @@ fn run(
     };
     #[cfg(feature = "crt-commitment")]
     let (witness_decomposed, commitment_with_aux, rc_commitment) = {
+        // Handing the digits over beats re-deriving them, but only while the array is small
+        // enough to allocate cheaply; past that the commitment narrows a column tile at a time.
+        const DIGIT_BUDGET: usize = 2 << 30;
+        let wanted = witness.data.len()
+            * WITNESS_CONFIG.decomposition_chunks
+            * std::mem::size_of::<crate::protocol::project_coarse::Signed16RingElement>()
+            <= DIGIT_BUDGET;
         let mut sink = Vec::new();
-        let (witness_decomposed, digits) =
-            crate::protocol::params::decompose_witness_with_digits(&witness, Some(&mut sink));
-        let digits = digits.expect("the digits were asked for");
+        let (witness_decomposed, digits) = crate::protocol::params::decompose_witness_with_digits(
+            &witness,
+            wanted.then_some(&mut sink),
+        );
         let (commitment_with_aux, rc_commitment) =
-            commit(&crs, &config, &witness_decomposed, Some(&digits));
+            commit(&crs, &config, &witness_decomposed, digits.as_ref());
         (witness_decomposed, commitment_with_aux, rc_commitment)
     };
     drop(commit_span);

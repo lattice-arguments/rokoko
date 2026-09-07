@@ -64,9 +64,18 @@ fn basic(
         .as_ref()
         .filter(|(_, key)| key.rows == rank && key.n == witness.height);
     match (fitting, digits) {
-        (Some((plan, key)), Some(digits)) => commit_basic_crt(key, digits, plan, rank),
-        (Some((plan, key)), None) => commit_basic_crt_streaming(key, witness, plan, rank),
-        (None, _) => commit_basic(crs, witness, rank),
+        (Some((plan, key)), Some(digits)) => {
+            tracing::debug!("crt commitment against supplied digits");
+            commit_basic_crt(key, digits, plan, rank)
+        }
+        (Some((plan, key)), None) => {
+            tracing::debug!("crt commitment, narrowing per tile");
+            commit_basic_crt_streaming(key, witness, plan, rank)
+        }
+        (None, _) => {
+            tracing::debug!("no CRT key of this shape; committing over the ring");
+            commit_basic(crs, witness, rank)
+        }
     }
 }
 
