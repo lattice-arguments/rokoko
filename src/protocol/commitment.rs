@@ -1,6 +1,6 @@
 use std::ops::IndexMut;
 
-#[cfg(feature = "parallel-commitment")]
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::{
@@ -64,7 +64,7 @@ fn commit_basic_internal_with(
         height: rank.next_power_of_two(),
     };
 
-    #[cfg(feature = "parallel-commitment")]
+    #[cfg(feature = "parallel")]
     if parallel {
         let width = commitment.width;
         let used_cols = witness.used_cols;
@@ -96,7 +96,7 @@ fn commit_basic_internal_with(
     commitment
 }
 
-#[cfg(feature = "parallel-commitment")]
+#[cfg(feature = "parallel")]
 pub fn commit_basic_parallel(
     crs: &CRS,
     witness: &VerticallyAlignedMatrix<RingElement>,
@@ -117,7 +117,7 @@ fn accumulate_rows(
     rank: usize,
     parallel: bool,
 ) {
-    #[cfg(feature = "parallel-commitment")]
+    #[cfg(feature = "parallel")]
     if parallel {
         commitment[..rank]
             .par_iter_mut()
@@ -339,7 +339,7 @@ pub fn recursive_commit(
     recursive_commit_with(crs, config, data, false)
 }
 
-#[cfg(feature = "parallel-commitment")]
+#[cfg(feature = "parallel")]
 #[tracing::instrument(skip_all, name = "commit::recursive_layer_parallel")]
 pub fn recursive_commit_parallel(
     crs: &CRS,

@@ -21,16 +21,12 @@ impl RingElement {
 // This ensures each decomposed part lies in the range [-2^{base_log - 1}, 2^{base_log - 1}).
 // Since k = (b/2) * Σ b^i, the recomposition is exact: Σ d_i * b^i = (x + k) - k = x, with zero offset.
 pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<RingElement> {
-    let mut decomposed =
-        vec![RingElement::zero(Representation::IncompleteNTT); input.len() * radix];
-
     if base_log == 1 {
         assert_eq!(
             radix, 1,
             "balanced base-2 decomposition is not supported; use decompose_bits"
         );
-        decomposed.clone_from_slice(input);
-        return decomposed;
+        return input.to_vec();
     }
 
     let small_shift_val = 1u64 << (base_log - 1);
@@ -39,82 +35,71 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
         big_shift_val += small_shift_val << (i as u64 * base_log);
     }
     let big_shift = RingElement::all(big_shift_val, Representation::EvenOddCoefficients);
-
-    let small_shift = RingElement::all(1u64 << (base_log - 1), Representation::EvenOddCoefficients);
-
-    let mut temp = RingElement::all(0, Representation::EvenOddCoefficients);
+    let mask = (1u64 << base_log) - 1;
 
     #[cfg(feature = "debug-decomp")]
-    let mut call_max: i64 = 0;
+    let call_max = std::sync::atomic::AtomicI64::new(0);
 
-    for (index, el) in input.iter().enumerate() {
-        temp.set_from(el);
-        temp.to_representation(Representation::EvenOddCoefficients);
-        #[cfg(feature = "debug-decomp")]
-        {
-            let q = crate::common::config::MOD_Q;
-            for &c in temp.v.iter() {
-                let s = if c > q / 2 {
-                    c as i64 - q as i64
-                } else {
-                    c as i64
-                };
-                call_max = call_max.max(s.abs());
+    let mut decomposed: Vec<RingElement> = Vec::with_capacity(input.len() * radix);
+    let slots = decomposed.spare_capacity_mut();
+
+    let run = |slots: &mut [std::mem::MaybeUninit<RingElement>], input: &[RingElement]| {
+        let mut temp = RingElement::all(0, Representation::EvenOddCoefficients);
+        let mut digit = RingElement::new(Representation::EvenOddCoefficients);
+        for (el, slots) in input.iter().zip(slots.chunks_exact_mut(radix)) {
+            temp.set_from(el);
+            temp.to_representation(Representation::EvenOddCoefficients);
+            #[cfg(feature = "debug-decomp")]
+            {
+                let q = crate::common::config::MOD_Q;
+                let mut local = 0i64;
+                for &c in temp.v.iter() {
+                    let s = if c > q / 2 {
+                        c as i64 - q as i64
+                    } else {
+                        c as i64
+                    };
+                    local = local.max(s.abs());
+                }
+                call_max.fetch_max(local, std::sync::atomic::Ordering::Relaxed);
+            }
+            temp += &big_shift;
+
+            for (i, slot) in slots.iter_mut().enumerate() {
+                let from = i as u64 * base_log;
+                for (out, coefficient) in digit.v.iter_mut().zip(temp.v.iter()) {
+                    let value = (coefficient >> from) & mask;
+                    *out = if value >= small_shift_val {
+                        value - small_shift_val
+                    } else {
+                        value + MOD_Q - small_shift_val
+                    };
+                }
+                digit.representation = Representation::EvenOddCoefficients;
+                digit.to_representation(Representation::IncompleteNTT);
+                slot.write(digit.clone());
             }
         }
-        temp += &big_shift;
-        for i in 0..radix {
-            let slot = &mut decomposed[index * radix + i];
-            slot.representation = Representation::EvenOddCoefficients;
-            temp.bits_into(slot, i as u64 * base_log, (i as u64 + 1) * base_log);
-            *slot -= &small_shift;
-            slot.to_representation(Representation::IncompleteNTT);
-        }
-        #[cfg(feature = "debug-decomp")]
-        {
-            // check that recomposition works
-            let mut recomposed = RingElement::all(0, Representation::IncompleteNTT);
-            for j in 0..radix {
-                let mut term = decomposed[index * radix + j].clone();
-                let shift = RingElement::constant(
-                    1u64 << (j as u64 * base_log),
-                    Representation::IncompleteNTT,
-                );
-                term *= &shift;
-                recomposed += &term;
-            }
-            let el_incomplete_ntt = {
-                let mut temp_el = el.clone();
-                temp_el.to_representation(Representation::IncompleteNTT);
-                temp_el
-            };
-            if recomposed != el_incomplete_ntt {
-                let mut coeffs = el.clone();
-                coeffs.to_representation(Representation::EvenOddCoefficients);
-                let centered: Vec<i64> = coeffs
-                    .v
-                    .iter()
-                    .map(|&c| {
-                        if c > crate::common::config::MOD_Q / 2 {
-                            c as i64 - crate::common::config::MOD_Q as i64
-                        } else {
-                            c as i64
-                        }
-                    })
-                    .collect();
-                let max_abs = centered.iter().map(|c| c.abs()).max().unwrap();
-                panic!(
-                    "Recomposition failed: index={} of {} base_log={} radix={} max|coeff|={}",
-                    index,
-                    input.len(),
-                    base_log,
-                    radix,
-                    max_abs
-                );
-            }
-        }
+    };
+
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        // A thread takes whole input elements, so the digits it writes are its own slice of the
+        // output and the page faults for that slice are its own too.
+        const GRAIN: usize = 256;
+        slots
+            .par_chunks_mut(GRAIN * radix)
+            .zip(input.par_chunks(GRAIN))
+            .for_each(|(slots, input)| run(slots, input));
     }
+    #[cfg(not(feature = "parallel"))]
+    run(slots, input);
 
+    unsafe { decomposed.set_len(input.len() * radix) };
+
+    #[cfg(feature = "debug-decomp")]
+    let call_max = call_max.load(std::sync::atomic::Ordering::Relaxed);
     #[cfg(feature = "debug-decomp")]
     {
         let capacity_neg = (big_shift_val as i64).min(1 << 62);

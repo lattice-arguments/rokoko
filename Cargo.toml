@@ -20,7 +20,7 @@ p-29 = []
 p-26 = []
 p-28 = []
 events = []
-parallel-commitment = ["dep:rayon"]
+parallel = ["dep:rayon"]
 profile = ["dep:sysinfo", "dep:time"]
 snark = []
 

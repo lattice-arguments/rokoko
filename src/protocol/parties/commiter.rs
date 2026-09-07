@@ -3,10 +3,10 @@ use crate::{
     protocol::{commitment::CommitmentWithAux, config::SumcheckConfig, crs::CRS},
 };
 
-#[cfg(not(feature = "parallel-commitment"))]
+#[cfg(not(feature = "parallel"))]
 use crate::protocol::commitment::{commit_basic, recursive_commit};
 
-#[cfg(feature = "parallel-commitment")]
+#[cfg(feature = "parallel")]
 use crate::protocol::commitment::{
     commit_basic_parallel as commit_basic, recursive_commit_parallel as recursive_commit,
 };
