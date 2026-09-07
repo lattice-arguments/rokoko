@@ -72,7 +72,9 @@ pub struct Limb {
     pub p: i32,
     pinv: i16,
     barrett: i32,
-    wide_magic: i64,
+    /// `floor(2^62 / p)` and `floor(2^42 / p)`: Barrett reciprocals for the two widths that need
+    /// reducing, a key coefficient centred mod `q` and a VNNI accumulator lane.
+    reciprocal_i64: i64,
     shift: i16,
     half: i16,
     inverse_zetas: [i16; SLOTS],
@@ -80,7 +82,7 @@ pub struct Limb {
     stage_shoup: [[i16; DEGREE]; STAGES as usize],
     slot_pairs: [i16; DEGREE],
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    wide_barrett: i32,
+    reciprocal_i32: i32,
     scale: i16,
     pub depth: usize,
     /// Butterfly stages the `i16` lanes survive between reductions: `|r|` grows by `p` a stage.
@@ -181,7 +183,7 @@ impl Limb {
             p,
             pinv: (pinv as u64 as u16) as i16,
             barrett: (((1i64 << 26) + modulus / 2) / modulus) as i32,
-            wide_magic: ((1i128 << 62) / modulus as i128) as i64,
+            reciprocal_i64: ((1i128 << 62) / modulus as i128) as i64,
             shift: centre(1i64 << 32),
             half: centre(32768),
             inverse_zetas,
@@ -189,7 +191,7 @@ impl Limb {
             stage_shoup,
             slot_pairs,
             #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-            wide_barrett: ((1i64 << 42) / modulus) as i32,
+            reciprocal_i32: ((1i64 << 42) / modulus) as i32,
             scale: montgomery(power(SLOTS as i64, modulus as u64 - 2, modulus)),
             depth: ((1u64 << 31) / (p as u64 * p as u64 / 2)) as usize,
             stride: stride(p),
@@ -223,7 +225,7 @@ impl Limb {
 
     #[inline]
     fn reduce_wide(&self, value: i64) -> i16 {
-        let quotient = ((value as i128 * self.wide_magic as i128) >> 62) as i64;
+        let quotient = ((value as i128 * self.reciprocal_i64 as i128) >> 62) as i64;
         self.centre((value - quotient * self.p as i64) as i16)
     }
 
@@ -1032,7 +1034,7 @@ unsafe fn accumulate<const ROWS: usize>(
 #[target_feature(enable = "avx512f,avx512bw,avx512vnni")]
 unsafe fn reduce(limb: &Limb, accumulators: &mut [i32]) {
     let p = _mm512_set1_epi32(limb.p);
-    let m = _mm512_set1_epi32(limb.wide_barrett);
+    let m = _mm512_set1_epi32(limb.reciprocal_i32);
     for lane in accumulators.chunks_exact_mut(16) {
         let a = _mm512_loadu_si512(lane.as_ptr() as *const _);
         let even = _mm512_and_si512(
