@@ -3,13 +3,22 @@ use crate::{
     protocol::{commitment::CommitmentWithAux, config::SumcheckConfig, crs::CRS},
 };
 
+#[cfg(all(not(feature = "parallel"), not(feature = "crt-commitment")))]
+use crate::protocol::commitment::commit_basic;
 #[cfg(not(feature = "parallel"))]
-use crate::protocol::commitment::{commit_basic, recursive_commit};
+use crate::protocol::commitment::recursive_commit;
 
+#[cfg(all(feature = "parallel", not(feature = "crt-commitment")))]
+use crate::protocol::commitment::commit_basic_parallel as commit_basic;
 #[cfg(feature = "parallel")]
-use crate::protocol::commitment::{
-    commit_basic_parallel as commit_basic, recursive_commit_parallel as recursive_commit,
-};
+use crate::protocol::commitment::recursive_commit_parallel as recursive_commit;
+
+/// The root commitment over the CRT basis; the recursion stays on the ring path, whose shapes
+/// are too small to pay for a preprocessed key.
+#[cfg(feature = "crt-commitment")]
+use crate::protocol::commitment_crt::commit_basic as commit_basic_root;
+#[cfg(not(feature = "crt-commitment"))]
+use commit_basic as commit_basic_root;
 
 pub fn commit(
     crs: &CRS,
@@ -18,7 +27,7 @@ pub fn commit(
 ) -> (CommitmentWithAux, Vec<RingElement>) {
     let basic_commitment = {
         let _s = tracing::info_span!("commit::basic").entered();
-        commit_basic(&crs, &witness, config.basic_commitment_rank)
+        commit_basic_root(&crs, &witness, config.basic_commitment_rank)
     };
 
     let rc_commitment_with_aux = {
