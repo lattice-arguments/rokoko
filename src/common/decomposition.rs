@@ -82,7 +82,7 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
         }
     };
 
-    #[cfg(feature = "parallel-commitment")]
+    #[cfg(feature = "parallel")]
     {
         use rayon::prelude::*;
         // A thread takes whole input elements, so the digits it writes are its own slice of the
@@ -93,7 +93,7 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
             .zip(input.par_chunks(GRAIN))
             .for_each(|(slots, input)| run(slots, input));
     }
-    #[cfg(not(feature = "parallel-commitment"))]
+    #[cfg(not(feature = "parallel"))]
     run(slots, input);
 
     unsafe { decomposed.set_len(input.len() * radix) };
