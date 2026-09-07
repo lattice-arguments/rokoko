@@ -59,7 +59,10 @@ fn bench_decompose(c: &mut Criterion) {
     group.bench_function("base 2^16, radix 2", |bencher| {
         bencher.iter(|| black_box(decompose(black_box(&input), 16, 2)));
 fn bench_commitment(c: &mut Criterion) {
+    #[cfg(not(feature = "parallel"))]
     use rokoko::protocol::commitment::commit_basic;
+    #[cfg(feature = "parallel")]
+    use rokoko::protocol::commitment::commit_basic_parallel as commit_basic;
     use rokoko::protocol::commitment_crt::{commit_basic_crt, digits_l2, CrtKey, Plan};
     use rokoko::protocol::crs::CRS;
 
