@@ -2,7 +2,6 @@ use std::sync::LazyLock;
 
 use crate::{
     common::{
-        decomposition::decompose,
         matrix::VerticallyAlignedMatrix,
         ring_arithmetic::{Representation, RingElement},
         sampling::sample_random_short_vector,
@@ -167,8 +166,8 @@ pub fn p_exact_norm_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumche
             2usize.pow(15),
         ),
         witness_width: size.pick(2usize.pow(7), 2usize.pow(8), 2usize.pow(8), 2usize.pow(9)),
-        projection_ratio: 2usize.pow(5), 
-        projection_height: 2usize.pow(8), 
+        projection_ratio: 2usize.pow(5),
+        projection_height: 2usize.pow(8),
         basic_commitment_rank: 6,
         nof_openings,
         commitment_recursion: AuxRecursionConfig {
@@ -444,7 +443,9 @@ pub static P: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
     SizeConfig::Small => P_SMALL.clone(),
     SizeConfig::Medium => P_MEDIUM.clone(),
     SizeConfig::NarrowLarge => {
-        panic!("no calibrated norm bounds for the plain NarrowLarge chain; use P_EN / P_EN_TWO_EVALS")
+        panic!(
+            "no calibrated norm bounds for the plain NarrowLarge chain; use P_EN / P_EN_TWO_EVALS"
+        )
     }
     SizeConfig::Large => P_LARGE.clone(),
 });
@@ -453,7 +454,9 @@ pub static P_TWO_EVALS: LazyLock<Config> = LazyLock::new(|| match compiled_size(
     SizeConfig::Small => P_2_SMALL.clone(),
     SizeConfig::Medium => P_2_MEDIUM.clone(),
     SizeConfig::NarrowLarge => {
-        panic!("no calibrated norm bounds for the plain NarrowLarge chain; use P_EN / P_EN_TWO_EVALS")
+        panic!(
+            "no calibrated norm bounds for the plain NarrowLarge chain; use P_EN / P_EN_TWO_EVALS"
+        )
     }
     SizeConfig::Large => P_2_LARGE.clone(),
 });
@@ -582,7 +585,6 @@ pub static P_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
     witness_decomposition_base_log: 7,
     next: Some(Box::new(AuxConfig::Simple(P_LAST.clone()))),
     // next: None
-
 });
 
 pub static P_LAST: LazyLock<SimpleConfig> = LazyLock::new(|| SimpleConfig {
@@ -638,18 +640,46 @@ pub fn witness_sampler() -> VerticallyAlignedMatrix<RingElement> {
 pub fn decompose_witness(
     witness: &VerticallyAlignedMatrix<RingElement>,
 ) -> VerticallyAlignedMatrix<RingElement> {
+    decompose_witness_with_digits(witness, None).0
+}
+
+/// The decomposition and, when asked, the same digits narrowed to `i16` in the coefficient
+/// domain, which is the form the CRT commitment consumes.
+#[tracing::instrument(skip_all, name = "commit::decompose_witness")]
+pub fn decompose_witness_with_digits(
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    digits: Option<&mut Vec<crate::protocol::project_coarse::Signed16RingElement>>,
+) -> (
+    VerticallyAlignedMatrix<RingElement>,
+    Option<VerticallyAlignedMatrix<crate::protocol::project_coarse::Signed16RingElement>>,
+) {
     let config = &*WITNESS_CONFIG;
-    let decomposed_data = decompose(
+    let height = witness.height * config.decomposition_chunks;
+    let wanted = digits.is_some();
+    let mut sink = digits;
+    if let Some(sink) = sink.as_deref_mut() {
+        sink.clear();
+        sink.reserve(height * witness.width);
+    }
+    let decomposed_data = crate::common::decomposition::decompose_into(
         &witness.data,
         config.decomposition_base_log as u64,
         config.decomposition_chunks,
+        sink.as_deref_mut(),
     );
-    VerticallyAlignedMatrix {
-        height: witness.height * config.decomposition_chunks,
+    let decomposed = VerticallyAlignedMatrix {
+        height,
         width: witness.width,
         data: decomposed_data,
         used_cols: witness.width,
-    }
+    };
+    let narrowed = wanted.then(|| VerticallyAlignedMatrix {
+        height,
+        width: witness.width,
+        data: std::mem::take(sink.unwrap()),
+        used_cols: witness.width,
+    });
+    (decomposed, narrowed)
 }
 
 /// Sizing rule for targets between compiled parameter sets: keep the compiled

@@ -316,6 +316,15 @@ impl Plan {
         Plan { primes, bound }
     }
 
+    /// The same bound from the schedule rather than from the digits: a balanced base-`2 bound`
+    /// decomposition leaves digits uniform over `[-bound, bound)`, so `||w||_2` is
+    /// `sqrt(rows * DEGREE * bound^2 / 3)`. Lets the key be preprocessed before a witness exists;
+    /// the per-coefficient check still catches a proof whose digits come out wider.
+    pub fn for_shape(rows: usize, bound: u64, rank: usize) -> Plan {
+        let square = (rows * DEGREE) as f64 * (bound * bound) as f64 / 3.0;
+        Plan::new(square.sqrt(), rank)
+    }
+
     pub fn limbs(&self) -> Vec<Limb> {
         self.primes.iter().map(|p| Limb::new(*p)).collect()
     }

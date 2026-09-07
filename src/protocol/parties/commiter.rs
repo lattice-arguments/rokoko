@@ -3,31 +3,32 @@ use crate::{
     protocol::{commitment::CommitmentWithAux, config::SumcheckConfig, crs::CRS},
 };
 
-#[cfg(all(not(feature = "parallel"), not(feature = "crt-commitment")))]
-use crate::protocol::commitment::commit_basic;
 #[cfg(not(feature = "parallel"))]
-use crate::protocol::commitment::recursive_commit;
+use crate::protocol::commitment::{commit_basic, recursive_commit};
 
-#[cfg(all(feature = "parallel", not(feature = "crt-commitment")))]
-use crate::protocol::commitment::commit_basic_parallel as commit_basic;
 #[cfg(feature = "parallel")]
-use crate::protocol::commitment::recursive_commit_parallel as recursive_commit;
+use crate::protocol::commitment::{
+    commit_basic_parallel as commit_basic, recursive_commit_parallel as recursive_commit,
+};
 
-/// The root commitment over the CRT basis; the recursion stays on the ring path, whose shapes
-/// are too small to pay for a preprocessed key.
 #[cfg(feature = "crt-commitment")]
-use crate::protocol::commitment_crt::commit_basic as commit_basic_root;
+use crate::protocol::project_coarse::Signed16RingElement;
+
+/// The digits the CRT basis wants, when the caller already has them from the decomposition.
+#[cfg(feature = "crt-commitment")]
+pub type Digits<'a> = Option<&'a VerticallyAlignedMatrix<Signed16RingElement>>;
 #[cfg(not(feature = "crt-commitment"))]
-use commit_basic as commit_basic_root;
+pub type Digits<'a> = Option<&'a ()>;
 
 pub fn commit(
     crs: &CRS,
     config: &SumcheckConfig,
     witness: &VerticallyAlignedMatrix<RingElement>,
+    digits: Digits,
 ) -> (CommitmentWithAux, Vec<RingElement>) {
     let basic_commitment = {
         let _s = tracing::info_span!("commit::basic").entered();
-        commit_basic_root(&crs, &witness, config.basic_commitment_rank)
+        basic(crs, config, witness, digits)
     };
 
     let rc_commitment_with_aux = {
@@ -43,4 +44,38 @@ pub fn commit(
     };
 
     (commitment_with_aux, rc_commitment)
+}
+
+/// The root commitment over the CRT basis when the CRS carries a key of this shape, and over the
+/// ring otherwise; the recursion always stays on the ring path, whose shapes are too small to pay
+/// for a preprocessed key.
+#[cfg(feature = "crt-commitment")]
+fn basic(
+    crs: &CRS,
+    config: &SumcheckConfig,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    digits: Digits,
+) -> crate::protocol::commitment::BasicCommitment {
+    use crate::protocol::commitment_crt::{commit_basic_crt, commit_basic_crt_streaming};
+
+    let rank = config.basic_commitment_rank;
+    let fitting = crs
+        .crt_root
+        .as_ref()
+        .filter(|(_, key)| key.rows == rank && key.n == witness.height);
+    match (fitting, digits) {
+        (Some((plan, key)), Some(digits)) => commit_basic_crt(key, digits, plan, rank),
+        (Some((plan, key)), None) => commit_basic_crt_streaming(key, witness, plan, rank),
+        (None, _) => commit_basic(crs, witness, rank),
+    }
+}
+
+#[cfg(not(feature = "crt-commitment"))]
+fn basic(
+    crs: &CRS,
+    config: &SumcheckConfig,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    _digits: Digits,
+) -> crate::protocol::commitment::BasicCommitment {
+    commit_basic(crs, witness, config.basic_commitment_rank)
 }
