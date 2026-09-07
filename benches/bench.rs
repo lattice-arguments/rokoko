@@ -45,6 +45,24 @@ fn bench_project_coarse(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_decompose(c: &mut Criterion) {
+    use rokoko::common::decomposition::decompose;
+
+    rokoko::common::init_common();
+    let mut group = c.benchmark_group("decompose");
+    group.sample_size(10);
+
+    let input: Vec<RingElement> = (0..1usize << 16)
+        .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 1 << 30))
+        .collect();
+
+    group.bench_function("base 2^16, radix 2", |bencher| {
+        bencher.iter(|| black_box(decompose(black_box(&input), 16, 2)));
+    });
+
+    group.finish();
+}
+
 fn bench_ring_multiplication(c: &mut Criterion) {
     let mut group = c.benchmark_group("ring_multiplication");
 
@@ -104,6 +122,6 @@ fn bench_short_challenge(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default();
-    targets = bench_ring_multiplication, bench_short_challenge, bench_project_coarse
+    targets = bench_decompose, bench_ring_multiplication, bench_short_challenge, bench_project_coarse
 }
 criterion_main!(benches);
