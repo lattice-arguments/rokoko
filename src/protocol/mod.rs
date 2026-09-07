@@ -1,5 +1,6 @@
 pub mod boundary;
 pub mod commitment;
+pub mod commitment_crt;
 pub mod crs;
 // pub mod execution_simple;
 pub mod config;
