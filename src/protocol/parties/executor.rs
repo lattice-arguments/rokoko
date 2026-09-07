@@ -8,7 +8,7 @@ use crate::{
         crs::{VerifierCRS, CRS},
         evaluation_point_sampler::{sample_initial_evaluation_points, InitialEvaluationPoints},
         open::claim,
-        params::{decompose_witness, witness_sampler, WITNESS_CONFIG},
+        params::{witness_sampler, WITNESS_CONFIG},
         parties::{commiter::commit, prover::prover_round, verifier::verifier_round},
         sumcheck::init_sumcheck,
         sumchecks::builder_verifier::init_verifier,
@@ -63,8 +63,30 @@ fn run(
     let start = std::time::Instant::now();
 
     let commit_span = tracing::info_span!("commit").entered();
-    let witness_decomposed = decompose_witness(&witness);
-    let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness_decomposed);
+    #[cfg(not(feature = "crt-commitment"))]
+    let (witness_decomposed, commitment_with_aux, rc_commitment) = {
+        let witness_decomposed = crate::protocol::params::decompose_witness(&witness);
+        let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness_decomposed, None);
+        (witness_decomposed, commitment_with_aux, rc_commitment)
+    };
+    #[cfg(feature = "crt-commitment")]
+    let (witness_decomposed, commitment_with_aux, rc_commitment) = {
+        // Handing the digits over beats re-deriving them, but only while the array is small
+        // enough to allocate cheaply; past that the commitment narrows a column tile at a time.
+        const DIGIT_BUDGET: usize = 2 << 30;
+        let wanted = witness.data.len()
+            * WITNESS_CONFIG.decomposition_chunks
+            * std::mem::size_of::<crate::protocol::project_coarse::Signed16RingElement>()
+            <= DIGIT_BUDGET;
+        let mut sink = Vec::new();
+        let (witness_decomposed, digits) = crate::protocol::params::decompose_witness_with_digits(
+            &witness,
+            wanted.then_some(&mut sink),
+        );
+        let (commitment_with_aux, rc_commitment) =
+            commit(&crs, &config, &witness_decomposed, digits.as_ref());
+        (witness_decomposed, commitment_with_aux, rc_commitment)
+    };
     drop(commit_span);
 
     let commit_duration = start.elapsed().as_nanos();
@@ -99,10 +121,17 @@ fn run(
     }
 
     let prover_duration = start.elapsed().as_nanos();
-    println!("TOTAL Prover time{}: {:?} ns", boundary_note, prover_duration);
+    println!(
+        "TOTAL Prover time{}: {:?} ns",
+        boundary_note, prover_duration
+    );
 
     let proof_size_bits = proof.size_in_bits();
-    println!("Total proof size{}: {} KB", boundary_note, to_kb(proof_size_bits));
+    println!(
+        "Total proof size{}: {} KB",
+        boundary_note,
+        to_kb(proof_size_bits)
+    );
 
     let start = std::time::Instant::now();
     let bytes = wire::to_bytes(&proof);
@@ -231,7 +260,7 @@ pub fn execute_snark() {
 
     let start = std::time::Instant::now();
     let _commit_span = tracing::info_span!("commit").entered();
-    let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness);
+    let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness, None);
     drop(_commit_span);
     println!("TOTAL Commit time: {:?} ns", start.elapsed().as_nanos());
 
@@ -468,7 +497,7 @@ mod tests {
             data: decompose(&raw, base_log as u64, input_chunks),
         };
 
-        let (commitment_with_aux, rc_commitment) = commit(&crs, config, &witness);
+        let (commitment_with_aux, rc_commitment) = commit(&crs, config, &witness, None);
 
         let (proof, claims) = prover_round(
             &crs,
@@ -503,10 +532,10 @@ mod tests {
     /// four rows, three of which are placed, one placement each.
     #[test]
     fn three_openings_round_trip() {
+        use crate::protocol::config::SimpleConfig;
         use crate::protocol::config_generator::{
             AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig,
         };
-        use crate::protocol::config::SimpleConfig;
 
         init_common();
 
@@ -580,10 +609,10 @@ mod tests {
     /// dyadic blocks and the recomposition is a weighted sum over the planes.
     #[test]
     fn three_decomposition_chunks_round_trip() {
+        use crate::protocol::config::SimpleConfig;
         use crate::protocol::config_generator::{
             AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig,
         };
-        use crate::protocol::config::SimpleConfig;
 
         init_common();
 

@@ -10,10 +10,16 @@ pub type CK = Vec<PreprocessedRow>;
 pub type SCK = Vec<StructuredRow>;
 
 /// Struct representing the Common Reference String (CRS).
-#[derive(Debug)]
 pub struct CRS {
     pub cks: Vec<CK>,             // Commitment keys for each witness length
     pub structured_cks: Vec<SCK>, // Structured commitment keys for each witness length
+    /// The root key in the CRT basis, planned from the witness schedule rather than from a
+    /// witness, so that the transform of the key never sits on the commitment's critical path.
+    #[cfg(feature = "crt-commitment")]
+    pub crt_root: Option<(
+        crate::protocol::commitment_crt::Plan,
+        crate::protocol::commitment_crt::CrtKey,
+    )>,
 }
 
 /// Only the structured keys; the expanded rows are prover-side preprocessing.
@@ -86,6 +92,8 @@ impl CRS {
             .collect();
 
         CRS {
+            #[cfg(feature = "crt-commitment")]
+            crt_root: None,
             cks,
             structured_cks,
         }
@@ -93,10 +101,26 @@ impl CRS {
 
     /// Two rows of headroom over the basic rank cover the inner rounds.
     pub fn gen_prover_crs(config: &SumcheckConfig) -> CRS {
-        CRS::gen_crs(
+        #[allow(unused_mut)]
+        let mut crs = CRS::gen_crs(
             config.composed_witness_length,
             config.basic_commitment_rank + 2,
-        )
+        );
+        #[cfg(feature = "crt-commitment")]
+        {
+            use crate::protocol::commitment_crt::{CrtKey, Plan};
+            use crate::protocol::params::WITNESS_CONFIG;
+            let rows = config.witness_height;
+            let bound = 1u64 << (WITNESS_CONFIG.decomposition_base_log - 1);
+            let plan = Plan::for_shape(rows, bound, config.basic_commitment_rank);
+            let key = CrtKey::preprocess(
+                crs.ck_for_wit_dim(rows),
+                config.basic_commitment_rank,
+                &plan,
+            );
+            crs.crt_root = Some((plan, key));
+        }
+        crs
     }
 
     pub fn gen_verifier_crs(config: &SumcheckConfig) -> VerifierCRS {

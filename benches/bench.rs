@@ -58,6 +58,115 @@ fn bench_decompose(c: &mut Criterion) {
 
     group.bench_function("base 2^16, radix 2", |bencher| {
         bencher.iter(|| black_box(decompose(black_box(&input), 16, 2)));
+fn bench_commitment(c: &mut Criterion) {
+    use rokoko::protocol::commitment::commit_basic;
+    use rokoko::protocol::commitment_crt::{commit_basic_crt, digits_l2, CrtKey, Plan};
+    use rokoko::protocol::crs::CRS;
+
+    rokoko::common::init_common();
+    let height: usize = std::env::var("ROKOKO_BENCH_HEIGHT")
+        .map(|v| v.parse().unwrap())
+        .unwrap_or(2usize.pow(11));
+    let width: usize = std::env::var("ROKOKO_BENCH_WIDTH")
+        .map(|v| v.parse().unwrap())
+        .unwrap_or(16);
+    let rank = 10;
+    let mut group = c.benchmark_group("commitment");
+    group.sample_size(10);
+
+    let crs = CRS::gen_crs(height, rank + 2);
+    let witness = VerticallyAlignedMatrix {
+        data: (0..height * width)
+            .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 1 << 15))
+            .collect(),
+        width,
+        height,
+        used_cols: width,
+    };
+    let start = std::time::Instant::now();
+    let digits = prepare_i16_witness(&witness);
+    let narrowing = start.elapsed();
+    let plan = Plan::new(digits_l2(&digits), rank);
+    let start = std::time::Instant::now();
+    let key = CrtKey::preprocess(crs.ck_for_wit_dim(height), rank, &plan);
+    println!(
+        "key {:.0} MB, digits {:.0} MB, ring witness {:.0} MB",
+        key.bytes() as f64 / 1e6,
+        (digits.data.len() * 256) as f64 / 1e6,
+        (witness.data.len() * 1088) as f64 / 1e6,
+    );
+    println!(
+        "plan: {:?}; digits {:.0} ms, key {:.0} ms",
+        plan.primes,
+        narrowing.as_secs_f64() * 1e3,
+        start.elapsed().as_secs_f64() * 1e3
+    );
+
+    group.bench_function("ring", |bencher| {
+        bencher.iter(|| black_box(commit_basic(black_box(&crs), black_box(&witness), rank)));
+    });
+
+    if std::env::var("ROKOKO_BENCH_LIMBS").is_ok() {
+        for set in [
+            vec![7681, 7937, 9473, 10753, 11777, 12289],
+            vec![9473, 10753, 11777, 12289, 13313, 7681],
+            vec![3329, 7681, 7937, 9473, 10753, 11777, 12289],
+            vec![3329, 7681, 7937, 9473, 10753, 11777],
+        ] {
+            let bits: f64 = set.iter().map(|p| (*p as f64).log2()).sum();
+            if bits < (2.0 * plan.bound).log2() {
+                continue;
+            }
+            let forced = Plan {
+                primes: set.clone(),
+                bound: plan.bound,
+            };
+            let forced_key = CrtKey::preprocess(crs.ck_for_wit_dim(height), rank, &forced);
+            group.bench_function(format!("crt {set:?}"), |bencher| {
+                bencher.iter(|| {
+                    black_box(commit_basic_crt(
+                        black_box(&forced_key),
+                        black_box(&digits),
+                        &forced,
+                        rank,
+                    ))
+                });
+            });
+        }
+    }
+
+    group.bench_function("crt", |bencher| {
+        bencher.iter(|| {
+            black_box(commit_basic_crt(
+                black_box(&key),
+                black_box(&digits),
+                &plan,
+                rank,
+            ))
+        });
+    });
+
+    group.bench_function("crt streaming", |bencher| {
+        bencher.iter(|| {
+            black_box(
+                rokoko::protocol::commitment_crt::commit_basic_crt_streaming(
+                    black_box(&key),
+                    black_box(&witness),
+                    &plan,
+                    rank,
+                ),
+            )
+        });
+    });
+
+    group.bench_function("crt end to end", |bencher| {
+        bencher.iter(|| {
+            black_box(rokoko::protocol::commitment_crt::commit_basic(
+                black_box(&crs),
+                black_box(&witness),
+                rank,
+            ))
+        });
     });
 
     group.finish();
@@ -122,6 +231,6 @@ fn bench_short_challenge(c: &mut Criterion) {
 criterion_group! {
     name = benches;
     config = Criterion::default();
-    targets = bench_decompose, bench_ring_multiplication, bench_short_challenge, bench_project_coarse
+    targets = bench_decompose, bench_commitment, bench_ring_multiplication, bench_short_challenge, bench_project_coarse
 }
 criterion_main!(benches);
