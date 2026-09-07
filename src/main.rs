@@ -80,6 +80,21 @@ fn main() {
         incomplete_rexl::cpu_features::print_features();
     }
 
+    #[cfg(feature = "crt-commitment")]
+    {
+        println!("Using CRT commitment...");
+    }
+
+    #[cfg(not(feature = "crt-commitment"))]
+    {
+        println!("Using 50-bits commitment...");
+    }
+
+    #[cfg(feature = "parallel")]
+    {
+        println!("Using parallel commitment...");
+    }
+
     #[cfg(not(target_arch = "x86_64"))]
     {
         println!("✗ AVX-512 is only available on x86_64 architecture");

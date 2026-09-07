@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["unsafe-sumcheck", "incomplete-rexl"]
+default = ["unsafe-sumcheck", "incomplete-rexl","crt-commitment"]
 
 incomplete-rexl = ["dep:incomplete-rexl"]
 unsafe-sumcheck = []
