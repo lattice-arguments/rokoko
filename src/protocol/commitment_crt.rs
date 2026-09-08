@@ -7,6 +7,7 @@
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 use core::arch::x86_64::*;
 
+use crate::common::structured_row::PreprocessedRow;
 use crate::common::{
     arithmetic::centered_i16_from_u64_mod_q,
     config::{DEGREE, HALF_DEGREE, MOD_Q},
@@ -19,6 +20,8 @@ use crate::protocol::{
     crs::{CK, CRS},
     project_coarse::{prepare_i16_witness, Signed16RingElement},
 };
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 
 pub const PRIMES: [i32; 8] = [3329, 7681, 7937, 9473, 10753, 11777, 12289, 13313];
 
@@ -402,33 +405,75 @@ fn transform_rows(limb: &Limb, source: &[i16], out: &mut [i16]) {
     }
 }
 
+fn centre_row(key: &PreprocessedRow, out: &mut [i64]) {
+    for (k, element) in key.preprocessed_row.iter().enumerate() {
+        let mut even_odd = element.clone();
+        even_odd.to_representation(Representation::EvenOddCoefficients);
+        for (slot, value) in even_odd.v.iter().enumerate() {
+            out[k * DEGREE + slot] = if *value > MOD_Q / 2 {
+                *value as i64 - MOD_Q as i64
+            } else {
+                *value as i64
+            };
+        }
+    }
+}
+
+fn narrow_row(limb: &Limb, centred: &[i64], out: &mut [i16]) {
+    for (slot, value) in centred.iter().enumerate() {
+        out[slot] = limb.reduce_wide(*value);
+    }
+}
+
 impl CrtKey {
     pub fn preprocess(ck: &CK, rank: usize, plan: &Plan) -> CrtKey {
+        CrtKey::preprocess_with(ck, rank, plan, cfg!(feature = "parallel"))
+    }
+
+    /// Each (limb, row) block is an independent transform of the same centred key row, so the
+    /// rows are centred once and the blocks then filled in any order.
+    fn preprocess_with(ck: &CK, rank: usize, plan: &Plan, parallel: bool) -> CrtKey {
         let limbs = plan.limbs();
         let n = ck[0].preprocessed_row.len();
         let mut data = vec![0i16; limbs.len() * rank * n * 2 * DEGREE];
 
-        let mut coefficients = vec![[0i64; DEGREE]; n];
+        #[cfg(feature = "parallel")]
+        if parallel {
+            let mut centred = vec![0i64; rank * n * DEGREE];
+            centred
+                .par_chunks_mut(n * DEGREE)
+                .enumerate()
+                .for_each(|(row, out)| centre_row(&ck[row], out));
+            data.par_chunks_mut(2 * n * DEGREE)
+                .enumerate()
+                .for_each_init(
+                    || vec![0i16; n * DEGREE],
+                    |narrowed, (block, out)| {
+                        let limb = &limbs[block / rank];
+                        narrow_row(
+                            limb,
+                            &centred[(block % rank) * n * DEGREE..][..n * DEGREE],
+                            narrowed,
+                        );
+                        transform_rows(limb, narrowed, out);
+                    },
+                );
+            return CrtKey {
+                limbs,
+                rows: rank,
+                n,
+                data,
+            };
+        }
+        let _ = parallel;
+
+        let mut centred = vec![0i64; n * DEGREE];
         let mut narrowed = vec![0i16; n * DEGREE];
-        for (row, key) in ck.iter().take(rank).enumerate() {
-            for (k, element) in key.preprocessed_row.iter().enumerate() {
-                let mut even_odd = element.clone();
-                even_odd.to_representation(Representation::EvenOddCoefficients);
-                for (slot, value) in even_odd.v.iter().enumerate() {
-                    coefficients[k][slot] = if *value > MOD_Q / 2 {
-                        *value as i64 - MOD_Q as i64
-                    } else {
-                        *value as i64
-                    };
-                }
-            }
-            for (limb_index, limb) in limbs.iter().enumerate() {
-                for k in 0..n {
-                    for (slot, value) in coefficients[k].iter().enumerate() {
-                        narrowed[k * DEGREE + slot] = limb.reduce_wide(*value);
-                    }
-                }
-                let at = ((limb_index * rank + row) * n) * 2 * DEGREE;
+        for row in 0..rank {
+            centre_row(&ck[row], &mut centred);
+            for (index, limb) in limbs.iter().enumerate() {
+                narrow_row(limb, &centred, &mut narrowed);
+                let at = ((index * rank + row) * n) * 2 * DEGREE;
                 transform_rows(limb, &narrowed, &mut data[at..at + 2 * n * DEGREE]);
             }
         }
@@ -496,6 +541,7 @@ fn residues(
         digits.height,
         digits.used_cols,
         Source::Narrowed(digits),
+        cfg!(feature = "parallel"),
     )
 }
 
@@ -550,6 +596,7 @@ pub fn commit_basic_crt_streaming(
         n,
         witness.used_cols,
         Source::Ring(witness),
+        cfg!(feature = "parallel"),
     );
     reconstruct(key, plan, rank, witness.width, &residues)
 }
@@ -579,122 +626,143 @@ fn narrow(source: &[RingElement], out: &mut [Signed16RingElement]) {
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-fn residues_by_tile(
-    key: &CrtKey,
-    rank: usize,
-    width: usize,
+struct GroupScratch {
+    buffer: Vec<i16>,
+    accumulators: Vec<i32>,
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+impl GroupScratch {
+    fn new(rank: usize, columns_per_tile: usize) -> GroupScratch {
+        GroupScratch {
+            buffer: vec![0i16; CHUNK * columns_per_tile * DEGREE],
+            accumulators: vec![0i32; GROUP * rank * columns_per_tile * DEGREE],
+        }
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+fn tile_digits<'a>(
+    source: &'a Source,
+    scratch: &'a mut [Signed16RingElement],
     n: usize,
-    used_cols: usize,
-    source: Source,
-) -> Vec<i16> {
-    let limbs = key.limbs.len();
-    let columns_per_tile = COLUMNS.min(width.next_power_of_two());
-    let mut residues = vec![0i16; limbs * rank * width * DEGREE];
-    let mut buffer = vec![0i16; CHUNK * columns_per_tile * DEGREE];
-    let mut accumulators = vec![0i32; GROUP * rank * columns_per_tile * DEGREE];
-    let mut scratch = match source {
-        Source::Ring(_) => vec![Signed16RingElement([0i16; DEGREE]); columns_per_tile * n],
-        Source::Narrowed(_) => Vec::new(),
-    };
+    at: usize,
+    columns: usize,
+) -> &'a [Signed16RingElement] {
+    match source {
+        Source::Narrowed(digits) => &digits.data[at * n..(at + columns) * n],
+        Source::Ring(witness) => {
+            narrow(
+                &witness.data[at * n..(at + columns) * n],
+                &mut scratch[..columns * n],
+            );
+            &scratch[..columns * n]
+        }
+    }
+}
+
+/// A tile's `(block, column)` residues into the flat `(block, column)` array of full width.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+fn scatter(
+    tile: &[i16],
+    residues: &mut [i16],
+    blocks: usize,
+    width: usize,
+    columns_per_tile: usize,
+    at: usize,
+    columns: usize,
+) {
+    for block in 0..blocks {
+        let from = block * columns_per_tile * DEGREE;
+        let to = (block * width + at) * DEGREE;
+        residues[to..to + columns * DEGREE].copy_from_slice(&tile[from..from + columns * DEGREE]);
+    }
+}
+
+/// One limb group of one column tile. Every (row, column) accumulates over `k` in ascending
+/// order regardless of who computes it, so which thread takes which group does not affect the
+/// result.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+fn accumulate_group(
+    key: &CrtKey,
+    first: usize,
+    rank: usize,
+    n: usize,
+    columns: usize,
+    columns_per_tile: usize,
+    tile_digits: &[Signed16RingElement],
+    scratch: &mut GroupScratch,
+    out: &mut [i16],
+) {
+    let group = &key.limbs[first..(first + GROUP).min(key.limbs.len())];
+    let period = group
+        .iter()
+        .map(|limb| limb.depth / CHUNK * CHUNK)
+        .min()
+        .unwrap_or(CHUNK);
     let stride = rank * columns_per_tile * DEGREE;
+    let buffer = &mut scratch.buffer;
+    let accumulators = &mut scratch.accumulators;
+    accumulators.fill(0);
 
-    for tile in (0..used_cols).step_by(columns_per_tile) {
-        let columns = (used_cols - tile).min(columns_per_tile);
-        let tile_digits: &[Signed16RingElement] = match source {
-            Source::Narrowed(digits) => &digits.data[tile * n..(tile + columns) * n],
-            Source::Ring(witness) => {
-                narrow(
-                    &witness.data[tile * n..(tile + columns) * n],
-                    &mut scratch[..columns * n],
-                );
-                &scratch[..columns * n]
-            }
-        };
-
-        for first in (0..limbs).step_by(GROUP) {
-            let group = &key.limbs[first..(first + GROUP).min(limbs)];
-            let period = group
-                .iter()
-                .map(|limb| limb.depth / CHUNK * CHUNK)
-                .min()
-                .unwrap_or(CHUNK);
-            accumulators.fill(0);
-
-            for base in (0..n).step_by(CHUNK) {
-                let taken = (n - base).min(CHUNK);
-                for (offset, limb) in group.iter().enumerate() {
-                    for c in 0..columns {
-                        let source = tile_digits[c * n + base].0.as_ptr();
-                        let out = unsafe { buffer.as_mut_ptr().add(c * CHUNK * DEGREE) };
-                        let mut k = 0;
-                        while k + 4 <= taken {
-                            unsafe {
-                                transform::<4, 0>(limb, source.add(k * DEGREE), out.add(k * DEGREE))
-                            };
-                            k += 4;
-                        }
-                        while k < taken {
-                            unsafe {
-                                transform::<1, 0>(limb, source.add(k * DEGREE), out.add(k * DEGREE))
-                            };
-                            k += 1;
-                        }
-                    }
-
-                    let mut row = 0;
-                    while row < rank {
-                        let paired = row + 1 < rank;
-                        for c in 0..columns {
-                            let at: [*mut i32; 2] = std::array::from_fn(|r| unsafe {
-                                accumulators.as_mut_ptr().add(
-                                    offset * stride
-                                        + ((row + r * paired as usize) * columns_per_tile + c)
-                                            * DEGREE,
-                                )
-                            });
-                            let mut acc = unsafe { load(at.map(|p| p as *const i32)) };
-                            let bases: [*const i16; 2] = std::array::from_fn(|r| {
-                                key.row(first + offset, row + r * paired as usize, base)
-                                    .as_ptr()
-                            });
-                            let operands = unsafe { buffer.as_ptr().add(c * CHUNK * DEGREE) };
-                            for k in 0..taken {
-                                let keys: [*const i16; 2] = std::array::from_fn(|r| unsafe {
-                                    bases[r].add(2 * k * DEGREE)
-                                });
-                                let operand = unsafe { operands.add(k * DEGREE) };
-                                unsafe {
-                                    if paired {
-                                        accumulate::<2>(&mut acc, operand, keys)
-                                    } else {
-                                        accumulate::<1>(&mut acc, operand, [keys[0]])
-                                    }
-                                };
-                            }
-                            unsafe {
-                                if paired {
-                                    store::<2>(&acc, at)
-                                } else {
-                                    store::<1>(&acc, [at[0]])
-                                }
-                            };
-                        }
-                        row += 1 + paired as usize;
-                    }
+    for base in (0..n).step_by(CHUNK) {
+        let taken = (n - base).min(CHUNK);
+        for (offset, limb) in group.iter().enumerate() {
+            for c in 0..columns {
+                let source = tile_digits[c * n + base].0.as_ptr();
+                let out = unsafe { buffer.as_mut_ptr().add(c * CHUNK * DEGREE) };
+                let mut k = 0;
+                while k + 4 <= taken {
+                    unsafe { transform::<4, 0>(limb, source.add(k * DEGREE), out.add(k * DEGREE)) };
+                    k += 4;
                 }
+                while k < taken {
+                    unsafe { transform::<1, 0>(limb, source.add(k * DEGREE), out.add(k * DEGREE)) };
+                    k += 1;
+                }
+            }
 
-                if (base + CHUNK) % period == 0 {
-                    for (offset, limb) in group.iter().enumerate() {
+            let mut row = 0;
+            while row < rank {
+                let paired = row + 1 < rank;
+                for c in 0..columns {
+                    let at: [*mut i32; 2] = std::array::from_fn(|r| unsafe {
+                        accumulators.as_mut_ptr().add(
+                            offset * stride
+                                + ((row + r * paired as usize) * columns_per_tile + c) * DEGREE,
+                        )
+                    });
+                    let mut acc = unsafe { load(at.map(|p| p as *const i32)) };
+                    let bases: [*const i16; 2] = std::array::from_fn(|r| {
+                        key.row(first + offset, row + r * paired as usize, base)
+                            .as_ptr()
+                    });
+                    let operands = unsafe { buffer.as_ptr().add(c * CHUNK * DEGREE) };
+                    for k in 0..taken {
+                        let keys: [*const i16; 2] =
+                            std::array::from_fn(|r| unsafe { bases[r].add(2 * k * DEGREE) });
+                        let operand = unsafe { operands.add(k * DEGREE) };
                         unsafe {
-                            reduce(
-                                limb,
-                                &mut accumulators[offset * stride..(offset + 1) * stride],
-                            )
+                            if paired {
+                                accumulate::<2>(&mut acc, operand, keys)
+                            } else {
+                                accumulate::<1>(&mut acc, operand, [keys[0]])
+                            }
                         };
                     }
+                    unsafe {
+                        if paired {
+                            store::<2>(&acc, at)
+                        } else {
+                            store::<1>(&acc, [at[0]])
+                        }
+                    };
                 }
+                row += 1 + paired as usize;
             }
+        }
 
+        if (base + CHUNK) % period == 0 {
             for (offset, limb) in group.iter().enumerate() {
                 unsafe {
                     reduce(
@@ -702,22 +770,136 @@ fn residues_by_tile(
                         &mut accumulators[offset * stride..(offset + 1) * stride],
                     )
                 };
-                for row in 0..rank {
-                    for c in 0..columns {
-                        let mut image = [0i16; DEGREE];
-                        gather(
-                            limb,
-                            &accumulators
-                                [offset * stride + (row * columns_per_tile + c) * DEGREE..],
-                            &mut image,
-                        );
-                        limb.inverse_ntt(&mut image);
-                        let at = (((first + offset) * rank + row) * width + tile + c) * DEGREE;
-                        residues[at..at + DEGREE].copy_from_slice(&image);
-                    }
-                }
             }
         }
+    }
+
+    for (offset, limb) in group.iter().enumerate() {
+        unsafe {
+            reduce(
+                limb,
+                &mut accumulators[offset * stride..(offset + 1) * stride],
+            )
+        };
+        for row in 0..rank {
+            for c in 0..columns {
+                let mut image = [0i16; DEGREE];
+                gather(
+                    limb,
+                    &accumulators[offset * stride + (row * columns_per_tile + c) * DEGREE..],
+                    &mut image,
+                );
+                limb.inverse_ntt(&mut image);
+                let at = ((offset * rank + row) * columns_per_tile + c) * DEGREE;
+                out[at..at + DEGREE].copy_from_slice(&image);
+            }
+        }
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+fn residues_by_tile(
+    key: &CrtKey,
+    rank: usize,
+    width: usize,
+    n: usize,
+    used_cols: usize,
+    source: Source,
+    parallel: bool,
+) -> Vec<i16> {
+    use {COLUMNS, GROUP};
+
+    let limbs = key.limbs.len();
+    let columns_per_tile = COLUMNS.min(width.next_power_of_two());
+    let stride = rank * columns_per_tile * DEGREE;
+    let mut residues = vec![0i16; limbs * rank * width * DEGREE];
+    let held = match source {
+        Source::Ring(_) => columns_per_tile * n,
+        Source::Narrowed(_) => 0,
+    };
+    let tiles: Vec<(usize, usize)> = (0..used_cols)
+        .step_by(columns_per_tile)
+        .map(|at| (at, (used_cols - at).min(columns_per_tile)))
+        .collect();
+
+    // Groups fan out under the tiles rather than beside them: the narrowed witness a tile's
+    // groups share is then held once per tile in flight instead of once per task.
+    #[cfg(feature = "parallel")]
+    if parallel {
+        let computed: Vec<Vec<i16>> = tiles
+            .par_iter()
+            .map_init(
+                || vec![Signed16RingElement([0i16; DEGREE]); held],
+                |scratch, &(at, columns)| {
+                    let digits = tile_digits(&source, scratch, n, at, columns);
+                    let mut tile = vec![0i16; limbs * stride];
+                    tile.par_chunks_mut(GROUP * stride)
+                        .enumerate()
+                        .for_each_init(
+                            || GroupScratch::new(rank, columns_per_tile),
+                            |scratch, (group, out)| {
+                                accumulate_group(
+                                    key,
+                                    group * GROUP,
+                                    rank,
+                                    n,
+                                    columns,
+                                    columns_per_tile,
+                                    digits,
+                                    scratch,
+                                    out,
+                                )
+                            },
+                        );
+                    tile
+                },
+            )
+            .collect();
+        for (&(at, columns), tile) in tiles.iter().zip(&computed) {
+            scatter(
+                tile,
+                &mut residues,
+                limbs * rank,
+                width,
+                columns_per_tile,
+                at,
+                columns,
+            );
+        }
+        return residues;
+    }
+    let _ = parallel;
+
+    let mut scratch = vec![Signed16RingElement([0i16; DEGREE]); held];
+    let mut group_scratch = GroupScratch::new(rank, columns_per_tile);
+    let mut tile = vec![0i16; limbs * stride];
+    for &(at, columns) in &tiles {
+        let digits = tile_digits(&source, &mut scratch, n, at, columns);
+        for (first, out) in (0..limbs)
+            .step_by(GROUP)
+            .zip(tile.chunks_mut(GROUP * stride))
+        {
+            accumulate_group(
+                key,
+                first,
+                rank,
+                n,
+                columns,
+                columns_per_tile,
+                digits,
+                &mut group_scratch,
+                out,
+            );
+        }
+        scatter(
+            &tile,
+            &mut residues,
+            limbs * rank,
+            width,
+            columns_per_tile,
+            at,
+            columns,
+        );
     }
     residues
 }
@@ -1347,6 +1529,73 @@ mod tests {
         let plan = Plan::new(digits_l2(&digits), rank);
         let key = CrtKey::preprocess(crs.ck_for_wit_dim(height), rank, &plan);
         let got = commit_basic_crt_streaming(&key, &witness, &plan, rank);
+        for element in 0..rank * width {
+            assert_eq!(
+                expected.data[element].v, got.data[element].v,
+                "element {element}"
+            );
+        }
+    }
+
+    #[cfg(all(
+        feature = "parallel",
+        target_arch = "x86_64",
+        target_feature = "avx512f"
+    ))]
+    #[test]
+    fn crt_parallel_matches_the_serial_path() {
+        init_common();
+        let height = 64;
+        let width = 70;
+        let rank = 3;
+        let crs = CRS::gen_crs(height, rank + 1);
+        let witness = VerticallyAlignedMatrix {
+            data: (0..height * width)
+                .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 1 << 15))
+                .collect(),
+            width,
+            height,
+            used_cols: width,
+        };
+        let digits = prepare_i16_witness(&witness);
+        let plan = Plan::new(digits_l2(&digits), rank);
+        let ck = crs.ck_for_wit_dim(height);
+
+        let key = CrtKey::preprocess_with(ck, rank, &plan, true);
+        assert_eq!(
+            key.data,
+            CrtKey::preprocess_with(ck, rank, &plan, false).data,
+            "preprocessed key"
+        );
+
+        let from_digits = |parallel| {
+            residues_by_tile(
+                &key,
+                rank,
+                width,
+                height,
+                width,
+                Source::Narrowed(&digits),
+                parallel,
+            )
+        };
+        let streamed = |parallel| {
+            residues_by_tile(
+                &key,
+                rank,
+                width,
+                height,
+                width,
+                Source::Ring(&witness),
+                parallel,
+            )
+        };
+        assert_eq!(from_digits(true), from_digits(false), "residues");
+        assert_eq!(streamed(true), streamed(false), "streamed residues");
+        assert_eq!(from_digits(true), streamed(true), "the two sources");
+
+        let expected = crate::protocol::commitment::commit_basic(&crs, &witness, rank);
+        let got = commit_basic_crt(&key, &digits, &plan, rank);
         for element in 0..rank * width {
             assert_eq!(
                 expected.data[element].v, got.data[element].v,
