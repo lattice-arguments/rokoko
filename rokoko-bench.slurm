@@ -29,9 +29,10 @@ date
 echo "logs in $OUT/"
 lscpu | grep -E "Model name|^CPU\(s\):|L3 cache"
 free -g | head -2
-NPROC=$(nproc)
-echo "cpus in this allocation: $NPROC"
-export RAYON_NUM_THREADS=$NPROC
+echo "cpus visible: $(nproc)"
+CORES=${SLURM_CPUS_PER_TASK:-$(nproc)}
+export RAYON_NUM_THREADS=$CORES
+echo "RAYON_NUM_THREADS=$RAYON_NUM_THREADS"
 git log --oneline -1
 
 module load triton-dev/2025.1-gcc gcc/14.2.0 2>/dev/null
