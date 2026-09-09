@@ -30,8 +30,7 @@ echo "logs in $OUT/"
 lscpu | grep -E "Model name|^CPU\(s\):|L3 cache"
 free -g | head -2
 echo "cpus visible: $(nproc)"
-CORES=${SLURM_CPUS_PER_TASK:-$(nproc)}
-export RAYON_NUM_THREADS=$CORES
+export RAYON_NUM_THREADS=$(nproc)
 echo "RAYON_NUM_THREADS=$RAYON_NUM_THREADS"
 git log --oneline -1
 
