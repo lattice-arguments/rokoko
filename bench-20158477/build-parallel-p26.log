@@ -1,0 +1,8 @@
+   Compiling crossbeam-utils v0.8.21
+   Compiling rayon-core v1.13.0
+   Compiling either v1.15.0
+   Compiling rokoko v0.1.0 (/home/osadnim1/cowboys-and-aliens)
+   Compiling crossbeam-epoch v0.9.18
+   Compiling crossbeam-deque v0.8.6
+   Compiling rayon v1.11.0
+    Finished `release` profile [optimized] target(s) in 19.24s
