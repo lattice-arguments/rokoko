@@ -1,0 +1,26 @@
+   Compiling rokoko v0.1.0 (/home/osadnim1/cowboys-and-aliens)
+    Finished `release` profile [optimized] target(s) in 16.84s
+     Running `target/release/rokoko`
+Using p30...
+Sumcheck unsafe...
+✓ AVX-512F is enabled in runtime detection and available on this CPU
+✓✓ AVX-512F is enabled at compile time
+✓ AVX-512DQ is enabled in runtime detection and available on this CPU
+✓✓ AVX-512DQ is enabled at compile time
+✓ AVX-512VBMI2 is enabled in runtime detection and available on this CPU
+✓✓ AVX-512VBMI2 is enabled at compile time
+CPU features for incomplete-rexl:
+  AVX-512DQ: ✓
+  AVX-512IFMA: ✓
+  AVX-512VBMI2: ✓
+  NEON: ✗
+Using CRT commitment...
+Using parallel commitment...
+Expected repetition rate for challenge set: 1.88
+Running executor...
+TOTAL CRS gen time: 3640407375 ns
+TOTAL Commit time: 1720956933 ns
+TOTAL Prover time: 11209334135 ns
+Total proof size: 100.6220703125 KB
+Wire proof size: 112.359375 KB (serialise 0.801 ms, deserialise 0.467 ms)
+TOTAL Verifier time: 19497668 ns

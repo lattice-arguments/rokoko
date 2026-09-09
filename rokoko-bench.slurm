@@ -1,6 +1,6 @@
 #!/bin/bash -l
 #SBATCH --job-name=rokoko-bench
-#SBATCH --partition=gpu-h100-80g-short
+#SBATCH --partition=gpu-h100-80g
 #SBATCH --constraint=saphr
 #SBATCH --gres=gpu:1
 #SBATCH --nodes=1
