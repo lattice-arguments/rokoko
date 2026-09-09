@@ -36,10 +36,25 @@ echo "RAYON_NUM_THREADS=$RAYON_NUM_THREADS"
 git log --oneline -1
 
 module load triton-dev/2025.1-gcc gcc/14.2.0 2>/dev/null
-export CC=${CC:-gcc}
+
+if ! command -v gcc > /dev/null
+then
+  echo "no gcc on this node; try: module avail gcc"
+  exit 1
+fi
+export CC=gcc
+
+BIN="$PWD/$OUT/bin"
+mkdir -p "$BIN"
+ln -sf "$(command -v gcc)" "$BIN/cc"
+export PATH="$BIN:$PATH"
+export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=gcc
+echo "gcc: $(command -v gcc)"
+echo "cc:  $(command -v cc)"
+
 if ! command -v cargo > /dev/null
 then
-    . "$HOME/.cargo/env"
+  . "$HOME/.cargo/env"
 fi
 cargo $TOOLCHAIN --version || exit 1
 
