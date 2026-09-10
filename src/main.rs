@@ -11,6 +11,14 @@ fn main() {
     {
         println!("Using p26...");
     }
+    #[cfg(feature = "p-24")]
+    {
+        println!("Using p24...");
+    }
+    #[cfg(feature = "p-22")]
+    {
+        println!("Using p22...");
+    }
     #[cfg(feature = "p-29")]
     {
         println!("Using p29...");
@@ -19,7 +27,13 @@ fn main() {
     {
         println!("Using p30...");
     }
-    #[cfg(not(any(feature = "p-26", feature = "p-29", feature = "p-30")))]
+    #[cfg(not(any(
+        feature = "p-22",
+        feature = "p-24",
+        feature = "p-26",
+        feature = "p-29",
+        feature = "p-30"
+    )))]
     {
         println!("Using p28...");
     }

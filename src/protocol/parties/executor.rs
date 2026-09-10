@@ -414,7 +414,7 @@ mod tests {
         super::execute();
     }
 
-    #[cfg(not(feature = "p-29"))]
+    #[cfg(not(any(feature = "p-22", feature = "p-24", feature = "p-29")))]
     #[test]
     fn round_boundary_extraction() {
         init_common();
