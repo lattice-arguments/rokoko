@@ -20,6 +20,8 @@ pub static DECOMP_8_LAST_LEVEL: AuxRecursionConfig = AuxRecursionConfig {
 };
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SizeConfig {
+    Micro,
+    Tiny,
     Small,
     Medium,
     NarrowLarge,
@@ -30,7 +32,8 @@ impl SizeConfig {
     #[inline(always)]
     pub fn pick<T>(self, small: T, medium: T, narrow_large: T, large: T) -> T {
         match self {
-            SizeConfig::Small => small,
+            // p-24 and p-22 share p-26's tail
+            SizeConfig::Micro | SizeConfig::Tiny | SizeConfig::Small => small,
             SizeConfig::Medium => medium,
             SizeConfig::NarrowLarge => narrow_large,
             SizeConfig::Large => large,
@@ -53,10 +56,36 @@ pub fn compiled_size() -> SizeConfig {
     {
         return SizeConfig::Small;
     }
+    #[cfg(feature = "p-24")]
+    {
+        return SizeConfig::Tiny;
+    }
+    #[cfg(feature = "p-22")]
+    {
+        return SizeConfig::Micro;
+    }
     SizeConfig::Medium
 }
 
 pub const NORM_MARGIN: f64 = 1.85; // verifier accepts norms up to this factor times the expected bound
+
+const NB_P_22: [[f64; 3]; 6] = [
+    [31653.03847974156, 2198.5545251369135, f64::INFINITY],
+    [32337.828312983544, 3129.6533354350927, f64::INFINITY],
+    [40230.40767876955, 3146.335646430622, f64::INFINITY],
+    [21598.145267591844, 3131.060842589936, f64::INFINITY],
+    [19906.40535104216, 18741.35864872128, f64::INFINITY],
+    [93228.17629879928, 224748.99265402727, f64::INFINITY],
+];
+
+const NB_P_24: [[f64; 3]; 6] = [
+    [44689.13252682357, 2222.1100332791802, f64::INFINITY],
+    [42475.04196584154, 3132.958505949289, f64::INFINITY],
+    [44610.02151983341, 3116.0059370931885, f64::INFINITY],
+    [21967.9732110179, 3141.272672023236, f64::INFINITY],
+    [19904.046397654925, 18729.234634656055, f64::INFINITY],
+    [93308.32186895229, 216981.0167503139, f64::INFINITY],
+];
 
 const NB_P_26: [[f64; 3]; 7] = [
     [53005.60869379768, 2187.258786700833, f64::INFINITY],
@@ -271,6 +300,39 @@ pub fn p_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
     }
 }
 
+/// Root of the p-24 and p-22 chains. Its composed witness is already as short as the one p_1
+/// composes to (p-22: half of it, hence the shorter p_2), so the chain skips p_1.
+pub fn p_root_aux_short(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
+    let tiny = size == SizeConfig::Tiny;
+    AuxSumcheckConfig {
+        exact_projection_norm: false,
+        witness_height: if tiny { 2usize.pow(11) } else { 2usize.pow(10) },
+        witness_width: if tiny { 2usize.pow(7) } else { 2usize.pow(6) },
+        projection_ratio: 1,              // no-op
+        projection_height: 2usize.pow(8), // no-op,
+        basic_commitment_rank: 10,
+        nof_openings,
+        commitment_recursion: AuxRecursionConfig {
+            decomposition_base_log: 7,
+            decomposition_chunks: 8,
+            rank: 2,
+            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        },
+        opening_recursion: AuxRecursionConfig {
+            decomposition_base_log: 7,
+            decomposition_chunks: 8,
+            rank: 2,
+            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        },
+        projection_recursion: AuxProjection::Skip,
+
+        witness_decomposition_chunks: 4,
+        witness_decomposition_base_log: 6,
+
+        next: Some(Box::new(AuxConfig::Sumcheck(p_2(size)))),
+    }
+}
+
 pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
     AuxSumcheckConfig {
         exact_projection_norm: false,
@@ -318,12 +380,15 @@ pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
 pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
     AuxSumcheckConfig {
         exact_projection_norm: false,
-        witness_height: size.pick(
-            2usize.pow(10),
-            2usize.pow(10),
-            2usize.pow(11),
-            2usize.pow(11),
-        ),
+        witness_height: match size {
+            SizeConfig::Micro => 2usize.pow(9),
+            _ => size.pick(
+                2usize.pow(10),
+                2usize.pow(10),
+                2usize.pow(11),
+                2usize.pow(11),
+            ),
+        },
         witness_width: 2usize.pow(5),
         projection_ratio: size.pick(2usize.pow(6), 2usize.pow(5), 2usize.pow(8), 2usize.pow(8)),
         projection_height: 2usize.pow(8),
@@ -385,6 +450,7 @@ pub static P_EN_LARGE: LazyLock<Config> =
     LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Large, 1).generate_config()); // never executed, OOM for 64GiB RAM
 
 pub static P_EN: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
+    SizeConfig::Micro | SizeConfig::Tiny => panic!("no exact-norm chain for p-22 / p-24; use P"),
     SizeConfig::Small => P_EN_SMALL.clone(),
     SizeConfig::Medium => P_EN_MEDIUM.clone(),
     SizeConfig::NarrowLarge => P_EN_NARROW_LARGE.clone(),
@@ -410,12 +476,23 @@ pub static P_EN_2_LARGE: LazyLock<Config> =
     LazyLock::new(|| p_exact_norm_root_aux(SizeConfig::Large, 2).generate_config()); // never executed, OOM for 64GiB RAM
 
 pub static P_EN_TWO_EVALS: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
+    SizeConfig::Micro | SizeConfig::Tiny => panic!("no exact-norm chain for p-22 / p-24; use P"),
     SizeConfig::Small => P_EN_2_SMALL.clone(),
     SizeConfig::Medium => P_EN_2_MEDIUM.clone(),
     SizeConfig::NarrowLarge => P_EN_2_NARROW_LARGE.clone(),
     SizeConfig::Large => P_EN_2_LARGE.clone(),
 });
 
+pub static P_MICRO: LazyLock<Config> = LazyLock::new(|| {
+    let mut c = p_root_aux_short(SizeConfig::Micro, 1).generate_config();
+    assign_norm_bounds(&mut c, &NB_P_22);
+    c
+});
+pub static P_TINY: LazyLock<Config> = LazyLock::new(|| {
+    let mut c = p_root_aux_short(SizeConfig::Tiny, 1).generate_config();
+    assign_norm_bounds(&mut c, &NB_P_24);
+    c
+});
 pub static P_SMALL: LazyLock<Config> = LazyLock::new(|| {
     let mut c = p_root_aux(SizeConfig::Small, 1).generate_config();
     assign_norm_bounds(&mut c, &NB_P_26);
@@ -432,6 +509,10 @@ pub static P_LARGE: LazyLock<Config> = LazyLock::new(|| {
     c
 });
 
+pub static P_2_MICRO: LazyLock<Config> =
+    LazyLock::new(|| p_root_aux_short(SizeConfig::Micro, 2).generate_config());
+pub static P_2_TINY: LazyLock<Config> =
+    LazyLock::new(|| p_root_aux_short(SizeConfig::Tiny, 2).generate_config());
 pub static P_2_SMALL: LazyLock<Config> =
     LazyLock::new(|| p_root_aux(SizeConfig::Small, 2).generate_config());
 pub static P_2_MEDIUM: LazyLock<Config> =
@@ -440,6 +521,8 @@ pub static P_2_LARGE: LazyLock<Config> =
     LazyLock::new(|| p_root_aux(SizeConfig::Large, 2).generate_config());
 
 pub static P: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
+    SizeConfig::Micro => P_MICRO.clone(),
+    SizeConfig::Tiny => P_TINY.clone(),
     SizeConfig::Small => P_SMALL.clone(),
     SizeConfig::Medium => P_MEDIUM.clone(),
     SizeConfig::NarrowLarge => {
@@ -451,6 +534,8 @@ pub static P: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
 });
 
 pub static P_TWO_EVALS: LazyLock<Config> = LazyLock::new(|| match compiled_size() {
+    SizeConfig::Micro => P_2_MICRO.clone(),
+    SizeConfig::Tiny => P_2_TINY.clone(),
     SizeConfig::Small => P_2_SMALL.clone(),
     SizeConfig::Medium => P_2_MEDIUM.clone(),
     SizeConfig::NarrowLarge => {
@@ -738,6 +823,12 @@ mod tests {
     #[test]
     fn test_p_snark_chain_dims() {
         assert_chain_dims(&super::P_EN_MEDIUM);
+    }
+
+    #[test]
+    fn test_short_chain_dims() {
+        assert_chain_dims(&super::P_MICRO);
+        assert_chain_dims(&super::P_TINY);
     }
 
     #[test]

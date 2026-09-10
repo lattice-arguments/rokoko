@@ -260,7 +260,7 @@ Due to memory requirements for polynomial degree 2^30 exceeding 64 GB, the respe
 
 * `incomplete-rexl`: enables the pure-Rust ring arithmetic back-end
 * `snark`: runs the executor in SNARK mode; without it, the executor runs the PCS chain (disclaimer: snark mode is currently highly experimental). The claim-language guide is [docs/snark.md](docs/snark.md), and `cargo run --release --example claims` is a runnable walk-through.
-* `p-26`, `p-28`, `p-30`: parameters for polynomial degrees 2^26, 2^28, and 2^30 respectively
+* `p-22`, `p-24`, `p-26`, `p-28`, `p-30`: parameters for polynomial degrees 2^22, 2^24, 2^26, 2^28, and 2^30 respectively
 * `events`: prints a per-phase timing summary to the console at the end of the run (see [Tracing and Profiling](#tracing-and-profiling))
 * `profile`: writes a Chrome trace and a per-span snapshot to `profiles/` for offline analysis (see [Tracing and Profiling](#tracing-and-profiling))
 * `unsafe-sumcheck`: enables zero-cost borrow checking by using `UnsafeCell` instead of `RefCell` in sumcheck subprotocols
