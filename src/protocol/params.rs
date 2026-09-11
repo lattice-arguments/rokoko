@@ -12,9 +12,9 @@ use crate::{
     },
 };
 
-pub static DECOMP_8_LAST_LEVEL: AuxRecursionConfig = AuxRecursionConfig {
-    decomposition_base_log: 7,
-    decomposition_chunks: 8,
+pub static DECOMP_11_LAST_LEVEL: AuxRecursionConfig = AuxRecursionConfig {
+    decomposition_base_log: 5,
+    decomposition_chunks: 11,
     rank: 1,
     next: None,
 };
@@ -70,62 +70,62 @@ pub fn compiled_size() -> SizeConfig {
 pub const NORM_MARGIN: f64 = 1.85; // verifier accepts norms up to this factor times the expected bound
 
 const NB_P_22: [[f64; 3]; 6] = [
-    [31653.03847974156, 2198.5545251369135, f64::INFINITY],
-    [32337.828312983544, 3129.6533354350927, f64::INFINITY],
-    [40230.40767876955, 3146.335646430622, f64::INFINITY],
-    [21598.145267591844, 3131.060842589936, f64::INFINITY],
-    [19906.40535104216, 18741.35864872128, f64::INFINITY],
-    [93228.17629879928, 224748.99265402727, f64::INFINITY],
+    [31586.04321531901, 664.4343458913003, f64::INFINITY],
+    [32242.99688304423, 933.3954146019788, f64::INFINITY],
+    [40528.49433423354, 941.2194218140635, f64::INFINITY],
+    [21462.925103536098, 934.9283394998785, f64::INFINITY],
+    [20031.19666919578, 18862.171296009376, f64::INFINITY],
+    [93834.292153775, 230467.703379454, f64::INFINITY],
 ];
 
 const NB_P_24: [[f64; 3]; 6] = [
-    [44689.13252682357, 2222.1100332791802, f64::INFINITY],
-    [42475.04196584154, 3132.958505949289, f64::INFINITY],
-    [44610.02151983341, 3116.0059370931885, f64::INFINITY],
-    [21967.9732110179, 3141.272672023236, f64::INFINITY],
-    [19904.046397654925, 18729.234634656055, f64::INFINITY],
-    [93308.32186895229, 216981.0167503139, f64::INFINITY],
+    [44646.33795732859, 668.5746031670661, f64::INFINITY],
+    [42464.83648855839, 933.2770221107986, f64::INFINITY],
+    [44926.57335030127, 934.2628109905692, f64::INFINITY],
+    [21945.911623808202, 942.6595355694441, f64::INFINITY],
+    [20090.157814213406, 18923.73945603775, f64::INFINITY],
+    [94437.21929408977, 230698.74991208775, f64::INFINITY],
 ];
 
 const NB_P_26: [[f64; 3]; 7] = [
-    [53005.60869379768, 2187.258786700833, f64::INFINITY],
-    [75795.76230238733, 2714.218487889286, f64::INFINITY],
-    [42347.903572668154, 3132.204335607752, f64::INFINITY],
-    [37207.207420068495, 3114.7304859329324, f64::INFINITY],
-    [21489.53142811634, 3131.9711045921226, f64::INFINITY],
-    [19936.88313152284, 18768.604210222988, f64::INFINITY],
-    [93674.81073372926, 224590.90958674173, f64::INFINITY],
+    [52962.016615684115, 939.7074012691397, f64::INFINITY],
+    [75752.96866790106, 812.7305826656211, f64::INFINITY],
+    [42387.67135618563, 931.4075370105182, f64::INFINITY],
+    [46470.407336282304, 940.3568471596301, f64::INFINITY],
+    [21745.98323829024, 942.3990662134593, f64::INFINITY],
+    [20040.361049641797, 18885.146729639142, f64::INFINITY],
+    [93821.23664714722, 227687.86020778533, f64::INFINITY],
 ];
 
 const NB_P_28: [[f64; 3]; 7] = [
-    [75086.2198009728, 2222.9271243115463, f64::INFINITY],
-    [97049.38765391568, 2710.4818759770374, f64::INFINITY],
-    [53543.95118031541, 3122.0562134593283, f64::INFINITY],
-    [39527.95458912591, 3159.0519147364453, f64::INFINITY],
-    [21491.85138604862, 3129.8618180360613, f64::INFINITY],
-    [20026.54103933078, 18844.89355236585, f64::INFINITY],
-    [94471.88754333217, 227110.0547906235, f64::INFINITY],
+    [75056.30693685908, 932.2210038397548, f64::INFINITY],
+    [97065.21574693995, 815.1349581511028, f64::INFINITY],
+    [53440.1325410033, 935.6115646997957, f64::INFINITY],
+    [49837.24499809354, 936.1751972787999, f64::INFINITY],
+    [22030.68394308266, 940.0765926242393, f64::INFINITY],
+    [20048.31496660006, 18881.50155575557, f64::INFINITY],
+    [93816.50766256437, 234175.65906814483, f64::INFINITY],
 ];
 
 const NB_P_30: [[f64; 3]; 7] = [
-    [155066.22588107316, 2206.3048293470238, f64::INFINITY],
-    [127504.2830653151, 3126.8253868740417, f64::INFINITY],
-    [46944.76686490199, 3160.822203161703, f64::INFINITY],
-    [41239.37173381767, 3127.22848541644, f64::INFINITY],
-    [20945.39655867131, 3108.5462840369614, f64::INFINITY],
-    [19945.057031756012, 18776.107264286708, f64::INFINITY],
-    [93419.08105949234, 230465.33839603735, f64::INFINITY],
+    [159046.0282811237, 943.0524905857574, f64::INFINITY],
+    [130226.10125086292, 931.624924527033, f64::INFINITY],
+    [47236.84904817424, 936.0571563745453, f64::INFINITY],
+    [53478.4027154888, 933.0096462523846, f64::INFINITY],
+    [22158.50157388807, 936.5121462106084, f64::INFINITY],
+    [20022.482063920048, 18852.281347359527, f64::INFINITY],
+    [93772.40590920125, 230425.2675077106, f64::INFINITY],
 ];
 
 const NB_P_EN_26: [[f64; 3]; 8] = [
-    [160182.94334291652, 2724.094344915389, f64::INFINITY],
-    [89330.65946247123, 2711.6249740699764, f64::INFINITY],
-    [71240.89427428602, 2719.503263465591, f64::INFINITY],
-    [49323.085852367345, 3141.5819263549374, f64::INFINITY],
-    [37658.174995610185, 3129.595181489133, f64::INFINITY],
-    [20677.989118867434, 3116.819211953109, f64::INFINITY],
-    [19947.41073422814, 18776.49674460068, f64::INFINITY],
-    [93611.53013384623, 214747.6993869783, f64::INFINITY],
+    [160205.4703872499, 814.1222266957217, 9635740.525794579],
+    [108562.36283353453, 814.8852679978943, 1818077.374859772],
+    [76199.9080051938, 808.4689233359561, f64::INFINITY],
+    [42512.63592157042, 933.0337614470336, f64::INFINITY],
+    [46680.69406082133, 937.4342643620405, f64::INFINITY],
+    [21804.699011910256, 931.5680329423075, f64::INFINITY],
+    [20062.42091573198, 18899.381656551624, f64::INFINITY],
+    [94569.6738071989, 215458.37572023048, f64::INFINITY],
 ];
 
 const NB_P_EN_28: [[f64; 3]; 8] = [
@@ -203,19 +203,19 @@ pub fn p_exact_norm_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumche
             decomposition_base_log: 7,
             decomposition_chunks: 8,
             rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         },
         opening_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
             rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         },
         projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
             decomposition_base_log: 8,
             decomposition_chunks: 2,
             rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         }),
 
         witness_decomposition_chunks: 4,
@@ -243,19 +243,19 @@ pub fn p_int(size: SizeConfig) -> AuxSumcheckConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
             rank: size.pick(2, 2, 4, 4),
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         },
         opening_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
             rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         },
         projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
             decomposition_base_log: 9,
             decomposition_chunks: 2,
             rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         }),
 
         witness_decomposition_chunks: 2,
@@ -282,14 +282,14 @@ pub fn p_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
         commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
-            rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            rank: 4,
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         },
         opening_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
-            rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            rank: 4,
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         },
         projection_recursion: AuxProjection::Skip,
 
@@ -316,13 +316,13 @@ pub fn p_root_aux_short(size: SizeConfig, nof_openings: usize) -> AuxSumcheckCon
             decomposition_base_log: 7,
             decomposition_chunks: 8,
             rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         },
         opening_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
             rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         },
         projection_recursion: AuxProjection::Skip,
 
@@ -351,19 +351,19 @@ pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
             rank: size.pick(2, 2, 4, 4),
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         },
         opening_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
             rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         },
         projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
             decomposition_base_log: 9,
             decomposition_chunks: 2,
             rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         }),
 
         witness_decomposition_chunks: 2,
@@ -398,13 +398,13 @@ pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
             rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         },
         opening_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
             rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         },
         projection_recursion: AuxProjection::Fine {
             nof_batches: 2,
@@ -412,13 +412,13 @@ pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
                 decomposition_base_log: 9,
                 decomposition_chunks: 2,
                 rank: 2,
-                next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+                next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
             },
             recursion_batched_projection: AuxRecursionConfig {
                 decomposition_base_log: 7,
                 decomposition_chunks: 8,
                 rank: 2,
-                next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+                next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
             },
         },
 
@@ -558,13 +558,13 @@ pub static P_3: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
         decomposition_base_log: 7,
         decomposition_chunks: 8,
         rank: 2,
-        next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
     },
     opening_recursion: AuxRecursionConfig {
         decomposition_base_log: 7,
         decomposition_chunks: 8,
         rank: 2,
-        next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
     },
     projection_recursion: AuxProjection::Fine {
         nof_batches: 2,
@@ -572,13 +572,13 @@ pub static P_3: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
             decomposition_base_log: 10,
             decomposition_chunks: 2,
             rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         },
         recursion_batched_projection: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
             rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         },
     },
 
@@ -600,13 +600,13 @@ pub static P_4: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
         decomposition_base_log: 7,
         decomposition_chunks: 8,
         rank: 2,
-        next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
     },
     opening_recursion: AuxRecursionConfig {
         decomposition_base_log: 7,
         decomposition_chunks: 8,
         rank: 2,
-        next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+        next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
     },
     projection_recursion: AuxProjection::Fine {
         nof_batches: 2,
@@ -614,13 +614,13 @@ pub static P_4: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
             decomposition_base_log: 9,
             decomposition_chunks: 2,
             rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         },
         recursion_batched_projection: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
             rank: 2,
-            next: Some(Box::new(DECOMP_8_LAST_LEVEL.clone())),
+            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         },
     },
 

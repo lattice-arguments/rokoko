@@ -102,10 +102,12 @@ fn check_recursive_commitment(
     let ell_inf_norm = norms::inf_norm(&rc.committed_data);
     let ell_2_norm = norms::l2_norm(&rc.committed_data);
 
-    let current_extracted_norm = match config.next {
-        Some(_) => extracted_norm,
-        None => extracted_norm_most_inner,
-    };
+    let current_extracted_norm = 2.0
+        * NORM_MARGIN
+        * match config.next {
+            Some(_) => extracted_norm,
+            None => extracted_norm_most_inner,
+        };
 
     let hardness = estimate_rsis_security(&RSISParameters {
         m: rc.committed_data.len() as u64,
