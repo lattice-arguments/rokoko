@@ -574,15 +574,9 @@ pub fn verifier_round_simple(
 
     hash_wrapper.sample_low_op_norm_ring_vec_into(&mut folding_challenges);
 
-    // the folded witness is short, so preprocessing the key here is cheap
-    let ck: Vec<PreprocessedRow> = crs
-        .structured_ck_for_wit_dim(round_proof.folded_witness.height)
-        .iter()
-        .take(config.basic_commitment_rank)
-        .map(PreprocessedRow::from_structured_row)
-        .collect();
+    debug_assert_eq!(crs.simple_ck.len(), config.basic_commitment_rank);
     let commitment_of_folded_witness = commit_basic_internal(
-        &ck,
+        &crs.simple_ck,
         &round_proof.folded_witness,
         config.basic_commitment_rank,
     );
