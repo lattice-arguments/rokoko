@@ -4,7 +4,7 @@ use crate::common::{
     sampling::{sample_public_vector_from_seed, PUBLIC_CRS_SEED},
     structured_row::{PreprocessedRow, StructuredRow},
 };
-use crate::protocol::config::SumcheckConfig;
+use crate::protocol::config::{Config, SimpleConfig, SumcheckConfig};
 
 pub type CK = Vec<PreprocessedRow>;
 pub type SCK = Vec<StructuredRow>;
@@ -26,6 +26,8 @@ pub struct CRS {
 #[derive(Debug)]
 pub struct VerifierCRS {
     pub structured_cks: Vec<SCK>,
+    /// The simple round's key rows, expanded at setup.
+    pub simple_ck: CK,
 }
 
 impl VerifierCRS {
@@ -33,6 +35,18 @@ impl VerifierCRS {
         let index = wit_dim.ilog2() as usize - 1;
         &self.structured_cks[index]
     }
+}
+
+fn simple_round(config: &SumcheckConfig) -> Option<&SimpleConfig> {
+    let mut next = config.next.as_deref();
+    while let Some(round) = next {
+        next = match round {
+            Config::Sumcheck(c) => c.next.as_deref(),
+            Config::Intermediate(c) => c.next.as_deref(),
+            Config::Simple(c) => return Some(c),
+        };
+    }
+    None
 }
 
 impl CRS {
@@ -124,11 +138,21 @@ impl CRS {
     }
 
     pub fn gen_verifier_crs(config: &SumcheckConfig) -> VerifierCRS {
-        VerifierCRS {
+        let mut crs = VerifierCRS {
             structured_cks: gen_structured_cks(
                 config.composed_witness_length,
                 config.basic_commitment_rank + 2,
             ),
+            simple_ck: Vec::new(),
+        };
+        if let Some(simple) = simple_round(config) {
+            crs.simple_ck = crs
+                .structured_ck_for_wit_dim(simple.witness_height)
+                .iter()
+                .take(simple.basic_commitment_rank)
+                .map(PreprocessedRow::from_structured_row)
+                .collect();
         }
+        crs
     }
 }
