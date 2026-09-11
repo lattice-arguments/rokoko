@@ -3,7 +3,6 @@ use crate::{
         arithmetic::ONE_QUAD,
         config::{DEGREE, NOF_BATCHES},
         ring_arithmetic::{QuadraticExtension, Representation, RingElement},
-        structured_row::StructuredRow,
     },
     protocol::{
         commitment::{self, Placement, Prefix},
@@ -56,6 +55,7 @@ fn sum_of_evaluations(terms: Vec<ElephantCell<EvalData>>) -> ElephantCell<EvalDa
 }
 
 /// Verifier dual of `Recomposition`.
+#[derive(Clone)]
 struct RecompositionEvaluation {
     factor: ElephantCell<EvalData>,
 }
@@ -140,64 +140,43 @@ pub fn load_combiner_evaluation_data(
     combiner_evaluation
 }
 
-pub fn structured_row_ck_evaluation(
+/// The `i`-th commitment key row as the verifier meets it: a dense vector, so its multilinear
+/// extension costs the length of the row. Block-diagonal commitment is what keeps that short.
+pub fn ck_row_evaluation(
     crs: &VerifierCRS,
     total_vars: usize,
     wit_dim: usize,
     i: usize,
     suffix: usize,
-) -> ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>> {
+) -> ElephantCell<BasicEvaluationLinearSumcheck<RingElement>> {
     let prefix_size = total_vars - wit_dim.ilog2() as usize - suffix;
-    let eval = ElephantCell::new(
-        StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
-            wit_dim,
-            prefix_size,
-            suffix,
-        ),
-    );
-    let structured_row = crs.structured_ck_for_wit_dim(wit_dim)[i].clone();
-    eval.borrow_mut().load_from(structured_row);
+    let eval = basic_evaluation_linear(wit_dim, prefix_size, suffix);
+    eval.borrow_mut()
+        .load_from(&crs.ck_for_wit_dim(wit_dim)[i].preprocessed_row);
     eval
 }
 
-/// The `segment`-th of `segments` equal dyadic slices of the `i`-th commitment key row, the
-/// verifier's counterpart to `ck_segment_sumcheck`. Layers are MS-first, so the leading
-/// `log2(segments)` of them pick the segment: what they contribute at this index is a constant,
-/// and the slice is still a tensor row over the layers below. `segments == 1` reproduces
-/// `structured_row_ck_evaluation` exactly.
-pub fn structured_row_ck_segment_evaluation(
+/// The `segment`-th of `segments` equal dyadic slices of that row, the verifier's counterpart to
+/// `ck_segment_sumcheck`.
+pub fn ck_segment_evaluation(
     crs: &VerifierCRS,
     total_vars: usize,
     wit_dim: usize,
     i: usize,
     segments: usize,
     segment: usize,
-) -> ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>> {
-    let segment_len = wit_dim / segments;
-    let fixed = segments.ilog2() as usize;
-    let row = crs.structured_ck_for_wit_dim(wit_dim)[i].clone();
-
-    let scale = StructuredRow {
-        tensor_layers: row.tensor_layers[..fixed].to_vec(),
-    }
-    .at(segment);
-    let sliced = StructuredRow {
-        tensor_layers: row.tensor_layers[fixed..].to_vec(),
-    };
-
-    let eval = ElephantCell::new(
-        StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
-            segment_len,
-            total_vars - segment_len.ilog2() as usize,
-            0,
-        ),
+) -> ElephantCell<BasicEvaluationLinearSumcheck<RingElement>> {
+    let len = wit_dim / segments;
+    let eval = basic_evaluation_linear(len, total_vars - len.ilog2() as usize, 0);
+    eval.borrow_mut().load_from(
+        &crs.ck_for_wit_dim(wit_dim)[i].preprocessed_row[segment * len..(segment + 1) * len],
     );
-    eval.borrow_mut().load_scaled_from(sliced, scale);
     eval
 }
 
 /// Verifier dual of `InputPiece`.
 struct InputPieceEvaluation {
+    block: usize,
     ck_slices: usize,
     ck_slice: usize,
     data: ElephantCell<EvalData>,
@@ -208,19 +187,32 @@ fn selected_input_piece_evaluations(
     config: &commitment::RecursionConfig,
     witness: &ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
 ) -> Vec<Vec<InputPieceEvaluation>> {
+    let blocks = config.diag_blocks;
+
     (0..config.placements.len())
         .map(|row| {
-            row_committed_pieces(config, row)
-                .into_iter()
-                .map(|(prefix, ck_slices, ck_slice)| InputPieceEvaluation {
-                    ck_slices,
-                    ck_slice,
-                    data: ElephantCell::new(ProductSumcheckEvaluation::new(
-                        selector_evaluation_from_prefix(&prefix, total_vars),
-                        witness.clone(),
-                    )) as ElephantCell<EvalData>,
-                })
-                .collect()
+            let mut pieces = Vec::new();
+            for (prefix, ck_slices, ck_slice) in row_committed_pieces(config, row) {
+                let split = blocks.div_ceil(ck_slices);
+                let per_block = ck_slices * split / blocks;
+                for part in 0..split {
+                    let prefix = Prefix {
+                        prefix: prefix.prefix * split + part,
+                        length: prefix.length + split.ilog2() as usize,
+                    };
+                    let slice = ck_slice * split + part;
+                    pieces.push(InputPieceEvaluation {
+                        block: slice / per_block,
+                        ck_slices: per_block,
+                        ck_slice: slice % per_block,
+                        data: ElephantCell::new(ProductSumcheckEvaluation::new(
+                            selector_evaluation_from_prefix(&prefix, total_vars),
+                            witness.clone(),
+                        )) as ElephantCell<EvalData>,
+                    });
+                }
+            }
+            pieces
         })
         .collect()
 }
@@ -229,19 +221,22 @@ fn ck_over_pieces_evaluation(
     crs: &VerifierCRS,
     total_vars: usize,
     config: &commitment::RecursionConfig,
-    i: usize,
+    r: usize,
     data_selected: &[Vec<InputPieceEvaluation>],
-    ck_evals: &mut Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
+    ck_evals: &mut Vec<ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>>,
 ) -> ElephantCell<EvalData> {
-    let committed_len = config.committed_len();
+    let block_len = config.block_len();
+    let blockwise_rank = config.blockwise_rank();
+    let block = r / blockwise_rank;
+    let i = r % blockwise_rank;
     let mut terms: Vec<ElephantCell<EvalData>> = Vec::new();
 
     for pieces in data_selected {
-        for piece in pieces {
-            let ck = structured_row_ck_segment_evaluation(
+        for piece in pieces.iter().filter(|piece| piece.block == block) {
+            let ck = ck_segment_evaluation(
                 crs,
                 total_vars,
-                committed_len,
+                block_len,
                 i,
                 piece.ck_slices,
                 piece.ck_slice,
@@ -349,9 +344,28 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
         folding_challenges_evaluation.clone(),
     )) as ElephantCell<EvalData>;
 
-    let commitment_key_rows_evaluation = (0..config.basic_commitment_rank)
-        .map(|i| structured_row_ck_evaluation(crs, total_vars, config.witness_height, i, 0))
+    let blocks = config.basic_commitment_diag_blocks;
+    let blockwise_rank = config.basic_commitment_rank / blocks;
+    let commitment_key_rows_evaluation = (0..blockwise_rank)
+        .map(|i| ck_row_evaluation(crs, total_vars, config.witness_height / blocks, i, 0))
         .collect::<Vec<_>>();
+
+    let folded_witness_blocks: Vec<RecompositionEvaluation> = if blocks == 1 {
+        vec![folded_witness.clone()]
+    } else {
+        (0..blocks)
+            .map(|b| {
+                recomposition_evaluation(
+                    &config.folded_witness_placement,
+                    config.witness_decomposition_chunks,
+                    config.witness_decomposition_base_log,
+                    total_vars,
+                    blocks,
+                    b,
+                )
+            })
+            .collect()
+    };
 
     let commitment_fold_evaluations = (0..config.basic_commitment_rank)
         .map(|i| {
@@ -364,10 +378,13 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 0,
             );
 
-            let lhs = folded_witness.times(ElephantCell::new(ProductSumcheckEvaluation::new(
-                witness.clone(),
-                commitment_key_rows_evaluation[i].clone(),
-            )) as ElephantCell<EvalData>);
+            let lhs = folded_witness_blocks[i / blockwise_rank].times(ElephantCell::new(
+                ProductSumcheckEvaluation::new(
+                    witness.clone(),
+                    commitment_key_rows_evaluation[i % blockwise_rank].clone(),
+                ),
+            )
+                as ElephantCell<EvalData>);
 
             let rhs = row.times(witness_with_folding_challenges.clone());
 
@@ -541,11 +558,10 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 0,
             );
 
-            let witness_with_rhs_fold_challenge =
-                ElephantCell::new(ProductSumcheckEvaluation::new(
-                    witness.clone(),
-                    rhs_fold_challenge_evaluation.clone(),
-                )) as ElephantCell<EvalData>;
+            let witness_with_rhs_fold_challenge = ElephantCell::new(ProductSumcheckEvaluation::new(
+                witness.clone(),
+                rhs_fold_challenge_evaluation.clone(),
+            )) as ElephantCell<EvalData>;
 
             let projection_constant_terms_embedded = recomposition_evaluation(
                 proj_config.recursion_constant_term.placement(),
@@ -748,14 +764,15 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
         ElephantCell::new(FakeEvaluationLinearSumcheck::<RingElement>::new());
 
     let mut most_inner_commitments_selectors: Vec<ElephantCell<SelectorEqEvaluation>> = vec![];
-    let push_most_inner = |recursion: &commitment::RecursionConfig,
-                               out: &mut Vec<ElephantCell<SelectorEqEvaluation>>| {
-        for placement in &recursion.most_inner_config().placements {
-            for block in &placement.blocks {
-                out.push(selector_evaluation_from_prefix(block, total_vars));
+    let push_most_inner =
+        |recursion: &commitment::RecursionConfig,
+         out: &mut Vec<ElephantCell<SelectorEqEvaluation>>| {
+            for placement in &recursion.most_inner_config().placements {
+                for block in &placement.blocks {
+                    out.push(selector_evaluation_from_prefix(block, total_vars));
+                }
             }
-        }
-    };
+        };
 
     push_most_inner(
         &config.commitment_recursion,

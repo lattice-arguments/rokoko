@@ -31,7 +31,10 @@ pub(crate) fn composition_sumcheck(
 ) -> ElephantCell<LinearSumcheck<RingElement>> {
     let composition_basis = (0..chunks)
         .map(|i| {
-            RingElement::constant(pow_mod(2, base_log * i as u64), Representation::IncompleteNTT)
+            RingElement::constant(
+                pow_mod(2, base_log * i as u64),
+                Representation::IncompleteNTT,
+            )
         })
         .collect::<Vec<RingElement>>();
     let combiner_sumcheck = ElephantCell::new(
@@ -146,6 +149,7 @@ pub(crate) fn block_recomposition_weights(
 /// blocks. The two factors of a block live on disjoint variables -- the block address above, the
 /// plane index below -- so the recomposition costs one product per block rather than one per
 /// digit plane.
+#[derive(Clone)]
 pub(crate) struct Recomposition {
     factor: Data,
 }

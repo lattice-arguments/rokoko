@@ -56,25 +56,36 @@ fn basic(
     witness: &VerticallyAlignedMatrix<RingElement>,
     digits: Digits,
 ) -> crate::protocol::commitment::BasicCommitment {
+    use crate::protocol::commitment::regroup_blocks;
     use crate::protocol::commitment_crt::{commit_basic_crt, commit_basic_crt_streaming};
 
     let rank = config.basic_commitment_rank;
+    let blocks = config.basic_commitment_diag_blocks;
+    let block_rank = rank / blocks;
     let fitting = crs
         .crt_root
         .as_ref()
-        .filter(|(_, key)| key.rows == rank && key.n == witness.height);
+        .filter(|(_, key)| key.rows == block_rank && key.n == witness.height / blocks);
     match (fitting, digits) {
         (Some((plan, key)), Some(digits)) => {
             tracing::debug!("crt commitment against supplied digits");
-            commit_basic_crt(key, digits, plan, rank)
+            regroup_blocks(
+                commit_basic_crt(key, digits, plan, block_rank, blocks),
+                rank,
+                blocks,
+            )
         }
         (Some((plan, key)), None) => {
             tracing::debug!("crt commitment, narrowing per tile");
-            commit_basic_crt_streaming(key, witness, plan, rank)
+            regroup_blocks(
+                commit_basic_crt_streaming(key, witness, plan, block_rank, blocks),
+                rank,
+                blocks,
+            )
         }
         (None, _) => {
             tracing::debug!("no CRT key of this shape; committing over the ring");
-            commit_basic(crs, witness, rank)
+            commit_basic(crs, witness, rank, blocks)
         }
     }
 }
@@ -86,5 +97,10 @@ fn basic(
     witness: &VerticallyAlignedMatrix<RingElement>,
     _digits: Digits,
 ) -> crate::protocol::commitment::BasicCommitment {
-    commit_basic(crs, witness, config.basic_commitment_rank)
+    commit_basic(
+        crs,
+        witness,
+        config.basic_commitment_rank,
+        config.basic_commitment_diag_blocks,
+    )
 }

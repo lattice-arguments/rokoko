@@ -515,7 +515,15 @@ pub fn commit_basic(
     let digits = prepare_i16_witness(witness);
     let plan = Plan::new(digits_l2(&digits), rank);
     let key = CrtKey::preprocess(crs.ck_for_wit_dim(witness.height), rank, &plan);
-    commit_basic_crt(&key, &digits, &plan, rank)
+    commit_basic_crt(&key, &digits, &plan, rank, 1)
+}
+
+/// A block-diagonal commitment reads the same buffer as `blocks` times as many columns, each
+/// `blocks` times shorter: a block of a column is a contiguous run. The result is that reshaped
+/// commitment, `rank` rows by `width * blocks` columns.
+fn blocked(height: usize, width: usize, used_cols: usize, blocks: usize) -> (usize, usize, usize) {
+    debug_assert_eq!(height % blocks, 0);
+    (height / blocks, width * blocks, used_cols * blocks)
 }
 
 pub fn commit_basic_crt(
@@ -523,9 +531,10 @@ pub fn commit_basic_crt(
     digits: &VerticallyAlignedMatrix<Signed16RingElement>,
     plan: &Plan,
     rank: usize,
+    blocks: usize,
 ) -> BasicCommitment {
-    let residues = residues(key, digits, rank);
-    reconstruct(key, plan, rank, digits.width, &residues)
+    let residues = residues(key, digits, rank, blocks);
+    reconstruct(key, plan, rank, digits.width * blocks, &residues)
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
@@ -533,13 +542,15 @@ fn residues(
     key: &CrtKey,
     digits: &VerticallyAlignedMatrix<Signed16RingElement>,
     rank: usize,
+    blocks: usize,
 ) -> Vec<i16> {
+    let (n, width, used_cols) = blocked(digits.height, digits.width, digits.used_cols, blocks);
     residues_by_tile(
         key,
         rank,
-        digits.width,
-        digits.height,
-        digits.used_cols,
+        width,
+        n,
+        used_cols,
         Source::Narrowed(digits),
         cfg!(feature = "parallel"),
     )
@@ -551,8 +562,9 @@ fn residues(
     key: &CrtKey,
     digits: &VerticallyAlignedMatrix<Signed16RingElement>,
     rank: usize,
+    blocks: usize,
 ) -> Vec<i16> {
-    reference_residues(key, digits, rank)
+    reference_residues(key, digits, rank, blocks)
 }
 
 #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
@@ -561,6 +573,7 @@ pub fn commit_basic_crt_streaming(
     witness: &VerticallyAlignedMatrix<RingElement>,
     plan: &Plan,
     rank: usize,
+    blocks: usize,
 ) -> BasicCommitment {
     let mut digits = vec![Signed16RingElement([0i16; DEGREE]); witness.data.len()];
     narrow(&witness.data, &mut digits);
@@ -570,7 +583,7 @@ pub fn commit_basic_crt_streaming(
         height: witness.height,
         used_cols: witness.used_cols,
     };
-    commit_basic_crt(key, &digits, plan, rank)
+    commit_basic_crt(key, &digits, plan, rank, blocks)
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
@@ -587,18 +600,19 @@ pub fn commit_basic_crt_streaming(
     witness: &VerticallyAlignedMatrix<RingElement>,
     plan: &Plan,
     rank: usize,
+    blocks: usize,
 ) -> BasicCommitment {
-    let n = witness.height;
+    let (n, width, used_cols) = blocked(witness.height, witness.width, witness.used_cols, blocks);
     let residues = residues_by_tile(
         key,
         rank,
-        witness.width,
+        width,
         n,
-        witness.used_cols,
+        used_cols,
         Source::Ring(witness),
         cfg!(feature = "parallel"),
     );
-    reconstruct(key, plan, rank, witness.width, &residues)
+    reconstruct(key, plan, rank, width, &residues)
 }
 
 fn narrow(source: &[RingElement], out: &mut [Signed16RingElement]) {
@@ -908,14 +922,14 @@ pub fn reference_residues(
     key: &CrtKey,
     digits: &VerticallyAlignedMatrix<Signed16RingElement>,
     rank: usize,
+    blocks: usize,
 ) -> Vec<i16> {
-    let width = digits.width;
-    let n = digits.height;
+    let (n, width, used_cols) = blocked(digits.height, digits.width, digits.used_cols, blocks);
     let mut residues = vec![0i16; key.limbs.len() * rank * width * DEGREE];
 
     for (index, limb) in key.limbs.iter().enumerate() {
         let mut accumulators = vec![0i32; rank * width * DEGREE];
-        for col in 0..digits.used_cols {
+        for col in 0..used_cols {
             for k in 0..n {
                 let mut z = natural(&digits.data[col * n + k]);
                 for slot in z.iter_mut() {
@@ -1361,8 +1375,8 @@ mod tests {
         let plan = Plan::new(digits_l2(&digits), rank);
         let key = CrtKey::preprocess(crs.ck_for_wit_dim(height), rank, &plan);
         assert_eq!(
-            residues(&key, &digits, rank),
-            reference_residues(&key, &digits, rank)
+            residues(&key, &digits, rank, 1),
+            reference_residues(&key, &digits, rank, 1)
         );
     }
 
@@ -1439,7 +1453,7 @@ mod tests {
             height,
             used_cols: width,
         };
-        let expected = commit_basic(&crs, &witness, rank);
+        let expected = commit_basic(&crs, &witness, rank, 1);
 
         let ck = crs.ck_for_wit_dim(height);
         let centred = |e: &RingElement| -> Vec<i128> {
@@ -1496,7 +1510,7 @@ mod tests {
             bound: f64::INFINITY,
         };
         let key = CrtKey::preprocess(ck, rank, &plan);
-        let got = commit_basic_crt(&key, &digits, &plan, rank);
+        let got = commit_basic_crt(&key, &digits, &plan, rank, 1);
         for row in 0..rank {
             for col in 0..width {
                 assert_eq!(
@@ -1505,6 +1519,52 @@ mod tests {
                     "crt commitment at {height}x{width} rank {rank}, row {row} col {col}"
                 );
             }
+        }
+    }
+
+    /// The CRT path commits block-diagonally by reading the witness as `blocks` times as many
+    /// columns; `regroup_blocks` then puts the rows back in commitment order.
+    #[test]
+    fn crt_blocks_match_the_ring_ones() {
+        init_common();
+        let height = 64;
+        let width = 5;
+        let rank = 4;
+        let blocks = 2;
+        let block_rank = rank / blocks;
+        let crs = CRS::gen_crs(height / blocks, block_rank);
+        let witness = VerticallyAlignedMatrix {
+            data: (0..height * width)
+                .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 1 << 15))
+                .collect(),
+            width,
+            height,
+            used_cols: width,
+        };
+        let expected = crate::protocol::commitment::commit_basic(&crs, &witness, rank, blocks);
+
+        let digits = prepare_i16_witness(&witness);
+        let plan = Plan::new(digits_l2(&digits), block_rank);
+        let key = CrtKey::preprocess(crs.ck_for_wit_dim(height / blocks), block_rank, &plan);
+        let got = crate::protocol::commitment::regroup_blocks(
+            commit_basic_crt(&key, &digits, &plan, block_rank, blocks),
+            rank,
+            blocks,
+        );
+        let streamed = crate::protocol::commitment::regroup_blocks(
+            commit_basic_crt_streaming(&key, &witness, &plan, block_rank, blocks),
+            rank,
+            blocks,
+        );
+        for element in 0..rank * width {
+            assert_eq!(
+                expected.data[element].v, got.data[element].v,
+                "element {element}"
+            );
+            assert_eq!(
+                expected.data[element].v, streamed.data[element].v,
+                "streamed element {element}"
+            );
         }
     }
 
@@ -1523,12 +1583,12 @@ mod tests {
             height,
             used_cols: width,
         };
-        let expected = crate::protocol::commitment::commit_basic(&crs, &witness, rank);
+        let expected = crate::protocol::commitment::commit_basic(&crs, &witness, rank, 1);
 
         let digits = prepare_i16_witness(&witness);
         let plan = Plan::new(digits_l2(&digits), rank);
         let key = CrtKey::preprocess(crs.ck_for_wit_dim(height), rank, &plan);
-        let got = commit_basic_crt_streaming(&key, &witness, &plan, rank);
+        let got = commit_basic_crt_streaming(&key, &witness, &plan, rank, 1);
         for element in 0..rank * width {
             assert_eq!(
                 expected.data[element].v, got.data[element].v,
@@ -1594,8 +1654,8 @@ mod tests {
         assert_eq!(streamed(true), streamed(false), "streamed residues");
         assert_eq!(from_digits(true), streamed(true), "the two sources");
 
-        let expected = crate::protocol::commitment::commit_basic(&crs, &witness, rank);
-        let got = commit_basic_crt(&key, &digits, &plan, rank);
+        let expected = crate::protocol::commitment::commit_basic(&crs, &witness, rank, 1);
+        let got = commit_basic_crt(&key, &digits, &plan, rank, 1);
         for element in 0..rank * width {
             assert_eq!(
                 expected.data[element].v, got.data[element].v,
@@ -1621,12 +1681,12 @@ mod tests {
             used_cols: width,
         };
 
-        let expected = crate::protocol::commitment::commit_basic(&crs, &witness, rank);
+        let expected = crate::protocol::commitment::commit_basic(&crs, &witness, rank, 1);
 
         let digits = prepare_i16_witness(&witness);
         let plan = Plan::new(digits_l2(&digits), rank);
         let key = CrtKey::preprocess(crs.ck_for_wit_dim(height), rank, &plan);
-        let got = commit_basic_crt(&key, &digits, &plan, rank);
+        let got = commit_basic_crt(&key, &digits, &plan, rank, 1);
 
         for row in 0..rank {
             for col in 0..width {
