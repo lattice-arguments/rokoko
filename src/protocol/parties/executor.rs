@@ -710,6 +710,7 @@ mod tests {
     /// full rank.
     fn diag_blocks_config(
         basic_commitment_rank: usize,
+        opening_blocks: usize,
     ) -> crate::protocol::config_generator::AuxSumcheckConfig {
         use crate::protocol::config::SimpleConfig;
         use crate::protocol::config_generator::{
@@ -743,8 +744,8 @@ mod tests {
             opening_recursion: AuxRecursionConfig {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
-                rank: 2,
-                diag_blocks: 2,
+                rank: opening_blocks,
+                diag_blocks: opening_blocks,
                 next: None,
             },
             projection_recursion: AuxProjection::Fine {
@@ -783,7 +784,7 @@ mod tests {
     fn diag_blocks_round_trip() {
         init_common();
 
-        let generated = diag_blocks_config(4).generate_config();
+        let generated = diag_blocks_config(4, 2).generate_config();
         let config = match &generated {
             crate::protocol::config::Config::Sumcheck(config) => config,
             _ => panic!("expected a sumcheck config"),
@@ -796,13 +797,33 @@ mod tests {
         round_trip(config);
     }
 
+    /// One key row meets all four blocks of a recursion level, so the verifier evaluates its
+    /// slices once and reuses them; only the per-block selector differs.
+    #[test]
+    fn four_blocks_recursion_level_round_trip() {
+        init_common();
+
+        let generated = diag_blocks_config(4, 4).generate_config();
+        let config = match &generated {
+            crate::protocol::config::Config::Sumcheck(config) => config,
+            _ => panic!("expected a sumcheck config"),
+        };
+
+        assert_eq!(config.opening_recursion.diag_blocks, 4);
+        assert_eq!(config.opening_recursion.blockwise_rank(), 1);
+        assert_eq!(config.opening_recursion.block_len(), 16);
+        assert_eq!(config.composed_witness_length, 4096);
+
+        round_trip(config);
+    }
+
     /// The basic commitment's rows are independent constraints, so its rank need not be dyadic
     /// when it commits block-diagonally: three key rows meet each of the two halves.
     #[test]
     fn non_dyadic_rank_with_blocks_round_trip() {
         init_common();
 
-        let generated = diag_blocks_config(6).generate_config();
+        let generated = diag_blocks_config(6, 2).generate_config();
         let config = match &generated {
             crate::protocol::config::Config::Sumcheck(config) => config,
             _ => panic!("expected a sumcheck config"),

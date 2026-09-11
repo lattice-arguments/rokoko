@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     common::{
         arithmetic::ONE_QUAD,
@@ -217,6 +219,14 @@ fn selected_input_piece_evaluations(
         .collect()
 }
 
+/// The key-row slices a level's outputs share, addressed by `(key row, slices, slice)`.
+type CkSegments =
+    HashMap<(usize, usize, usize), ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>>;
+
+/// The level's key is `I_blocks (x) K`, so the slice of key row `i` that a piece meets is the
+/// same vector whichever block the piece falls in: its multilinear extension is evaluated once
+/// and reused by all `blocks` outputs that carry row `i`. What separates the blocks is the
+/// piece's own selector, whose prefix carries the block index in its leading bits.
 fn ck_over_pieces_evaluation(
     crs: &VerifierCRS,
     total_vars: usize,
@@ -224,6 +234,7 @@ fn ck_over_pieces_evaluation(
     r: usize,
     data_selected: &[Vec<InputPieceEvaluation>],
     ck_evals: &mut Vec<ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>>,
+    segments: &mut CkSegments,
 ) -> ElephantCell<EvalData> {
     let block_len = config.block_len();
     let blockwise_rank = config.blockwise_rank();
@@ -233,15 +244,23 @@ fn ck_over_pieces_evaluation(
 
     for pieces in data_selected {
         for piece in pieces.iter().filter(|piece| piece.block == block) {
-            let ck = ck_segment_evaluation(
-                crs,
-                total_vars,
-                block_len,
-                i,
-                piece.ck_slices,
-                piece.ck_slice,
-            );
-            ck_evals.push(ck.clone());
+            let key = (i, piece.ck_slices, piece.ck_slice);
+            let ck = match segments.get(&key) {
+                Some(ck) => ck.clone(),
+                None => {
+                    let ck = ck_segment_evaluation(
+                        crs,
+                        total_vars,
+                        block_len,
+                        i,
+                        piece.ck_slices,
+                        piece.ck_slice,
+                    );
+                    ck_evals.push(ck.clone());
+                    segments.insert(key, ck.clone());
+                    ck
+                }
+            };
             terms.push(
                 ElephantCell::new(ProductSumcheckEvaluation::new(ck, piece.data.clone()))
                     as ElephantCell<EvalData>,
@@ -266,6 +285,7 @@ fn build_com_verify_verifier_context(
             selected_input_piece_evaluations(total_vars, current, &combined_witness_eval);
 
         let mut ck_evals = Vec::new();
+        let mut segments = CkSegments::new();
         let outputs = (0..current.rank)
             .map(|i| {
                 let ck_with_data = ck_over_pieces_evaluation(
@@ -275,6 +295,7 @@ fn build_com_verify_verifier_context(
                     i,
                     &data_selected,
                     &mut ck_evals,
+                    &mut segments,
                 );
 
                 let child = recomposition_evaluation(
@@ -302,9 +323,18 @@ fn build_com_verify_verifier_context(
     let data_selected =
         selected_input_piece_evaluations(total_vars, current, &combined_witness_eval);
     let mut ck_evals = Vec::new();
+    let mut segments = CkSegments::new();
     let outputs = (0..current.rank)
         .map(|i| {
-            ck_over_pieces_evaluation(crs, total_vars, current, i, &data_selected, &mut ck_evals)
+            ck_over_pieces_evaluation(
+                crs,
+                total_vars,
+                current,
+                i,
+                &data_selected,
+                &mut ck_evals,
+                &mut segments,
+            )
         })
         .collect::<Vec<_>>();
 
