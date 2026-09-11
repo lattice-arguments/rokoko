@@ -97,7 +97,6 @@ fn check_recursive_commitment(
     name: &str,
     extracted_norm: f64,
     extracted_norm_most_inner: f64,
-    accepted_most_inner: f64,
     depth: usize,
 ) {
     let ell_inf_norm = norms::inf_norm(&rc.committed_data);
@@ -105,7 +104,7 @@ fn check_recursive_commitment(
 
     let current_extracted_norm = match config.next {
         Some(_) => extracted_norm,
-        None => extracted_norm_most_inner,
+        None => 2.0 * NORM_MARGIN * extracted_norm_most_inner,
     };
 
     let hardness = estimate_rsis_security(&RSISParameters {
@@ -125,18 +124,6 @@ fn check_recursive_commitment(
         config.rank,
     );
 
-    if config.next.is_none() && accepted_most_inner.is_finite() {
-        let binding = estimate_rsis_security(&RSISParameters {
-            m: rc.committed_data.len() as u64,
-            n: config.rank as u64,
-            length_bound: length_bound(2.0 * accepted_most_inner),
-        });
-        println!(
-            "{}Terminal binding at 2 x accepted most-inner bound {}: {:?}",
-            indent, accepted_most_inner, binding
-        );
-    }
-
     if let (Some(next_rc), Some(next_config)) = (&rc.next, &config.next) {
         check_recursive_commitment(
             next_rc,
@@ -144,7 +131,6 @@ fn check_recursive_commitment(
             name,
             extracted_norm,
             extracted_norm_most_inner,
-            accepted_most_inner,
             depth + 1,
         );
     }
@@ -216,7 +202,6 @@ pub fn check_sumcheck_round(
         "Commitment",
         recommited_ell_2_norm_rest,
         most_inner_commitment_data_ell_2,
-        config.most_inner_norm_bound,
         0,
     );
 
@@ -226,7 +211,6 @@ pub fn check_sumcheck_round(
         "Opening",
         recommited_ell_2_norm_rest,
         most_inner_commitment_data_ell_2,
-        config.most_inner_norm_bound,
         0,
     );
 
@@ -239,7 +223,6 @@ pub fn check_sumcheck_round(
             "Projection Image",
             recommited_ell_2_norm_rest,
             most_inner_commitment_data_ell_2,
-            config.most_inner_norm_bound,
             0,
         );
     }
@@ -253,7 +236,6 @@ pub fn check_sumcheck_round(
             "Fine Projection Constant Term",
             recommited_ell_2_norm_rest,
             most_inner_commitment_data_ell_2,
-            config.most_inner_norm_bound,
             0,
         );
         check_recursive_commitment(
@@ -262,7 +244,6 @@ pub fn check_sumcheck_round(
             "Fine Projection Batched",
             recommited_ell_2_norm_rest,
             most_inner_commitment_data_ell_2,
-            config.most_inner_norm_bound,
             0,
         );
     }
