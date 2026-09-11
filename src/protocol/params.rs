@@ -349,6 +349,7 @@ pub fn p_root_aux_short(size: SizeConfig, nof_openings: usize) -> AuxSumcheckCon
 }
 
 pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
+    let blocked = size == SizeConfig::Small;
     AuxSumcheckConfig {
         exact_projection_norm: false,
         witness_height: size.pick(
@@ -360,8 +361,8 @@ pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
         witness_width: size.pick(2usize.pow(3), 2usize.pow(4), 2usize.pow(4), 2usize.pow(4)),
         projection_ratio: 2usize.pow(5),
         projection_height: 2usize.pow(8),
-        basic_commitment_rank: size.pick(6, 6, 6, 6),
-        basic_commitment_diag_blocks: 1,
+        basic_commitment_rank: if blocked { 24 } else { size.pick(6, 6, 6, 6) },
+        basic_commitment_diag_blocks: if blocked { 4 } else { 1 },
         nof_openings: 2,
         commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
@@ -868,6 +869,8 @@ mod tests {
     fn test_short_chain_dims() {
         assert_chain_dims(&super::P_MICRO);
         assert_chain_dims(&super::P_TINY);
+        assert_chain_dims(&super::P_SMALL);
+        assert_chain_dims(&super::P_MEDIUM);
     }
 
     #[test]

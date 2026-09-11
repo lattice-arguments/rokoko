@@ -60,10 +60,11 @@ fn commit_basic_internal_with(
             height: 0,
         };
     }
+    // The rows of the basic commitment are independent constraints, so its rank is free; the
+    // block count is what has to be dyadic, because a block is addressed by a run of variables.
     debug_assert!(
-        blocks == 1
-            || (blocks.is_power_of_two() && rank.is_power_of_two() && witness.height % blocks == 0),
-        "a block-diagonal commitment needs a dyadic rank, block count and height"
+        blocks.is_power_of_two() && rank % blocks == 0 && witness.height % blocks == 0,
+        "a block-diagonal commitment needs a dyadic block count dividing the rank and the height"
     );
     let blockwise_rank = rank / blocks;
     let block_height = witness.height / blocks;

@@ -708,22 +708,21 @@ mod tests {
     /// A round that commits block-diagonally, at the basic commitment and at a recursion level:
     /// the witness is cut in two, one short key meets both halves, and the commitment keeps its
     /// full rank.
-    #[test]
-    fn diag_blocks_round_trip() {
+    fn diag_blocks_config(
+        basic_commitment_rank: usize,
+    ) -> crate::protocol::config_generator::AuxSumcheckConfig {
         use crate::protocol::config::SimpleConfig;
         use crate::protocol::config_generator::{
             AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig,
         };
 
-        init_common();
-
-        let aux = AuxSumcheckConfig {
+        AuxSumcheckConfig {
             exact_projection_norm: false,
             witness_height: 1024,
             witness_width: 16,
             projection_ratio: 32,
             projection_height: 256,
-            basic_commitment_rank: 4,
+            basic_commitment_rank,
             basic_commitment_diag_blocks: 2,
             nof_openings: 1,
             commitment_recursion: AuxRecursionConfig {
@@ -777,9 +776,14 @@ mod tests {
                 witness_norm_bound: f64::INFINITY,
                 projection_norm_bound: f64::INFINITY,
             }))),
-        };
+        }
+    }
 
-        let generated = aux.generate_config();
+    #[test]
+    fn diag_blocks_round_trip() {
+        init_common();
+
+        let generated = diag_blocks_config(4).generate_config();
         let config = match &generated {
             crate::protocol::config::Config::Sumcheck(config) => config,
             _ => panic!("expected a sumcheck config"),
@@ -788,6 +792,25 @@ mod tests {
         assert_eq!(config.composed_witness_length, 4096);
         assert_eq!(config.commitment_recursion.block_len(), 128);
         assert_eq!(config.commitment_recursion.blockwise_rank(), 1);
+
+        round_trip(config);
+    }
+
+    /// The basic commitment's rows are independent constraints, so its rank need not be dyadic
+    /// when it commits block-diagonally: three key rows meet each of the two halves.
+    #[test]
+    fn non_dyadic_rank_with_blocks_round_trip() {
+        init_common();
+
+        let generated = diag_blocks_config(6).generate_config();
+        let config = match &generated {
+            crate::protocol::config::Config::Sumcheck(config) => config,
+            _ => panic!("expected a sumcheck config"),
+        };
+
+        assert_eq!(config.basic_commitment_rank, 6);
+        assert_eq!(config.basic_commitment_diag_blocks, 2);
+        assert_eq!(config.composed_witness_length, 4096);
 
         round_trip(config);
     }
