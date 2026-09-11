@@ -1,18 +1,17 @@
 use crate::common::{
-    matrix::HorizontallyAlignedMatrix,
     ring_arithmetic::{Representation, RingElement},
-    sampling::{sample_public_vector_from_seed, PUBLIC_CRS_SEED},
-    structured_row::{PreprocessedRow, StructuredRow},
+    sampling::{AesCtrPublicSampler, PUBLIC_CRS_SEED},
+    structured_row::PreprocessedRow,
 };
-use crate::protocol::config::{Config, SimpleConfig, SumcheckConfig};
+use crate::protocol::commitment::RecursionConfig;
+use crate::protocol::config::{Config, Projection, SimpleConfig, SumcheckConfig};
 
 pub type CK = Vec<PreprocessedRow>;
-pub type SCK = Vec<StructuredRow>;
 
 /// Struct representing the Common Reference String (CRS).
 pub struct CRS {
-    pub cks: Vec<CK>,             // Commitment keys for each witness length
-    pub structured_cks: Vec<SCK>, // Structured commitment keys for each witness length
+    /// Keys by witness length, empty at the lengths the chain never commits over.
+    pub cks: Vec<CK>,
     /// The root key in the CRT basis, planned from the witness schedule rather than from a
     /// witness, so that the transform of the key never sits on the commitment's critical path.
     #[cfg(feature = "crt-commitment")]
@@ -22,18 +21,16 @@ pub struct CRS {
     )>,
 }
 
-/// Only the structured keys; the expanded rows are prover-side preprocessing.
 #[derive(Debug)]
 pub struct VerifierCRS {
-    pub structured_cks: Vec<SCK>,
-    /// The simple round's key rows, expanded at setup.
+    pub cks: Vec<CK>,
+    /// The simple round's rows, which the verifier recommits with rather than evaluates.
     pub simple_ck: CK,
 }
 
 impl VerifierCRS {
-    pub fn structured_ck_for_wit_dim(&self, wit_dim: usize) -> &Vec<StructuredRow> {
-        let index = wit_dim.ilog2() as usize - 1;
-        &self.structured_cks[index]
+    pub fn ck_for_wit_dim(&self, wit_dim: usize) -> &CK {
+        &self.cks[key_index(wit_dim)]
     }
 }
 
@@ -51,87 +48,136 @@ fn simple_round(config: &SumcheckConfig) -> Option<&SimpleConfig> {
 
 impl CRS {
     // Returns the commitment key for a given witness dimension.
-    pub fn ck_for_wit_dim(&self, wit_dim: usize) -> &Vec<PreprocessedRow> {
-        let index = wit_dim.ilog2() as usize - 1;
-        &self.cks[index]
-    }
-
-    // Returns the structured commitment key for a given witness dimension.
-    pub fn structured_ck_for_wit_dim(&self, wit_dim: usize) -> &Vec<StructuredRow> {
-        let index = wit_dim.ilog2() as usize - 1;
-        &self.structured_cks[index]
+    pub fn ck_for_wit_dim(&self, wit_dim: usize) -> &CK {
+        &self.cks[key_index(wit_dim)]
     }
 }
 
-fn gen_structured_cks(max_wit_dim: usize, max_module_size: usize) -> Vec<SCK> {
-    debug_assert!(max_wit_dim.is_power_of_two());
+fn key_index(wit_dim: usize) -> usize {
+    debug_assert!(wit_dim.is_power_of_two(), "key lengths are dyadic");
+    wit_dim.ilog2() as usize - 1
+}
 
-    let shared_v_module = HorizontallyAlignedMatrix::<RingElement> {
-        data: sample_public_vector_from_seed(
-            PUBLIC_CRS_SEED,
-            max_wit_dim.ilog2() as usize * max_module_size,
-            Representation::IncompleteNTT,
-        ),
-        width: max_wit_dim.ilog2() as usize,
-        height: max_module_size,
-    };
+/// The stream is keyed by the length alone and read row by row, so row `i` is the same vector
+/// however many rows the caller asks for.
+fn dense_ck(len: usize, rows: usize) -> CK {
+    let mut seed = PUBLIC_CRS_SEED.to_vec();
+    seed.extend_from_slice(b"/dense/");
+    seed.extend_from_slice(&(len as u64).to_le_bytes());
+    let mut sampler = AesCtrPublicSampler::from_seed(&seed);
 
-    (1..=max_wit_dim.ilog2() as usize)
-        .map(|i| {
-            (0..max_module_size)
-                .map(|j| StructuredRow {
-                    tensor_layers: shared_v_module
-                        .row(j)
-                        .iter()
-                        .skip(max_wit_dim.ilog2() as usize - i)
-                        .cloned()
-                        .collect(),
-                })
-                .collect()
+    (0..rows)
+        .map(|_| {
+            let mut row = Vec::with_capacity(len);
+            for _ in 0..len {
+                let mut element = RingElement::new(Representation::IncompleteNTT);
+                sampler.fill_ring_element(&mut element, Representation::IncompleteNTT);
+                row.push(element);
+            }
+            PreprocessedRow {
+                preprocessed_row: row,
+            }
         })
         .collect()
+}
+
+fn recursion_shapes(config: &RecursionConfig, shapes: &mut Vec<(usize, usize)>) {
+    shapes.push((config.block_len(), config.blockwise_rank()));
+    if let Some(next) = config.next.as_deref() {
+        recursion_shapes(next, shapes);
+    }
+}
+
+fn sumcheck_shapes(config: &SumcheckConfig, shapes: &mut Vec<(usize, usize)>) {
+    shapes.push((
+        config.witness_height / config.basic_commitment_diag_blocks,
+        config.basic_commitment_rank / config.basic_commitment_diag_blocks,
+    ));
+    recursion_shapes(&config.commitment_recursion, shapes);
+    recursion_shapes(&config.opening_recursion, shapes);
+    match &config.projection_recursion {
+        Projection::Coarse(recursion) => recursion_shapes(recursion, shapes),
+        Projection::Fine(recursion) => {
+            recursion_shapes(&recursion.recursion_constant_term, shapes);
+            recursion_shapes(&recursion.recursion_batched_projection, shapes);
+        }
+        Projection::Skip => {}
+    }
+    if let Some(next) = config.next.as_deref() {
+        key_shapes(next, shapes);
+    }
+}
+
+/// Every `(length, rows)` the chain commits over, narrowed to one block. A dense key costs its
+/// whole shape, so keying every dyadic length up to the composed witness runs to gigabytes.
+fn key_shapes(config: &Config, shapes: &mut Vec<(usize, usize)>) {
+    match config {
+        Config::Sumcheck(c) => sumcheck_shapes(c, shapes),
+        Config::Intermediate(c) => {
+            shapes.push((c.witness_height, c.basic_commitment_rank));
+            if let Some(next) = c.next.as_deref() {
+                key_shapes(next, shapes);
+            }
+        }
+        Config::Simple(c) => shapes.push((c.witness_height, c.basic_commitment_rank)),
+    }
+}
+
+fn gen_cks(shapes: &[(usize, usize)]) -> Vec<CK> {
+    let mut rows = Vec::new();
+    for (len, wanted) in shapes {
+        let index = key_index(*len);
+        if rows.len() <= index {
+            rows.resize(index + 1, 0);
+        }
+        rows[index] = rows[index].max(*wanted);
+    }
+
+    rows.into_iter()
+        .enumerate()
+        .map(|(index, rows)| {
+            if rows == 0 {
+                Vec::new()
+            } else {
+                dense_ck(1 << (index + 1), rows)
+            }
+        })
+        .collect()
+}
+
+fn chain_shapes(config: &SumcheckConfig) -> Vec<(usize, usize)> {
+    let mut shapes = Vec::new();
+    sumcheck_shapes(config, &mut shapes);
+    shapes
 }
 
 /// Generates a Common Reference String (CRS).
 impl CRS {
     pub fn gen_crs(max_wit_dim: usize, max_module_size: usize) -> CRS {
-        let structured_cks = gen_structured_cks(max_wit_dim, max_module_size);
-        let cks = structured_cks
-            .iter()
-            .map(|sck| {
-                sck.iter()
-                    .map(PreprocessedRow::from_structured_row)
-                    .collect()
-            })
-            .collect();
-
         CRS {
             #[cfg(feature = "crt-commitment")]
             crt_root: None,
-            cks,
-            structured_cks,
+            cks: gen_cks(&[(max_wit_dim, max_module_size)]),
         }
     }
 
-    /// Two rows of headroom over the basic rank cover the inner rounds.
     pub fn gen_prover_crs(config: &SumcheckConfig) -> CRS {
         #[allow(unused_mut)]
-        let mut crs = CRS::gen_crs(
-            config.composed_witness_length,
-            config.basic_commitment_rank + 2,
-        );
+        let mut crs = CRS {
+            #[cfg(feature = "crt-commitment")]
+            crt_root: None,
+            cks: gen_cks(&chain_shapes(config)),
+        };
         #[cfg(feature = "crt-commitment")]
         {
             use crate::protocol::commitment_crt::{CrtKey, Plan};
             use crate::protocol::params::WITNESS_CONFIG;
-            let rows = config.witness_height;
+            let blocks = config.basic_commitment_diag_blocks;
+            let rank = config.basic_commitment_rank / blocks;
+            let rows = config.witness_height / blocks;
             let bound = 1u64 << (WITNESS_CONFIG.decomposition_base_log - 1);
-            let plan = Plan::for_shape(rows, bound, config.basic_commitment_rank);
-            let key = CrtKey::preprocess(
-                crs.ck_for_wit_dim(rows),
-                config.basic_commitment_rank,
-                &plan,
-            );
+            let plan = Plan::for_shape(rows, bound, rank);
+            let key = CrtKey::preprocess(crs.ck_for_wit_dim(rows), rank, &plan);
             crs.crt_root = Some((plan, key));
         }
         crs
@@ -139,18 +185,15 @@ impl CRS {
 
     pub fn gen_verifier_crs(config: &SumcheckConfig) -> VerifierCRS {
         let mut crs = VerifierCRS {
-            structured_cks: gen_structured_cks(
-                config.composed_witness_length,
-                config.basic_commitment_rank + 2,
-            ),
+            cks: gen_cks(&chain_shapes(config)),
             simple_ck: Vec::new(),
         };
         if let Some(simple) = simple_round(config) {
             crs.simple_ck = crs
-                .structured_ck_for_wit_dim(simple.witness_height)
+                .ck_for_wit_dim(simple.witness_height)
                 .iter()
                 .take(simple.basic_commitment_rank)
-                .map(PreprocessedRow::from_structured_row)
+                .cloned()
                 .collect();
         }
         crs

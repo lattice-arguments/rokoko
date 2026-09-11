@@ -28,7 +28,7 @@ pub struct VerifierSumcheckContext {
     pub combined_witness_evaluation: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
     pub folding_challenges_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub commitment_key_rows_evaluation:
-        Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
+        Vec<ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>>,
 
     // Type-specific contexts
     pub commitment_fold_evaluations: Vec<CommitmentFoldVerifierContext>,
@@ -119,12 +119,12 @@ pub struct ComVerifyVerifierContext {
 }
 
 pub struct ComVerifyLayerVerifierContext {
-    pub ck_evaluations: Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
+    pub ck_evaluations: Vec<ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>>,
     pub outputs: Vec<ElephantCell<DiffSumcheckEvaluation>>,
 }
 
 pub struct ComVerifyOutputLayerVerifierContext {
-    pub ck_evaluations: Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
+    pub ck_evaluations: Vec<ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>>,
     pub outputs: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
 }
 
