@@ -12,8 +12,6 @@ use crate::{
     },
 };
 
-/// Terminal level of every recursion: rank one, so its binding is plain SIS at twice the
-/// accepted most-inner norm. Base 2^5 keeps that radius small; 11 digits cover the 50-bit q.
 pub static DECOMP_11_LAST_LEVEL: AuxRecursionConfig = AuxRecursionConfig {
     decomposition_base_log: 5,
     decomposition_chunks: 11,

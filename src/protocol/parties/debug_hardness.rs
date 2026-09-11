@@ -125,7 +125,6 @@ fn check_recursive_commitment(
         config.rank,
     );
 
-    // Binding of the terminal level: two accepted openings differ by at most twice the bound.
     if config.next.is_none() && accepted_most_inner.is_finite() {
         let binding = estimate_rsis_security(&RSISParameters {
             m: rc.committed_data.len() as u64,
