@@ -60,7 +60,11 @@ fn commit_basic_internal_with(
             height: 0,
         };
     }
-    debug_assert!(blocks.is_power_of_two() && rank % blocks == 0);
+    debug_assert!(
+        blocks == 1
+            || (blocks.is_power_of_two() && rank.is_power_of_two() && witness.height % blocks == 0),
+        "a block-diagonal commitment needs a dyadic rank, block count and height"
+    );
     let blockwise_rank = rank / blocks;
     let block_height = witness.height / blocks;
     let block = |b: usize, col: usize| {
