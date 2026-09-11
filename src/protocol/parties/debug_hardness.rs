@@ -109,9 +109,10 @@ fn check_recursive_commitment(
             None => extracted_norm_most_inner,
         };
 
+    // A block-diagonal level is `diag_blocks` independent SIS instances, each over one block.
     let hardness = estimate_rsis_security(&RSISParameters {
-        m: rc.committed_data.len() as u64,
-        n: config.rank as u64,
+        m: (rc.committed_data.len() / config.diag_blocks) as u64,
+        n: config.blockwise_rank() as u64,
         length_bound: length_bound(current_extracted_norm),
     });
     let indent = "  ".repeat(depth);
@@ -363,14 +364,16 @@ pub fn check_sumcheck_round(
         }
     }
 
+    let blocks = config.basic_commitment_diag_blocks;
     let basic_commitment_security = estimate_rsis_security(&RSISParameters {
-        m: config.witness_height as u64,
-        n: config.basic_commitment_rank as u64,
+        m: (config.witness_height / blocks) as u64,
+        n: (config.basic_commitment_rank / blocks) as u64,
         length_bound: length_bound(worse_bound),
     });
     println!(
         "Basic commitment estimated security for extraction: {:?} with rank {}",
-        basic_commitment_security, config.basic_commitment_rank
+        basic_commitment_security,
+        config.basic_commitment_rank / blocks
     );
 }
 

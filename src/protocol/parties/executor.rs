@@ -437,9 +437,15 @@ mod tests {
             .fill_from_xof(b"round-boundary-test", &mut verifier_bytes);
         assert_eq!(prover_bytes, verifier_bytes);
 
-        assert_eq!(run.crs.cks.len(), run.verifier_crs.structured_cks.len());
-        let first_row = &run.verifier_crs.structured_cks[0][0];
-        assert_eq!(first_row.tensor_layers.len(), 1);
+        // Both parties read the same rows off the public seed.
+        assert_eq!(run.crs.cks.len(), run.verifier_crs.cks.len());
+        for (prover, verifier) in run.crs.cks.iter().zip(&run.verifier_crs.cks) {
+            assert_eq!(prover.len(), verifier.len());
+            assert!(prover
+                .iter()
+                .zip(verifier)
+                .all(|(a, b)| a.preprocessed_row == b.preprocessed_row));
+        }
 
         let run4 = execute_to_boundary(NonZeroUsize::new(4).unwrap());
         assert_eq!(run4.prover.witness.height, 512);
@@ -546,15 +552,18 @@ mod tests {
             projection_ratio: 32,
             projection_height: 256,
             basic_commitment_rank: 3,
+            basic_commitment_diag_blocks: 1,
             nof_openings: 3,
             commitment_recursion: AuxRecursionConfig {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                diag_blocks: 1,
                 next: Some(Box::new(AuxRecursionConfig {
                     decomposition_base_log: 7,
                     decomposition_chunks: 8,
                     rank: 1,
+                    diag_blocks: 1,
                     next: None,
                 })),
             },
@@ -562,6 +571,7 @@ mod tests {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                diag_blocks: 1,
                 next: None,
             },
             projection_recursion: AuxProjection::Fine {
@@ -570,12 +580,14 @@ mod tests {
                     decomposition_base_log: 15,
                     decomposition_chunks: 2,
                     rank: 1,
+                    diag_blocks: 1,
                     next: None,
                 },
                 recursion_batched_projection: AuxRecursionConfig {
                     decomposition_base_log: 15,
                     decomposition_chunks: 4,
                     rank: 1,
+                    diag_blocks: 1,
                     next: None,
                 },
             },
@@ -623,15 +635,18 @@ mod tests {
             projection_ratio: 32,
             projection_height: 256,
             basic_commitment_rank: 3,
+            basic_commitment_diag_blocks: 1,
             nof_openings: 1,
             commitment_recursion: AuxRecursionConfig {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                diag_blocks: 1,
                 next: Some(Box::new(AuxRecursionConfig {
                     decomposition_base_log: 7,
                     decomposition_chunks: 8,
                     rank: 1,
+                    diag_blocks: 1,
                     next: None,
                 })),
             },
@@ -639,6 +654,7 @@ mod tests {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                diag_blocks: 1,
                 next: None,
             },
             projection_recursion: AuxProjection::Fine {
@@ -647,12 +663,14 @@ mod tests {
                     decomposition_base_log: 15,
                     decomposition_chunks: 2,
                     rank: 1,
+                    diag_blocks: 1,
                     next: None,
                 },
                 recursion_batched_projection: AuxRecursionConfig {
                     decomposition_base_log: 15,
                     decomposition_chunks: 4,
                     rank: 1,
+                    diag_blocks: 1,
                     next: None,
                 },
             },
@@ -687,6 +705,93 @@ mod tests {
         round_trip(config);
     }
 
+    /// A round that commits block-diagonally, at the basic commitment and at a recursion level:
+    /// the witness is cut in two, one short key meets both halves, and the commitment keeps its
+    /// full rank.
+    #[test]
+    fn diag_blocks_round_trip() {
+        use crate::protocol::config::SimpleConfig;
+        use crate::protocol::config_generator::{
+            AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig,
+        };
+
+        init_common();
+
+        let aux = AuxSumcheckConfig {
+            exact_projection_norm: false,
+            witness_height: 1024,
+            witness_width: 16,
+            projection_ratio: 32,
+            projection_height: 256,
+            basic_commitment_rank: 4,
+            basic_commitment_diag_blocks: 2,
+            nof_openings: 1,
+            commitment_recursion: AuxRecursionConfig {
+                decomposition_base_log: 15,
+                decomposition_chunks: 4,
+                rank: 2,
+                diag_blocks: 2,
+                next: Some(Box::new(AuxRecursionConfig {
+                    decomposition_base_log: 7,
+                    decomposition_chunks: 8,
+                    rank: 1,
+                    diag_blocks: 1,
+                    next: None,
+                })),
+            },
+            // A single placed block is one piece of the input, so a block cuts the piece in
+            // two and each half meets the whole key row.
+            opening_recursion: AuxRecursionConfig {
+                decomposition_base_log: 15,
+                decomposition_chunks: 4,
+                rank: 2,
+                diag_blocks: 2,
+                next: None,
+            },
+            projection_recursion: AuxProjection::Fine {
+                nof_batches: 2,
+                recursion_constant_term: AuxRecursionConfig {
+                    decomposition_base_log: 15,
+                    decomposition_chunks: 2,
+                    rank: 1,
+                    diag_blocks: 1,
+                    next: None,
+                },
+                recursion_batched_projection: AuxRecursionConfig {
+                    decomposition_base_log: 15,
+                    decomposition_chunks: 4,
+                    rank: 1,
+                    diag_blocks: 1,
+                    next: None,
+                },
+            },
+            witness_decomposition_chunks: 2,
+            witness_decomposition_base_log: 15,
+            next: Some(Box::new(AuxConfig::Simple(SimpleConfig {
+                witness_height: 256,
+                witness_width: 16,
+                projection_ratio: 128,
+                projection_height: 256,
+                projection_nof_batches: 2,
+                basic_commitment_rank: 2,
+                witness_norm_bound: f64::INFINITY,
+                projection_norm_bound: f64::INFINITY,
+            }))),
+        };
+
+        let generated = aux.generate_config();
+        let config = match &generated {
+            crate::protocol::config::Config::Sumcheck(config) => config,
+            _ => panic!("expected a sumcheck config"),
+        };
+
+        assert_eq!(config.composed_witness_length, 4096);
+        assert_eq!(config.commitment_recursion.block_len(), 128);
+        assert_eq!(config.commitment_recursion.blockwise_rank(), 1);
+
+        round_trip(config);
+    }
+
     /// A component whose size is not a power of two occupies the blocks of its binary
     /// decomposition rather than one block of the next size up: three openings cost three
     /// opening rows, not four.
@@ -705,17 +810,20 @@ mod tests {
             projection_ratio: 32,
             projection_height: 8,
             basic_commitment_rank: 1,
+            basic_commitment_diag_blocks: 1,
             nof_openings,
             commitment_recursion: AuxRecursionConfig {
                 decomposition_base_log: 15,
                 decomposition_chunks: 2,
                 rank: 1,
+                diag_blocks: 1,
                 next: None,
             },
             opening_recursion: AuxRecursionConfig {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                diag_blocks: 1,
                 next: None,
             },
             projection_recursion: AuxProjection::Skip,
