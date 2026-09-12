@@ -31,6 +31,16 @@ pub static DECOMP_11_LAST_LEVEL: AuxRecursionConfig = AuxRecursionConfig {
     diag_blocks: 1,
     next: None,
 };
+
+/// The same terminal over two rows. A tree whose level-0 rank is large hands its terminal a long
+/// input, and one row of SIS over that input is the weakest extraction in the chain.
+pub static DECOMP_11_LAST_LEVEL_TWO_ROWS: AuxRecursionConfig = AuxRecursionConfig {
+    decomposition_base_log: 5,
+    decomposition_chunks: 11,
+    rank: 2,
+    diag_blocks: 1,
+    next: None,
+};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SizeConfig {
     Micro,
@@ -295,8 +305,12 @@ pub fn p_int(size: SizeConfig) -> AuxSumcheckConfig {
 pub fn p_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
     let (basic, commitment, opening) = match size {
         SizeConfig::Small | SizeConfig::Medium => (shape(2, 26), shape(4, 8), shape(8, 16)),
-        SizeConfig::Large => (shape(2, 30), shape(8, 32), shape(16, 64)),
+        SizeConfig::Large => (shape(4, 64), shape(128, 512), shape(16, 64)),
         _ => (shape(1, 10), shape(1, 4), shape(1, 4)),
+    };
+    let terminal = match size {
+        SizeConfig::Large => &DECOMP_11_LAST_LEVEL_TWO_ROWS,
+        _ => &DECOMP_11_LAST_LEVEL,
     };
     AuxSumcheckConfig {
         exact_projection_norm: false,
@@ -317,14 +331,14 @@ pub fn p_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
             decomposition_chunks: 8,
             rank: commitment.rank,
             diag_blocks: commitment.blocks,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
+            next: Some(Box::new(terminal.clone())),
         },
         opening_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
             rank: opening.rank,
             diag_blocks: opening.blocks,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
+            next: Some(Box::new(terminal.clone())),
         },
         projection_recursion: AuxProjection::Skip,
 
@@ -380,8 +394,12 @@ pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
     let (basic, commitment, opening, projection) = match size {
         SizeConfig::Small => (shape(16, 128), shape(16, 32), shape(2, 4), shape(16, 32)),
         SizeConfig::Medium => (shape(8, 56), shape(4, 8), shape(4, 8), shape(16, 32)),
-        SizeConfig::Large => (shape(16, 112), shape(4, 8), shape(4, 8), shape(32, 64)),
+        SizeConfig::Large => (shape(2, 16), shape(32, 128), shape(8, 32), shape(32, 128)),
         _ => (shape(1, 6), shape(1, 4), shape(1, 2), shape(1, 2)),
+    };
+    let terminal = match size {
+        SizeConfig::Large => &DECOMP_11_LAST_LEVEL_TWO_ROWS,
+        _ => &DECOMP_11_LAST_LEVEL,
     };
     AuxSumcheckConfig {
         exact_projection_norm: false,
@@ -389,11 +407,11 @@ pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
             2usize.pow(13),
             2usize.pow(13),
             2usize.pow(14),
-            2usize.pow(14),
+            2usize.pow(12),
         ),
-        witness_width: size.pick(2usize.pow(3), 2usize.pow(4), 2usize.pow(4), 2usize.pow(4)),
+        witness_width: size.pick(2usize.pow(3), 2usize.pow(4), 2usize.pow(4), 2usize.pow(7)),
         projection_ratio: 2usize.pow(5),
-        projection_height: 2usize.pow(8),
+        projection_height: size.pick(2usize.pow(8), 2usize.pow(8), 2usize.pow(8), 2usize.pow(7)),
         basic_commitment_rank: basic.rank,
         basic_commitment_diag_blocks: basic.blocks,
         nof_openings: 2,
@@ -402,21 +420,23 @@ pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
             decomposition_chunks: 8,
             rank: commitment.rank,
             diag_blocks: commitment.blocks,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
+            next: Some(Box::new(terminal.clone())),
         },
         opening_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
             rank: opening.rank,
             diag_blocks: opening.blocks,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
+            next: Some(Box::new(terminal.clone())),
         },
+        // A shorter radix over the same two digits: the recomposition factor the round's
+        // extraction pays is what the image bound is measured against.
         projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
-            decomposition_base_log: 9,
+            decomposition_base_log: size.pick(9, 9, 9, 8),
             decomposition_chunks: 2,
             rank: projection.rank,
             diag_blocks: projection.blocks,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
+            next: Some(Box::new(terminal.clone())),
         }),
 
         witness_decomposition_chunks: 2,
@@ -456,7 +476,7 @@ pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
             shape(1, 6),
             shape(2, 4),
             shape(4, 8),
-            shape(4, 8),
+            shape(8, 16),
             shape(4, 8),
         ),
         _ => (
@@ -479,7 +499,7 @@ pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
             ),
         },
         witness_width: 2usize.pow(5),
-        projection_ratio: size.pick(2usize.pow(6), 2usize.pow(5), 2usize.pow(8), 2usize.pow(8)),
+        projection_ratio: size.pick(2usize.pow(6), 2usize.pow(5), 2usize.pow(8), 2usize.pow(7)),
         projection_height: 2usize.pow(8),
         basic_commitment_rank: basic.rank,
         basic_commitment_diag_blocks: basic.blocks,
