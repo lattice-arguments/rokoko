@@ -41,18 +41,15 @@ pub static SOMEWHAT_REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| {
         projection_ratio: 2usize.pow(6),  // 2^6
         projection_height: 2usize.pow(8), // 2^8
         basic_commitment_rank: 4,
-        basic_commitment_diag_blocks: 1,
         nof_openings: 1,
         commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 15, // 2^5 (witness_width) * 2^2 (rank) * 2^2 (decomp) = 2^9
             decomposition_chunks: 4,
             rank: 1,
-            diag_blocks: 1,
             next: Some(Box::new(AuxRecursionConfig {
                 decomposition_base_log: 7,
                 decomposition_chunks: 8, // 1 (rank) * 8 (decomp) = 2^3
                 rank: 1,
-                diag_blocks: 1,
                 next: None,
             })),
         },
@@ -60,7 +57,6 @@ pub static SOMEWHAT_REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| {
             decomposition_base_log: 15, // 2^5 (witness_width) * 2^0 (nof openings) * 2^2 (decomp) = 2^7
             decomposition_chunks: 4, // for now, there's no reason why decomposition_chunks here shall be different from commitment_recursion.decomposition_chunks. I will use that assumption in sumcheck.
             rank: 1,
-            diag_blocks: 1,
             next: None,
         },
         projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
@@ -68,7 +64,6 @@ pub static SOMEWHAT_REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| {
             decomposition_base_log: 20, // no decomposition
             decomposition_chunks: 1,
             rank: 1,
-            diag_blocks: 1,
             next: None,
         }),
 
@@ -82,18 +77,15 @@ pub static SOMEWHAT_REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| {
             projection_ratio: 2usize.pow(7),
             projection_height: 2usize.pow(8),
             basic_commitment_rank: 2,
-            basic_commitment_diag_blocks: 1,
             nof_openings: 2,
             commitment_recursion: AuxRecursionConfig {
                 decomposition_base_log: 15, // 2^5 (witness_width) * 2^2 (rank) * 2^2 (decomp) = 2^9
                 decomposition_chunks: 4,
                 rank: 1,
-                diag_blocks: 1,
                 next: Some(Box::new(AuxRecursionConfig {
                     decomposition_base_log: 7,
                     decomposition_chunks: 8, // 1 (rank) * 8 (decomp) = 2^3
                     rank: 1,
-                    diag_blocks: 1,
                     next: None,
                 })),
             },
@@ -101,7 +93,6 @@ pub static SOMEWHAT_REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| {
                 decomposition_base_log: 15, // 2^5 (witness_width) * 2^0 (nof openings) * 2^2 (decomp) = 2^7
                 decomposition_chunks: 4, // for now, there's no reason why decomposition_chunks here shall be different from commitment_recursion.decomposition_chunks. I will use that assumption in sumcheck.
                 rank: 1,
-                diag_blocks: 1,
                 next: None,
             },
             projection_recursion: AuxProjection::Fine {
@@ -110,14 +101,12 @@ pub static SOMEWHAT_REAL_CONFIG: LazyLock<Config> = LazyLock::new(|| {
                     decomposition_base_log: 15,
                     decomposition_chunks: 4,
                     rank: 1,
-                    diag_blocks: 1,
                     next: None,
                 },
                 recursion_batched_projection: AuxRecursionConfig {
                     decomposition_base_log: 15,
                     decomposition_chunks: 4,
                     rank: 1,
-                    diag_blocks: 1,
                     next: None,
                 },
             },
@@ -139,19 +128,16 @@ pub static TOY_CONFIG: LazyLock<Config> = LazyLock::new(|| {
         projection_ratio: 32,
         projection_height: 8, // small for testing
         basic_commitment_rank: 2,
-        basic_commitment_diag_blocks: 1,
         nof_openings: 1,
 
         commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 15,
             decomposition_chunks: 4,
             rank: 1,
-            diag_blocks: 1,
             next: Some(Box::new(AuxRecursionConfig {
                 decomposition_base_log: 7,
                 decomposition_chunks: 8,
                 rank: 1,
-                diag_blocks: 1,
                 next: None,
             })),
         },
@@ -159,14 +145,12 @@ pub static TOY_CONFIG: LazyLock<Config> = LazyLock::new(|| {
             decomposition_base_log: 15,
             decomposition_chunks: 4,
             rank: 1,
-            diag_blocks: 1,
             next: None,
         },
         projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
             decomposition_base_log: 15,
             decomposition_chunks: 2,
             rank: 1,
-            diag_blocks: 1,
             next: None,
         }),
 
@@ -185,19 +169,16 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
         projection_ratio: 32,
         projection_height: 256,
         basic_commitment_rank: 2,
-        basic_commitment_diag_blocks: 1,
         nof_openings: 1,
 
         commitment_recursion: AuxRecursionConfig {
             decomposition_base_log: 15,
             decomposition_chunks: 4,
             rank: 1,
-            diag_blocks: 1,
             next: Some(Box::new(AuxRecursionConfig {
                 decomposition_base_log: 7,
                 decomposition_chunks: 8,
                 rank: 1,
-                diag_blocks: 1,
                 next: None,
             })),
         },
@@ -205,7 +186,6 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
             decomposition_base_log: 15,
             decomposition_chunks: 4,
             rank: 1,
-            diag_blocks: 1,
             next: None,
         },
         projection_recursion: AuxProjection::Fine {
@@ -214,14 +194,12 @@ pub static TOY_CONFIG_II: LazyLock<Config> = LazyLock::new(|| {
                 decomposition_base_log: 10,
                 decomposition_chunks: 2,
                 rank: 1,
-                diag_blocks: 1,
                 next: None,
             },
             recursion_batched_projection: AuxRecursionConfig {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
-                diag_blocks: 1,
                 next: None,
             },
         },
@@ -284,9 +262,6 @@ pub struct SumcheckConfig {
     pub folded_witness_placement: Placement,
 
     pub basic_commitment_rank: usize,
-    /// How many equal blocks the witness is cut into for the basic commitment; the same
-    /// `basic_commitment_rank / basic_commitment_diag_blocks` key rows meet every block.
-    pub basic_commitment_diag_blocks: usize,
     pub composed_witness_length: usize,
 
     pub norm_bound: f64,
