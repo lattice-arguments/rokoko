@@ -28,7 +28,7 @@ pub static DECOMP_11_LAST_LEVEL: AuxRecursionConfig = AuxRecursionConfig {
     decomposition_base_log: 5,
     decomposition_chunks: 11,
     rank: 2,
-    diag_blocks: 2,
+    diag_blocks: 1,
     next: None,
 };
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
