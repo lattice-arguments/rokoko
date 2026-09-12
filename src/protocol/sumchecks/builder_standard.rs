@@ -1,0 +1,874 @@
+use std::collections::HashMap;
+
+use crate::common::arithmetic::ONE;
+use crate::common::config::DEGREE;
+use crate::protocol::config::{Projection, SumcheckConfig};
+use crate::protocol::intermediate_sumchecks::builder::init_intermediate_sumcheck;
+use crate::protocol::sumcheck_utils::sum::SumSumcheck;
+use crate::protocol::sumchecks::context::{FineProjSumcheckContextWrapper, NextSumcheckContext};
+use crate::{
+    common::{config::NOF_BATCHES, ring_arithmetic::RingElement},
+    protocol::{
+        commitment::{self},
+        config::Config,
+        crs,
+        sumcheck_utils::{
+            combiner::Combiner, common::HighOrderSumcheckData, diff::DiffSumcheck,
+            elephant_cell::ElephantCell, linear::LinearSumcheck, product::ProductSumcheck,
+            ring_to_field_combiner::RingToFieldCombiner, selector_eq::SelectorEq,
+        },
+        sumchecks::context::NormCheckSumcheckContext,
+    },
+};
+
+use super::{
+    context::{
+        CoarseProjSumcheckContext, ComVerifyLayerSumcheckContext,
+        ComVerifyOutputLayerSumcheckContext, ComVerifySumcheckContext,
+        CommitmentFoldSumcheckContext, FineProjSumcheckContext, InnerEvalFoldSumcheckContext,
+        OuterEvalClaimSumcheckContext, SumcheckContext,
+    },
+    helpers::{
+        row_committed_pieces, sum_of, sumcheck_from_prefix, FoldedLeaves, Recomposition,
+        WeightedRecomposition,
+    },
+};
+
+type Data = ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>;
+type Selector = ElephantCell<SelectorEq<RingElement>>;
+type Selectors = Vec<Selector>;
+
+/// Builds sumcheck gadgets for recursive commitment verification.
+///
+/// For each internal layer i, proves: CK_i . witness_i = compose(child_commitment_{i+1})
+/// where compose() recomposes the parent out of the child's digit planes.
+///
+/// A level's decomposed input is placed one component per row, each cut into `chunks` digit
+/// planes and each plane into dyadic blocks, so both sides of the constraint are sums:
+///
+///     lhs_i = SUM_{row, piece}  ck_i[piece] . (selector_piece . W)
+///     rhs_i = SUM_{plane}       2^{base_log . plane} . (selector_{plane, element i} . W)
+///
+/// A piece is one digit plane, or a whole row where its planes are one aligned run
+/// (`row_committed_pieces`).
+///
+/// The leaf layer anchors to the public commitment value, and is the lhs alone.
+///
+/// The `rank` rows of a layer are batched into one output under a tensor row weight
+/// `w_i = w_blk(block) . w_row(key row)`: the key rows collapse into the one combined row
+/// `SUM_j w_row(j) . K_j`, whose segments a piece meets whichever block it falls in, and the
+/// block weight rides on the piece's own selector rather than on the key or on a factor of its
+/// own.
+fn selected_input_pieces(
+    total_vars: usize,
+    config: &commitment::RecursionConfig,
+    witness: &Data,
+    leaves: &mut FoldedLeaves,
+) -> Vec<Vec<InputPiece>> {
+    let blocks = config.diag_blocks;
+    let mut rows = Vec::with_capacity(config.placements.len());
+
+    for row in 0..config.placements.len() {
+        let mut pieces = Vec::new();
+        for (prefix, ck_slices, ck_slice) in row_committed_pieces(config, row) {
+            // A piece spanning several blocks is cut down to one, so that every piece is met by a
+            // single slice of a single key row.
+            let split = blocks.div_ceil(ck_slices);
+            let per_block = ck_slices * split / blocks;
+            for part in 0..split {
+                let prefix = commitment::Prefix {
+                    prefix: prefix.prefix * split + part,
+                    length: prefix.length + split.ilog2() as usize,
+                };
+                let slice = ck_slice * split + part;
+                let selector = sumcheck_from_prefix(&prefix, total_vars);
+                leaves.selectors.push(selector.clone());
+                pieces.push(InputPiece {
+                    block: slice / per_block,
+                    ck_slices: per_block,
+                    ck_slice: slice % per_block,
+                    data: ElephantCell::new(ProductSumcheck::new(
+                        selector.clone(),
+                        witness.clone(),
+                    )),
+                    selector,
+                });
+            }
+        }
+        rows.push(pieces);
+    }
+
+    rows
+}
+
+/// One piece of a level's input as the constraint meets it: the witness selected down to that
+/// piece, which block of the input it falls in, and which dyadic slice of a commitment key row
+/// covers it inside that block.
+struct InputPiece {
+    block: usize,
+    ck_slices: usize,
+    ck_slice: usize,
+    data: ElephantCell<ProductSumcheck<RingElement>>,
+    /// The piece's own selector, which carries the weight of the block the piece falls in.
+    selector: Selector,
+}
+
+/// The block a piece falls in, paired with the selector that scales it, for every piece of a
+/// level. Loading a level's block weights walks this in place of the pieces themselves.
+fn piece_block_selectors(data_selected: &[Vec<InputPiece>]) -> Vec<(usize, Selector)> {
+    data_selected
+        .iter()
+        .flatten()
+        .map(|piece| (piece.block, piece.selector.clone()))
+        .collect()
+}
+
+/// The segments of a level's combined key row, addressed by `(slices, slice)`. Every block meets
+/// the same segment for a given slice index, so one linear sumcheck serves all of them.
+type CombinedKeySegments = HashMap<(usize, usize), ElephantCell<LinearSumcheck<RingElement>>>;
+
+/// The level's `rank` commitment elements batched into one: every placed piece met by the segment
+/// of the combined key row that covers it. The block weights are already on the piece selectors,
+/// so the sum over the pieces is the sum over the rows.
+fn combined_ck_over_pieces(
+    total_vars: usize,
+    config: &commitment::RecursionConfig,
+    data_selected: &[Vec<InputPiece>],
+    key_segments: &mut CombinedKeySegments,
+) -> Data {
+    let block_len = config.block_len();
+    let mut terms: Vec<Data> = Vec::new();
+
+    for pieces in data_selected {
+        for piece in pieces {
+            let len = block_len / piece.ck_slices;
+            let ck = key_segments
+                .entry((piece.ck_slices, piece.ck_slice))
+                .or_insert_with(|| {
+                    ElephantCell::new(
+                        LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                            len,
+                            total_vars - len.ilog2() as usize,
+                            0,
+                        ),
+                    )
+                })
+                .clone();
+            terms.push(ElephantCell::new(ProductSumcheck::new(ck, piece.data.clone())) as Data);
+        }
+    }
+
+    sum_of(terms)
+}
+
+/// The key segments of a level in a fixed order, each tagged with the slicing that addresses it.
+fn key_segment_list(
+    segments: CombinedKeySegments,
+) -> Vec<(usize, usize, ElephantCell<LinearSumcheck<RingElement>>)> {
+    let mut list = segments
+        .into_iter()
+        .map(|((slices, slice), ck)| (slices, slice, ck))
+        .collect::<Vec<_>>();
+    list.sort_by_key(|(slices, slice, _)| (*slices, *slice));
+    list
+}
+
+fn build_com_verify_sumcheck_context(
+    total_vars: usize,
+    combined_witness_sumcheck: Data,
+    config: &commitment::RecursionConfig,
+    leaves: &mut FoldedLeaves,
+) -> ComVerifySumcheckContext {
+    let mut layers = Vec::new();
+    let mut current = config;
+    while let Some(next) = current.next.as_deref() {
+        let data_selected =
+            selected_input_pieces(total_vars, current, &combined_witness_sumcheck, leaves);
+
+        let mut key_segments = CombinedKeySegments::new();
+        let lhs = combined_ck_over_pieces(total_vars, current, &data_selected, &mut key_segments);
+
+        // The child level's input is this level's commitment; its elements are recomposed out of
+        // the child's digit planes, and the row weights ride on that recomposition.
+        let child = leaves.weighted_recomposition(
+            next.placement(),
+            next.decomposition_chunks,
+            next.decomposition_base_log,
+            total_vars,
+            current.rank,
+        );
+        let rhs = child.times(combined_witness_sumcheck.clone());
+
+        layers.push(ComVerifyLayerSumcheckContext {
+            blocks: current.diag_blocks,
+            block_len: current.block_len(),
+            blockwise_rank: current.blockwise_rank(),
+            piece_selectors: piece_block_selectors(&data_selected),
+            key_segments: key_segment_list(key_segments),
+            child,
+            output: ElephantCell::new(DiffSumcheck::new(lhs, rhs)),
+        });
+
+        current = next;
+    }
+
+    // Build the output (leaf) layer
+    // This is the base case that checks against the public commitment value
+    let data_selected =
+        selected_input_pieces(total_vars, current, &combined_witness_sumcheck, leaves);
+    let mut key_segments = CombinedKeySegments::new();
+    let output = combined_ck_over_pieces(total_vars, current, &data_selected, &mut key_segments);
+
+    ComVerifySumcheckContext {
+        layers,
+        output_layer: ComVerifyOutputLayerSumcheckContext {
+            blocks: current.diag_blocks,
+            block_len: current.block_len(),
+            blockwise_rank: current.blockwise_rank(),
+            piece_selectors: piece_block_selectors(&data_selected),
+            key_segments: key_segment_list(key_segments),
+            output,
+        },
+    }
+}
+
+/// Constructs all sumcheck gadgets for constraint verification:
+///   - CommitmentFold: CK · folded_witness = commitment · fold_challenge
+///   - InnerEvalFold: inner_eval · folded_witness = opening.rhs · fold_challenge
+///   - OuterEvalClaim: outer_eval · opening.rhs = claimed_evaluation
+///   - CoarseProj: projection_coeffs · folded_witness = fold_tensor · projection_image (block-diagonal)
+///   - FineProj: c^T (I ⊗ P) · folded_witness = c^T projection_image · fold_challenge (Kronecker) + consistency checks for batched projections
+///   - ComVerify: recursive commitment well-formedness at each layer
+///   - NormCheck: witness norm via <combined_witness, conjugate>
+///             (also, we derive a specialised sumcheck for the most outer commitment layer)
+///
+/// Prefix padding enables composition without reindexing. Decomposition
+/// offsets are preloaded to match commitment arithmetic.
+pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext {
+    let total_vars = config.composed_witness_length.ilog2() as usize;
+
+    // Every leaf built below is registered here and folded once per round.
+    let mut leaves = FoldedLeaves::new();
+
+    let combined_witness_sumcheck = ElephantCell::new(LinearSumcheck::<RingElement>::new(
+        config.composed_witness_length,
+    ));
+    let witness = combined_witness_sumcheck.clone() as Data;
+
+    let folded_witness = leaves.recomposition(
+        &config.folded_witness_placement,
+        config.witness_decomposition_chunks,
+        config.witness_decomposition_base_log,
+        total_vars,
+        1,
+        0,
+    );
+
+    // The basic commitment is block-diagonal: `blockwise_rank` key rows of `witness_height /
+    // blocks` meet every block, and commitment row `b * blockwise_rank + i` is row `i` on block
+    // `b`. The rows are batched under a tensor row weight, so the key rows collapse into one
+    // combined row and the block weights enter through the folded witness's block weighting.
+    let blocks = config.basic_commitment_diag_blocks;
+    let block_len = config.witness_height / blocks;
+    let combined_commitment_key_row = ElephantCell::new(
+        LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+            block_len,
+            total_vars - block_len.ilog2() as usize,
+            0,
+        ),
+    );
+
+    let folded_witness_blocks = leaves.weighted_recomposition(
+        &config.folded_witness_placement,
+        config.witness_decomposition_chunks,
+        config.witness_decomposition_base_log,
+        total_vars,
+        blocks,
+    );
+
+    let folding_challenges_sumcheck = ElephantCell::new(
+        LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+            config.witness_width,
+            total_vars - config.witness_width.ilog2() as usize,
+            0,
+        ),
+    );
+
+    let witness_with_folding_challenges = ElephantCell::new(ProductSumcheck::new(
+        witness.clone(),
+        folding_challenges_sumcheck.clone(),
+    )) as Data;
+
+    // CommitmentFold sumcheck
+    // SUM_i w_i . (CK_i \cdot folded_witness - commitment_i \cdot fold_challenge) = 0
+    let basic_commitment_rows = (0..config.basic_commitment_rank)
+        .map(|i| {
+            leaves.weighted_recomposition(
+                &config.commitment_recursion.placements[i],
+                config.commitment_recursion.decomposition_chunks,
+                config.commitment_recursion.decomposition_base_log,
+                total_vars,
+                1,
+            )
+        })
+        .collect::<Vec<WeightedRecomposition>>();
+
+    let commitment_fold_sumcheck = {
+        let lhs = folded_witness_blocks.times(ElephantCell::new(ProductSumcheck::new(
+            witness.clone(),
+            combined_commitment_key_row.clone(),
+        )) as Data);
+
+        // A row at a time: a product over the rows at once would be evaluated over the whole
+        // run they span rather than over each row's own placement.
+        let rhs = sum_of(
+            basic_commitment_rows
+                .iter()
+                .map(|row| row.times(witness_with_folding_challenges.clone()))
+                .collect(),
+        );
+
+        CommitmentFoldSumcheckContext {
+            combined_commitment_key_row,
+            folded_witness_blocks,
+            basic_commitment_rows,
+            output: ElephantCell::new(DiffSumcheck::new(lhs, rhs)),
+        }
+    };
+
+    // InnerEvalFold sumchecks
+    // inner_evaluation_points \cdot folded_witness - opening.rhs \cdot fold_challenge = 0
+    // One opening per row of the opening commitment, each with its own placement.
+    let openings = (0..config.nof_openings)
+        .map(|i| {
+            leaves.recomposition(
+                &config.opening_recursion.placements[i],
+                config.opening_recursion.decomposition_chunks,
+                config.opening_recursion.decomposition_base_log,
+                total_vars,
+                1,
+                0,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let inner_eval_fold_sumchecks = (0..config.nof_openings)
+        .map(|i| {
+            let inner_evaluation_sumcheck = ElephantCell::new(
+                LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                    config.witness_height,
+                    total_vars - config.witness_height.ilog2() as usize,
+                    0,
+                ),
+            );
+
+            let lhs = folded_witness.times(ElephantCell::new(ProductSumcheck::new(
+                witness.clone(),
+                inner_evaluation_sumcheck.clone(),
+            )) as Data);
+
+            let rhs = openings[i].times(witness_with_folding_challenges.clone());
+
+            InnerEvalFoldSumcheckContext {
+                inner_evaluation_sumcheck,
+                output: ElephantCell::new(DiffSumcheck::new(lhs, rhs)),
+            }
+        })
+        .collect::<Vec<InnerEvalFoldSumcheckContext>>();
+
+    // OuterEvalClaim sumchecks
+    // <opening.rhs[i], outer_evaluation_points> = evaluations[i] (public)
+    let outer_eval_claim_sumchecks = (0..config.nof_openings)
+        .map(|i| {
+            let outer_evaluation_sumcheck = ElephantCell::new(
+                LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                    config.witness_width,
+                    total_vars - config.witness_width.ilog2() as usize,
+                    0,
+                ),
+            );
+
+            let output = openings[i].times(ElephantCell::new(ProductSumcheck::new(
+                witness.clone(),
+                outer_evaluation_sumcheck.clone(),
+            )) as Data);
+
+            OuterEvalClaimSumcheckContext {
+                outer_evaluation_sumcheck,
+                output,
+            }
+        })
+        .collect::<Vec<OuterEvalClaimSumcheckContext>>();
+
+    // coarse_proj sumchecks
+    // projection_matrix_flatter \cdot (I \otimes projection_matrix) \cdot folded_witness - projection_matrix_flatter \cdot projection_image \cdot fold_challenge = 0
+    // Here, we treat projection_matrix_flatter \cdot (I \otimes projection_matrix) as a single multilinear polynomial
+    // Also, we treat projection_matrix_flatter \tensor fold_challenge as a single multilinear polynomial
+
+    // It corresponds to:
+    // \sum_z Diff(Prod(projection_matrix_flatter \cdot (I \otimes projection_matrix), folded_witness), Prod(projection_matrix_flatter \tensor fold_challenge, projection_image))
+    // change to:
+    // \sum_z Diff(Prod(projection_matrix_flatter_0, Prod(projection_matrix_flatter_1 \cdot (I \otimes projection_matrix), folded_witness)), Prod(Prod(projection_matrix_flatter, Prod(fold_challenge, projection_image))
+
+    let projection_height_flat = config.witness_height / config.projection_ratio;
+    let coarse_proj_sumcheck = match &config.projection_recursion {
+        Projection::Coarse(projection_recursion) => {
+            let projection = leaves.recomposition(
+                projection_recursion.placement(),
+                projection_recursion.decomposition_chunks,
+                projection_recursion.decomposition_base_log,
+                total_vars,
+                1,
+                0,
+            );
+
+            // Split projection coefficients into two parts:
+            // 1. projection_flatter_0: elder variables (block indices)
+            // 2. projection_flatter_1 . matrix: LS variables (within-block)
+            let height = config.projection_height;
+            let inner_width = config.projection_ratio * height;
+            let blocks = config.witness_height / inner_width;
+
+            if blocks == 0 {
+                panic!("Coarse-projection sumcheck: invalid configuration. The number of blocks computed as witness_height / (projection_ratio * projection_height) is zero. Please check your configuration.");
+            }
+
+            // Elder variables: projection_flatter_0 (length = blocks)
+            let lhs_flatter_0_sumcheck = ElephantCell::new(
+                LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                    blocks,
+                    total_vars - blocks.ilog2() as usize - inner_width.ilog2() as usize,
+                    inner_width.ilog2() as usize,
+                ),
+            );
+
+            // LS variables: projection_flatter_1 . matrix (length = inner_width)
+            let lhs_flatter_1_times_matrix_sumcheck = ElephantCell::new(
+                LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                    inner_width,
+                    total_vars - inner_width.ilog2() as usize,
+                    0,
+                ),
+            );
+
+            // Combined projection coefficients via Product
+            let projection_coeff_product = ElephantCell::new(ProductSumcheck::new(
+                lhs_flatter_0_sumcheck.clone(),
+                lhs_flatter_1_times_matrix_sumcheck.clone(),
+            ));
+
+            // Split RHS into Product of two LinearSumchecks:
+            let rhs_fold_challenge_sumcheck = ElephantCell::new(
+                LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                    config.witness_width,
+                    total_vars
+                        - config.witness_width.ilog2() as usize
+                        - projection_height_flat.ilog2() as usize,
+                    projection_height_flat.ilog2() as usize,
+                ),
+            );
+
+            let rhs_projection_flatter_sumcheck = ElephantCell::new(
+                LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                    projection_height_flat,
+                    total_vars - projection_height_flat.ilog2() as usize,
+                    0,
+                ),
+            );
+
+            let rhs_fold_tensor_product = ElephantCell::new(ProductSumcheck::new(
+                rhs_fold_challenge_sumcheck.clone(),
+                rhs_projection_flatter_sumcheck.clone(),
+            ));
+
+            let lhs = folded_witness.times(ElephantCell::new(ProductSumcheck::new(
+                witness.clone(),
+                projection_coeff_product,
+            )) as Data);
+            let rhs = projection.times(ElephantCell::new(ProductSumcheck::new(
+                witness.clone(),
+                rhs_fold_tensor_product,
+            )) as Data);
+            let output = ElephantCell::new(DiffSumcheck::new(lhs, rhs));
+
+            Some(CoarseProjSumcheckContext {
+                lhs_flatter_0_sumcheck,
+                lhs_flatter_1_times_matrix_sumcheck,
+                rhs_fold_challenge_sumcheck,
+                rhs_projection_flatter_sumcheck,
+                output,
+            })
+        }
+        _ => None,
+    };
+
+    // let fine_proj_sumchecks = match &config.projection_recursion {
+    // FineProj-consistency sumchecks for batched projections
+    // Similar to coarse_proj but for each batch: c_0'^T (I ⊗ j_batched) · folded_witness = projection_image_i · fold_challenge
+    // c_0 and c_1 are u64 challenges that need to be lifted to RingElement
+    // j_batched is already a Vec<RingElement>
+    let fine_proj_sumchecks = match &config.projection_recursion {
+        Projection::Fine(projection_recursion) => {
+            let projection_constant_terms_embedded = leaves.recomposition(
+                projection_recursion.recursion_constant_term.placement(),
+                projection_recursion
+                    .recursion_constant_term
+                    .decomposition_chunks,
+                projection_recursion
+                    .recursion_constant_term
+                    .decomposition_base_log,
+                total_vars,
+                1,
+                0,
+            );
+
+            // RHS: fold_challenge (same for all batches)
+            let rhs_fold_challenge_sumcheck = ElephantCell::new(
+                LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                    config.witness_width,
+                    total_vars - config.witness_width.ilog2() as usize,
+                    0,
+                ),
+            );
+
+            let witness_with_rhs_fold_challenge = ElephantCell::new(ProductSumcheck::new(
+                witness.clone(),
+                rhs_fold_challenge_sumcheck.clone(),
+            )) as Data;
+
+            let lhs_scalar_consistency_sumcheck = ElephantCell::new(
+                LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(1, total_vars, 0),
+            );
+
+            lhs_scalar_consistency_sumcheck
+                .borrow_mut()
+                .load_from(&[ONE.clone()]);
+
+            // Each batch is one piece of every digit plane of the batched-projection component.
+            let batched: [Recomposition; NOF_BATCHES] = std::array::from_fn(|i| {
+                leaves.recomposition(
+                    projection_recursion
+                        .recursion_batched_projection
+                        .placement(),
+                    projection_recursion
+                        .recursion_batched_projection
+                        .decomposition_chunks,
+                    projection_recursion
+                        .recursion_batched_projection
+                        .decomposition_base_log,
+                    total_vars,
+                    NOF_BATCHES,
+                    i,
+                )
+            });
+
+            // Build one context per batch
+            let contexts: [FineProjSumcheckContext; NOF_BATCHES] = std::array::from_fn(|i| {
+                // Split coefficients into block indices (elder vars) and within-block (LS vars)
+                let height = config.projection_height;
+                let inner_width = config.projection_ratio * height / DEGREE;
+                let blocks = config.witness_height / inner_width;
+
+                // Elder variables: c_0 coefficients (block indices)
+                let lhs_flatter_0_sumcheck = ElephantCell::new(
+                    LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                        blocks,
+                        total_vars - blocks.ilog2() as usize - inner_width.ilog2() as usize,
+                        inner_width.ilog2() as usize,
+                    ),
+                );
+
+                // LS variables: c_1 . j_batched (within-block coefficients)
+                let lhs_flatter_1_times_matrix_sumcheck = ElephantCell::new(
+                    LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                        inner_width,
+                        total_vars - inner_width.ilog2() as usize,
+                        0,
+                    ),
+                );
+
+                // Build the constraint tree
+                let projection_coeff_product = ElephantCell::new(ProductSumcheck::new(
+                    lhs_flatter_0_sumcheck.clone(),
+                    lhs_flatter_1_times_matrix_sumcheck.clone(),
+                ));
+
+                let lhs = folded_witness.times(ElephantCell::new(ProductSumcheck::new(
+                    witness.clone(),
+                    projection_coeff_product,
+                )) as Data);
+
+                let rhs = batched[i].times(witness_with_rhs_fold_challenge.clone());
+
+                let output = ElephantCell::new(DiffSumcheck::new(lhs, rhs));
+
+                let lhs_consistency_flatter_sumcheck = ElephantCell::new(
+                    LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                        config.witness_width,
+                        total_vars - config.witness_width.ilog2() as usize,
+                        0,
+                    ),
+                );
+
+                let lhs = ElephantCell::new(ProductSumcheck::new(
+                    lhs_scalar_consistency_sumcheck.clone(),
+                    batched[i].times(ElephantCell::new(ProductSumcheck::new(
+                        lhs_consistency_flatter_sumcheck.clone(),
+                        witness.clone(),
+                    )) as Data),
+                ));
+
+                // c_2 \otimes c_0 \otimes e_0
+                let rhs_flatter_len =
+                    config.witness_width * blocks * config.projection_height / DEGREE;
+
+                let rhs_consistency_flatter_sumcheck = ElephantCell::new(
+                    LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                        rhs_flatter_len,
+                        total_vars - rhs_flatter_len.ilog2() as usize,
+                        0,
+                    ),
+                );
+
+                let rhs_scalar_consistency_sumcheck = ElephantCell::new(
+                    LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(1, total_vars, 0),
+                );
+
+                let rhs = ElephantCell::new(ProductSumcheck::new(
+                    rhs_scalar_consistency_sumcheck.clone(),
+                    projection_constant_terms_embedded.times(ElephantCell::new(
+                        ProductSumcheck::new(
+                            rhs_consistency_flatter_sumcheck.clone(),
+                            witness.clone(),
+                        ),
+                    ) as Data),
+                ));
+
+                let output_consistency = ElephantCell::new(DiffSumcheck::new(lhs, rhs));
+
+                FineProjSumcheckContext {
+                    lhs_flatter_0_sumcheck,
+                    lhs_flatter_1_times_matrix_sumcheck,
+                    output,
+                    lhs_consistency_flatter_sumcheck,
+                    rhs_scalar_consistency_sumcheck,
+                    rhs_consistency_flatter_sumcheck,
+                    output_2: output_consistency,
+                }
+            });
+
+            Some(FineProjSumcheckContextWrapper {
+                sumchecks: contexts,
+                rhs_fold_challenge_sumcheck,
+                lhs_scalar_consistency_sumcheck,
+            })
+        }
+        _ => None,
+    };
+
+    let conjugated_combined_witness_sumcheck = ElephantCell::new(
+        LinearSumcheck::<RingElement>::new(config.composed_witness_length),
+    );
+
+    // The norm claim covers the most inner commitment of every recursion tree: all blocks of
+    // every row it places.
+    let mut most_inner_commitments_selectors: Selectors = Vec::new();
+    let push_most_inner = |recursion: &commitment::RecursionConfig, out: &mut Selectors| {
+        for placement in &recursion.most_inner_config().placements {
+            for block in &placement.blocks {
+                out.push(sumcheck_from_prefix(block, total_vars));
+            }
+        }
+    };
+
+    push_most_inner(
+        &config.commitment_recursion,
+        &mut most_inner_commitments_selectors,
+    );
+    push_most_inner(
+        &config.opening_recursion,
+        &mut most_inner_commitments_selectors,
+    );
+
+    match config.projection_recursion {
+        Projection::Coarse(ref proj_config) => {
+            push_most_inner(proj_config, &mut most_inner_commitments_selectors);
+        }
+        Projection::Fine(ref proj_config) => {
+            push_most_inner(
+                &proj_config.recursion_constant_term,
+                &mut most_inner_commitments_selectors,
+            );
+            push_most_inner(
+                &proj_config.recursion_batched_projection,
+                &mut most_inner_commitments_selectors,
+            );
+        }
+        Projection::Skip => {
+            // No com_verify sumcheck for projection
+        }
+    }
+
+    leaves
+        .selectors
+        .extend(most_inner_commitments_selectors.iter().cloned());
+
+    let mut sum_of_selectors: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>> =
+        most_inner_commitments_selectors[0].clone();
+
+    for selector in most_inner_commitments_selectors.iter().skip(1) {
+        sum_of_selectors =
+            ElephantCell::new(SumSumcheck::new(sum_of_selectors.clone(), selector.clone()));
+    }
+
+    let output = ElephantCell::new(ProductSumcheck::new(
+        combined_witness_sumcheck.clone(),
+        conjugated_combined_witness_sumcheck.clone(),
+    ));
+
+    let output_2 = ElephantCell::new(ProductSumcheck::new(
+        sum_of_selectors.clone(),
+        output.clone(),
+    ));
+
+    // SUM_j 2^{2 . base_log . j} . <d_j, conj d_j> over the projection recursion's own digit
+    // planes. The recomposed image is SUM_j 2^{base_log . j} d_j, so Cauchy-Schwarz turns this
+    // claim into a bound on the image itself, up to sqrt(chunks).
+    let output_3 = config.projection_norm_scope().map(|recursion| {
+        let squared_projection = leaves.recomposition(
+            recursion.placement(),
+            recursion.decomposition_chunks,
+            2 * recursion.decomposition_base_log,
+            total_vars,
+            1,
+            0,
+        );
+
+        ElephantCell::new(ProductSumcheck::new(
+            squared_projection.factor(),
+            output.clone(),
+        ))
+    });
+
+    let norm_check_sumcheck = NormCheckSumcheckContext {
+        conjugated_combined_witness: conjugated_combined_witness_sumcheck.clone(),
+        output,
+        output_2,
+        output_3,
+    };
+
+    // ComVerify sumchecks: Three separate recursive commitment trees
+    // 1. Commitment recursion: verifies the basic witness commitments are well-formed
+    // 2. Opening recursion: verifies the opening proofs are correctly committed
+    // 3. Projection recursion: verifies the projection images are correctly committed
+    // Each tree has its own depth, rank, and decomposition parameters defined in config.
+
+    let mut com_verify_sumchecks = vec![
+        build_com_verify_sumcheck_context(
+            total_vars,
+            witness.clone(),
+            &config.commitment_recursion,
+            &mut leaves,
+        ),
+        build_com_verify_sumcheck_context(
+            total_vars,
+            witness.clone(),
+            &config.opening_recursion,
+            &mut leaves,
+        ),
+    ];
+
+    match &config.projection_recursion {
+        Projection::Coarse(recursion_config) => {
+            com_verify_sumchecks.push(build_com_verify_sumcheck_context(
+                total_vars,
+                witness.clone(),
+                recursion_config,
+                &mut leaves,
+            ));
+        }
+        Projection::Fine(recursion_config) => {
+            com_verify_sumchecks.push(build_com_verify_sumcheck_context(
+                total_vars,
+                witness.clone(),
+                &recursion_config.recursion_constant_term,
+                &mut leaves,
+            ));
+            com_verify_sumchecks.push(build_com_verify_sumcheck_context(
+                total_vars,
+                witness.clone(),
+                &recursion_config.recursion_batched_projection,
+                &mut leaves,
+            ));
+        }
+        Projection::Skip => {
+            // No com_verify sumcheck for projection
+        }
+    }
+
+    let mut all_outputs: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>> =
+        vec![];
+    all_outputs.push(commitment_fold_sumcheck.output.clone());
+    for inner_eval_fold in &inner_eval_fold_sumchecks {
+        all_outputs.push(inner_eval_fold.output.clone());
+    }
+    for outer_eval_claim in &outer_eval_claim_sumchecks {
+        all_outputs.push(outer_eval_claim.output.clone());
+    }
+
+    if let Some(coarse_proj_sumcheck) = &coarse_proj_sumcheck {
+        all_outputs.push(coarse_proj_sumcheck.output.clone());
+    } else if let Some(fine_proj_contexts) = &fine_proj_sumchecks {
+        for fine_proj_ctx in fine_proj_contexts.sumchecks.iter() {
+            all_outputs.push(fine_proj_ctx.output.clone());
+            all_outputs.push(fine_proj_ctx.output_2.clone());
+        }
+    }
+
+    for com_verify in &com_verify_sumchecks {
+        for layer in &com_verify.layers {
+            all_outputs.push(layer.output.clone());
+        }
+        all_outputs.push(com_verify.output_layer.output.clone());
+    }
+
+    all_outputs.push(norm_check_sumcheck.output.clone());
+    all_outputs.push(norm_check_sumcheck.output_2.clone());
+    if let Some(output_3) = &norm_check_sumcheck.output_3 {
+        all_outputs.push(output_3.clone());
+    }
+
+    let combiner = ElephantCell::new(Combiner::new(all_outputs));
+
+    let field_combiner = ElephantCell::new(RingToFieldCombiner::new(combiner.clone()));
+
+    SumcheckContext {
+        combined_witness_sumcheck: combined_witness_sumcheck.clone(),
+        selectors: leaves.selectors,
+        recomposition_weights: leaves.weights,
+        folding_challenges_sumcheck,
+        commitment_fold_sumcheck,
+        inner_eval_fold_sumchecks,
+        outer_eval_claim_sumchecks,
+        coarse_proj_sumcheck,
+        com_verify_sumchecks,
+        norm_check_sumcheck,
+        fine_proj_sumchecks,
+        combiner,
+        field_combiner,
+        next: match &config.next {
+            Some(next_config) => match next_config.as_ref() {
+                Config::Sumcheck(next_simple_config) => Some(Box::new(
+                    NextSumcheckContext::Simple(init_sumcheck(crs, next_simple_config)),
+                )),
+                Config::Simple(_) => None,
+                Config::Intermediate(next_intermediate_config) => {
+                    Some(Box::new(NextSumcheckContext::Intermediate(
+                        init_intermediate_sumcheck(crs, next_intermediate_config),
+                    )))
+                }
+            },
+            None => None,
+        },
+    }
+}

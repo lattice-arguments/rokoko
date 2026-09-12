@@ -7,23 +7,27 @@ use crate::{
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
-        config::SumcheckConfig,
         project_fine::BatchedProjectionChallengesSuccinct,
-        sumcheck_utils::{elephant_cell::ElephantCell, selector_eq::SelectorEqEvaluation},
-        sumchecks::{
-            builder_verifier::WeightedRecompositionEvaluation,
-            helpers::{
-                projection_flatter_1_times_matrix, row_batch_weights, split_projection_flatter,
-            },
-        },
+        sumchecks::helpers::{projection_flatter_1_times_matrix, split_projection_flatter},
     },
 };
 
-use super::context_verifier::{PieceSelectorEvaluations, VerifierSumcheckContext};
+use super::context_verifier::VerifierSumcheckContext;
+
+#[cfg(feature = "standard")]
+use crate::protocol::{
+    config::SumcheckConfig,
+    sumcheck_utils::{elephant_cell::ElephantCell, selector_eq::SelectorEqEvaluation},
+    sumchecks::{
+        builder_verifier::WeightedRecompositionEvaluation,
+        context_verifier::PieceSelectorEvaluations, helpers::row_batch_weights,
+    },
+};
 
 /// Verifier dual of `load_row_batch_weights`: the same weights on the same gadgets, with the
 /// key-row weights going to the scales the combined key rows are assembled from rather than to a
 /// combined row of their own.
+#[cfg(feature = "standard")]
 pub fn load_verifier_row_batch_weights(
     verifier_sumcheck_context: &mut VerifierSumcheckContext,
     config: &SumcheckConfig,
@@ -72,6 +76,7 @@ pub fn load_verifier_row_batch_weights(
 }
 
 /// One recursion level's share of that; `shape` is `(blocks, blockwise_rank)`.
+#[cfg(feature = "standard")]
 fn load_com_verify_level(
     layers: &[RingElement],
     shape: (usize, usize),

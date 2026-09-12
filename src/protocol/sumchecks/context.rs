@@ -12,9 +12,11 @@ use crate::{
             ring_to_field_combiner::RingToFieldCombiner,
             selector_eq::SelectorEq,
         },
-        sumchecks::helpers::WeightedRecomposition,
     },
 };
+
+#[cfg(feature = "standard")]
+use crate::protocol::sumchecks::helpers::WeightedRecomposition;
 
 /// All sumchecks for constraint verification, grouped for consistent folding.
 /// Each type verifies a different constraint (commitment correctness, opening
@@ -32,6 +34,11 @@ pub struct SumcheckContext {
     /// per such recomposition.
     pub recomposition_weights: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
     pub folding_challenges_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    #[cfg(not(feature = "standard"))]
+    pub commitment_key_rows_sumcheck: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
+    #[cfg(not(feature = "standard"))]
+    pub commitment_fold_sumchecks: Vec<CommitmentFoldSumcheckContext>,
+    #[cfg(feature = "standard")]
     pub commitment_fold_sumcheck: CommitmentFoldSumcheckContext,
     pub inner_eval_fold_sumchecks: Vec<InnerEvalFoldSumcheckContext>,
     pub outer_eval_claim_sumchecks: Vec<OuterEvalClaimSumcheckContext>,
@@ -63,6 +70,11 @@ impl SumcheckContext {
         self.folding_challenges_sumcheck
             .borrow_mut()
             .partial_evaluate(r);
+        #[cfg(not(feature = "standard"))]
+        for ck_row_sc in self.commitment_key_rows_sumcheck.iter() {
+            ck_row_sc.borrow_mut().partial_evaluate(r);
+        }
+        #[cfg(feature = "standard")]
         self.commitment_fold_sumcheck
             .combined_commitment_key_row
             .borrow_mut()
@@ -153,10 +165,13 @@ impl SumcheckContext {
 ///   RHS: (SUM_i w_i . recomposed commitment_i) · (witness · fold_challenge)
 pub struct CommitmentFoldSumcheckContext {
     /// `SUM_j w_row(j) . K_j` over the key rows one block is committed with.
+    #[cfg(feature = "standard")]
     pub combined_commitment_key_row: ElephantCell<LinearSumcheck<RingElement>>,
     /// The folded witness recomposed per block, carrying the block weights.
+    #[cfg(feature = "standard")]
     pub folded_witness_blocks: WeightedRecomposition,
     /// One recomposition per commitment row, each carrying that row's weight.
+    #[cfg(feature = "standard")]
     pub basic_commitment_rows: Vec<WeightedRecomposition>,
     pub output: ElephantCell<DiffSumcheck<RingElement>>,
 }
@@ -206,10 +221,12 @@ pub struct CoarseProjSumcheckContext {
 
 /// The key segments of one level, each tagged with the `(slices, slice)` that cuts it out of the
 /// level's combined key row.
+#[cfg(feature = "standard")]
 pub type KeySegments = Vec<(usize, usize, ElephantCell<LinearSumcheck<RingElement>>)>;
 
 /// The block each placed piece of a level falls in, paired with the selector that carries the
 /// block's weight.
+#[cfg(feature = "standard")]
 pub type PieceSelectors = Vec<(usize, ElephantCell<SelectorEq<RingElement>>)>;
 
 /// ComVerify layer: One layer in a recursive commitment tree, with its `rank` rows batched into
@@ -223,25 +240,48 @@ pub type PieceSelectors = Vec<(usize, ElephantCell<SelectorEq<RingElement>>)>;
 /// - `piece_selectors`: the piece selectors, which carry the block weights
 /// - `child`: the child's recomposition, carrying the row weights
 pub struct ComVerifyLayerSumcheckContext {
+    #[cfg(feature = "standard")]
     pub blocks: usize,
+    #[cfg(feature = "standard")]
     pub block_len: usize,
+    #[cfg(feature = "standard")]
     pub blockwise_rank: usize,
+    #[cfg(feature = "standard")]
     pub piece_selectors: PieceSelectors,
+    #[cfg(feature = "standard")]
     pub key_segments: KeySegments,
+    #[cfg(feature = "standard")]
     pub child: WeightedRecomposition,
+    #[cfg(feature = "standard")]
     pub output: ElephantCell<DiffSumcheck<RingElement>>,
+    /// The commitment key rows cut into one slice per placed piece of the level's input,
+    /// `rank` x pieces.
+    #[cfg(not(feature = "standard"))]
+    pub ck_sumchecks: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
+    #[cfg(not(feature = "standard"))]
+    pub outputs: Vec<ElephantCell<DiffSumcheck<RingElement>>>,
 }
 
 /// ComVerify output layer: Leaf layer checking `SUM_i w_i . (CK_i · witness) = SUM_i w_i . rc_i`.
 ///
 /// A ProductSumcheck tree (not a DiffSumcheck) since we check against a known public value.
 pub struct ComVerifyOutputLayerSumcheckContext {
+    #[cfg(feature = "standard")]
     pub blocks: usize,
+    #[cfg(feature = "standard")]
     pub block_len: usize,
+    #[cfg(feature = "standard")]
     pub blockwise_rank: usize,
+    #[cfg(feature = "standard")]
     pub piece_selectors: PieceSelectors,
+    #[cfg(feature = "standard")]
     pub key_segments: KeySegments,
+    #[cfg(feature = "standard")]
     pub output: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
+    #[cfg(not(feature = "standard"))]
+    pub ck_sumchecks: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
+    #[cfg(not(feature = "standard"))]
+    pub outputs: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>>,
 }
 
 /// ComVerify: Complete recursive commitment verification structure.
@@ -296,6 +336,20 @@ pub struct FineProjSumcheckContextWrapper {
     pub lhs_scalar_consistency_sumcheck: ElephantCell<LinearSumcheck<RingElement>>, // for 1 as to scale over all variables
 }
 
+#[cfg(not(feature = "standard"))]
+fn partial_evaluate_com_verify(ctx: &mut ComVerifySumcheckContext, r: &RingElement) {
+    for layer in ctx.layers.iter_mut() {
+        for ck in layer.ck_sumchecks.iter() {
+            ck.borrow_mut().partial_evaluate(r);
+        }
+    }
+
+    for ck in ctx.output_layer.ck_sumchecks.iter() {
+        ck.borrow_mut().partial_evaluate(r);
+    }
+}
+
+#[cfg(feature = "standard")]
 fn partial_evaluate_com_verify(ctx: &mut ComVerifySumcheckContext, r: &RingElement) {
     for layer in ctx.layers.iter_mut() {
         for (_, _, ck) in layer.key_segments.iter() {

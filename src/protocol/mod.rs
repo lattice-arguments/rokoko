@@ -1,6 +1,10 @@
 pub mod boundary;
 pub mod commitment;
 pub mod commitment_crt;
+#[cfg(not(feature = "standard"))]
+pub mod crs;
+#[cfg(feature = "standard")]
+#[path = "crs_standard.rs"]
 pub mod crs;
 // pub mod execution_simple;
 pub mod config;
@@ -9,6 +13,10 @@ pub mod evaluation_point_sampler;
 pub mod fold;
 pub mod intermediate_sumchecks;
 pub mod open;
+#[cfg(not(feature = "standard"))]
+pub mod params;
+#[cfg(feature = "standard")]
+#[path = "params_standard.rs"]
 pub mod params;
 pub mod parties;
 pub mod project_coarse;

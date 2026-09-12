@@ -437,14 +437,24 @@ mod tests {
             .fill_from_xof(b"round-boundary-test", &mut verifier_bytes);
         assert_eq!(prover_bytes, verifier_bytes);
 
+        #[cfg(not(feature = "standard"))]
+        {
+            assert_eq!(run.crs.cks.len(), run.verifier_crs.structured_cks.len());
+            let first_row = &run.verifier_crs.structured_cks[0][0];
+            assert_eq!(first_row.tensor_layers.len(), 1);
+        }
+
         // Both parties read the same rows off the public seed.
-        assert_eq!(run.crs.cks.len(), run.verifier_crs.cks.len());
-        for (prover, verifier) in run.crs.cks.iter().zip(&run.verifier_crs.cks) {
-            assert_eq!(prover.len(), verifier.len());
-            assert!(prover
-                .iter()
-                .zip(verifier)
-                .all(|(a, b)| a.preprocessed_row == b.preprocessed_row));
+        #[cfg(feature = "standard")]
+        {
+            assert_eq!(run.crs.cks.len(), run.verifier_crs.cks.len());
+            for (prover, verifier) in run.crs.cks.iter().zip(&run.verifier_crs.cks) {
+                assert_eq!(prover.len(), verifier.len());
+                assert!(prover
+                    .iter()
+                    .zip(verifier)
+                    .all(|(a, b)| a.preprocessed_row == b.preprocessed_row));
+            }
         }
 
         let run4 = execute_to_boundary(NonZeroUsize::new(4).unwrap());
@@ -569,17 +579,20 @@ mod tests {
             projection_ratio: 32,
             projection_height: 256,
             basic_commitment_rank: 3,
+            #[cfg(feature = "standard")]
             basic_commitment_diag_blocks: 1,
             nof_openings: 3,
             commitment_recursion: AuxRecursionConfig {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                #[cfg(feature = "standard")]
                 diag_blocks: 1,
                 next: Some(Box::new(AuxRecursionConfig {
                     decomposition_base_log: 7,
                     decomposition_chunks: 8,
                     rank: 1,
+                    #[cfg(feature = "standard")]
                     diag_blocks: 1,
                     next: None,
                 })),
@@ -588,6 +601,7 @@ mod tests {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                #[cfg(feature = "standard")]
                 diag_blocks: 1,
                 next: None,
             },
@@ -597,6 +611,7 @@ mod tests {
                     decomposition_base_log: 15,
                     decomposition_chunks: 2,
                     rank: 1,
+                    #[cfg(feature = "standard")]
                     diag_blocks: 1,
                     next: None,
                 },
@@ -604,6 +619,7 @@ mod tests {
                     decomposition_base_log: 15,
                     decomposition_chunks: 4,
                     rank: 1,
+                    #[cfg(feature = "standard")]
                     diag_blocks: 1,
                     next: None,
                 },
@@ -652,17 +668,20 @@ mod tests {
             projection_ratio: 32,
             projection_height: 256,
             basic_commitment_rank: 3,
+            #[cfg(feature = "standard")]
             basic_commitment_diag_blocks: 1,
             nof_openings: 1,
             commitment_recursion: AuxRecursionConfig {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                #[cfg(feature = "standard")]
                 diag_blocks: 1,
                 next: Some(Box::new(AuxRecursionConfig {
                     decomposition_base_log: 7,
                     decomposition_chunks: 8,
                     rank: 1,
+                    #[cfg(feature = "standard")]
                     diag_blocks: 1,
                     next: None,
                 })),
@@ -671,6 +690,7 @@ mod tests {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                #[cfg(feature = "standard")]
                 diag_blocks: 1,
                 next: None,
             },
@@ -680,6 +700,7 @@ mod tests {
                     decomposition_base_log: 15,
                     decomposition_chunks: 2,
                     rank: 1,
+                    #[cfg(feature = "standard")]
                     diag_blocks: 1,
                     next: None,
                 },
@@ -687,6 +708,7 @@ mod tests {
                     decomposition_base_log: 15,
                     decomposition_chunks: 4,
                     rank: 1,
+                    #[cfg(feature = "standard")]
                     diag_blocks: 1,
                     next: None,
                 },
@@ -722,6 +744,7 @@ mod tests {
         round_trip(config);
     }
 
+    #[cfg(feature = "standard")]
     /// A round that commits block-diagonally, at the basic commitment and at a recursion level:
     /// the witness is cut in two, one short key meets both halves, and the commitment keeps its
     /// full rank.
@@ -752,6 +775,7 @@ mod tests {
                     decomposition_base_log: 7,
                     decomposition_chunks: 8,
                     rank: 1,
+                    #[cfg(feature = "standard")]
                     diag_blocks: 1,
                     next: None,
                 })),
@@ -771,6 +795,7 @@ mod tests {
                     decomposition_base_log: 15,
                     decomposition_chunks: 2,
                     rank: 1,
+                    #[cfg(feature = "standard")]
                     diag_blocks: 1,
                     next: None,
                 },
@@ -778,6 +803,7 @@ mod tests {
                     decomposition_base_log: 15,
                     decomposition_chunks: 4,
                     rank: 1,
+                    #[cfg(feature = "standard")]
                     diag_blocks: 1,
                     next: None,
                 },
@@ -797,6 +823,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "standard")]
     #[test]
     fn diag_blocks_round_trip() {
         init_common();
@@ -816,6 +843,7 @@ mod tests {
 
     /// One key row meets all four blocks of a recursion level, so the verifier evaluates its
     /// slices once and reuses them; only the per-block selector differs.
+    #[cfg(feature = "standard")]
     #[test]
     fn four_blocks_recursion_level_round_trip() {
         init_common();
@@ -836,6 +864,7 @@ mod tests {
 
     /// The basic commitment's rows are independent constraints, so its rank need not be dyadic
     /// when it commits block-diagonally: three key rows meet each of the two halves.
+    #[cfg(feature = "standard")]
     #[test]
     fn non_dyadic_rank_with_blocks_round_trip() {
         init_common();
@@ -857,6 +886,7 @@ mod tests {
     /// every row is still constrained is that corrupting any single one of them is rejected. The
     /// first digit of a row is placed and carries radix one, and touching it breaks that row's
     /// CommitmentFold term and the layer that commits it alike.
+    #[cfg(feature = "standard")]
     #[test]
     fn a_corrupt_commitment_row_is_rejected() {
         use crate::common::ring_arithmetic::{Representation, RingElement};
@@ -930,12 +960,14 @@ mod tests {
             projection_ratio: 32,
             projection_height: 8,
             basic_commitment_rank: 1,
+            #[cfg(feature = "standard")]
             basic_commitment_diag_blocks: 1,
             nof_openings,
             commitment_recursion: AuxRecursionConfig {
                 decomposition_base_log: 15,
                 decomposition_chunks: 2,
                 rank: 1,
+                #[cfg(feature = "standard")]
                 diag_blocks: 1,
                 next: None,
             },
@@ -943,6 +975,7 @@ mod tests {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                #[cfg(feature = "standard")]
                 diag_blocks: 1,
                 next: None,
             },

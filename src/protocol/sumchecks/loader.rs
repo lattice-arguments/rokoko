@@ -8,22 +8,30 @@ use crate::{
     },
     protocol::{
         config::SumcheckConfig,
-        crs::CRS,
         open::Opening,
         project_fine::BatchedProjectionChallenges,
         sumchecks::helpers::{
-            combined_ck_row, projection_flatter_1_times_matrix, row_batch_weights,
-            split_projection_flatter, tensor_product_u64, WeightedRecomposition,
+            projection_flatter_1_times_matrix, split_projection_flatter, tensor_product_u64,
         },
     },
 };
 
-use super::context::{KeySegments, PieceSelectors, SumcheckContext};
+use super::context::SumcheckContext;
+
+#[cfg(feature = "standard")]
+use crate::protocol::{
+    crs::CRS,
+    sumchecks::{
+        context::{KeySegments, PieceSelectors},
+        helpers::{combined_ck_row, row_batch_weights, WeightedRecomposition},
+    },
+};
 
 /// Loads the round's row-batching weights into the gadgets that stand for a family of commitment
 /// rows: the block weights onto the piece selectors and the block recomposition of the folded
 /// witness, the key-row weights into the combined key rows, and the row weights into the
 /// recompositions of the committed values.
+#[cfg(feature = "standard")]
 pub fn load_row_batch_weights(
     sumcheck_context: &mut SumcheckContext,
     config: &SumcheckConfig,
@@ -82,6 +90,7 @@ pub fn load_row_batch_weights(
 /// One recursion level's share of that: `shape` is `(blocks, block_len, blockwise_rank)`, and
 /// `child` is the recomposition of the level's commitment, absent on the level that anchors to
 /// the public value.
+#[cfg(feature = "standard")]
 fn load_com_verify_level(
     crs: &CRS,
     layers: &[RingElement],

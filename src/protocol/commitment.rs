@@ -495,6 +495,7 @@ mod tests {
 
     /// Block-diagonal commitment: the same short key meets every block of a column, and block
     /// `b` against row `i` lands at commitment row `b * rank / blocks + i`.
+    #[cfg(feature = "standard")]
     #[test]
     fn block_diagonal_commitment_repeats_one_key() {
         let blocks = 2;

@@ -18,9 +18,11 @@ use crate::{
             ring_to_field_combiner::RingToFieldCombinerEvaluation,
             selector_eq::SelectorEqEvaluation,
         },
-        sumchecks::builder_verifier::WeightedRecompositionEvaluation,
     },
 };
+
+#[cfg(feature = "standard")]
+use crate::protocol::sumchecks::builder_verifier::WeightedRecompositionEvaluation;
 
 /// Verifier's sumcheck context - mirrors SumcheckContext but with evaluation-only types.
 /// Uses ElephantCell for all evaluations to allow shared ownership, just like the prover.
@@ -28,8 +30,14 @@ pub struct VerifierSumcheckContext {
     // Base evaluations (leaf nodes that will be loaded with data)
     pub combined_witness_evaluation: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
     pub folding_challenges_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
+    #[cfg(not(feature = "standard"))]
+    pub commitment_key_rows_evaluation:
+        Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
 
     // Type-specific contexts
+    #[cfg(not(feature = "standard"))]
+    pub commitment_fold_evaluations: Vec<CommitmentFoldVerifierContext>,
+    #[cfg(feature = "standard")]
     pub commitment_fold_evaluation: CommitmentFoldVerifierContext,
     pub inner_eval_fold_evaluations: Vec<InnerEvalFoldVerifierContext>,
     pub outer_eval_claim_evaluations: Vec<OuterEvalClaimVerifierContext>,
@@ -62,8 +70,11 @@ impl VerifierSumcheckContext {
 /// output's tree; what the round loads are the weights its scales and recompositions carry.
 pub struct CommitmentFoldVerifierContext {
     /// One scale per key row, holding `w_row(j)`.
+    #[cfg(feature = "standard")]
     pub key_row_scales: Vec<ElephantCell<SelectorEqEvaluation>>,
+    #[cfg(feature = "standard")]
     pub folded_witness_blocks: WeightedRecompositionEvaluation,
+    #[cfg(feature = "standard")]
     pub basic_commitment_rows: Vec<WeightedRecompositionEvaluation>,
     pub output: ElephantCell<DiffSumcheckEvaluation>,
 }
@@ -125,23 +136,43 @@ pub struct ComVerifyVerifierContext {
 
 /// The block each placed piece of a level falls in, paired with the selector that carries the
 /// block's weight.
+#[cfg(feature = "standard")]
 pub type PieceSelectorEvaluations = Vec<(usize, ElephantCell<SelectorEqEvaluation>)>;
 
 pub struct ComVerifyLayerVerifierContext {
+    #[cfg(feature = "standard")]
     pub blocks: usize,
+    #[cfg(feature = "standard")]
     pub blockwise_rank: usize,
+    #[cfg(feature = "standard")]
     pub piece_selectors: PieceSelectorEvaluations,
+    #[cfg(feature = "standard")]
     pub key_row_scales: Vec<ElephantCell<SelectorEqEvaluation>>,
+    #[cfg(feature = "standard")]
     pub child: WeightedRecompositionEvaluation,
+    #[cfg(feature = "standard")]
     pub output: ElephantCell<DiffSumcheckEvaluation>,
+    #[cfg(not(feature = "standard"))]
+    pub ck_evaluations: Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
+    #[cfg(not(feature = "standard"))]
+    pub outputs: Vec<ElephantCell<DiffSumcheckEvaluation>>,
 }
 
 pub struct ComVerifyOutputLayerVerifierContext {
+    #[cfg(feature = "standard")]
     pub blocks: usize,
+    #[cfg(feature = "standard")]
     pub blockwise_rank: usize,
+    #[cfg(feature = "standard")]
     pub piece_selectors: PieceSelectorEvaluations,
+    #[cfg(feature = "standard")]
     pub key_row_scales: Vec<ElephantCell<SelectorEqEvaluation>>,
+    #[cfg(feature = "standard")]
     pub output: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
+    #[cfg(not(feature = "standard"))]
+    pub ck_evaluations: Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
+    #[cfg(not(feature = "standard"))]
+    pub outputs: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
 }
 
 pub struct NormCheckVerifierContext {

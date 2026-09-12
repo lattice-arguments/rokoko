@@ -1524,6 +1524,7 @@ mod tests {
 
     /// The CRT path commits block-diagonally by reading the witness as `blocks` times as many
     /// columns; `regroup_blocks` then puts the rows back in commitment order.
+    #[cfg(feature = "standard")]
     #[test]
     fn crt_blocks_match_the_ring_ones() {
         init_common();

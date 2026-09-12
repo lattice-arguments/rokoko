@@ -1,3 +1,8 @@
+#[cfg(feature = "standard")]
+use crate::protocol::sumchecks::builder_verifier::ck_row_evaluation;
+#[cfg(not(feature = "standard"))]
+use crate::protocol::sumchecks::builder_verifier::structured_row_ck_evaluation as ck_row_evaluation;
+
 use crate::{
     common::{
         config::{DEGREE, NOF_BATCHES},
@@ -19,9 +24,7 @@ use crate::{
             product::ProductSumcheckEvaluation,
             ring_to_field_combiner::RingToFieldCombinerEvaluation,
         },
-        sumchecks::builder_verifier::{
-            basic_evaluation_linear, ck_row_evaluation, load_combiner_evaluation_data,
-        },
+        sumchecks::builder_verifier::{basic_evaluation_linear, load_combiner_evaluation_data},
     },
 };
 

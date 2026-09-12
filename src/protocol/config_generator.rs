@@ -8,7 +8,23 @@ pub struct AuxRecursionConfig {
     pub decomposition_base_log: usize,
     pub decomposition_chunks: usize,
     pub rank: usize,
+    /// How many equal blocks the level's input is cut into, each committed with the same
+    /// `rank / diag_blocks` key rows.
+    #[cfg(feature = "standard")]
+    pub diag_blocks: usize,
     pub next: Option<Box<AuxRecursionConfig>>,
+}
+
+impl AuxRecursionConfig {
+    #[cfg(feature = "standard")]
+    fn blocks(&self) -> usize {
+        self.diag_blocks
+    }
+
+    #[cfg(not(feature = "standard"))]
+    fn blocks(&self) -> usize {
+        1
+    }
 }
 
 #[derive(Clone)]
@@ -36,6 +52,9 @@ pub struct AuxSumcheckConfig {
     pub projection_ratio: usize,
     pub projection_height: usize,
     pub basic_commitment_rank: usize,
+    /// How many equal blocks the round's witness is cut into for the basic commitment.
+    #[cfg(feature = "standard")]
+    pub basic_commitment_diag_blocks: usize,
     pub nof_openings: usize,
     pub commitment_recursion: AuxRecursionConfig,
     pub opening_recursion: AuxRecursionConfig,
@@ -55,6 +74,16 @@ struct ComponentInfo {
 }
 
 impl AuxSumcheckConfig {
+    #[cfg(feature = "standard")]
+    fn blocks(&self) -> usize {
+        self.basic_commitment_diag_blocks
+    }
+
+    #[cfg(not(feature = "standard"))]
+    fn blocks(&self) -> usize {
+        1
+    }
+
     pub fn generate_config(&self) -> Config {
         self.generate_config_inner(0)
     }
@@ -429,6 +458,7 @@ impl AuxSumcheckConfig {
             projection_ratio: self.projection_ratio,
             projection_height: self.projection_height,
             basic_commitment_rank: self.basic_commitment_rank,
+            basic_commitment_diag_blocks: self.blocks(),
             nof_openings: self.nof_openings,
             commitment_recursion,
             next_level_usage_ratio: usage_ratio,
@@ -496,6 +526,7 @@ impl AuxSumcheckConfig {
             decomposition_base_log: aux_config.decomposition_base_log,
             decomposition_chunks: aux_config.decomposition_chunks,
             rank: aux_config.rank,
+            diag_blocks: aux_config.blocks(),
             placements,
             next,
         }
@@ -514,15 +545,21 @@ mod tests {
             projection_ratio: 32,
             projection_height: 8,
             basic_commitment_rank: 2,
+            #[cfg(feature = "standard")]
+            basic_commitment_diag_blocks: 1,
             nof_openings: 1,
             commitment_recursion: AuxRecursionConfig {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                #[cfg(feature = "standard")]
+                diag_blocks: 1,
                 next: Some(Box::new(AuxRecursionConfig {
                     decomposition_base_log: 7,
                     decomposition_chunks: 8,
                     rank: 1,
+                    #[cfg(feature = "standard")]
+                    diag_blocks: 1,
                     next: None,
                 })),
             },
@@ -530,12 +567,16 @@ mod tests {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                #[cfg(feature = "standard")]
+                diag_blocks: 1,
                 next: None,
             },
             projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
                 decomposition_base_log: 15,
                 decomposition_chunks: 2,
                 rank: 1,
+                #[cfg(feature = "standard")]
+                diag_blocks: 1,
                 next: None,
             }),
             witness_decomposition_base_log: 15,
@@ -558,15 +599,21 @@ mod tests {
             projection_ratio: 64,
             projection_height: 8,
             basic_commitment_rank: 2,
+            #[cfg(feature = "standard")]
+            basic_commitment_diag_blocks: 1,
             nof_openings: 1,
             commitment_recursion: AuxRecursionConfig {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                #[cfg(feature = "standard")]
+                diag_blocks: 1,
                 next: Some(Box::new(AuxRecursionConfig {
                     decomposition_base_log: 7,
                     decomposition_chunks: 8,
                     rank: 1,
+                    #[cfg(feature = "standard")]
+                    diag_blocks: 1,
                     next: None,
                 })),
             },
@@ -574,6 +621,8 @@ mod tests {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                #[cfg(feature = "standard")]
+                diag_blocks: 1,
                 next: None,
             },
             projection_recursion: AuxProjection::Fine {
@@ -582,12 +631,16 @@ mod tests {
                     decomposition_base_log: 15,
                     decomposition_chunks: 2,
                     rank: 1,
+                    #[cfg(feature = "standard")]
+                    diag_blocks: 1,
                     next: None,
                 },
                 recursion_batched_projection: AuxRecursionConfig {
                     decomposition_base_log: 15,
                     decomposition_chunks: 4,
                     rank: 1,
+                    #[cfg(feature = "standard")]
+                    diag_blocks: 1,
                     next: None,
                 },
             },
