@@ -31,7 +31,10 @@ pub(crate) fn composition_sumcheck(
 ) -> ElephantCell<LinearSumcheck<RingElement>> {
     let composition_basis = (0..chunks)
         .map(|i| {
-            RingElement::constant(pow_mod(2, base_log * i as u64), Representation::IncompleteNTT)
+            RingElement::constant(
+                pow_mod(2, base_log * i as u64),
+                Representation::IncompleteNTT,
+            )
         })
         .collect::<Vec<RingElement>>();
     let combiner_sumcheck = ElephantCell::new(
@@ -93,21 +96,26 @@ pub(crate) fn sum_of(
         .expect("a component has at least one placed block")
 }
 
-/// One dyadic block of a placed component as a recomposition term: where the block sits, the
-/// radix weights it carries, and the variables below them. `prefix.length`, `weights.len()` and
-/// `suffix` are the geometry the linear sumcheck over the weights is laid out on, and they add up
-/// to `total_vars`.
+/// One run of a placed component as a recomposition term: where the run sits, the radix weights
+/// it carries, and the variables below them. `prefix.length`, `weights.len()` and `suffix` are
+/// the geometry the linear sumcheck over the weights is laid out on, and they add up to
+/// `total_vars`.
 pub(crate) struct BlockWeights {
     pub prefix: Prefix,
     pub weights: Vec<RingElement>,
     pub suffix: usize,
 }
 
-/// The dyadic blocks of a placed component, each with the radix weights it carries. A block holds
-/// a power-of-two run of the component's slices at a slice-aligned offset, so the weights it
-/// carries are a function of the block's own low bits alone. `parts`/`part` address one of
-/// `parts` equal pieces of every plane -- an opening, a projection batch, one commitment element
-/// -- and `(1, 0)` takes the whole plane; a slice outside the `part`-th piece weighs zero.
+/// The runs of a placed component that carry weight. `parts`/`part` address one of `parts` equal
+/// pieces of every plane -- an opening, a projection batch, one commitment element -- and
+/// `(1, 0)` takes the whole plane.
+///
+/// A block holds a power-of-two run of the component's slices at a slice-aligned offset, and
+/// slice `plane * parts + part` sits on the block's own low bits. A single part is therefore the
+/// whole block and its weights are the block's planes; every other part is one slice per plane,
+/// scattered `parts` apart, and each is addressed by its own prefix. Addressing them costs a term
+/// per plane rather than a length-`chunks * parts` vector per part, which is what keeps a level
+/// linear rather than quadratic in `parts`.
 pub(crate) fn block_recomposition_weights(
     placement: &Placement,
     chunks: usize,
@@ -121,31 +129,43 @@ pub(crate) fn block_recomposition_weights(
     placement
         .blocks_with_offsets()
         .into_iter()
-        .map(|(offset, size, prefix)| {
-            let weights: Vec<RingElement> = (offset / slice_len..(offset + size) / slice_len)
-                .map(|slice| {
-                    if slice % parts == part {
-                        plane_weight(base_log, slice / parts)
-                    } else {
-                        RingElement::zero(Representation::IncompleteNTT)
+        .flat_map(|(offset, size, prefix)| {
+            let slices = size / slice_len;
+            let planes = slices / parts;
+            let first_plane = offset / slice_len / parts;
+            debug_assert_eq!(slices % parts, 0, "a block holds whole planes");
+
+            if parts == 1 {
+                let weights = (0..planes)
+                    .map(|plane| plane_weight(base_log, first_plane + plane))
+                    .collect::<Vec<_>>();
+                let suffix = total_vars - prefix.length - planes.ilog2() as usize;
+                return vec![BlockWeights {
+                    prefix,
+                    weights,
+                    suffix,
+                }];
+            }
+
+            (0..planes)
+                .map(|plane| {
+                    let prefix = Prefix {
+                        prefix: prefix.prefix * slices + plane * parts + part,
+                        length: prefix.length + slices.ilog2() as usize,
+                    };
+                    BlockWeights {
+                        suffix: total_vars - prefix.length,
+                        prefix,
+                        weights: vec![plane_weight(base_log, first_plane + plane)],
                     }
                 })
-                .collect();
-            let suffix = total_vars - prefix.length - weights.len().ilog2() as usize;
-            BlockWeights {
-                prefix,
-                weights,
-                suffix,
-            }
+                .collect::<Vec<_>>()
         })
         .collect()
 }
 
 /// The factor `SUM_j 2^{base_log . j} . selector_j` a placed component is recomposed by: one
-/// block selector times the radix weights of the planes that block holds, summed over the
-/// blocks. The two factors of a block live on disjoint variables -- the block address above, the
-/// plane index below -- so the recomposition costs one product per block rather than one per
-/// digit plane.
+/// run selector times the radix weights that run carries, summed over the runs.
 pub(crate) struct Recomposition {
     factor: Data,
 }
@@ -198,7 +218,7 @@ impl FoldedLeaves {
                         weights,
                         suffix,
                     } = block_weights;
-                    let block = sumcheck_from_prefix(&prefix, total_vars);
+                    let run = sumcheck_from_prefix(&prefix, total_vars);
                     let weights_sumcheck = ElephantCell::new(
                         LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
                             weights.len(),
@@ -209,11 +229,11 @@ impl FoldedLeaves {
                     weights_sumcheck.borrow_mut().load_from(&weights);
 
                     let factor = ElephantCell::new(ProductSumcheck::new(
-                        block.clone() as Data,
+                        run.clone() as Data,
                         weights_sumcheck.clone() as Data,
                     )) as Data;
 
-                    self.selectors.push(block);
+                    self.selectors.push(run);
                     self.weights.push(weights_sumcheck);
 
                     factor
