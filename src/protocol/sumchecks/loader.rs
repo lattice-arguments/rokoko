@@ -8,15 +8,107 @@ use crate::{
     },
     protocol::{
         config::SumcheckConfig,
+        crs::CRS,
         open::Opening,
         project_fine::BatchedProjectionChallenges,
         sumchecks::helpers::{
-            projection_flatter_1_times_matrix, split_projection_flatter, tensor_product_u64,
+            combined_ck_row, projection_flatter_1_times_matrix, row_batch_weights,
+            split_projection_flatter, tensor_product_u64, WeightedRecomposition,
         },
     },
 };
 
-use super::context::SumcheckContext;
+use super::context::{KeySegments, PieceSelectors, SumcheckContext};
+
+/// Loads the round's row-batching weights into the gadgets that stand for a family of commitment
+/// rows: the block weights onto the piece selectors and the block recomposition of the folded
+/// witness, the key-row weights into the combined key rows, and the row weights into the
+/// recompositions of the committed values.
+pub fn load_row_batch_weights(
+    sumcheck_context: &mut SumcheckContext,
+    config: &SumcheckConfig,
+    crs: &CRS,
+    layers: &[RingElement],
+) {
+    let blocks = config.basic_commitment_diag_blocks;
+    let weights = row_batch_weights(layers, blocks, config.basic_commitment_rank / blocks);
+
+    let commitment_fold = &sumcheck_context.commitment_fold_sumcheck;
+    commitment_fold.folded_witness_blocks.load(&weights.blocks);
+    commitment_fold
+        .combined_commitment_key_row
+        .borrow_mut()
+        .load_from(&combined_ck_row(
+            crs,
+            config.witness_height / blocks,
+            &weights.rows,
+        ));
+    for (row, weight) in commitment_fold
+        .basic_commitment_rows
+        .iter()
+        .zip(weights.all.iter())
+    {
+        row.load(std::slice::from_ref(weight));
+    }
+
+    for com_verify in sumcheck_context.com_verify_sumchecks.iter() {
+        for layer in com_verify.layers.iter() {
+            load_com_verify_level(
+                crs,
+                layers,
+                (layer.blocks, layer.block_len, layer.blockwise_rank),
+                &layer.piece_selectors,
+                &layer.key_segments,
+                Some(&layer.child),
+            );
+        }
+
+        let output_layer = &com_verify.output_layer;
+        load_com_verify_level(
+            crs,
+            layers,
+            (
+                output_layer.blocks,
+                output_layer.block_len,
+                output_layer.blockwise_rank,
+            ),
+            &output_layer.piece_selectors,
+            &output_layer.key_segments,
+            None,
+        );
+    }
+}
+
+/// One recursion level's share of that: `shape` is `(blocks, block_len, blockwise_rank)`, and
+/// `child` is the recomposition of the level's commitment, absent on the level that anchors to
+/// the public value.
+fn load_com_verify_level(
+    crs: &CRS,
+    layers: &[RingElement],
+    shape: (usize, usize, usize),
+    piece_selectors: &PieceSelectors,
+    key_segments: &KeySegments,
+    child: Option<&WeightedRecomposition>,
+) {
+    let (blocks, block_len, blockwise_rank) = shape;
+    let weights = row_batch_weights(layers, blocks, blockwise_rank);
+    let combined_key_row = combined_ck_row(crs, block_len, &weights.rows);
+
+    for (block, selector) in piece_selectors {
+        selector.borrow_mut().set_scale(&weights.blocks[*block]);
+    }
+
+    for (slices, slice, key_segment) in key_segments {
+        let len = block_len / slices;
+        key_segment
+            .borrow_mut()
+            .load_from(&combined_key_row[slice * len..(slice + 1) * len]);
+    }
+
+    if let Some(child) = child {
+        child.load(&weights.all);
+    }
+}
 
 /// Loads all data into the sumcheck context.
 ///

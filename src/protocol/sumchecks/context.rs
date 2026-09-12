@@ -12,6 +12,7 @@ use crate::{
             ring_to_field_combiner::RingToFieldCombiner,
             selector_eq::SelectorEq,
         },
+        sumchecks::helpers::WeightedRecomposition,
     },
 };
 
@@ -31,8 +32,7 @@ pub struct SumcheckContext {
     /// per such recomposition.
     pub recomposition_weights: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
     pub folding_challenges_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
-    pub commitment_key_rows_sumcheck: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
-    pub commitment_fold_sumchecks: Vec<CommitmentFoldSumcheckContext>,
+    pub commitment_fold_sumcheck: CommitmentFoldSumcheckContext,
     pub inner_eval_fold_sumchecks: Vec<InnerEvalFoldSumcheckContext>,
     pub outer_eval_claim_sumchecks: Vec<OuterEvalClaimSumcheckContext>,
     pub coarse_proj_sumcheck: Option<CoarseProjSumcheckContext>,
@@ -63,9 +63,10 @@ impl SumcheckContext {
         self.folding_challenges_sumcheck
             .borrow_mut()
             .partial_evaluate(r);
-        for ck_row_sc in self.commitment_key_rows_sumcheck.iter() {
-            ck_row_sc.borrow_mut().partial_evaluate(r);
-        }
+        self.commitment_fold_sumcheck
+            .combined_commitment_key_row
+            .borrow_mut()
+            .partial_evaluate(r);
         for inner_eval_fold_sc in self.inner_eval_fold_sumchecks.iter() {
             inner_eval_fold_sc
                 .inner_evaluation_sumcheck
@@ -142,15 +143,21 @@ impl SumcheckContext {
     }
 }
 
-/// CommitmentFold: Basic commitment correctness constraint.
+/// CommitmentFold: Basic commitment correctness constraint, over all `basic_commitment_rank` rows
+/// at once.
 ///
-/// Proves: `CK · folded_witness = commitment · fold_challenge`
-/// where folded_witness is recomposed from decomposed chunks.
+/// Proves: `SUM_i w_i . (CK_i · folded_witness - commitment_i · fold_challenge) = 0`
 ///
 /// Output DiffSumcheck computes:
-///   LHS: selector · (recomposed_folded_witness · CK_row)
-///   RHS: commitment_selector · (recomposed_commitment · fold_challenge)
+///   LHS: block-weighted recomposed folded witness · (witness · combined CK row)
+///   RHS: (SUM_i w_i . recomposed commitment_i) · (witness · fold_challenge)
 pub struct CommitmentFoldSumcheckContext {
+    /// `SUM_j w_row(j) . K_j` over the key rows one block is committed with.
+    pub combined_commitment_key_row: ElephantCell<LinearSumcheck<RingElement>>,
+    /// The folded witness recomposed per block, carrying the block weights.
+    pub folded_witness_blocks: WeightedRecomposition,
+    /// One recomposition per commitment row, each carrying that row's weight.
+    pub basic_commitment_rows: Vec<WeightedRecomposition>,
     pub output: ElephantCell<DiffSumcheck<RingElement>>,
 }
 
@@ -197,28 +204,44 @@ pub struct CoarseProjSumcheckContext {
     pub output: ElephantCell<DiffSumcheck<RingElement>>,
 }
 
-/// ComVerify layer: One layer in a recursive commitment tree.
+/// The key segments of one level, each tagged with the `(slices, slice)` that cuts it out of the
+/// level's combined key row.
+pub type KeySegments = Vec<(usize, usize, ElephantCell<LinearSumcheck<RingElement>>)>;
+
+/// The block each placed piece of a level falls in, paired with the selector that carries the
+/// block's weight.
+pub type PieceSelectors = Vec<(usize, ElephantCell<SelectorEq<RingElement>>)>;
+
+/// ComVerify layer: One layer in a recursive commitment tree, with its `rank` rows batched into
+/// one constraint.
 ///
-/// For each internal layer i, proves: `CK_i · selected_witness_i = compose(child_commitment_{i+1})`
+/// Proves: `SUM_i w_i . (CK_i · selected_witness_i - compose(child_commitment)_i) = 0`
 ///
 /// Key fields:
-/// - `selector_sumchecks`, `child_selector_sumcheck`: select layer and child data slices, one
-///   selector per placed row block of the layer's input and one child selector per CK row
-/// - `ck_sumchecks`: commitment key rows cut into the matching row segments, `rank` x segments
-/// - `outputs`: DiffSumchecks proving the constraint for each CK row, summed over the segments
+/// - `blocks`, `block_len`, `blockwise_rank`: the shape the level's combined key row is built at
+/// - `key_segments`: that row cut into the slices the placed pieces meet
+/// - `piece_selectors`: the piece selectors, which carry the block weights
+/// - `child`: the child's recomposition, carrying the row weights
 pub struct ComVerifyLayerSumcheckContext {
-    /// The commitment key rows cut into one slice per placed piece of the level's input,
-    /// `rank` x pieces.
-    pub ck_sumchecks: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
-    pub outputs: Vec<ElephantCell<DiffSumcheck<RingElement>>>,
+    pub blocks: usize,
+    pub block_len: usize,
+    pub blockwise_rank: usize,
+    pub piece_selectors: PieceSelectors,
+    pub key_segments: KeySegments,
+    pub child: WeightedRecomposition,
+    pub output: ElephantCell<DiffSumcheck<RingElement>>,
 }
 
-/// ComVerify output layer: Leaf layer checking `selector · (CK · witness) = public_commitment`.
+/// ComVerify output layer: Leaf layer checking `SUM_i w_i . (CK_i · witness) = SUM_i w_i . rc_i`.
 ///
-/// Uses ProductSumchecks (not DiffSumchecks) since we check against a known public value.
+/// A ProductSumcheck tree (not a DiffSumcheck) since we check against a known public value.
 pub struct ComVerifyOutputLayerSumcheckContext {
-    pub ck_sumchecks: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
-    pub outputs: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>>,
+    pub blocks: usize,
+    pub block_len: usize,
+    pub blockwise_rank: usize,
+    pub piece_selectors: PieceSelectors,
+    pub key_segments: KeySegments,
+    pub output: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
 }
 
 /// ComVerify: Complete recursive commitment verification structure.
@@ -275,12 +298,12 @@ pub struct FineProjSumcheckContextWrapper {
 
 fn partial_evaluate_com_verify(ctx: &mut ComVerifySumcheckContext, r: &RingElement) {
     for layer in ctx.layers.iter_mut() {
-        for ck in layer.ck_sumchecks.iter() {
+        for (_, _, ck) in layer.key_segments.iter() {
             ck.borrow_mut().partial_evaluate(r);
         }
     }
 
-    for ck in ctx.output_layer.ck_sumchecks.iter() {
+    for (_, _, ck) in ctx.output_layer.key_segments.iter() {
         ck.borrow_mut().partial_evaluate(r);
     }
 }

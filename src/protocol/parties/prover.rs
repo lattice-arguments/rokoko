@@ -361,6 +361,7 @@ pub fn prover_round(
     let sumcheck_output = {
         let _s = tracing::info_span!("prover_round::sumcheck").entered();
         sumcheck(
+            crs,
             &config,
             &next_round_witness.data,
             &projection_matrix,

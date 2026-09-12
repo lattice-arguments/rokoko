@@ -192,17 +192,17 @@ type WeightedEntries = Vec<(RingElement, usize)>;
 /// `SUM_part weights[part] . recomposition(.., parts, part)`. The geometry is fixed at setup and
 /// the weights are loaded once the round has sampled them, so one constraint stands for what was
 /// a family of `parts` of them.
-pub(crate) struct WeightedRecomposition {
+pub struct WeightedRecomposition {
     factor: Data,
     leaves: Vec<(ElephantCell<LinearSumcheck<RingElement>>, WeightedEntries)>,
 }
 
 impl WeightedRecomposition {
-    pub(crate) fn times(&self, payload: Data) -> Data {
+    pub fn times(&self, payload: Data) -> Data {
         ElephantCell::new(ProductSumcheck::new(self.factor.clone(), payload)) as Data
     }
 
-    pub(crate) fn load(&self, part_weights: &[RingElement]) {
+    pub fn load(&self, part_weights: &[RingElement]) {
         let mut values: Vec<RingElement> = Vec::new();
         for (leaf, entries) in &self.leaves {
             values.clear();
@@ -259,6 +259,80 @@ pub(crate) fn weighted_recomposition_layout(
                 .collect::<Vec<_>>()
         })
         .collect()
+}
+
+/// How many tensor layers a round samples for its row-batching challenge. One set covers every
+/// commitment-row family of the round, and a family takes as many of the trailing layers as its
+/// row count needs.
+pub(crate) const ROW_BATCH_LAYERS: usize = 16;
+
+/// The weights one family of commitment rows is batched under. Row `block * blockwise_rank + row`
+/// carries `blocks[block] . rows[row]`, which `all` holds in row order. The two groups sit on
+/// layer groups of their own, so neither count has to be a power of two.
+pub(crate) struct RowWeights {
+    pub blocks: Vec<RingElement>,
+    pub rows: Vec<RingElement>,
+    pub all: Vec<RingElement>,
+}
+
+/// Derives a family's weights from the round's layers: the key-row group is the trailing
+/// `log2(blockwise_rank)` layers and the block group the `log2(blocks)` before it, each rounded
+/// up to a whole layer and cut back to the count it addresses.
+pub(crate) fn row_batch_weights(
+    layers: &[RingElement],
+    blocks: usize,
+    blockwise_rank: usize,
+) -> RowWeights {
+    let row_bits = blockwise_rank.next_power_of_two().ilog2() as usize;
+    let block_bits = blocks.next_power_of_two().ilog2() as usize;
+    assert!(
+        row_bits + block_bits <= layers.len(),
+        "{blocks} x {blockwise_rank} rows ask for more layers than the round samples"
+    );
+    let split = layers.len() - row_bits;
+
+    let mut block_weights =
+        PreprocessedRow::from_layers(&layers[split - block_bits..split]).preprocessed_row;
+    block_weights.truncate(blocks);
+    let mut row_weights = PreprocessedRow::from_layers(&layers[split..]).preprocessed_row;
+    row_weights.truncate(blockwise_rank);
+
+    let mut all = Vec::with_capacity(blocks * blockwise_rank);
+    for block in &block_weights {
+        for row in &row_weights {
+            let mut weight = RingElement::zero(Representation::IncompleteNTT);
+            weight *= (block, row);
+            all.push(weight);
+        }
+    }
+
+    RowWeights {
+        blocks: block_weights,
+        rows: row_weights,
+        all,
+    }
+}
+
+/// The one dense key row the batched constraint meets: `SUM_j w_row(j) . K_j` over the
+/// `blockwise_rank` key rows that meet every `wit_dim`-long block of a commitment's input. The
+/// segment of the combined row is the combination of the rows' segments, so a level materialises
+/// the row once and hands out slices of it.
+pub(crate) fn combined_ck_row(
+    crs: &CRS,
+    wit_dim: usize,
+    row_weights: &[RingElement],
+) -> Vec<RingElement> {
+    let mut combined = vec![RingElement::zero(Representation::IncompleteNTT); wit_dim];
+    let mut term = RingElement::zero(Representation::IncompleteNTT);
+
+    for (key_row, weight) in crs.ck_for_wit_dim(wit_dim).iter().zip(row_weights) {
+        for (out, key) in combined.iter_mut().zip(key_row.preprocessed_row.iter()) {
+            term *= (key, weight);
+            *out += &term;
+        }
+    }
+
+    combined
 }
 
 /// The registry of leaves a round folds once per sumcheck round: every selector it uses and the
@@ -415,25 +489,6 @@ pub(crate) fn ck_sumcheck(
         &crs.ck_for_wit_dim(wit_dim)[i].preprocessed_row,
         total_vars,
         sufix,
-    )
-}
-
-/// The `segment`-th of `segments` equal dyadic slices of the `i`-th commitment key row: the part
-/// of the row that meets one separately placed row block of the commitment's input.
-/// `segments == 1` reproduces `ck_sumcheck`.
-pub(crate) fn ck_segment_sumcheck(
-    crs: &CRS,
-    total_vars: usize,
-    wit_dim: usize,
-    i: usize,
-    segments: usize,
-    segment: usize,
-) -> ElephantCell<LinearSumcheck<RingElement>> {
-    let len = wit_dim / segments;
-    ck_row_sumcheck(
-        &crs.ck_for_wit_dim(wit_dim)[i].preprocessed_row[segment * len..(segment + 1) * len],
-        total_vars,
-        0,
     )
 }
 

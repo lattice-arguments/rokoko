@@ -17,7 +17,9 @@ use crate::{
         },
         sumcheck_utils::common::EvaluationSumcheckData,
         sumchecks::{
-            context_verifier::VerifierSumcheckContext, loader_verifier::load_verifier_sumcheck_data,
+            context_verifier::VerifierSumcheckContext,
+            helpers::{row_batch_weights, ROW_BATCH_LAYERS},
+            loader_verifier::{load_verifier_row_batch_weights, load_verifier_sumcheck_data},
         },
     },
 };
@@ -33,13 +35,14 @@ fn batch_claims(
     norm_claim: &RingElement,
     most_inner_norm_claim: &RingElement,
     projection_norm_claim: Option<&RingElement>,
+    row_batch_layers: &[RingElement],
     combination: &[RingElement],
 ) -> RingElement {
     let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
     let mut idx = 0;
 
-    // CommitmentFold: zero claims (difference sumchecks)
-    idx += config.basic_commitment_rank;
+    // CommitmentFold: one zero claim, the rows batched under the row weights
+    idx += 1;
 
     // InnerEvalFold: zero claims (difference sumchecks)
     idx += config.nof_openings;
@@ -103,20 +106,28 @@ fn batch_claims(
             _ => unreachable!(),
         };
 
-        // Internal layers (zero claims)
+        // Internal layers (zero claims), one output each
         let mut current = recursion_config;
         while let Some(next) = current.next.as_deref() {
-            idx += current.rank; // Each layer has rank outputs, all zero claims
+            idx += 1;
             current = next;
         }
 
-        // Output layer: rc_inner claims
-        for rc_value in rc_inner.iter() {
-            let mut weighted = rc_value.clone();
-            weighted *= &combination[idx];
-            batched_claim += &weighted;
-            idx += 1;
+        // Output layer: the rc_inner claims under the same row weights the output carries
+        let weights = row_batch_weights(
+            row_batch_layers,
+            current.diag_blocks,
+            current.blockwise_rank(),
+        );
+        let mut row_claim = RingElement::zero(Representation::IncompleteNTT);
+        let mut weighted = RingElement::zero(Representation::IncompleteNTT);
+        for (rc_value, weight) in rc_inner.iter().zip(weights.all.iter()) {
+            weighted *= (rc_value, weight);
+            row_claim += &weighted;
         }
+        row_claim *= &combination[idx];
+        batched_claim += &row_claim;
+        idx += 1;
     }
 
     // NormCheck: norm claim
@@ -239,6 +250,14 @@ pub fn sumcheck_verifier(
         hash_wrapper.update_with_ring_element_slice(constant_term_claims);
     }
 
+    // One tensor row challenge batches every commitment-row family of the round; a family of
+    // `rank` rows survives a wrong row only if the tensor vanishes on it, about
+    // log2(rank) / |F| in the quadratic extension, union-bounded over the families.
+    let mut row_batch_layers =
+        vec![RingElement::zero(Representation::IncompleteNTT); ROW_BATCH_LAYERS];
+    hash_wrapper.sample_ring_element_ntt_slots_same_vec_into(&mut row_batch_layers);
+    load_verifier_row_batch_weights(verifier_sumcheck_context, config, &row_batch_layers);
+
     // Sample random batching coefficients from Fiat-Shamir
     let num_sumchecks = verifier_sumcheck_context
         .combiner_evaluation
@@ -268,6 +287,7 @@ pub fn sumcheck_verifier(
         &round_proof.norm_claim,
         &round_proof.most_inner_norm_claim,
         projection_norm_claim,
+        &row_batch_layers,
         &combination,
     );
 

@@ -32,7 +32,10 @@ use crate::{
             InnerEvalFoldVerifierContext, NextVerifierSumcheckContext, NormCheckVerifierContext,
             OuterEvalClaimVerifierContext, VerifierSumcheckContext,
         },
-        sumchecks::helpers::{block_recomposition_weights, row_committed_pieces, BlockWeights},
+        sumchecks::helpers::{
+            block_recomposition_weights, row_committed_pieces, weighted_recomposition_layout,
+            BlockWeights,
+        },
     },
 };
 
@@ -108,6 +111,89 @@ fn recomposition_evaluation(
     }
 }
 
+/// Verifier dual of `WeightedRecomposition`: the same geometry, with the leaves loaded once the
+/// round has sampled the weights they carry.
+pub struct WeightedRecompositionEvaluation {
+    factor: ElephantCell<EvalData>,
+    leaves: Vec<(
+        ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
+        Vec<(RingElement, usize)>,
+    )>,
+}
+
+impl WeightedRecompositionEvaluation {
+    fn times(&self, payload: ElephantCell<EvalData>) -> ElephantCell<EvalData> {
+        ElephantCell::new(ProductSumcheckEvaluation::new(self.factor.clone(), payload))
+            as ElephantCell<EvalData>
+    }
+
+    pub fn load(&self, part_weights: &[RingElement]) {
+        let mut values: Vec<RingElement> = Vec::new();
+        for (leaf, entries) in &self.leaves {
+            values.clear();
+            for (radix, part) in entries {
+                let mut value = RingElement::zero(Representation::IncompleteNTT);
+                value *= (radix, &part_weights[*part]);
+                values.push(value);
+            }
+            leaf.borrow_mut().load_from(&values);
+        }
+    }
+}
+
+/// Dual of `FoldedLeaves::weighted_recomposition`.
+fn weighted_recomposition_evaluation(
+    placement: &Placement,
+    chunks: usize,
+    base_log: usize,
+    total_vars: usize,
+    parts: usize,
+) -> WeightedRecompositionEvaluation {
+    let mut leaves = Vec::new();
+    let terms = weighted_recomposition_layout(placement, chunks, base_log, total_vars, parts)
+        .into_iter()
+        .map(|(prefix, suffix, entries)| {
+            let run = selector_evaluation_from_prefix(&prefix, total_vars);
+            let weights = basic_evaluation_linear(entries.len(), prefix.length, suffix);
+
+            leaves.push((weights.clone(), entries));
+
+            ElephantCell::new(ProductSumcheckEvaluation::new(run, weights))
+                as ElephantCell<EvalData>
+        })
+        .collect();
+
+    WeightedRecompositionEvaluation {
+        factor: sum_of_evaluations(terms),
+        leaves,
+    }
+}
+
+/// A node that evaluates to a constant wherever the sumcheck point falls: a selector on no
+/// variables, whose scale the round loads. It is how a row weight enters a product without
+/// raising the constraint's degree.
+fn weight_evaluation(total_vars: usize) -> ElephantCell<SelectorEqEvaluation> {
+    ElephantCell::new(SelectorEqEvaluation::new(0, 0, total_vars))
+}
+
+/// The combined key row `SUM_j w_row(j) . K_j` as the verifier meets it: the dense rows evaluated
+/// at the point and weighted afterwards, which costs what the rows alone cost rather than a
+/// freshly combined dense row per round.
+fn combined_ck_evaluation(
+    rows: Vec<ElephantCell<EvalData>>,
+    scales: &[ElephantCell<SelectorEqEvaluation>],
+) -> ElephantCell<EvalData> {
+    sum_of_evaluations(
+        rows.into_iter()
+            .zip(scales)
+            .map(|(row, scale)| {
+                ElephantCell::new(ProductSumcheckEvaluation::new(scale.clone(), row))
+                    as ElephantCell<EvalData>
+            })
+            .collect(),
+    )
+}
+
 pub fn basic_evaluation_linear(
     count: usize,
     prefix_size: usize,
@@ -158,8 +244,8 @@ pub fn ck_row_evaluation(
     eval
 }
 
-/// The `segment`-th of `segments` equal dyadic slices of that row, the verifier's counterpart to
-/// `ck_segment_sumcheck`.
+/// The `segment`-th of `segments` equal dyadic slices of that row: the part that meets one
+/// separately placed row block of the commitment's input.
 pub fn ck_segment_evaluation(
     crs: &VerifierCRS,
     total_vars: usize,
@@ -182,6 +268,19 @@ struct InputPieceEvaluation {
     ck_slices: usize,
     ck_slice: usize,
     data: ElephantCell<EvalData>,
+    /// The piece's own selector, which carries the weight of the block the piece falls in.
+    selector: ElephantCell<SelectorEqEvaluation>,
+}
+
+/// Dual of `piece_block_selectors`.
+fn piece_block_selectors(
+    data_selected: &[Vec<InputPieceEvaluation>],
+) -> Vec<(usize, ElephantCell<SelectorEqEvaluation>)> {
+    data_selected
+        .iter()
+        .flatten()
+        .map(|piece| (piece.block, piece.selector.clone()))
+        .collect()
 }
 
 fn selected_input_piece_evaluations(
@@ -203,14 +302,16 @@ fn selected_input_piece_evaluations(
                         length: prefix.length + split.ilog2() as usize,
                     };
                     let slice = ck_slice * split + part;
+                    let selector = selector_evaluation_from_prefix(&prefix, total_vars);
                     pieces.push(InputPieceEvaluation {
                         block: slice / per_block,
                         ck_slices: per_block,
                         ck_slice: slice % per_block,
                         data: ElephantCell::new(ProductSumcheckEvaluation::new(
-                            selector_evaluation_from_prefix(&prefix, total_vars),
+                            selector.clone(),
                             witness.clone(),
                         )) as ElephantCell<EvalData>,
+                        selector,
                     });
                 }
             }
@@ -219,48 +320,45 @@ fn selected_input_piece_evaluations(
         .collect()
 }
 
-/// The key-row slices a level's outputs share, addressed by `(key row, slices, slice)`.
-type CkSegments =
-    HashMap<(usize, usize, usize), ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>>;
+/// The combined key-row slices a level's pieces share, addressed by `(slices, slice)`.
+type CkSegments = HashMap<(usize, usize), ElephantCell<EvalData>>;
 
-/// The level's key is `I_blocks (x) K`, so the slice of key row `i` that a piece meets is the
-/// same vector whichever block the piece falls in: its multilinear extension is evaluated once
-/// and reused by all `blocks` outputs that carry row `i`. What separates the blocks is the
-/// piece's own selector, whose prefix carries the block index in its leading bits.
-fn ck_over_pieces_evaluation(
+/// The level's key is `I_blocks (x) K`, so the slice of the combined key row that a piece meets
+/// is the same vector whichever block the piece falls in: the `blockwise_rank` dense rows behind
+/// it are evaluated once and reused by every piece on that slice. What separates the blocks is
+/// the piece's own selector, whose scale carries the block's weight.
+fn combined_ck_over_pieces_evaluation(
     crs: &VerifierCRS,
     total_vars: usize,
     config: &commitment::RecursionConfig,
-    r: usize,
     data_selected: &[Vec<InputPieceEvaluation>],
-    ck_evals: &mut Vec<ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>>,
+    key_row_scales: &[ElephantCell<SelectorEqEvaluation>],
     segments: &mut CkSegments,
 ) -> ElephantCell<EvalData> {
     let block_len = config.block_len();
     let blockwise_rank = config.blockwise_rank();
-    let block = r / blockwise_rank;
-    let i = r % blockwise_rank;
     let mut terms: Vec<ElephantCell<EvalData>> = Vec::new();
 
     for pieces in data_selected {
-        for piece in pieces.iter().filter(|piece| piece.block == block) {
-            let key = (i, piece.ck_slices, piece.ck_slice);
-            let ck = match segments.get(&key) {
-                Some(ck) => ck.clone(),
-                None => {
-                    let ck = ck_segment_evaluation(
-                        crs,
-                        total_vars,
-                        block_len,
-                        i,
-                        piece.ck_slices,
-                        piece.ck_slice,
-                    );
-                    ck_evals.push(ck.clone());
-                    segments.insert(key, ck.clone());
-                    ck
-                }
-            };
+        for piece in pieces {
+            let ck = segments
+                .entry((piece.ck_slices, piece.ck_slice))
+                .or_insert_with(|| {
+                    let rows = (0..blockwise_rank)
+                        .map(|i| {
+                            ck_segment_evaluation(
+                                crs,
+                                total_vars,
+                                block_len,
+                                i,
+                                piece.ck_slices,
+                                piece.ck_slice,
+                            ) as ElephantCell<EvalData>
+                        })
+                        .collect();
+                    combined_ck_evaluation(rows, key_row_scales)
+                })
+                .clone();
             terms.push(
                 ElephantCell::new(ProductSumcheckEvaluation::new(ck, piece.data.clone()))
                     as ElephantCell<EvalData>,
@@ -284,37 +382,35 @@ fn build_com_verify_verifier_context(
         let data_selected =
             selected_input_piece_evaluations(total_vars, current, &combined_witness_eval);
 
-        let mut ck_evals = Vec::new();
-        let mut segments = CkSegments::new();
-        let outputs = (0..current.rank)
-            .map(|i| {
-                let ck_with_data = ck_over_pieces_evaluation(
-                    crs,
-                    total_vars,
-                    current,
-                    i,
-                    &data_selected,
-                    &mut ck_evals,
-                    &mut segments,
-                );
-
-                let child = recomposition_evaluation(
-                    next.placement(),
-                    next.decomposition_chunks,
-                    next.decomposition_base_log,
-                    total_vars,
-                    current.rank,
-                    i,
-                );
-                let recomposed_child = child.times(combined_witness_eval.clone());
-
-                ElephantCell::new(DiffSumcheckEvaluation::new(ck_with_data, recomposed_child))
-            })
+        let key_row_scales = (0..current.blockwise_rank())
+            .map(|_| weight_evaluation(total_vars))
             .collect::<Vec<_>>();
+        let mut segments = CkSegments::new();
+        let ck_with_data = combined_ck_over_pieces_evaluation(
+            crs,
+            total_vars,
+            current,
+            &data_selected,
+            &key_row_scales,
+            &mut segments,
+        );
+
+        let child = weighted_recomposition_evaluation(
+            next.placement(),
+            next.decomposition_chunks,
+            next.decomposition_base_log,
+            total_vars,
+            current.rank,
+        );
+        let recomposed_child = child.times(combined_witness_eval.clone());
 
         layers.push(ComVerifyLayerVerifierContext {
-            ck_evaluations: ck_evals,
-            outputs,
+            blocks: current.diag_blocks,
+            blockwise_rank: current.blockwise_rank(),
+            piece_selectors: piece_block_selectors(&data_selected),
+            key_row_scales,
+            child,
+            output: ElephantCell::new(DiffSumcheckEvaluation::new(ck_with_data, recomposed_child)),
         });
 
         current = next;
@@ -322,27 +418,27 @@ fn build_com_verify_verifier_context(
 
     let data_selected =
         selected_input_piece_evaluations(total_vars, current, &combined_witness_eval);
-    let mut ck_evals = Vec::new();
-    let mut segments = CkSegments::new();
-    let outputs = (0..current.rank)
-        .map(|i| {
-            ck_over_pieces_evaluation(
-                crs,
-                total_vars,
-                current,
-                i,
-                &data_selected,
-                &mut ck_evals,
-                &mut segments,
-            )
-        })
+    let key_row_scales = (0..current.blockwise_rank())
+        .map(|_| weight_evaluation(total_vars))
         .collect::<Vec<_>>();
+    let mut segments = CkSegments::new();
+    let output = combined_ck_over_pieces_evaluation(
+        crs,
+        total_vars,
+        current,
+        &data_selected,
+        &key_row_scales,
+        &mut segments,
+    );
 
     ComVerifyVerifierContext {
         layers,
         output_layer: ComVerifyOutputLayerVerifierContext {
-            ck_evaluations: ck_evals,
-            outputs,
+            blocks: current.diag_blocks,
+            blockwise_rank: current.blockwise_rank(),
+            piece_selectors: piece_block_selectors(&data_selected),
+            key_row_scales,
+            output,
         },
     }
 }
@@ -376,53 +472,59 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
 
     let blocks = config.basic_commitment_diag_blocks;
     let blockwise_rank = config.basic_commitment_rank / blocks;
-    let commitment_key_rows_evaluation = (0..blockwise_rank)
-        .map(|i| ck_row_evaluation(crs, total_vars, config.witness_height / blocks, i, 0))
+    let key_row_scales = (0..blockwise_rank)
+        .map(|_| weight_evaluation(total_vars))
         .collect::<Vec<_>>();
-
-    let folded_witness_blocks: Vec<RecompositionEvaluation> = if blocks == 1 {
-        vec![folded_witness.clone()]
-    } else {
-        (0..blocks)
-            .map(|b| {
-                recomposition_evaluation(
-                    &config.folded_witness_placement,
-                    config.witness_decomposition_chunks,
-                    config.witness_decomposition_base_log,
-                    total_vars,
-                    blocks,
-                    b,
-                )
+    let combined_commitment_key_row = combined_ck_evaluation(
+        (0..blockwise_rank)
+            .map(|i| {
+                ck_row_evaluation(crs, total_vars, config.witness_height / blocks, i, 0)
+                    as ElephantCell<EvalData>
             })
-            .collect()
-    };
+            .collect(),
+        &key_row_scales,
+    );
 
-    let commitment_fold_evaluations = (0..config.basic_commitment_rank)
+    let folded_witness_blocks = weighted_recomposition_evaluation(
+        &config.folded_witness_placement,
+        config.witness_decomposition_chunks,
+        config.witness_decomposition_base_log,
+        total_vars,
+        blocks,
+    );
+
+    let basic_commitment_rows = (0..config.basic_commitment_rank)
         .map(|i| {
-            let row = recomposition_evaluation(
+            weighted_recomposition_evaluation(
                 &config.commitment_recursion.placements[i],
                 config.commitment_recursion.decomposition_chunks,
                 config.commitment_recursion.decomposition_base_log,
                 total_vars,
                 1,
-                0,
-            );
-
-            let lhs = folded_witness_blocks[i / blockwise_rank].times(ElephantCell::new(
-                ProductSumcheckEvaluation::new(
-                    witness.clone(),
-                    commitment_key_rows_evaluation[i % blockwise_rank].clone(),
-                ),
             )
-                as ElephantCell<EvalData>);
-
-            let rhs = row.times(witness_with_folding_challenges.clone());
-
-            CommitmentFoldVerifierContext {
-                output: ElephantCell::new(DiffSumcheckEvaluation::new(lhs, rhs)),
-            }
         })
         .collect::<Vec<_>>();
+
+    let commitment_fold_evaluation = {
+        let lhs = folded_witness_blocks.times(ElephantCell::new(ProductSumcheckEvaluation::new(
+            witness.clone(),
+            combined_commitment_key_row,
+        )) as ElephantCell<EvalData>);
+
+        let rhs = sum_of_evaluations(
+            basic_commitment_rows
+                .iter()
+                .map(|row| row.times(witness_with_folding_challenges.clone()))
+                .collect(),
+        );
+
+        CommitmentFoldVerifierContext {
+            key_row_scales,
+            folded_witness_blocks,
+            basic_commitment_rows,
+            output: ElephantCell::new(DiffSumcheckEvaluation::new(lhs, rhs)),
+        }
+    };
 
     let openings = (0..config.nof_openings)
         .map(|i| {
@@ -877,9 +979,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
     };
 
     let mut all_outputs: Vec<ElephantCell<EvalData>> = vec![];
-    for commitment_fold in &commitment_fold_evaluations {
-        all_outputs.push(commitment_fold.output.clone());
-    }
+    all_outputs.push(commitment_fold_evaluation.output.clone());
     for inner_eval_fold in &inner_eval_fold_evaluations {
         all_outputs.push(inner_eval_fold.output.clone());
     }
@@ -898,13 +998,9 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
 
     for com_verify in &com_verify_evaluations {
         for layer in &com_verify.layers {
-            for output in &layer.outputs {
-                all_outputs.push(output.clone());
-            }
+            all_outputs.push(layer.output.clone());
         }
-        for output in &com_verify.output_layer.outputs {
-            all_outputs.push(output.clone());
-        }
+        all_outputs.push(com_verify.output_layer.output.clone());
     }
     all_outputs.push(norm_check_evaluation.output.clone());
     all_outputs.push(norm_check_evaluation.output_2.clone());
@@ -920,8 +1016,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
     VerifierSumcheckContext {
         combined_witness_evaluation,
         folding_challenges_evaluation,
-        commitment_key_rows_evaluation,
-        commitment_fold_evaluations,
+        commitment_fold_evaluation,
         inner_eval_fold_evaluations,
         outer_eval_claim_evaluations,
         coarse_proj_evaluation,
