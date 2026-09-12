@@ -92,11 +92,11 @@ fn recomposition_evaluation(
                 weights,
                 suffix,
             } = block_weights;
-            let block = selector_evaluation_from_prefix(&prefix, total_vars);
+            let run = selector_evaluation_from_prefix(&prefix, total_vars);
             let weights_evaluation = basic_evaluation_linear(weights.len(), prefix.length, suffix);
             weights_evaluation.borrow_mut().load_from(&weights);
 
-            ElephantCell::new(ProductSumcheckEvaluation::new(block, weights_evaluation))
+            ElephantCell::new(ProductSumcheckEvaluation::new(run, weights_evaluation))
                 as ElephantCell<EvalData>
         })
         .collect();
@@ -541,11 +541,10 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 0,
             );
 
-            let witness_with_rhs_fold_challenge =
-                ElephantCell::new(ProductSumcheckEvaluation::new(
-                    witness.clone(),
-                    rhs_fold_challenge_evaluation.clone(),
-                )) as ElephantCell<EvalData>;
+            let witness_with_rhs_fold_challenge = ElephantCell::new(ProductSumcheckEvaluation::new(
+                witness.clone(),
+                rhs_fold_challenge_evaluation.clone(),
+            )) as ElephantCell<EvalData>;
 
             let projection_constant_terms_embedded = recomposition_evaluation(
                 proj_config.recursion_constant_term.placement(),
@@ -748,14 +747,15 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
         ElephantCell::new(FakeEvaluationLinearSumcheck::<RingElement>::new());
 
     let mut most_inner_commitments_selectors: Vec<ElephantCell<SelectorEqEvaluation>> = vec![];
-    let push_most_inner = |recursion: &commitment::RecursionConfig,
-                               out: &mut Vec<ElephantCell<SelectorEqEvaluation>>| {
-        for placement in &recursion.most_inner_config().placements {
-            for block in &placement.blocks {
-                out.push(selector_evaluation_from_prefix(block, total_vars));
+    let push_most_inner =
+        |recursion: &commitment::RecursionConfig,
+         out: &mut Vec<ElephantCell<SelectorEqEvaluation>>| {
+            for placement in &recursion.most_inner_config().placements {
+                for block in &placement.blocks {
+                    out.push(selector_evaluation_from_prefix(block, total_vars));
+                }
             }
-        }
-    };
+        };
 
     push_most_inner(
         &config.commitment_recursion,
