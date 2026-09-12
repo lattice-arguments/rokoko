@@ -55,6 +55,12 @@ impl<E: SumcheckElement> SelectorEq<E> {
             scratch_poly: RefCell::new(Polynomial::new(2)),
         }
     }
+
+    /// Scales the selector by a constant, which the folding then carries through untouched.
+    /// Only meaningful before the first round: the claim is the fold's running product.
+    pub fn set_scale(&mut self, scale: &E) {
+        self.current_claim.set_from(scale);
+    }
 }
 
 impl<E: SumcheckElement> HighOrderSumcheckData for SelectorEq<E> {
@@ -254,6 +260,11 @@ impl SelectorEqEvaluation {
             scratch: RingElement::zero(Representation::IncompleteNTT),
             evaluated: false,
         }
+    }
+
+    /// Verifier dual of `SelectorEq::set_scale`: the product the evaluation starts from.
+    pub fn set_scale(&mut self, scale: &RingElement) {
+        self.result.set_from(scale);
     }
 }
 

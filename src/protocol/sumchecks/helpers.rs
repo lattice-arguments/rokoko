@@ -183,6 +183,84 @@ impl Recomposition {
     }
 }
 
+/// The entries of one recomposition leaf: the radix weight each carries and which part of the
+/// component it belongs to. A single part puts the planes in one leaf; several parts put one
+/// plane's parts in one leaf.
+type WeightedEntries = Vec<(RingElement, usize)>;
+
+/// A recomposition whose parts are weighted rather than one of them selected:
+/// `SUM_part weights[part] . recomposition(.., parts, part)`. The geometry is fixed at setup and
+/// the weights are loaded once the round has sampled them, so one constraint stands for what was
+/// a family of `parts` of them.
+pub(crate) struct WeightedRecomposition {
+    factor: Data,
+    leaves: Vec<(ElephantCell<LinearSumcheck<RingElement>>, WeightedEntries)>,
+}
+
+impl WeightedRecomposition {
+    pub(crate) fn times(&self, payload: Data) -> Data {
+        ElephantCell::new(ProductSumcheck::new(self.factor.clone(), payload)) as Data
+    }
+
+    pub(crate) fn load(&self, part_weights: &[RingElement]) {
+        let mut values: Vec<RingElement> = Vec::new();
+        for (leaf, entries) in &self.leaves {
+            values.clear();
+            for (radix, part) in entries {
+                let mut value = RingElement::zero(Representation::IncompleteNTT);
+                value *= (radix, &part_weights[*part]);
+                values.push(value);
+            }
+            leaf.borrow_mut().load_from(&values);
+        }
+    }
+}
+
+/// Where the weighted recomposition puts its leaves: one per block when the component has a
+/// single part, one per digit plane otherwise, since a plane's parts are a dyadic run on the
+/// block's low bits while the planes themselves are not.
+pub(crate) fn weighted_recomposition_layout(
+    placement: &Placement,
+    chunks: usize,
+    base_log: usize,
+    total_vars: usize,
+    parts: usize,
+) -> Vec<(Prefix, usize, WeightedEntries)> {
+    let slice_len = placement.size / (chunks * parts);
+
+    placement
+        .blocks_with_offsets()
+        .into_iter()
+        .flat_map(|(offset, size, prefix)| {
+            let slices = size / slice_len;
+            let planes = slices / parts;
+            let first_plane = offset / slice_len / parts;
+            debug_assert_eq!(slices % parts, 0, "a block holds whole planes");
+
+            if parts == 1 {
+                let entries = (0..planes)
+                    .map(|plane| (plane_weight(base_log, first_plane + plane), 0))
+                    .collect();
+                let suffix = total_vars - prefix.length - planes.ilog2() as usize;
+                return vec![(prefix, suffix, entries)];
+            }
+
+            (0..planes)
+                .map(|plane| {
+                    let prefix = Prefix {
+                        prefix: prefix.prefix * planes + plane,
+                        length: prefix.length + planes.ilog2() as usize,
+                    };
+                    let radix = plane_weight(base_log, first_plane + plane);
+                    let entries = (0..parts).map(|part| (radix.clone(), part)).collect();
+                    let suffix = total_vars - prefix.length - parts.ilog2() as usize;
+                    (prefix, suffix, entries)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 /// The registry of leaves a round folds once per sumcheck round: every selector it uses and the
 /// radix weights of the recompositions that carry them on their own factor. The same block
 /// selector is registered once per part a component is recomposed in; a `SelectorEq` folds in
@@ -197,6 +275,47 @@ impl FoldedLeaves {
         FoldedLeaves {
             selectors: Vec::new(),
             weights: Vec::new(),
+        }
+    }
+
+    /// Builds the weighted recomposition of a placed component and registers its leaves.
+    pub(crate) fn weighted_recomposition(
+        &mut self,
+        placement: &Placement,
+        chunks: usize,
+        base_log: usize,
+        total_vars: usize,
+        parts: usize,
+    ) -> WeightedRecomposition {
+        let mut leaves = Vec::new();
+        let terms = weighted_recomposition_layout(placement, chunks, base_log, total_vars, parts)
+            .into_iter()
+            .map(|(prefix, suffix, entries)| {
+                let run = sumcheck_from_prefix(&prefix, total_vars);
+                let weights = ElephantCell::new(
+                    LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                        entries.len(),
+                        prefix.length,
+                        suffix,
+                    ),
+                );
+
+                let factor = ElephantCell::new(ProductSumcheck::new(
+                    run.clone() as Data,
+                    weights.clone() as Data,
+                )) as Data;
+
+                self.selectors.push(run);
+                self.weights.push(weights.clone());
+                leaves.push((weights, entries));
+
+                factor
+            })
+            .collect();
+
+        WeightedRecomposition {
+            factor: sum_of(terms),
+            leaves,
         }
     }
 
