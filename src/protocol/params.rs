@@ -365,8 +365,8 @@ pub fn p_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
     #[cfg(feature = "standard")]
     let (basic, commitment, opening, terminal) = match size {
         SizeConfig::Small | SizeConfig::Medium => (
-            shape(2, 26),
-            shape(4, 8),
+            shape(2, 20),
+            shape(2, 4),
             shape(8, 16),
             &DECOMP_11_LAST_LEVEL,
         ),
