@@ -425,12 +425,27 @@ pub fn p_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
 pub fn p_root_aux_short(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
     let tiny = size == SizeConfig::Tiny;
     #[cfg(not(feature = "standard"))]
-    let (basic, commitment, opening) = (shape(1, 10), shape(1, 2), shape(1, 2));
+    let (basic, commitment, opening, terminal) = (
+        shape(1, 10),
+        shape(1, 2),
+        shape(1, 2),
+        &DECOMP_11_LAST_LEVEL,
+    );
     #[cfg(feature = "standard")]
-    let (basic, commitment, opening) = if tiny {
-        (shape(1, 16), shape(32, 64), shape(8, 16))
+    let (basic, commitment, opening, terminal) = if tiny {
+        (
+            shape(1, 16),
+            shape(32, 64),
+            shape(8, 16),
+            &DECOMP_11_LAST_LEVEL_TWO_ROWS,
+        )
     } else {
-        (shape(1, 13), shape(4, 8), shape(4, 8))
+        (
+            shape(1, 13),
+            shape(4, 8),
+            shape(4, 8),
+            &DECOMP_11_LAST_LEVEL,
+        )
     };
     AuxSumcheckConfig {
         exact_projection_norm: false,
@@ -446,14 +461,14 @@ pub fn p_root_aux_short(size: SizeConfig, nof_openings: usize) -> AuxSumcheckCon
             decomposition_chunks: 8,
             rank: commitment.rank,
             diag_blocks: commitment.blocks,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
+            next: Some(Box::new(terminal.clone())),
         },
         opening_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
             rank: opening.rank,
             diag_blocks: opening.blocks,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
+            next: Some(Box::new(terminal.clone())),
         },
         projection_recursion: AuxProjection::Skip,
 
@@ -480,7 +495,7 @@ pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
             shape(16, 32),
             shape(2, 4),
             shape(16, 32),
-            &DECOMP_11_LAST_LEVEL,
+            &DECOMP_11_LAST_LEVEL_TWO_ROWS,
         ),
         SizeConfig::Medium => (
             shape(8, 56),
@@ -584,21 +599,23 @@ pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
 
 pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
     #[cfg(not(feature = "standard"))]
-    let (basic, commitment, opening, constant_term, batched) = (
+    let (basic, commitment, opening, constant_term, batched, terminal) = (
         shape(1, 6),
         shape(1, 2),
         shape(1, 2),
         shape(1, 2),
         shape(1, 2),
+        &DECOMP_11_LAST_LEVEL,
     );
     #[cfg(feature = "standard")]
-    let (basic, commitment, opening, constant_term, batched) = match size {
+    let (basic, commitment, opening, constant_term, batched, terminal) = match size {
         SizeConfig::Micro => (
             shape(2, 16),
             shape(16, 32),
             shape(4, 8),
             shape(4, 8),
             shape(4, 8),
+            &DECOMP_11_LAST_LEVEL_TWO_ROWS,
         ),
         SizeConfig::Tiny | SizeConfig::Small => (
             shape(2, 14),
@@ -606,6 +623,7 @@ pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
             shape(4, 8),
             shape(8, 16),
             shape(4, 8),
+            &DECOMP_11_LAST_LEVEL,
         ),
         SizeConfig::Medium | SizeConfig::Large => (
             shape(1, 6),
@@ -613,6 +631,7 @@ pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
             shape(4, 8),
             shape(8, 16),
             shape(4, 8),
+            &DECOMP_11_LAST_LEVEL,
         ),
         _ => (
             shape(1, 6),
@@ -620,6 +639,7 @@ pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
             shape(1, 2),
             shape(1, 2),
             shape(1, 2),
+            &DECOMP_11_LAST_LEVEL,
         ),
     };
     AuxSumcheckConfig {
@@ -653,14 +673,14 @@ pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
             decomposition_chunks: 8,
             rank: commitment.rank,
             diag_blocks: commitment.blocks,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
+            next: Some(Box::new(terminal.clone())),
         },
         opening_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
             rank: opening.rank,
             diag_blocks: opening.blocks,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
+            next: Some(Box::new(terminal.clone())),
         },
         projection_recursion: AuxProjection::Fine {
             nof_batches: 2,
@@ -673,14 +693,14 @@ pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
                 decomposition_chunks: 2,
                 rank: constant_term.rank,
                 diag_blocks: constant_term.blocks,
-                next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
+                next: Some(Box::new(terminal.clone())),
             },
             recursion_batched_projection: AuxRecursionConfig {
                 decomposition_base_log: 7,
                 decomposition_chunks: 8,
                 rank: batched.rank,
                 diag_blocks: batched.blocks,
-                next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
+                next: Some(Box::new(terminal.clone())),
             },
         },
 
