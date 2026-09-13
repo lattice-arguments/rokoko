@@ -1,25 +1,17 @@
-#[cfg(not(feature = "standard"))]
 pub mod builder;
-#[cfg(feature = "standard")]
-#[path = "builder_standard.rs"]
-pub mod builder;
-#[cfg(not(feature = "standard"))]
-pub mod builder_verifier;
-#[cfg(feature = "standard")]
-#[path = "builder_verifier_standard.rs"]
 pub mod builder_verifier;
 pub mod context;
 pub mod context_verifier;
 #[cfg(not(feature = "standard"))]
+pub mod helpers;
+#[cfg(feature = "standard")]
+#[path = "helpers_standard.rs"]
 pub mod helpers;
 /// The batched round shares every helper it does not change with the plain one.
 #[cfg(feature = "standard")]
 #[path = "helpers.rs"]
 #[allow(dead_code)]
 pub mod helpers_plain;
-#[cfg(feature = "standard")]
-#[path = "helpers_standard.rs"]
-pub mod helpers;
 pub mod loader;
 pub mod loader_verifier;
 pub mod runner;
