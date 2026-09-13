@@ -1,3 +1,4 @@
+#[cfg(feature = "standard")]
 use std::collections::HashMap;
 
 #[cfg(not(feature = "standard"))]
@@ -447,8 +448,8 @@ fn ck_over_pieces_evaluation(
     sum_of_evaluations(terms)
 }
 
-#[cfg(feature = "standard")]
 /// The combined key-row slices a level's pieces share, addressed by `(slices, slice)`.
+#[cfg(feature = "standard")]
 type CkSegments = HashMap<(usize, usize), ElephantCell<EvalData>>;
 
 #[cfg(feature = "standard")]

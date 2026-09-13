@@ -13,10 +13,6 @@ pub mod evaluation_point_sampler;
 pub mod fold;
 pub mod intermediate_sumchecks;
 pub mod open;
-#[cfg(not(feature = "standard"))]
-pub mod params;
-#[cfg(feature = "standard")]
-#[path = "params_standard.rs"]
 pub mod params;
 pub mod parties;
 pub mod project_coarse;
