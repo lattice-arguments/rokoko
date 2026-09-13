@@ -38,14 +38,19 @@ pub fn commit_basic_internal(
     witness: &VerticallyAlignedMatrix<RingElement>,
     rank: usize,
 ) -> BasicCommitment {
-    commit_basic_internal_with(ck, witness, rank, false)
+    commit_basic_internal_with(ck, witness, rank, 1, false)
 }
 
 /// One commitment per (key row, witness column); the cells are independent accumulations.
+///
+/// Over `blocks > 1` the key is `I_blocks (x) ck`: every column is cut into `blocks` equal
+/// blocks, the same `rank / blocks` rows meet each of them, and block `b` against row `i` lands
+/// at commitment row `b * rank / blocks + i`.
 fn commit_basic_internal_with(
     ck: &CK,
     witness: &VerticallyAlignedMatrix<RingElement>,
     rank: usize,
+    blocks: usize,
     parallel: bool,
 ) -> BasicCommitment {
     if rank == 0 {
@@ -55,6 +60,18 @@ fn commit_basic_internal_with(
             height: 0,
         };
     }
+    // The rows of the basic commitment are independent constraints, so its rank is free; the
+    // block count is what has to be dyadic, because a block is addressed by a run of variables.
+    debug_assert!(
+        blocks.is_power_of_two() && rank % blocks == 0 && witness.height % blocks == 0,
+        "a block-diagonal commitment needs a dyadic block count dividing the rank and the height"
+    );
+    let blockwise_rank = rank / blocks;
+    let block_height = witness.height / blocks;
+    let block = |b: usize, col: usize| {
+        &witness.data[col * witness.height + b * block_height..][..block_height]
+    };
+
     let mut commitment = HorizontallyAlignedMatrix {
         data: vec![
             RingElement::zero(Representation::IncompleteNTT);
@@ -73,24 +90,27 @@ fn commit_basic_internal_with(
             .par_chunks_mut(width)
             .take(rank)
             .enumerate()
-            .for_each(|(i, commitment_row)| {
-                let ck_row = &ck[i].preprocessed_row;
+            .for_each(|(r, commitment_row)| {
+                let ck_row = &ck[r % blockwise_rank].preprocessed_row;
+                let b = r / blockwise_rank;
                 commitment_row[..used_cols]
                     .par_iter_mut()
                     .enumerate()
-                    .for_each(|(col, acc)| inner_product_into(acc, ck_row, witness.col(col)));
+                    .for_each(|(col, acc)| inner_product_into(acc, ck_row, block(b, col)));
             });
         return commitment;
     }
     let _ = parallel;
 
-    for (i, row) in ck.iter().take(rank).enumerate() {
-        for col in 0..witness.used_cols {
-            inner_product_into(
-                commitment.index_mut((i, col)),
-                &row.preprocessed_row,
-                witness.col(col),
-            );
+    for b in 0..blocks {
+        for (i, row) in ck.iter().take(blockwise_rank).enumerate() {
+            for col in 0..witness.used_cols {
+                inner_product_into(
+                    commitment.index_mut((b * blockwise_rank + i, col)),
+                    &row.preprocessed_row,
+                    block(b, col),
+                );
+            }
         }
     }
     commitment
@@ -101,8 +121,15 @@ pub fn commit_basic_parallel(
     crs: &CRS,
     witness: &VerticallyAlignedMatrix<RingElement>,
     rank: usize,
+    blocks: usize,
 ) -> BasicCommitment {
-    commit_basic_internal_with(crs.ck_for_wit_dim(witness.height), witness, rank, true)
+    commit_basic_internal_with(
+        crs.ck_for_wit_dim(witness.height / blocks),
+        witness,
+        rank,
+        blocks,
+        true,
+    )
 }
 
 /// Accumulates `sum_k ck_row[k] * operand[k]` into `acc`.
@@ -139,19 +166,44 @@ fn inner_product_into(acc: &mut RingElement, ck_row: &[RingElement], operand: &[
     }
 }
 
-
 // this is first level commit for FW = Y
 pub fn commit_basic(
     crs: &CRS,
     witness: &VerticallyAlignedMatrix<RingElement>,
     rank: usize,
+    blocks: usize,
 ) -> BasicCommitment {
-    let ck = crs.ck_for_wit_dim(witness.height);
-    let commitment = commit_basic_internal(ck, witness, rank);
-
-    commitment
+    let ck = crs.ck_for_wit_dim(witness.height / blocks);
+    commit_basic_internal_with(ck, witness, rank, blocks, false)
 }
 
+/// A block-diagonal commitment computed over the reshaped witness, in the row order the
+/// sumchecks index it by: the flat commitment's column `col * blocks + b` is block `b` of
+/// column `col`, and its row `i` is key row `i`.
+pub fn regroup_blocks(flat: BasicCommitment, rank: usize, blocks: usize) -> BasicCommitment {
+    if blocks == 1 {
+        return flat;
+    }
+    let blockwise_rank = rank / blocks;
+    let width = flat.width / blocks;
+    let mut commitment = HorizontallyAlignedMatrix {
+        data: vec![
+            RingElement::zero(Representation::IncompleteNTT);
+            rank.next_power_of_two() * width
+        ],
+        width,
+        height: rank.next_power_of_two(),
+    };
+    for b in 0..blocks {
+        for i in 0..blockwise_rank {
+            for col in 0..width {
+                *commitment.index_mut((b * blockwise_rank + i, col)) =
+                    flat[(i, col * blocks + b)].clone();
+            }
+        }
+    }
+    commitment
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Prefix {
@@ -206,7 +258,11 @@ impl Placement {
     /// The slice must be a power of two long and fall inside a single block, which it does
     /// whenever its length divides every block.
     pub fn slice(&self, index: usize, count: usize) -> Prefix {
-        debug_assert_eq!(self.size % count, 0, "slice count must divide the component");
+        debug_assert_eq!(
+            self.size % count,
+            0,
+            "slice count must divide the component"
+        );
         let len = self.size / count;
         debug_assert!(len.is_power_of_two(), "a slice must be dyadic");
         let start = index * len;
@@ -246,6 +302,11 @@ pub struct RecursionConfig {
     pub decomposition_base_log: usize,
     pub decomposition_chunks: usize,
     pub rank: usize,
+    /// The level commits block-diagonally: its input is cut into `diag_blocks` equal blocks and
+    /// every block is met by the same `rank / diag_blocks` key rows, so the key is
+    /// `I_{diag_blocks} (x) K`. Commitment element `b * rank / diag_blocks + i` is key row `i`
+    /// against block `b`.
+    pub diag_blocks: usize,
     /// One placement per row segment of this level's input, in row order.
     pub placements: Vec<Placement>,
     pub next: Option<Box<RecursionConfig>>,
@@ -300,6 +361,22 @@ impl RecursionConfig {
     /// The length of the padded vector this level actually commits to.
     pub fn committed_len(&self) -> usize {
         self.row_len() * self.segments() * self.padded_chunks()
+    }
+
+    /// The length of one block of that vector: what a key row spans.
+    pub fn block_len(&self) -> usize {
+        debug_assert!(
+            self.diag_blocks.is_power_of_two() && self.rank.is_power_of_two(),
+            "a level that is not a power of two on both counts does not verify"
+        );
+        debug_assert_eq!(self.committed_len() % self.diag_blocks, 0);
+        self.committed_len() / self.diag_blocks
+    }
+
+    /// How many key rows meet one block.
+    pub fn blockwise_rank(&self) -> usize {
+        debug_assert_eq!(self.rank % self.diag_blocks, 0);
+        self.rank / self.diag_blocks
     }
 }
 
@@ -376,14 +453,29 @@ fn recursive_commit_with(
         );
     }
 
-    let ck = crs.ck_for_wit_dim(committed_data.len());
+    let block_len = config.block_len();
+    let blockwise_rank = config.blockwise_rank();
+    let ck = crs.ck_for_wit_dim(block_len);
 
     let mut commitment = vec![RingElement::zero(Representation::IncompleteNTT); config.rank];
 
-    accumulate_rows(&mut commitment, ck, &committed_data, config.rank, parallel);
+    for b in 0..config.diag_blocks {
+        accumulate_rows(
+            &mut commitment[b * blockwise_rank..],
+            ck,
+            &committed_data[b * block_len..(b + 1) * block_len],
+            blockwise_rank,
+            parallel,
+        );
+    }
 
     let next = config.next.as_ref().map(|next_config| {
-        Box::new(recursive_commit_with(crs, next_config, &commitment, parallel))
+        Box::new(recursive_commit_with(
+            crs,
+            next_config,
+            &commitment,
+            parallel,
+        ))
     });
 
     RecursiveCommitmentWithAux {
@@ -395,7 +487,6 @@ fn recursive_commit_with(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,7 +495,7 @@ mod tests {
 
     #[test]
     fn test_recursive_commit() {
-        let crs = CRS::gen_crs(256, 2);
+        let crs = CRS::gen_crs(32, 2);
         let data = vec![
             RingElement::all(37, Representation::IncompleteNTT),
             RingElement::all(36, Representation::IncompleteNTT),
@@ -420,6 +511,7 @@ mod tests {
             decomposition_base_log: 3, // base 8
             decomposition_chunks: 4,
             rank: 2,
+            diag_blocks: 1,
             placements: vec![Placement::single(
                 32,
                 Prefix {

@@ -111,7 +111,7 @@ fn bench_commitment(c: &mut Criterion) {
     );
 
     group.bench_function("ring", |bencher| {
-        bencher.iter(|| black_box(commit_basic(black_box(&crs), black_box(&witness), rank)));
+        bencher.iter(|| black_box(commit_basic(black_box(&crs), black_box(&witness), rank, 1)));
     });
 
     if std::env::var("ROKOKO_BENCH_LIMBS").is_ok() {
@@ -137,6 +137,7 @@ fn bench_commitment(c: &mut Criterion) {
                         black_box(&digits),
                         &forced,
                         rank,
+                        1,
                     ))
                 });
             });
@@ -150,6 +151,7 @@ fn bench_commitment(c: &mut Criterion) {
                 black_box(&digits),
                 &plan,
                 rank,
+                1,
             ))
         });
     });
@@ -162,6 +164,7 @@ fn bench_commitment(c: &mut Criterion) {
                     black_box(&witness),
                     &plan,
                     rank,
+                    1,
                 ),
             )
         });
