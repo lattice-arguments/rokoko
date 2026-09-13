@@ -9,6 +9,9 @@ default = ["unsafe-sumcheck", "incomplete-rexl","crt-commitment"]
 incomplete-rexl = ["dep:incomplete-rexl"]
 unsafe-sumcheck = []
 debug-hardness = []
+# Block-diagonal commitments over dense keys, with a round's commitment rows batched
+# into one sumcheck constraint. Off, the chain is the structured-key one.
+standard = []
 # Measure the norm schedule instead of enforcing it; prints a paste-ready NB_* table.
 calibration = ["soft-norms"]
 # Report a norm over its bound instead of rejecting the proof.

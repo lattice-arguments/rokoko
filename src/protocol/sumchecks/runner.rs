@@ -20,6 +20,11 @@ use crate::{
     },
 };
 
+#[cfg(feature = "standard")]
+use crate::protocol::{crs::CRS, sumchecks::helpers::ROW_BATCH_LAYERS};
+
+#[cfg(feature = "standard")]
+use super::loader::load_row_batch_weights;
 use super::loader::load_sumcheck_data;
 
 /// Executes the sumcheck protocol for all constraint types.
@@ -45,6 +50,7 @@ use super::loader::load_sumcheck_data;
 ///   projection recursion's level-0 placements
 #[tracing::instrument(skip_all, name = "sumcheck")]
 pub fn sumcheck(
+    #[cfg(feature = "standard")] crs: &CRS,
     config: &SumcheckConfig,
     combined_witness: &Vec<RingElement>,
     projection_matrix: &ProjectionMatrix,
@@ -149,6 +155,17 @@ pub fn sumcheck(
     }
     if let Some(constant_term_claims) = &constant_term_claims {
         hash_wrapper.update_with_ring_element_slice(constant_term_claims);
+    }
+
+    // One tensor row challenge batches every commitment-row family of the round; a family of
+    // `rank` rows survives a wrong row only if the tensor vanishes on it, about
+    // log2(rank) / |F| in the quadratic extension, union-bounded over the families.
+    #[cfg(feature = "standard")]
+    {
+        let mut row_batch_layers =
+            vec![RingElement::zero(Representation::IncompleteNTT); ROW_BATCH_LAYERS];
+        hash_wrapper.sample_ring_element_ntt_slots_same_vec_into(&mut row_batch_layers);
+        load_row_batch_weights(sumcheck_context, config, crs, &row_batch_layers);
     }
 
     // Sample random batching coefficients from Fiat-Shamir

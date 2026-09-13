@@ -14,6 +14,92 @@ use crate::{
 
 use super::context_verifier::VerifierSumcheckContext;
 
+#[cfg(feature = "standard")]
+use crate::protocol::{
+    config::SumcheckConfig,
+    sumcheck_utils::{elephant_cell::ElephantCell, selector_eq::SelectorEqEvaluation},
+    sumchecks::{
+        builder_verifier::WeightedRecompositionEvaluation,
+        context_verifier::PieceSelectorEvaluations, helpers::row_batch_weights,
+    },
+};
+
+/// Verifier dual of `load_row_batch_weights`: the same weights on the same gadgets, with the
+/// key-row weights going to the scales the combined key rows are assembled from rather than to a
+/// combined row of their own.
+#[cfg(feature = "standard")]
+pub fn load_verifier_row_batch_weights(
+    verifier_sumcheck_context: &mut VerifierSumcheckContext,
+    config: &SumcheckConfig,
+    layers: &[RingElement],
+) {
+    let blocks = config.basic_commitment_diag_blocks;
+    let weights = row_batch_weights(layers, blocks, config.basic_commitment_rank / blocks);
+
+    let commitment_fold = &verifier_sumcheck_context.commitment_fold_evaluation;
+    commitment_fold.folded_witness_blocks.load(&weights.blocks);
+    for (scale, weight) in commitment_fold
+        .key_row_scales
+        .iter()
+        .zip(weights.rows.iter())
+    {
+        scale.borrow_mut().set_scale(weight);
+    }
+    for (row, weight) in commitment_fold
+        .basic_commitment_rows
+        .iter()
+        .zip(weights.all.iter())
+    {
+        row.load(std::slice::from_ref(weight));
+    }
+
+    for com_verify in verifier_sumcheck_context.com_verify_evaluations.iter() {
+        for layer in com_verify.layers.iter() {
+            load_com_verify_level(
+                layers,
+                (layer.blocks, layer.blockwise_rank),
+                &layer.piece_selectors,
+                &layer.key_row_scales,
+                Some(&layer.child),
+            );
+        }
+
+        let output_layer = &com_verify.output_layer;
+        load_com_verify_level(
+            layers,
+            (output_layer.blocks, output_layer.blockwise_rank),
+            &output_layer.piece_selectors,
+            &output_layer.key_row_scales,
+            None,
+        );
+    }
+}
+
+/// One recursion level's share of that; `shape` is `(blocks, blockwise_rank)`.
+#[cfg(feature = "standard")]
+fn load_com_verify_level(
+    layers: &[RingElement],
+    shape: (usize, usize),
+    piece_selectors: &PieceSelectorEvaluations,
+    key_row_scales: &[ElephantCell<SelectorEqEvaluation>],
+    child: Option<&WeightedRecompositionEvaluation>,
+) {
+    let (blocks, blockwise_rank) = shape;
+    let weights = row_batch_weights(layers, blocks, blockwise_rank);
+
+    for (block, selector) in piece_selectors {
+        selector.borrow_mut().set_scale(&weights.blocks[*block]);
+    }
+
+    for (scale, weight) in key_row_scales.iter().zip(weights.rows.iter()) {
+        scale.borrow_mut().set_scale(weight);
+    }
+
+    if let Some(child) = child {
+        child.load(&weights.all);
+    }
+}
+
 /// Loads verifier-side evaluation gadgets with public claims and evaluation points.
 ///
 /// Unlike the prover loader, the verifier only sees folded claims rather than the

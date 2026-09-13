@@ -1,6 +1,10 @@
 pub mod boundary;
 pub mod commitment;
 pub mod commitment_crt;
+#[cfg(not(feature = "standard"))]
+pub mod crs;
+#[cfg(feature = "standard")]
+#[path = "crs_standard.rs"]
 pub mod crs;
 // pub mod execution_simple;
 pub mod config;

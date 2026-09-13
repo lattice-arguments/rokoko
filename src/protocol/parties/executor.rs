@@ -437,9 +437,14 @@ mod tests {
             .fill_from_xof(b"round-boundary-test", &mut verifier_bytes);
         assert_eq!(prover_bytes, verifier_bytes);
 
-        assert_eq!(run.crs.cks.len(), run.verifier_crs.structured_cks.len());
-        let first_row = &run.verifier_crs.structured_cks[0][0];
-        assert_eq!(first_row.tensor_layers.len(), 1);
+        #[cfg(not(feature = "standard"))]
+        {
+            assert_eq!(run.crs.cks.len(), run.verifier_crs.structured_cks.len());
+            let first_row = &run.verifier_crs.structured_cks[0][0];
+            assert_eq!(first_row.tensor_layers.len(), 1);
+        }
+        #[cfg(feature = "standard")]
+        assert_eq!(run.crs.cks.len(), run.verifier_crs.cks.len());
 
         let run4 = execute_to_boundary(NonZeroUsize::new(4).unwrap());
         assert_eq!(run4.prover.witness.height, 512);
@@ -546,15 +551,18 @@ mod tests {
             projection_ratio: 32,
             projection_height: 256,
             basic_commitment_rank: 3,
+            basic_commitment_diag_blocks: 1,
             nof_openings: 3,
             commitment_recursion: AuxRecursionConfig {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                diag_blocks: 1,
                 next: Some(Box::new(AuxRecursionConfig {
                     decomposition_base_log: 7,
                     decomposition_chunks: 8,
                     rank: 1,
+                    diag_blocks: 1,
                     next: None,
                 })),
             },
@@ -562,6 +570,7 @@ mod tests {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                diag_blocks: 1,
                 next: None,
             },
             projection_recursion: AuxProjection::Fine {
@@ -570,12 +579,14 @@ mod tests {
                     decomposition_base_log: 15,
                     decomposition_chunks: 2,
                     rank: 1,
+                    diag_blocks: 1,
                     next: None,
                 },
                 recursion_batched_projection: AuxRecursionConfig {
                     decomposition_base_log: 15,
                     decomposition_chunks: 4,
                     rank: 1,
+                    diag_blocks: 1,
                     next: None,
                 },
             },
@@ -623,15 +634,18 @@ mod tests {
             projection_ratio: 32,
             projection_height: 256,
             basic_commitment_rank: 3,
+            basic_commitment_diag_blocks: 1,
             nof_openings: 1,
             commitment_recursion: AuxRecursionConfig {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                diag_blocks: 1,
                 next: Some(Box::new(AuxRecursionConfig {
                     decomposition_base_log: 7,
                     decomposition_chunks: 8,
                     rank: 1,
+                    diag_blocks: 1,
                     next: None,
                 })),
             },
@@ -639,6 +653,7 @@ mod tests {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                diag_blocks: 1,
                 next: None,
             },
             projection_recursion: AuxProjection::Fine {
@@ -647,12 +662,14 @@ mod tests {
                     decomposition_base_log: 15,
                     decomposition_chunks: 2,
                     rank: 1,
+                    diag_blocks: 1,
                     next: None,
                 },
                 recursion_batched_projection: AuxRecursionConfig {
                     decomposition_base_log: 15,
                     decomposition_chunks: 4,
                     rank: 1,
+                    diag_blocks: 1,
                     next: None,
                 },
             },
@@ -705,17 +722,20 @@ mod tests {
             projection_ratio: 32,
             projection_height: 8,
             basic_commitment_rank: 1,
+            basic_commitment_diag_blocks: 1,
             nof_openings,
             commitment_recursion: AuxRecursionConfig {
                 decomposition_base_log: 15,
                 decomposition_chunks: 2,
                 rank: 1,
+                diag_blocks: 1,
                 next: None,
             },
             opening_recursion: AuxRecursionConfig {
                 decomposition_base_log: 15,
                 decomposition_chunks: 4,
                 rank: 1,
+                diag_blocks: 1,
                 next: None,
             },
             projection_recursion: AuxProjection::Skip,
