@@ -521,6 +521,10 @@ pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
         projection_recursion: AuxProjection::Fine {
             nof_batches: 2,
             recursion_constant_term: AuxRecursionConfig {
+                // Two digits of this radix are what the coefficient-projection image fits
+                // in. A shorter one wraps the decomposition silently -- `debug-decomp` checks
+                // the coarse projection only -- and the fine trace identity then fails in the
+                // verifier as a non-zero constant-term claim.
                 decomposition_base_log: 9,
                 decomposition_chunks: 2,
                 rank: constant_term.rank,
