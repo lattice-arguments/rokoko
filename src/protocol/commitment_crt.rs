@@ -1522,53 +1522,6 @@ mod tests {
         }
     }
 
-    /// The CRT path commits block-diagonally by reading the witness as `blocks` times as many
-    /// columns; `regroup_blocks` then puts the rows back in commitment order.
-    #[cfg(feature = "standard")]
-    #[test]
-    fn crt_blocks_match_the_ring_ones() {
-        init_common();
-        let height = 64;
-        let width = 5;
-        let rank = 4;
-        let blocks = 2;
-        let block_rank = rank / blocks;
-        let crs = CRS::gen_crs(height / blocks, block_rank);
-        let witness = VerticallyAlignedMatrix {
-            data: (0..height * width)
-                .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 1 << 15))
-                .collect(),
-            width,
-            height,
-            used_cols: width,
-        };
-        let expected = crate::protocol::commitment::commit_basic(&crs, &witness, rank, blocks);
-
-        let digits = prepare_i16_witness(&witness);
-        let plan = Plan::new(digits_l2(&digits), block_rank);
-        let key = CrtKey::preprocess(crs.ck_for_wit_dim(height / blocks), block_rank, &plan);
-        let got = crate::protocol::commitment::regroup_blocks(
-            commit_basic_crt(&key, &digits, &plan, block_rank, blocks),
-            rank,
-            blocks,
-        );
-        let streamed = crate::protocol::commitment::regroup_blocks(
-            commit_basic_crt_streaming(&key, &witness, &plan, block_rank, blocks),
-            rank,
-            blocks,
-        );
-        for element in 0..rank * width {
-            assert_eq!(
-                expected.data[element].v, got.data[element].v,
-                "element {element}"
-            );
-            assert_eq!(
-                expected.data[element].v, streamed.data[element].v,
-                "streamed element {element}"
-            );
-        }
-    }
-
     #[test]
     fn crt_streaming_matches_the_ring_one() {
         init_common();

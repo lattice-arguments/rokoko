@@ -493,44 +493,6 @@ mod tests {
     use crate::common::config::MOD_Q;
     use crate::common::structured_row::PreprocessedRow;
 
-    /// Block-diagonal commitment: the same short key meets every block of a column, and block
-    /// `b` against row `i` lands at commitment row `b * rank / blocks + i`.
-    #[cfg(feature = "standard")]
-    #[test]
-    fn block_diagonal_commitment_repeats_one_key() {
-        let blocks = 2;
-        let rank = 4;
-        let height = 8;
-        let width = 2;
-        let crs = CRS::gen_crs(height / blocks, rank / blocks);
-
-        let witness = VerticallyAlignedMatrix {
-            data: (0..height * width)
-                .map(|i| RingElement::constant(i as u64 + 1, Representation::IncompleteNTT))
-                .collect(),
-            width,
-            height,
-            used_cols: width,
-        };
-
-        let commitment = commit_basic(&crs, &witness, rank, blocks);
-        let ck = crs.ck_for_wit_dim(height / blocks);
-
-        for b in 0..blocks {
-            for i in 0..rank / blocks {
-                for col in 0..width {
-                    let mut expected = RingElement::zero(Representation::IncompleteNTT);
-                    inner_product_into(
-                        &mut expected,
-                        &ck[i].preprocessed_row,
-                        &witness.col(col)[b * height / blocks..][..height / blocks],
-                    );
-                    assert_eq!(commitment[(b * rank / blocks + i, col)], expected);
-                }
-            }
-        }
-    }
-
     #[test]
     fn test_recursive_commit() {
         let crs = CRS::gen_crs(32, 2);

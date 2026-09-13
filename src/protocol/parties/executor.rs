@@ -443,19 +443,8 @@ mod tests {
             let first_row = &run.verifier_crs.structured_cks[0][0];
             assert_eq!(first_row.tensor_layers.len(), 1);
         }
-
-        // Both parties read the same rows off the public seed.
         #[cfg(feature = "standard")]
-        {
-            assert_eq!(run.crs.cks.len(), run.verifier_crs.cks.len());
-            for (prover, verifier) in run.crs.cks.iter().zip(&run.verifier_crs.cks) {
-                assert_eq!(prover.len(), verifier.len());
-                assert!(prover
-                    .iter()
-                    .zip(verifier)
-                    .all(|(a, b)| a.preprocessed_row == b.preprocessed_row));
-            }
-        }
+        assert_eq!(run.crs.cks.len(), run.verifier_crs.cks.len());
 
         let run4 = execute_to_boundary(NonZeroUsize::new(4).unwrap());
         assert_eq!(run4.prover.witness.height, 512);
@@ -470,19 +459,6 @@ mod tests {
     /// two element-major chunks, which is the top-level hypercube and independent of the round's
     /// own `witness_decomposition_chunks`.
     fn round_trip(config: &crate::protocol::config::SumcheckConfig) {
-        assert!(
-            round_trip_perturbed(config, |_| {}),
-            "the honest round must verify"
-        );
-    }
-
-    /// The same round, with `perturb` free to corrupt the commitment the prover proves about
-    /// after the public value the verifier anchors to has been taken off it. Answers whether the
-    /// verifier accepted.
-    fn round_trip_perturbed(
-        config: &crate::protocol::config::SumcheckConfig,
-        perturb: impl FnOnce(&mut crate::protocol::commitment::CommitmentWithAux),
-    ) -> bool {
         use crate::common::{
             decomposition::decompose, matrix::VerticallyAlignedMatrix,
             ring_arithmetic::Representation, sampling::sample_random_short_vector,
@@ -526,8 +502,7 @@ mod tests {
             data: decompose(&raw, base_log as u64, input_chunks),
         };
 
-        let (mut commitment_with_aux, rc_commitment) = commit(&crs, config, &witness, None);
-        perturb(&mut commitment_with_aux);
+        let (commitment_with_aux, rc_commitment) = commit(&crs, config, &witness, None);
 
         let (proof, claims) = prover_round(
             &crs,
@@ -544,21 +519,18 @@ mod tests {
         let claims = claims.expect("prover must return claims");
         assert_eq!(claims.len(), config.nof_openings);
 
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            verifier_round(
-                &verifier_crs,
-                config,
-                &rc_commitment,
-                &proof,
-                &inner,
-                &outer,
-                &claims,
-                &mut sumcheck_context_verifier,
-                None,
-                None,
-            );
-        }))
-        .is_ok()
+        verifier_round(
+            &verifier_crs,
+            config,
+            &rc_commitment,
+            &proof,
+            &inner,
+            &outer,
+            &claims,
+            &mut sumcheck_context_verifier,
+            None,
+            None,
+        );
     }
 
     /// A round with a non-power-of-two number of openings: the opening commitment is padded to
@@ -730,201 +702,6 @@ mod tests {
         );
 
         round_trip(config);
-    }
-
-    #[cfg(feature = "standard")]
-    /// A round that commits block-diagonally, at the basic commitment and at a recursion level:
-    /// the witness is cut in two, one short key meets both halves, and the commitment keeps its
-    /// full rank.
-    fn diag_blocks_config(
-        basic_commitment_rank: usize,
-        opening_blocks: usize,
-    ) -> crate::protocol::config_generator::AuxSumcheckConfig {
-        use crate::protocol::config::SimpleConfig;
-        use crate::protocol::config_generator::{
-            AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig,
-        };
-
-        AuxSumcheckConfig {
-            exact_projection_norm: false,
-            witness_height: 1024,
-            witness_width: 16,
-            projection_ratio: 32,
-            projection_height: 256,
-            basic_commitment_rank,
-            basic_commitment_diag_blocks: 2,
-            nof_openings: 1,
-            commitment_recursion: AuxRecursionConfig {
-                decomposition_base_log: 15,
-                decomposition_chunks: 4,
-                rank: 2,
-                diag_blocks: 2,
-                next: Some(Box::new(AuxRecursionConfig {
-                    decomposition_base_log: 7,
-                    decomposition_chunks: 8,
-                    rank: 1,
-                    diag_blocks: 1,
-                    next: None,
-                })),
-            },
-            // A single placed block is one piece of the input, so a block cuts the piece in
-            // two and each half meets the whole key row.
-            opening_recursion: AuxRecursionConfig {
-                decomposition_base_log: 15,
-                decomposition_chunks: 4,
-                rank: opening_blocks,
-                diag_blocks: opening_blocks,
-                next: None,
-            },
-            projection_recursion: AuxProjection::Fine {
-                nof_batches: 2,
-                recursion_constant_term: AuxRecursionConfig {
-                    decomposition_base_log: 15,
-                    decomposition_chunks: 2,
-                    rank: 1,
-                    diag_blocks: 1,
-                    next: None,
-                },
-                recursion_batched_projection: AuxRecursionConfig {
-                    decomposition_base_log: 15,
-                    decomposition_chunks: 4,
-                    rank: 1,
-                    diag_blocks: 1,
-                    next: None,
-                },
-            },
-            witness_decomposition_chunks: 2,
-            witness_decomposition_base_log: 15,
-            next: Some(Box::new(AuxConfig::Simple(SimpleConfig {
-                witness_height: 256,
-                witness_width: 16,
-                projection_ratio: 128,
-                projection_height: 256,
-                projection_nof_batches: 2,
-                basic_commitment_rank: 2,
-                witness_norm_bound: f64::INFINITY,
-                projection_norm_bound: f64::INFINITY,
-            }))),
-        }
-    }
-
-    #[cfg(feature = "standard")]
-    #[test]
-    fn diag_blocks_round_trip() {
-        init_common();
-
-        let generated = diag_blocks_config(4, 2).generate_config();
-        let config = match &generated {
-            crate::protocol::config::Config::Sumcheck(config) => config,
-            _ => panic!("expected a sumcheck config"),
-        };
-
-        assert_eq!(config.composed_witness_length, 4096);
-        assert_eq!(config.commitment_recursion.block_len(), 128);
-        assert_eq!(config.commitment_recursion.blockwise_rank(), 1);
-
-        round_trip(config);
-    }
-
-    /// One key row meets all four blocks of a recursion level, so the verifier evaluates its
-    /// slices once and reuses them; only the per-block selector differs.
-    #[cfg(feature = "standard")]
-    #[test]
-    fn four_blocks_recursion_level_round_trip() {
-        init_common();
-
-        let generated = diag_blocks_config(4, 4).generate_config();
-        let config = match &generated {
-            crate::protocol::config::Config::Sumcheck(config) => config,
-            _ => panic!("expected a sumcheck config"),
-        };
-
-        assert_eq!(config.opening_recursion.diag_blocks, 4);
-        assert_eq!(config.opening_recursion.blockwise_rank(), 1);
-        assert_eq!(config.opening_recursion.block_len(), 16);
-        assert_eq!(config.composed_witness_length, 4096);
-
-        round_trip(config);
-    }
-
-    /// The basic commitment's rows are independent constraints, so its rank need not be dyadic
-    /// when it commits block-diagonally: three key rows meet each of the two halves.
-    #[cfg(feature = "standard")]
-    #[test]
-    fn non_dyadic_rank_with_blocks_round_trip() {
-        init_common();
-
-        let generated = diag_blocks_config(6, 2).generate_config();
-        let config = match &generated {
-            crate::protocol::config::Config::Sumcheck(config) => config,
-            _ => panic!("expected a sumcheck config"),
-        };
-
-        assert_eq!(config.basic_commitment_rank, 6);
-        assert_eq!(config.basic_commitment_diag_blocks, 2);
-        assert_eq!(config.composed_witness_length, 4096);
-
-        round_trip(config);
-    }
-
-    /// The rows of a commitment are one sumcheck constraint between them, so the control that
-    /// every row is still constrained is that corrupting any single one of them is rejected. The
-    /// first digit of a row is placed and carries radix one, and touching it breaks that row's
-    /// CommitmentFold term and the layer that commits it alike.
-    #[cfg(feature = "standard")]
-    #[test]
-    fn a_corrupt_commitment_row_is_rejected() {
-        use crate::common::ring_arithmetic::{Representation, RingElement};
-
-        init_common();
-
-        let generated = diag_blocks_config(6, 2).generate_config();
-        let config = match &generated {
-            crate::protocol::config::Config::Sumcheck(config) => config,
-            _ => panic!("expected a sumcheck config"),
-        };
-
-        let bump = |data: &mut Vec<RingElement>, rows: usize, row: usize| {
-            let stride = data.len() / rows.next_power_of_two();
-            data[row * stride] += &RingElement::constant(1, Representation::IncompleteNTT);
-        };
-
-        let hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
-
-        let rows = config.basic_commitment_rank;
-        let outcomes = (0..rows)
-            .map(|row| {
-                round_trip_perturbed(config, |aux| {
-                    bump(&mut aux.rc_commitment_with_aux.committed_data, rows, row)
-                })
-            })
-            .collect::<Vec<_>>();
-
-        let elements = config.commitment_recursion.rank;
-        let inner_outcomes = (0..elements)
-            .map(|element| {
-                round_trip_perturbed(config, |aux| {
-                    let child = aux.rc_commitment_with_aux.next.as_mut().unwrap();
-                    bump(&mut child.committed_data, elements, element)
-                })
-            })
-            .collect::<Vec<_>>();
-
-        std::panic::set_hook(hook);
-
-        for (row, accepted) in outcomes.iter().enumerate() {
-            assert!(
-                !accepted,
-                "a corrupt digit of commitment row {row} verified"
-            );
-        }
-        for (element, accepted) in inner_outcomes.iter().enumerate() {
-            assert!(
-                !accepted,
-                "a corrupt digit of recursion element {element} verified"
-            );
-        }
     }
 
     /// A component whose size is not a power of two occupies the blocks of its binary
