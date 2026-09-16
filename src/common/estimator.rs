@@ -1,8 +1,6 @@
 use std::io;
 use std::process::Command;
 
-use tracing::error;
-
 use crate::common::config::{DEGREE, MOD_Q};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
