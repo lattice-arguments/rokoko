@@ -1,6 +1,8 @@
 use std::io;
 use std::process::Command;
 
+use tracing::error;
+
 use crate::common::config::{DEGREE, MOD_Q};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,8 +66,16 @@ pub fn estimate_sis_security(params: &SISParameters) -> Result<EstimatorResult, 
         Norm::Infinity => sis_lattice::cost_infinity_top_log2(params),
     };
 
+    let rop = log2_rop.ceil();
+
+    if rop < 128.0 {
+        println!(
+            "Warning: Estimated security parameter is low: {} bits. Consider increasing parameters.",
+            rop
+        );
+    }
     Ok(EstimatorResult {
-        secpar: log2_rop.ceil(),
+        secpar: rop,
     })
 }
 

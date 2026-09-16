@@ -356,13 +356,13 @@ pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
         opening_recursion: AuxRecursionConfig {
             decomposition_base_log: 7,
             decomposition_chunks: 8,
-            rank: 2,
+            rank: size.pick(2, 2, 4, 4),
             next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         },
         projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
-            decomposition_base_log: 9,
+            decomposition_base_log: size.pick(8, 8, 9, 9),
             decomposition_chunks: 2,
-            rank: 2,
+            rank: size.pick(2, 2, 4, 4),
             next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         }),
 
