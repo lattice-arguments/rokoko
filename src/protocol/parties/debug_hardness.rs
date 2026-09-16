@@ -23,9 +23,18 @@ use crate::{
 /// Paper: alpha_rp = sqrt(30), the lower JL bound (Lemma "JL", kappa = 2^-128).
 const JL_ALPHA_RP: f64 = 5.477225575051661;
 
-/// Rewinding slack: factor 4 for the difference quotient in extraction,
-/// factor 2 for ISIS-to-SIS.
-const EXTRACTION_SLACK: f64 = 8.0;
+/// Paper uses factor 8.0, but we use 6.0 
+/// we allow extractor to do one more fork over the folding base challenge c,
+/// we get
+/// Fw = F(v - v') = y(c - c') = yz 
+// for SIS-breakage, we rewind once more, but with c fixed, so that 
+/// Fw' =  F(v - v'') = y(c - c'') = yz'
+/// Then, if (w, z) \neq (w', z'), we have 
+/// F(wz' - w'z) = 0
+/// (wz' - w'z) = (v - v')(c- c') - (v - v'')(c - c'') \leq 6 op_norm_bound * v_norm
+/// as vc - vc cancels out
+/// cf. https://github.com/lattice-dogs/labrador/blob/8b6626b26afd4c0162ddd089759d21d3d51bfbdf/greyhound.c#L42
+const EXTRACTION_SLACK: f64 = 6.0;
 
 /// The L_2 norm of the level's undecomposed input, recomposed out of its digit planes. This is
 /// what the recomposition factor bounds, so printing it shows how much of that factor is slack.
@@ -459,7 +468,7 @@ pub fn check_simple_round(
 
     let projection_l2_norm = norms::l2_norm_coeffs(projection_image_ct_data);
 
-    let extracted_witness_bound = folded_witness_l2_norm * T_OP_NORM_BOUND * EXTRACTION_SLACK;
+    let extracted_witness_bound = folded_witness_l2_norm * T_OP_NORM_BOUND * EXTRACTION_SLACK * NORM_MARGIN;
 
     let argued_witness_bound = projection_l2_norm / JL_ALPHA_RP;
     let worse_bound = if extracted_witness_bound > argued_witness_bound {
