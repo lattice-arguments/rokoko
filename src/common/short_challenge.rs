@@ -18,8 +18,8 @@ use std::sync::LazyLock;
 
 // Challenge set size before rejection: C(128,22) * 2^22 = 2^103.31 elements.
 pub const TAU: usize = 22;
-// With TAU=22, the expected number of sampling attempts is about 2^0.31 = 1.24.
-pub const T_OP_NORM_BOUND: f64 = 10.0;
+// With TAU=22
+pub const T_OP_NORM_BOUND: f64 = 9.8;
 
 const N: usize = DEGREE;
 const LOG_N: usize = N.trailing_zeros() as usize;
