@@ -1,7 +1,7 @@
 //! The basic commitment over a CRT basis of 16-bit NTT primes instead of `q`. `A w` is computed
-//! exactly over the integers modulo `Q = prod p_i`, one 128-point negacyclic NTT per prime with
-//! the slot products accumulated by VNNI, and reduced to `q` once at the end. The limb count
-//! comes from a statistical bound on `|A w|` and the digits' measured norm, not from the
+//! exactly over the integers modulo `Q = prod p_i`, one negacyclic NTT down to degree-2 slots per
+//! prime with the slot products accumulated by VNNI, and reduced to `q` once at the end. The limb
+//! count comes from a statistical bound on `|A w|` and the digits' measured norm, not from the
 //! worst-case one, and every reconstructed coefficient is checked against that bound.
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
@@ -26,7 +26,7 @@ use rayon::prelude::*;
 pub const PRIMES: [i32; 8] = [3329, 7681, 7937, 9473, 10753, 11777, 12289, 13313];
 
 const SLOTS: usize = HALF_DEGREE;
-const STAGES: u32 = 6;
+const STAGES: u32 = SLOTS.trailing_zeros();
 
 fn power(base: i64, exponent: u64, modulus: i64) -> i64 {
     let mut result = 1i64;
@@ -112,7 +112,11 @@ fn stage_offset(stage: u32) -> usize {
 impl Limb {
     pub fn new(p: i32) -> Limb {
         let modulus = p as i64;
-        let root = power(generator(modulus), ((modulus - 1) / 256) as u64, modulus);
+        let root = power(
+            generator(modulus),
+            ((modulus - 1) / DEGREE as i64) as u64,
+            modulus,
+        );
         let montgomery = |x: i64| -> i16 {
             let lifted = (x.rem_euclid(modulus) << 16) % modulus;
             let centred = if lifted > modulus / 2 {
@@ -130,16 +134,16 @@ impl Limb {
 
         let mut inverse_zetas = [0i16; SLOTS];
         let mut block_exponents: Vec<Vec<u64>> = Vec::new();
-        let mut exponents = vec![128u64];
+        let mut exponents = vec![SLOTS as u64];
         for stage in 0..STAGES {
             block_exponents.push(exponents.clone());
             let mut next = Vec::with_capacity(exponents.len() * 2);
             for (block, exponent) in exponents.iter().enumerate() {
                 let half = exponent / 2;
                 inverse_zetas[stage_offset(stage) + block] =
-                    montgomery(power(root, 256 - half, modulus));
+                    montgomery(power(root, DEGREE as u64 - half, modulus));
                 next.push(half);
-                next.push(half + 128);
+                next.push(half + SLOTS as u64);
             }
             exponents = next;
         }
@@ -367,15 +371,15 @@ pub struct CrtKey {
 fn transform_rows(limb: &Limb, source: &[i16], out: &mut [i16]) {
     let mut k = 0;
     let rows = out.len() / (2 * DEGREE);
-    while k + 4 <= rows {
+    while k + TRANSFORM_BATCH <= rows {
         unsafe {
-            transform::<4, 2>(
+            transform::<TRANSFORM_BATCH, 2>(
                 limb,
                 source.as_ptr().add(k * DEGREE),
                 out.as_mut_ptr().add(2 * k * DEGREE),
             )
         };
-        k += 4;
+        k += TRANSFORM_BATCH;
     }
     while k < rows {
         unsafe {
@@ -712,9 +716,15 @@ fn accumulate_group(
                 let source = tile_digits[c * n + base].0.as_ptr();
                 let out = unsafe { buffer.as_mut_ptr().add(c * CHUNK * DEGREE) };
                 let mut k = 0;
-                while k + 4 <= taken {
-                    unsafe { transform::<4, 0>(limb, source.add(k * DEGREE), out.add(k * DEGREE)) };
-                    k += 4;
+                while k + TRANSFORM_BATCH <= taken {
+                    unsafe {
+                        transform::<TRANSFORM_BATCH, 0>(
+                            limb,
+                            source.add(k * DEGREE),
+                            out.add(k * DEGREE),
+                        )
+                    };
+                    k += TRANSFORM_BATCH;
                 }
                 while k < taken {
                     unsafe { transform::<1, 0>(limb, source.add(k * DEGREE), out.add(k * DEGREE)) };
@@ -732,31 +742,34 @@ fn accumulate_group(
                                 + ((row + r * paired as usize) * columns_per_tile + c) * DEGREE,
                         )
                     });
-                    let mut acc = unsafe { load(at.map(|p| p as *const i32)) };
                     let bases: [*const i16; 2] = std::array::from_fn(|r| {
                         key.row(first + offset, row + r * paired as usize, base)
                             .as_ptr()
                     });
                     let operands = unsafe { buffer.as_ptr().add(c * CHUNK * DEGREE) };
-                    for k in 0..taken {
-                        let keys: [*const i16; 2] =
-                            std::array::from_fn(|r| unsafe { bases[r].add(2 * k * DEGREE) });
-                        let operand = unsafe { operands.add(k * DEGREE) };
+                    for panel in (0..DEGREE).step_by(PANEL) {
+                        let mut acc = unsafe { load(at.map(|p| p as *const i32), panel) };
+                        for k in 0..taken {
+                            let keys: [*const i16; 2] = std::array::from_fn(|r| unsafe {
+                                bases[r].add(2 * k * DEGREE + panel)
+                            });
+                            let operand = unsafe { operands.add(k * DEGREE + panel) };
+                            unsafe {
+                                if paired {
+                                    accumulate::<2>(&mut acc, operand, keys)
+                                } else {
+                                    accumulate::<1>(&mut acc, operand, [keys[0]])
+                                }
+                            };
+                        }
                         unsafe {
                             if paired {
-                                accumulate::<2>(&mut acc, operand, keys)
+                                store::<2>(&acc, at, panel)
                             } else {
-                                accumulate::<1>(&mut acc, operand, [keys[0]])
+                                store::<1>(&acc, [at[0]], panel)
                             }
                         };
                     }
-                    unsafe {
-                        if paired {
-                            store::<2>(&acc, at)
-                        } else {
-                            store::<1>(&acc, [at[0]])
-                        }
-                    };
                 }
                 row += 1 + paired as usize;
             }
@@ -1050,8 +1063,17 @@ unsafe fn centre(a: __m512i, p: __m512i, barrett: __m512i) -> __m512i {
     _mm512_sub_epi16(a, _mm512_mullo_epi16(t, p))
 }
 
+/// `i16` registers per element, and the butterfly stages whose pairs sit in different registers.
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-const LOW_LANES: [u32; 6] = [0, 0, 0x0000_ffff, 0x00ff_00ff, 0x0f0f_0f0f, 0x3333_3333];
+const REGISTERS: usize = DEGREE / 32;
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+const CROSSING: u32 = REGISTERS.trailing_zeros();
+/// Elements transformed together, filling sixteen registers.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+const TRANSFORM_BATCH: usize = 16 / REGISTERS;
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+const LOW_LANES: [u32; 4] = [0x0000_ffff, 0x00ff_00ff, 0x0f0f_0f0f, 0x3333_3333];
 
 /// Even-odd storage into natural coefficient order: output lane `2i` takes the even half,
 /// lane `2i + 1` the odd one.
@@ -1078,59 +1100,59 @@ unsafe fn interleave(source: *const i16, register: usize) -> __m512i {
     _mm512_permutex2var_epi16(
         _mm512_loadu_si512(source.add(half) as *const _),
         _mm512_loadu_si512(INTERLEAVE[register % 2].as_ptr() as *const _),
-        _mm512_loadu_si512(source.add(64 + half) as *const _),
+        _mm512_loadu_si512(source.add(HALF_DEGREE + half) as *const _),
     )
 }
 
+/// The butterfly partner of every lane at in-register level `LEVEL`, where pairs are
+/// `16 >> LEVEL` lanes apart.
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 #[inline(always)]
-unsafe fn partner_of<const STAGE: usize>(x: __m512i) -> __m512i {
-    match STAGE {
-        2 => _mm512_shuffle_i64x2(x, x, 0x4e),
-        3 => _mm512_shuffle_i64x2(x, x, 0xb1),
-        4 => _mm512_shuffle_epi32(x, _MM_PERM_BADC),
+unsafe fn partner_of<const LEVEL: usize>(x: __m512i) -> __m512i {
+    match LEVEL {
+        0 => _mm512_shuffle_i64x2(x, x, 0x4e),
+        1 => _mm512_shuffle_i64x2(x, x, 0xb1),
+        2 => _mm512_shuffle_epi32(x, _MM_PERM_BADC),
         _ => _mm512_shuffle_epi32(x, _MM_PERM_CDAB),
     }
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 #[inline(always)]
-unsafe fn in_register<const STAGE: usize, const BATCH: usize>(
+unsafe fn in_register<const LEVEL: usize, const BATCH: usize>(
     limb: &Limb,
     z: &mut [__m512i],
     p: __m512i,
 ) {
-    for r in 0..4 {
-        let zeta = _mm512_loadu_si512(limb.stage_zetas[STAGE].as_ptr().add(32 * r) as *const _);
-        let quotient = _mm512_loadu_si512(limb.stage_shoup[STAGE].as_ptr().add(32 * r) as *const _);
+    let stage = CROSSING as usize + LEVEL;
+    for r in 0..REGISTERS {
+        let zeta = _mm512_loadu_si512(limb.stage_zetas[stage].as_ptr().add(32 * r) as *const _);
+        let quotient = _mm512_loadu_si512(limb.stage_shoup[stage].as_ptr().add(32 * r) as *const _);
         for e in 0..BATCH {
-            let x = z[4 * e + r];
-            let other = partner_of::<STAGE>(x);
-            let upper = _mm512_mask_blend_epi16(LOW_LANES[STAGE], x, other);
-            let lower = _mm512_mask_blend_epi16(LOW_LANES[STAGE], other, x);
-            z[4 * e + r] = _mm512_add_epi16(lower, shoup(upper, zeta, quotient, p));
+            let x = z[REGISTERS * e + r];
+            let other = partner_of::<LEVEL>(x);
+            let upper = _mm512_mask_blend_epi16(LOW_LANES[LEVEL], x, other);
+            let lower = _mm512_mask_blend_epi16(LOW_LANES[LEVEL], other, x);
+            z[REGISTERS * e + r] = _mm512_add_epi16(lower, shoup(upper, zeta, quotient, p));
         }
     }
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 #[inline(always)]
-unsafe fn crossing<const STAGE: usize, const BATCH: usize>(
-    limb: &Limb,
-    z: &mut [__m512i],
-    p: __m512i,
-) {
-    let step = 2 >> STAGE;
-    for low in 0..4 {
+unsafe fn crossing<const BATCH: usize>(limb: &Limb, z: &mut [__m512i], p: __m512i, stage: u32) {
+    let step = (REGISTERS / 2) >> stage;
+    for low in 0..REGISTERS {
         if low & step != 0 {
             continue;
         }
-        let zeta = _mm512_set1_epi16(limb.stage_zetas[STAGE][32 * low]);
-        let quotient = _mm512_set1_epi16(limb.stage_shoup[STAGE][32 * low]);
+        let zeta = _mm512_set1_epi16(limb.stage_zetas[stage as usize][32 * low]);
+        let quotient = _mm512_set1_epi16(limb.stage_shoup[stage as usize][32 * low]);
         for e in 0..BATCH {
-            let t = shoup(z[4 * e + low + step], zeta, quotient, p);
-            z[4 * e + low + step] = _mm512_sub_epi16(z[4 * e + low], t);
-            z[4 * e + low] = _mm512_add_epi16(z[4 * e + low], t);
+            let at = REGISTERS * e + low;
+            let t = shoup(z[at + step], zeta, quotient, p);
+            z[at + step] = _mm512_sub_epi16(z[at], t);
+            z[at] = _mm512_add_epi16(z[at], t);
         }
     }
 }
@@ -1148,38 +1170,38 @@ unsafe fn transform<const BATCH: usize, const MODE: usize>(
 
     let mut z = [_mm512_setzero_si512(); 16];
     for e in 0..BATCH {
-        for r in 0..4 {
-            z[4 * e + r] = centre(interleave(source.add(DEGREE * e), r), p, barrett);
+        for r in 0..REGISTERS {
+            z[REGISTERS * e + r] = centre(interleave(source.add(DEGREE * e), r), p, barrett);
         }
     }
 
     let reduce = |z: &mut [__m512i], stage: u32| {
         if (stage + 1) % limb.stride == 0 {
-            for slot in z.iter_mut().take(4 * BATCH) {
+            for slot in z.iter_mut().take(REGISTERS * BATCH) {
                 *slot = centre(*slot, p, barrett);
             }
         }
     };
 
-    crossing::<0, BATCH>(limb, &mut z, p);
-    reduce(&mut z, 0);
-    crossing::<1, BATCH>(limb, &mut z, p);
-    reduce(&mut z, 1);
+    for stage in 0..CROSSING {
+        crossing::<BATCH>(limb, &mut z, p, stage);
+        reduce(&mut z, stage);
+    }
+    in_register::<0, BATCH>(limb, &mut z, p);
+    reduce(&mut z, CROSSING);
+    in_register::<1, BATCH>(limb, &mut z, p);
+    reduce(&mut z, CROSSING + 1);
     in_register::<2, BATCH>(limb, &mut z, p);
-    reduce(&mut z, 2);
+    reduce(&mut z, CROSSING + 2);
     in_register::<3, BATCH>(limb, &mut z, p);
-    reduce(&mut z, 3);
-    in_register::<4, BATCH>(limb, &mut z, p);
-    reduce(&mut z, 4);
-    in_register::<5, BATCH>(limb, &mut z, p);
-    for slot in z.iter_mut().take(4 * BATCH) {
+    for slot in z.iter_mut().take(REGISTERS * BATCH) {
         *slot = centre(*slot, p, barrett);
     }
 
-    for r in 0..4 {
+    for r in 0..REGISTERS {
         let zeta = _mm512_loadu_si512(limb.slot_pairs.as_ptr().add(32 * r) as *const _);
         for e in 0..BATCH {
-            let x = z[4 * e + r];
+            let x = z[REGISTERS * e + r];
             if MODE == 0 {
                 _mm512_storeu_si512(out.add(DEGREE * e + 32 * r) as *mut _, x);
                 continue;
@@ -1191,8 +1213,12 @@ unsafe fn transform<const BATCH: usize, const MODE: usize>(
     }
 }
 
-/// One transformed witness element against `ROWS` key rows, so that its eight loads are
-/// shared instead of repeated per row.
+/// Coefficients of one accumulation pass: four registers of an element, eight accumulators a row.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+const PANEL: usize = 128;
+
+/// One panel of a transformed witness element against `ROWS` key rows, so that its eight loads
+/// are shared instead of repeated per row.
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 #[target_feature(enable = "avx512f,avx512bw,avx512vnni")]
 unsafe fn accumulate<const ROWS: usize>(
@@ -1235,18 +1261,28 @@ unsafe fn reduce(limb: &Limb, accumulators: &mut [i32]) {
     }
 }
 
+/// Where accumulator `register` of the panel starting at coefficient `panel` sits in a row's
+/// accumulators, the slots' constant terms first and their `X` terms after them.
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-#[target_feature(enable = "avx512f,avx512bw,avx512vnni")]
-unsafe fn load(at: [*const i32; 2]) -> [__m512i; 16] {
-    std::array::from_fn(|slot| _mm512_loadu_si512(at[slot / 8].add(16 * (slot % 8)) as *const _))
+#[inline(always)]
+fn lane(register: usize, panel: usize) -> usize {
+    register / 4 * SLOTS + panel / 2 + 16 * (register % 4)
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 #[target_feature(enable = "avx512f,avx512bw,avx512vnni")]
-unsafe fn store<const ROWS: usize>(acc: &[__m512i], at: [*mut i32; ROWS]) {
+unsafe fn load(at: [*const i32; 2], panel: usize) -> [__m512i; 16] {
+    std::array::from_fn(|slot| {
+        _mm512_loadu_si512(at[slot / 8].add(lane(slot % 8, panel)) as *const _)
+    })
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[target_feature(enable = "avx512f,avx512bw,avx512vnni")]
+unsafe fn store<const ROWS: usize>(acc: &[__m512i], at: [*mut i32; ROWS], panel: usize) {
     for row in 0..ROWS {
         for r in 0..8 {
-            _mm512_storeu_si512(at[row].add(16 * r) as *mut _, acc[8 * row + r]);
+            _mm512_storeu_si512(at[row].add(lane(r, panel)) as *mut _, acc[8 * row + r]);
         }
     }
 }
