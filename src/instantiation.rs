@@ -69,21 +69,20 @@ impl std::str::FromStr for ParamSet {
 pub fn instantiation(set: ParamSet) -> Option<Instantiation> {
     Some(Instantiation {
         config: chain(set)?,
-        witness: initial_witness(set),
+        witness: initial_witness(&root_aux(set, 1)),
     })
 }
 
 pub fn snark_instantiation(set: ParamSet) -> Option<Instantiation> {
     Some(Instantiation {
         config: exact_norm_chain(set, 2)?,
-        witness: initial_witness(set),
+        witness: initial_witness(&root_aux(set, 1)),
     })
 }
 
 /// 2^28 Z_q elements of norm 2^32 => 2^29 Z_q elements of norm 2^16 (signed 2^15)
 /// => 2^22 R_q elements => height 2^15, width 2^7
-fn initial_witness(set: ParamSet) -> InitialWitnessParams {
-    let root = root_aux(set, 1);
+pub fn initial_witness(root: &AuxSumcheckConfig) -> InitialWitnessParams {
     let decomposition_chunks = 2;
     InitialWitnessParams {
         height: root.witness_height / decomposition_chunks,
@@ -600,7 +599,7 @@ pub static P_LAST: LazyLock<SimpleConfig> = LazyLock::new(|| SimpleConfig {
     projection_norm_bound: f64::INFINITY,
 });
 
-#[cfg(test)]
+#[cfg(all(test, ring_degree = "128"))]
 mod tests {
     use super::{exact_norm_chain, instantiation, p_root_aux, ParamSet};
     use rokoko::common::init_common;

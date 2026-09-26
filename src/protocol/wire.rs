@@ -6,9 +6,10 @@
 //! and the norm claims pay their own scale, and zero carries no field at all. Ring elements are
 //! coded in the representation they are held in unless the coefficient one saves more than a bit
 //! per coefficient, and shapes travel as varints rather than being re-derived from `Config`. At
-//! p-26 this is 112.1 KB against the 100.4 KB `size_in_bits` reports, and about 10 kB of that
-//! gap is unreachable: that accounting charges `log2|c|`, the ideal code length for a scale-free
-//! source, whereas the entropy floor of the coefficients actually sent is 110.7 KB.
+//! p-26 on the default ring this is 112.1 KB against the 100.4 KB `size_in_bits` reports, and
+//! about 10 kB of that gap is unreachable: that accounting charges `log2|c|`, the ideal code
+//! length for a scale-free source, whereas the entropy floor of the coefficients actually sent is
+//! 110.7 KB.
 
 use crate::common::config::{DEGREE, MOD_Q};
 use crate::common::matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix};

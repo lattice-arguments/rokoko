@@ -12,8 +12,9 @@ Where `{SET}` is one of `p-22`, `p-24`, `p-26`, `p-28`, `p-29`, `p-30` (or which
 without an argument the binary runs `p-28`. `p-29` has only the exact-norm chain, so it runs with
 `--features snark`. The parameter set is a runtime argument, so one build serves every set.
 
-The sets themselves live in `src/instantiation.rs` (binary crate); the library only receives the
-chain as a `rokoko::protocol::params::Instantiation`.
+The sets themselves live in `src/instantiation.rs` (binary crate), and those of the degree-256 ring
+in `src/instantiation_n256.rs`; the binary takes the file matching the compiled ring. The library
+only receives the chain as a `rokoko::protocol::params::Instantiation`.
 
 Features are defined in `Cargo.toml`; the defaults already include:
 - `incomplete-rexl` — optional dep for reduced-extension ring, always enabled for these benches

@@ -258,7 +258,7 @@ Due to memory requirements for polynomial degree 2^30 exceeding 64 GB, the respe
 
 ## Parameter sets
 
-The binary takes the parameter set as its argument: `p-22`, `p-24`, `p-26`, `p-28` (default) and `p-30` for polynomial degrees 2^22 to 2^30, e.g. `cargo run --release -- p-26`; `p-29` exists as an exact-norm chain for `snark` mode. The sets are defined in `src/instantiation.rs`.
+The binary takes the parameter set as its argument: `p-22`, `p-24`, `p-26`, `p-28` (default) and `p-30` for polynomial degrees 2^22 to 2^30, e.g. `cargo run --release -- p-26`; `p-29` exists as an exact-norm chain for `snark` mode. The sets are defined in `src/instantiation.rs` for the default degree-128 ring and in `src/instantiation_n256.rs` for a degree-256 one (`p-22` to `p-30` except `p-29`, plain chains only); the binary picks the file matching the compiled `DEGREE`, e.g. `ROKOKO_RING=rings/n256.toml cargo run --release -- p-26`.
 
 ## Ring
 
