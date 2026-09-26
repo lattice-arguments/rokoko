@@ -71,47 +71,46 @@ pub const NORM_MARGIN: f64 = 1.85; // verifier accepts norms up to this factor t
 
 const NB_P_22: [[f64; 3]; 5] = [
     [32780.13553968318, 658.8581030844199, f64::INFINITY],
-    [33944.424696848226, 940.5620660009631, f64::INFINITY],
-    [26029.049291128555, 932.807054004203, f64::INFINITY],
-    [25520.177507219654, 23691.980478634538, f64::INFINITY],
-    [105490.32169824869, 282460.504525854, f64::INFINITY],
+    [47419.75602003874, 937.2283606464329, f64::INFINITY],
+    [19652.954281735863, 17184.076408116904, f64::INFINITY],
+    [82819.62027201042, 17959.385679916784, f64::INFINITY],
+    [342150.11295044166, 906577.6996612039, f64::INFINITY],
 ];
 
-const NB_P_24: [[f64; 3]; 5] = [
+const NB_P_24: [[f64; 3]; 6] = [
     [46380.63681106589, 658.2780567510966, f64::INFINITY],
-    [44191.243329419915, 934.8957161095562, f64::INFINITY],
-    [28496.98806891704, 936.6947208135637, f64::INFINITY],
-    [25617.27091241376, 23785.993231311575, f64::INFINITY],
-    [105953.3394329787, 288958.38519067067, f64::INFINITY],
+    [52495.27435874585, 933.6910623969793, f64::INFINITY],
+    [36664.73233231084, 932.7829329484969, f64::INFINITY],
+    [20123.63543199886, 17723.635970082436, f64::INFINITY],
+    [84691.22217798016, 18058.99352123479, f64::INFINITY],
+    [343553.17282772984, 974675.9334322357, f64::INFINITY],
 ];
 
 const NB_P_26: [[f64; 3]; 6] = [
-    [54448.06447432269, 932.9410485127129, f64::INFINITY],
-    [60481.65042390957, 810.3406691015822, f64::INFINITY],
-    [45099.63781451022, 939.5999148573823, f64::INFINITY],
-    [28762.725844397988, 935.0358281905566, f64::INFINITY],
-    [25636.912840667846, 23806.64623587287, f64::INFINITY],
-    [105498.70839019783, 291989.8741069628, f64::INFINITY],
+    [65626.87609508775, 935.359289257342, f64::INFINITY],
+    [81826.37432393055, 1329.583017340399, f64::INFINITY],
+    [40182.334352299644, 936.3690511758705, f64::INFINITY],
+    [20021.812655201826, 17588.60375356725, f64::INFINITY],
+    [84896.52137160863, 18074.12905232227, f64::INFINITY],
+    [354224.9021186963, 975599.2551206668, f64::INFINITY],
 ];
 
-const NB_P_28: [[f64; 3]; 7] = [
+const NB_P_28: [[f64; 3]; 6] = [
     [77066.24937675377, 934.5346435526079, f64::INFINITY],
-    [75129.99459603334, 1154.271631809428, f64::INFINITY],
-    [63601.99592780088, 935.7820259013314, f64::INFINITY],
-    [57553.05434987791, 935.3314920390525, f64::INFINITY],
-    [26448.06915447704, 931.5041599477696, f64::INFINITY],
-    [25524.994436826033, 23679.86925639582, f64::INFINITY],
-    [105677.47794587075, 290070.6799902396, f64::INFINITY],
+    [70699.86742561827, 1323.6721648504965, f64::INFINITY],
+    [54203.87920619704, 935.0802104632522, f64::INFINITY],
+    [20145.34559147596, 17696.098214013167, f64::INFINITY],
+    [84928.53727104924, 17998.61655794689, f64::INFINITY],
+    [367344.54147979384, 958576.8451699634, f64::INFINITY],
 ];
 
-const NB_P_30: [[f64; 3]; 7] = [
-    [160740.60277042637, 937.7499666755526, f64::INFINITY],
-    [132725.9321685103, 1147.5081699055568, f64::INFINITY],
-    [48507.854178473, 940.1388195367746, f64::INFINITY],
-    [56136.25327718265, 936.9167519048851, f64::INFINITY],
-    [26341.58366537593, 936.876726149177, f64::INFINITY],
-    [25546.074551680147, 23708.79619466159, f64::INFINITY],
-    [105481.88627911429, 295650.2019346511, f64::INFINITY],
+const NB_P_30: [[f64; 3]; 6] = [
+    [161637.21955663554, 934.2644165331354, f64::INFINITY],
+    [117458.72637654471, 1318.812344497882, f64::INFINITY],
+    [54874.59558848703, 935.467262922653, f64::INFINITY],
+    [20188.107142572826, 17747.034935447668, f64::INFINITY],
+    [85814.1120737143, 18068.599198609725, f64::INFINITY],
+    [352581.0992651194, 938639.6995173388, f64::INFINITY],
 ];
 
 const NB_P_EN_26: [[f64; 3]; 8] = [
@@ -263,45 +262,34 @@ pub fn p_int(size: SizeConfig) -> AuxSumcheckConfig {
 }
 
 pub fn p_root_aux(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
-    AuxSumcheckConfig {
+    chained(AuxSumcheckConfig {
         exact_projection_norm: false,
         witness_height: size.pick(
-            2usize.pow(12),
+            2usize.pow(11),
             2usize.pow(13),
             2usize.pow(14),
-            2usize.pow(14),
+            2usize.pow(13),
         ),
-        witness_width: size.pick(2usize.pow(7), 2usize.pow(8), 2usize.pow(8), 2usize.pow(9)),
+        witness_width: size.pick(2usize.pow(8), 2usize.pow(8), 2usize.pow(8), 2usize.pow(10)),
         projection_ratio: 1,              // no-op
         projection_height: 2usize.pow(8), // no-op,
         basic_commitment_rank: size.pick(5, 5, 5, 6),
         nof_openings,
-        commitment_recursion: AuxRecursionConfig {
-            decomposition_base_log: 7,
-            decomposition_chunks: 8,
-            rank: 2,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-        },
-        opening_recursion: AuxRecursionConfig {
-            decomposition_base_log: 7,
-            decomposition_chunks: 8,
-            rank: 2,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-        },
+        commitment_recursion: two_level(7, 8, 2),
+        opening_recursion: two_level(7, 8, 2),
         projection_recursion: AuxProjection::Skip,
 
         witness_decomposition_chunks: 4,
         witness_decomposition_base_log: size.pick(6, 6, 6, 7),
 
-        next: Some(Box::new(AuxConfig::Sumcheck(p_1(size)))),
-    }
+        next: None,
+    })
 }
 
-/// Root of the p-24 and p-22 chains. Its composed witness is already as short as the one p_1
-/// composes to (p-22: half of it, hence the shorter p_2), so the chain skips p_1.
+/// Root of the p-24 and p-22 chains, narrow enough that its composed witness is already short.
 pub fn p_root_aux_short(size: SizeConfig, nof_openings: usize) -> AuxSumcheckConfig {
     let tiny = size == SizeConfig::Tiny;
-    AuxSumcheckConfig {
+    chained(AuxSumcheckConfig {
         exact_projection_norm: false,
         witness_height: if tiny { 2usize.pow(10) } else { 2usize.pow(9) },
         witness_width: if tiny { 2usize.pow(7) } else { 2usize.pow(6) },
@@ -309,124 +297,197 @@ pub fn p_root_aux_short(size: SizeConfig, nof_openings: usize) -> AuxSumcheckCon
         projection_height: 2usize.pow(8), // no-op,
         basic_commitment_rank: 5,
         nof_openings,
-        commitment_recursion: AuxRecursionConfig {
-            decomposition_base_log: 7,
-            decomposition_chunks: 8,
-            rank: 1,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-        },
-        opening_recursion: AuxRecursionConfig {
-            decomposition_base_log: 7,
-            decomposition_chunks: 8,
-            rank: 1,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-        },
+        commitment_recursion: two_level(7, 8, 1),
+        opening_recursion: two_level(7, 8, 1),
         projection_recursion: AuxProjection::Skip,
 
         witness_decomposition_chunks: 4,
         witness_decomposition_base_log: 6,
 
-        next: Some(Box::new(AuxConfig::Sumcheck(p_2(size)))),
-    }
+        next: None,
+    })
 }
 
+/// The round after the plain root of `size`.
 pub fn p_1(size: SizeConfig) -> AuxSumcheckConfig {
-    AuxSumcheckConfig {
-        exact_projection_norm: false,
-        witness_height: size.pick(
-            2usize.pow(12),
-            2usize.pow(12),
-            2usize.pow(13),
-            2usize.pow(13),
-        ),
-        witness_width: size.pick(2usize.pow(3), 2usize.pow(4), 2usize.pow(4), 2usize.pow(4)),
-        projection_ratio: size.pick(2usize.pow(4), 2usize.pow(4), 2usize.pow(5), 2usize.pow(5)),
-        projection_height: 2usize.pow(8),
-        basic_commitment_rank: 3,
-        nof_openings: 2,
-        commitment_recursion: AuxRecursionConfig {
-            decomposition_base_log: 7,
-            decomposition_chunks: 8,
-            rank: size.pick(1, 2, 2, 2),
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-        },
-        opening_recursion: AuxRecursionConfig {
-            decomposition_base_log: 7,
-            decomposition_chunks: 8,
-            rank: size.pick(1, 2, 2, 2),
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-        },
-        projection_recursion: AuxProjection::Coarse(AuxRecursionConfig {
-            decomposition_base_log: size.pick(8, 8, 9, 9),
-            decomposition_chunks: 2,
-            rank: size.pick(1, 2, 2, 2),
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-        }),
+    let root = p_root_aux(size, 1);
+    chained(round_for(composed_length(&root)))
+}
 
-        witness_decomposition_chunks: 2,
-        // the base-2^6 window measured 2082 against its 2080 cap at p-28
-        // (transcript-dependent); base 2^7, already the p-30 value, restores
-        // margin at unchanged composed geometry
-        witness_decomposition_base_log: 7,
-
-        next: Some(Box::new(AuxConfig::Sumcheck(p_2(size)))),
-        // next: None
+fn level(
+    decomposition_base_log: usize,
+    decomposition_chunks: usize,
+    rank: usize,
+    next: Option<AuxRecursionConfig>,
+) -> AuxRecursionConfig {
+    AuxRecursionConfig {
+        decomposition_base_log,
+        decomposition_chunks,
+        rank,
+        next: next.map(Box::new),
     }
 }
 
-pub fn p_2(size: SizeConfig) -> AuxSumcheckConfig {
-    AuxSumcheckConfig {
-        exact_projection_norm: false,
-        witness_height: match size {
-            SizeConfig::Micro => 2usize.pow(8),
-            _ => size.pick(
-                2usize.pow(9),
-                2usize.pow(10),
-                2usize.pow(10),
-                2usize.pow(10),
-            ),
-        },
-        witness_width: 2usize.pow(5),
-        projection_ratio: size.pick(2usize.pow(6), 2usize.pow(5), 2usize.pow(8), 2usize.pow(8)),
-        projection_height: 2usize.pow(8),
-        basic_commitment_rank: 3,
-        nof_openings: 2,
-        commitment_recursion: AuxRecursionConfig {
-            decomposition_base_log: 7,
-            decomposition_chunks: 8,
-            rank: 1,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-        },
-        opening_recursion: AuxRecursionConfig {
-            decomposition_base_log: 7,
-            decomposition_chunks: 8,
-            rank: 1,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-        },
-        projection_recursion: AuxProjection::Fine {
-            nof_batches: 2,
-            recursion_constant_term: AuxRecursionConfig {
-                decomposition_base_log: 9,
-                decomposition_chunks: 2,
-                rank: 1,
-                next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-            },
-            recursion_batched_projection: AuxRecursionConfig {
-                decomposition_base_log: 7,
-                decomposition_chunks: 8,
-                rank: 1,
-                next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-            },
-        },
+fn two_level(
+    decomposition_base_log: usize,
+    decomposition_chunks: usize,
+    rank: usize,
+) -> AuxRecursionConfig {
+    level(
+        decomposition_base_log,
+        decomposition_chunks,
+        rank,
+        Some(DECOMP_11_LAST_LEVEL.clone()),
+    )
+}
 
-        witness_decomposition_chunks: 2,
-        witness_decomposition_base_log: 8,
+/// A round with a fine projection whose commitment, opening and batched-projection recursions
+/// share one shape.
+struct FineRound {
+    height: usize,
+    width: usize,
+    ratio: usize,
+    rank: usize,
+    witness_base_log: usize,
+    witness_chunks: usize,
+    recursion: AuxRecursionConfig,
+    constant_term: AuxRecursionConfig,
+}
 
-        next: Some(Box::new(AuxConfig::Sumcheck(match size {
-            SizeConfig::Micro | SizeConfig::Tiny | SizeConfig::Small => P_4.clone(),
-            _ => P_3.clone(),
-        }))),
+impl FineRound {
+    fn aux(self) -> AuxSumcheckConfig {
+        AuxSumcheckConfig {
+            exact_projection_norm: false,
+            witness_height: self.height,
+            witness_width: self.width,
+            projection_ratio: self.ratio,
+            projection_height: 2usize.pow(8),
+            basic_commitment_rank: self.rank,
+            nof_openings: 2,
+            commitment_recursion: self.recursion.clone(),
+            opening_recursion: self.recursion.clone(),
+            projection_recursion: AuxProjection::Fine {
+                nof_batches: 2,
+                recursion_constant_term: self.constant_term,
+                recursion_batched_projection: self.recursion,
+            },
+            witness_decomposition_chunks: self.witness_chunks,
+            witness_decomposition_base_log: self.witness_base_log,
+            next: None,
+        }
     }
+}
+
+fn composed_length(round: &AuxSumcheckConfig) -> usize {
+    let mut open = round.clone();
+    open.next = None;
+    match open.generate_config() {
+        Config::Sumcheck(config) => config.composed_witness_length,
+        _ => unreachable!("a sumcheck round generates a sumcheck config"),
+    }
+}
+
+/// `round` followed by the rounds that take its composed witness down to the terminal one.
+fn chained(mut round: AuxSumcheckConfig) -> AuxSumcheckConfig {
+    let length = composed_length(&round);
+    round.next = Some(Box::new(
+        if length == P_LAST.witness_height * P_LAST.witness_width {
+            AuxConfig::Simple(P_LAST.clone())
+        } else {
+            AuxConfig::Sumcheck(chained(round_for(length)))
+        },
+    ));
+    round
+}
+
+/// The round that takes a witness of `length` ring elements.
+fn round_for(length: usize) -> AuxSumcheckConfig {
+    match length.ilog2() {
+        17 => FineRound {
+            height: 2usize.pow(11),
+            width: 2usize.pow(6),
+            ratio: 2usize.pow(8),
+            rank: 3,
+            witness_base_log: 7,
+            witness_chunks: 2,
+            recursion: two_level(9, 6, 2),
+            constant_term: two_level(9, 2, 2),
+        },
+        16 => FineRound {
+            height: 2usize.pow(11),
+            width: 2usize.pow(5),
+            ratio: 2usize.pow(6),
+            rank: 3,
+            witness_base_log: 7,
+            witness_chunks: 2,
+            recursion: two_level(7, 8, 2),
+            constant_term: two_level(9, 2, 2),
+        },
+        15 => FineRound {
+            height: 2usize.pow(10),
+            width: 2usize.pow(5),
+            ratio: 2usize.pow(7),
+            rank: 3,
+            witness_base_log: 7,
+            witness_chunks: 2,
+            recursion: two_level(9, 6, 2),
+            constant_term: two_level(9, 2, 2),
+        },
+        14 => FineRound {
+            height: 2usize.pow(9),
+            width: 2usize.pow(5),
+            ratio: 2usize.pow(5),
+            rank: 3,
+            witness_base_log: 8,
+            witness_chunks: 2,
+            recursion: two_level(7, 8, 1),
+            constant_term: two_level(9, 2, 1),
+        },
+        13 => FineRound {
+            height: 2usize.pow(9),
+            width: 2usize.pow(4),
+            ratio: 2usize.pow(7),
+            rank: 3,
+            witness_base_log: 8,
+            witness_chunks: 2,
+            recursion: two_level(8, 7, 1),
+            constant_term: two_level(10, 2, 1),
+        },
+        12 => FineRound {
+            height: 2usize.pow(9),
+            width: 2usize.pow(3),
+            ratio: 2usize.pow(4),
+            rank: 3,
+            witness_base_log: 7,
+            witness_chunks: 2,
+            recursion: two_level(7, 8, 1),
+            constant_term: two_level(9, 2, 1),
+        },
+        11 => FineRound {
+            height: 2usize.pow(8),
+            width: 2usize.pow(3),
+            ratio: 2usize.pow(6),
+            rank: 3,
+            witness_base_log: 7,
+            witness_chunks: 2,
+            recursion: level(7, 8, 1, None),
+            constant_term: level(9, 2, 1, None),
+        },
+        10 => FineRound {
+            height: 2usize.pow(8),
+            width: 2usize.pow(2),
+            ratio: 2usize.pow(6),
+            rank: 3,
+            // the folded witness goes whole into the terminal round: as two digit planes it
+            // would leave the round no room to halve the witness
+            witness_base_log: 16,
+            witness_chunks: 1,
+            recursion: level(8, 7, 1, None),
+            constant_term: level(9, 2, 1, None),
+        },
+        log => panic!("no round takes a witness of 2^{log} ring elements"),
+    }
+    .aux()
 }
 
 pub static P_EN_SMALL: LazyLock<Config> = LazyLock::new(|| {
@@ -545,136 +606,10 @@ pub static P_TWO_EVALS: LazyLock<Config> = LazyLock::new(|| match compiled_size(
     SizeConfig::Large => P_2_LARGE.clone(),
 });
 
-pub static P_3: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
-    exact_projection_norm: false,
-    witness_height: 2usize.pow(8),
-    witness_width: 2usize.pow(5),
-    projection_ratio: 2usize.pow(5),
-    projection_height: 2usize.pow(8),
-    basic_commitment_rank: 3,
-    nof_openings: 2,
-    commitment_recursion: AuxRecursionConfig {
-        decomposition_base_log: 7,
-        decomposition_chunks: 8,
-        rank: 1,
-        next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-    },
-    opening_recursion: AuxRecursionConfig {
-        decomposition_base_log: 7,
-        decomposition_chunks: 8,
-        rank: 1,
-        next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-    },
-    projection_recursion: AuxProjection::Fine {
-        nof_batches: 2,
-        recursion_constant_term: AuxRecursionConfig {
-            decomposition_base_log: 10,
-            decomposition_chunks: 2,
-            rank: 1,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-        },
-        recursion_batched_projection: AuxRecursionConfig {
-            decomposition_base_log: 7,
-            decomposition_chunks: 8,
-            rank: 1,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-        },
-    },
-
-    witness_decomposition_chunks: 2,
-    witness_decomposition_base_log: 8,
-    next: Some(Box::new(AuxConfig::Sumcheck(P_4.clone()))),
-    // next: None
-});
-
-pub static P_4: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
-    exact_projection_norm: false,
-    witness_height: 2usize.pow(9),
-    witness_width: 2usize.pow(3),
-    projection_ratio: 2usize.pow(5),
-    projection_height: 2usize.pow(8),
-    basic_commitment_rank: 3,
-    nof_openings: 2,
-    commitment_recursion: AuxRecursionConfig {
-        decomposition_base_log: 7,
-        decomposition_chunks: 8,
-        rank: 1,
-        next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-    },
-    opening_recursion: AuxRecursionConfig {
-        decomposition_base_log: 7,
-        decomposition_chunks: 8,
-        rank: 1,
-        next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-    },
-    projection_recursion: AuxProjection::Fine {
-        nof_batches: 2,
-        recursion_constant_term: AuxRecursionConfig {
-            decomposition_base_log: 9,
-            decomposition_chunks: 2,
-            rank: 1,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-        },
-        recursion_batched_projection: AuxRecursionConfig {
-            decomposition_base_log: 7,
-            decomposition_chunks: 8,
-            rank: 1,
-            next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
-        },
-    },
-
-    witness_decomposition_chunks: 2,
-    witness_decomposition_base_log: 7,
-
-    next: Some(Box::new(AuxConfig::Sumcheck(P_5.clone()))),
-});
-
-pub static P_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
-    exact_projection_norm: false,
-    witness_height: 2usize.pow(8),
-    witness_width: 2usize.pow(3),
-    projection_ratio: 2usize.pow(6),
-    projection_height: 2usize.pow(8),
-    basic_commitment_rank: 3,
-    nof_openings: 2,
-    commitment_recursion: AuxRecursionConfig {
-        decomposition_base_log: 8,
-        decomposition_chunks: 7,
-        rank: 1,
-        next: None,
-    },
-    opening_recursion: AuxRecursionConfig {
-        decomposition_base_log: 8,
-        decomposition_chunks: 7,
-        rank: 1,
-        next: None,
-    },
-    projection_recursion: AuxProjection::Fine {
-        nof_batches: 2,
-        recursion_constant_term: AuxRecursionConfig {
-            decomposition_base_log: 9,
-            decomposition_chunks: 2,
-            rank: 1,
-            next: None,
-        },
-        recursion_batched_projection: AuxRecursionConfig {
-            decomposition_base_log: 8,
-            decomposition_chunks: 7,
-            rank: 1,
-            next: None,
-        },
-    },
-
-    witness_decomposition_chunks: 2,
-    witness_decomposition_base_log: 7,
-    next: Some(Box::new(AuxConfig::Simple(P_LAST.clone()))),
-    // next: None
-});
-
 pub static P_LAST: LazyLock<SimpleConfig> = LazyLock::new(|| SimpleConfig {
-    witness_height: 2usize.pow(8),
+    witness_height: 2usize.pow(7),
     witness_width: 2usize.pow(2),
-    projection_ratio: 2usize.pow(8),
+    projection_ratio: 2usize.pow(7),
     projection_height: 2usize.pow(8),
     basic_commitment_rank: 2,
     projection_nof_batches: 2,
