@@ -1079,6 +1079,11 @@ unsafe fn centre(a: __m512i, p: __m512i, barrett: __m512i) -> __m512i {
 const REGISTERS: usize = DEGREE / 32;
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 const CROSSING: u32 = REGISTERS.trailing_zeros();
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+const _: () = assert!(
+    CROSSING == 2 || CROSSING == 3,
+    "the transform unrolls degrees 128 and 256"
+);
 /// Elements transformed together, filling sixteen registers.
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 const TRANSFORM_BATCH: usize = 16 / REGISTERS;
@@ -1151,14 +1156,18 @@ unsafe fn in_register<const LEVEL: usize, const BATCH: usize>(
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 #[inline(always)]
-unsafe fn crossing<const BATCH: usize>(limb: &Limb, z: &mut [__m512i], p: __m512i, stage: u32) {
-    let step = (REGISTERS / 2) >> stage;
+unsafe fn crossing<const STAGE: usize, const BATCH: usize>(
+    limb: &Limb,
+    z: &mut [__m512i],
+    p: __m512i,
+) {
+    let step = (REGISTERS / 2) >> STAGE;
     for low in 0..REGISTERS {
         if low & step != 0 {
             continue;
         }
-        let zeta = _mm512_set1_epi16(limb.stage_zetas[stage as usize][32 * low]);
-        let quotient = _mm512_set1_epi16(limb.stage_shoup[stage as usize][32 * low]);
+        let zeta = _mm512_set1_epi16(limb.stage_zetas[STAGE][32 * low]);
+        let quotient = _mm512_set1_epi16(limb.stage_shoup[STAGE][32 * low]);
         for e in 0..BATCH {
             let at = REGISTERS * e + low;
             let t = shoup(z[at + step], zeta, quotient, p);
@@ -1194,9 +1203,13 @@ unsafe fn transform<const BATCH: usize, const MODE: usize>(
         }
     };
 
-    for stage in 0..CROSSING {
-        crossing::<BATCH>(limb, &mut z, p, stage);
-        reduce(&mut z, stage);
+    crossing::<0, BATCH>(limb, &mut z, p);
+    reduce(&mut z, 0);
+    crossing::<1, BATCH>(limb, &mut z, p);
+    reduce(&mut z, 1);
+    if CROSSING == 3 {
+        crossing::<2, BATCH>(limb, &mut z, p);
+        reduce(&mut z, 2);
     }
     in_register::<0, BATCH>(limb, &mut z, p);
     reduce(&mut z, CROSSING);
