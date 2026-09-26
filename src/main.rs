@@ -1,3 +1,6 @@
+mod instantiation;
+
+use instantiation::ParamSet;
 use rokoko::common::init_common;
 use rokoko::common::short_challenge::repetition_rate;
 
@@ -7,36 +10,23 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use rokoko::protocol::parties::executor::execute;
 
 fn main() {
-    #[cfg(feature = "p-26")]
-    {
-        println!("Using p26...");
-    }
-    #[cfg(feature = "p-24")]
-    {
-        println!("Using p24...");
-    }
-    #[cfg(feature = "p-22")]
-    {
-        println!("Using p22...");
-    }
-    #[cfg(feature = "p-29")]
-    {
-        println!("Using p29...");
-    }
-    #[cfg(feature = "p-30")]
-    {
-        println!("Using p30...");
-    }
-    #[cfg(not(any(
-        feature = "p-22",
-        feature = "p-24",
-        feature = "p-26",
-        feature = "p-29",
-        feature = "p-30"
-    )))]
-    {
-        println!("Using p28...");
-    }
+    let set = match std::env::args().nth(1) {
+        Some(arg) => arg.parse::<ParamSet>().unwrap_or_else(|e| {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }),
+        None => ParamSet::P28,
+    };
+    let (inst, chain) = if cfg!(feature = "snark") {
+        (instantiation::snark_instantiation(set), "exact-norm")
+    } else {
+        (instantiation::instantiation(set), "plain")
+    };
+    let inst = inst.unwrap_or_else(|| {
+        eprintln!("{} has no {chain} chain", set.name());
+        std::process::exit(2);
+    });
+    println!("Using {}...", set.name().replace('-', ""));
 
     #[cfg(feature = "unsafe-sumcheck")]
     {
@@ -119,18 +109,18 @@ fn main() {
         challenge_set_repetition_rate
     );
 
-    let tracing_guards = rokoko::tracing::setup();
+    let tracing_guards = rokoko::tracing::setup(set.name());
 
     init_common();
     #[cfg(feature = "snark")]
     {
         println!("Running executor in SNARK mode...");
-        rokoko::protocol::parties::executor::execute_snark();
+        rokoko::protocol::parties::executor::execute_snark(&inst);
     }
     #[cfg(not(feature = "snark"))]
     {
         println!("Running executor...");
-        execute();
+        execute(&inst);
     }
     #[cfg(feature = "calibration")]
     rokoko::common::norms::calibration::print_table();

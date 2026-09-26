@@ -5,26 +5,34 @@ Reference for future experiment runs. Follow this procedure exactly unless instr
 ## The command
 
 ```
-cargo run --release --features {FEATURE},incomplete-rexl,unsafe-sumcheck
+cargo run --release -- {SET}
 ```
 
-Where `{FEATURE}` is one of `p-26`, `p-28`, `p-30` (or whichever is requested).
+Where `{SET}` is one of `p-22`, `p-24`, `p-26`, `p-28`, `p-29`, `p-30` (or whichever is requested);
+without an argument the binary runs `p-28`. `p-29` has only the exact-norm chain, so it runs with
+`--features snark`. The parameter set is a runtime argument, so one build serves every set.
 
-Features are defined in `Cargo.toml`:
-- `p-26`, `p-28`, `p-30` — modulus size variants (mutually exclusive; changing requires rebuild)
+The sets themselves live in `src/instantiation.rs` (binary crate); the library only receives the
+chain as a `rokoko::protocol::params::Instantiation`.
+
+Features are defined in `Cargo.toml`; the defaults already include:
 - `incomplete-rexl` — optional dep for reduced-extension ring, always enabled for these benches
 - `unsafe-sumcheck` — turns on unsafe sumcheck optimizations
+- `crt-commitment` — the root commitment through the CRT kernel
+
+Other useful features: `snark` (exact-norm SNARK mode), `calibration` (prints the measured norms
+as a paste-ready `NB_*` table, e.g. `cargo run --release --features calibration -- p-26`), `profile`.
 
 ## Protocol
 
-For each feature set, in order (default is p-26 → p-28 → p-30):
+For each parameter set, in order (default is p-26 → p-28 → p-30):
 
 1. **1 warmup run** — discard the numbers (caches cold, JIT effects, etc).
 2. **3 timed runs** — record the metrics, average across the 3.
 
 Run them **sequentially**, not in parallel — parallel runs contaminate timing.
 
-Changing the `p-XX` feature triggers a full rebuild of the workspace. Budget for that: p-26 build is a few minutes on this machine, p-28/p-30 similar.
+Build once with `cargo build --release`, then run `target/release/rokoko {SET}` per set; changing the set does not rebuild.
 
 ## Metrics to collect
 
@@ -39,7 +47,7 @@ Parse the following lines from stdout:
 
 Prover time does **not** include commit time — they are separate. Report both.
 
-Proof size is deterministic across runs for a given feature; only times vary.
+Proof size is deterministic across runs for a given parameter set; only times vary.
 
 ## Output format
 
@@ -51,7 +59,7 @@ Proof size is deterministic across runs for a given feature; only times vary.
 
 ### LaTeX paper row
 
-A single LaTeX row covers all features side-by-side for paste into the paper. Format (4 columns per feature: commit, prover, verifier, proof size):
+A single LaTeX row covers all parameter sets side-by-side for paste into the paper. Format (4 columns per set: commit, prover, verifier, proof size):
 
 ```
 & <commit>s & <prover>s & <verifier>s  & <proof> & ... \\
@@ -98,12 +106,12 @@ Per-run logs live alongside `report.md` inside the experiment directory (see Out
 
 - Use the `Bash` tool with `run_in_background: true` for each `cargo run` so timing is precise and a completion notification fires.
 - Run them one at a time (wait for each notification before launching the next).
-- The first build for a new feature takes much longer than subsequent runs — that's expected.
+- The first build takes much longer than subsequent runs — that's expected.
 - Do **not** sleep-poll; let the notification drive you.
 
 ## Checklist before reporting back
 
-- [ ] 3 feature sets, each: 1 warmup + 3 timed runs (9 timed runs total).
+- [ ] 3 parameter sets, each: 1 warmup + 3 timed runs (9 timed runs total).
 - [ ] Per-run table.
 - [ ] Averages table.
 - [ ] LaTeX paper row.
