@@ -475,8 +475,12 @@ mod tests {
         );
     }
 
+    #[cfg(ring_degree = "128")]
     const EXPECTED_FINGERPRINT: &str =
-        "5670da5c3578390a8e449b8d42526135dcdb708c95054a31c5767281218c42b1";
+        "710f97b14da6bd300eae67b2e2aac22f68f23737de15b9ff659d8a0d88dd64ee";
+    #[cfg(ring_degree = "256")]
+    const EXPECTED_FINGERPRINT: &str =
+        "4bbb4cdf29a3ebcae5d9861d0071b2a1b655dd1c3579b03a5e02bfddcaa618df";
 
     #[test]
     fn ring_output_encoding_is_consistent() {

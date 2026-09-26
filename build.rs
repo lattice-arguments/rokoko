@@ -65,6 +65,8 @@ fn emit_ring() {
     if let Err(e) = validate_ring(&spec) {
         fail(&path, &e);
     }
+    println!("cargo::rustc-check-cfg=cfg(ring_degree, values(any()))");
+    println!("cargo::rustc-cfg=ring_degree=\"{}\"", spec.degree);
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
     std::fs::write(
         out.join("ring.rs"),
