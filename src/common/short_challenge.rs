@@ -16,10 +16,10 @@ use crate::common::ring_arithmetic::{Representation, RingElement};
 use num::Complex;
 use std::sync::LazyLock;
 
-// Challenge set size before rejection: C(128,22) * 2^22 = 2^103.31 elements.
-pub const TAU: usize = 22;
-// With TAU=22
-pub const T_OP_NORM_BOUND: f64 = 9.8;
+// Challenge set size before rejection: C(256,17) * 2^17 = 2^103.88 elements.
+pub const TAU: usize = 17;
+// With TAU=17, about 2.27 sampling attempts per challenge.
+pub const T_OP_NORM_BOUND: f64 = 9.1;
 
 const N: usize = DEGREE;
 const LOG_N: usize = N.trailing_zeros() as usize;
@@ -479,7 +479,7 @@ mod tests {
     }
 
     const EXPECTED_FINGERPRINT: &str =
-        "5670da5c3578390a8e449b8d42526135dcdb708c95054a31c5767281218c42b1";
+        "4bbb4cdf29a3ebcae5d9861d0071b2a1b655dd1c3579b03a5e02bfddcaa618df";
 
     #[test]
     fn ring_output_encoding_is_consistent() {

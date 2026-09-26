@@ -1606,7 +1606,7 @@ mod neon_tests {
     /// independent value. The float-Barrett constant `mu = (1 + eps) / p`
     /// depends on `p`, so a kernel can be bit-exact for one modulus and misround
     /// for another — we check both.
-    const MODULI: [u64; 2] = [1125899906839937, 1125899906826241];
+    const MODULI: [u64; 2] = [1125899906840833, 1125899906826241];
 
     /// Deterministic xorshift64 data in [0, modulus). Avoids dragging in `rand`.
     fn deterministic_vec(len: usize, modulus: u64, seed: u64) -> Vec<u64> {

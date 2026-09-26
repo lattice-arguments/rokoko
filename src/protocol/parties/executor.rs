@@ -402,6 +402,7 @@ pub fn execute_snark() {
 mod tests {
     use super::execute_to_boundary;
     use crate::common::init_common;
+    use crate::protocol::config::{config_base_from_config, Config, CONFIG};
     use std::num::NonZeroUsize;
 
     /// The boundary tests stop a few rounds in, so they never reach the last sumcheck round,
@@ -418,10 +419,24 @@ mod tests {
     #[test]
     fn round_boundary_extraction() {
         init_common();
+        let shape_at = |boundary: usize| {
+            let mut round = &*CONFIG;
+            for _ in 0..boundary {
+                let Config::Sumcheck(config) = round else {
+                    panic!("expected a sumcheck round before the boundary");
+                };
+                round = config.next.as_deref().unwrap();
+            }
+            let shape = config_base_from_config(round);
+            (shape.witness_height(), shape.witness_width())
+        };
+
         let mut run = execute_to_boundary(NonZeroUsize::new(3).unwrap());
 
-        assert_eq!(run.prover.witness.height, 256);
-        assert_eq!(run.prover.witness.width, 32);
+        assert_eq!(
+            (run.prover.witness.height, run.prover.witness.width),
+            shape_at(3)
+        );
         assert_eq!(run.verifier.commitment_root.len(), 1);
         assert_eq!(run.prover.claims.len(), 2);
         assert_eq!(run.verifier.claims.len(), 2);
@@ -442,8 +457,10 @@ mod tests {
         assert_eq!(first_row.tensor_layers.len(), 1);
 
         let run4 = execute_to_boundary(NonZeroUsize::new(4).unwrap());
-        assert_eq!(run4.prover.witness.height, 512);
-        assert_eq!(run4.prover.witness.width, 8);
+        assert_eq!(
+            (run4.prover.witness.height, run4.prover.witness.width),
+            shape_at(4)
+        );
         assert_eq!(
             run4.prover.evaluation_points,
             run4.verifier.evaluation_points
@@ -584,7 +601,7 @@ mod tests {
             next: Some(Box::new(AuxConfig::Simple(SimpleConfig {
                 witness_height: 256,
                 witness_width: 16,
-                projection_ratio: 128,
+                projection_ratio: 256,
                 projection_height: 256,
                 projection_nof_batches: 2,
                 basic_commitment_rank: 2,
@@ -661,7 +678,7 @@ mod tests {
             next: Some(Box::new(AuxConfig::Simple(SimpleConfig {
                 witness_height: 256,
                 witness_width: 16,
-                projection_ratio: 128,
+                projection_ratio: 256,
                 projection_height: 256,
                 projection_nof_batches: 2,
                 basic_commitment_rank: 2,

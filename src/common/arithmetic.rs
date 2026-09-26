@@ -134,7 +134,7 @@ unsafe fn convert_i16x32_to_u64_mod_q(dst_u64: *mut u64, v16x32: __m512i) {
 //
 // The loop nest exists to keep the loads cache-hot (L1, spill L2, never L3):
 //   k    - one 32-lane (64 B) slice of the coefficients at a time. Each
-//          witness element is 4 such lines; a k-pass touches exactly one
+//          witness element is DEGREE / 32 such lines; a k-pass touches exactly one
 //          line per element.
 //   tile - the witness is walked in 256-element windows: 256 x 64 B = 16 KB,
 //          which stays L1-resident while...
