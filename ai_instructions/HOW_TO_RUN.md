@@ -23,6 +23,12 @@ Features are defined in `Cargo.toml`; the defaults already include:
 Other useful features: `snark` (exact-norm SNARK mode), `calibration` (prints the measured norms
 as a paste-ready `NB_*` table, e.g. `cargo run --release --features calibration -- p-26`), `profile`.
 
+## The ring
+
+The ring degree, modulus and challenge-set constants are fixed at build time from a small spec
+file; `rings/default.toml` is used unless `ROKOKO_RING` names another one, e.g.
+`ROKOKO_RING=rings/n256.toml cargo build --release`. Changing it rebuilds the crate.
+
 ## Protocol
 
 For each parameter set, in order (default is p-26 → p-28 → p-30):

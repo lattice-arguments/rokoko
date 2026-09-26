@@ -48,7 +48,7 @@ pub(crate) fn composition_sumcheck(
 }
 
 /// The radix weight `2^{base_log * plane}` of a digit plane, reduced mod q: an unreduced shift
-/// wraps once `base_log * plane >= 50`.
+/// wraps once `base_log * plane >= log2 q`.
 pub(crate) fn plane_weight(base_log: usize, plane: usize) -> RingElement {
     RingElement::constant(
         pow_mod(2, (base_log * plane) as u64),

@@ -539,7 +539,7 @@ mod tests {
             next: Some(Box::new(AuxConfig::Simple(SimpleConfig {
                 witness_height: 256,
                 witness_width: 16,
-                projection_ratio: 128,
+                projection_ratio: crate::common::config::DEGREE,
                 projection_height: 256,
                 projection_nof_batches: 2,
                 basic_commitment_rank: 2,
@@ -616,7 +616,7 @@ mod tests {
             next: Some(Box::new(AuxConfig::Simple(SimpleConfig {
                 witness_height: 256,
                 witness_width: 16,
-                projection_ratio: 128,
+                projection_ratio: crate::common::config::DEGREE,
                 projection_height: 256,
                 projection_nof_batches: 2,
                 basic_commitment_rank: 2,

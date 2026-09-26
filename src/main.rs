@@ -91,7 +91,10 @@ fn main() {
 
     #[cfg(not(feature = "crt-commitment"))]
     {
-        println!("Using 50-bits commitment...");
+        println!(
+            "Using {}-bits commitment...",
+            rokoko::common::config::MOD_Q.ilog2() + 1
+        );
     }
 
     #[cfg(feature = "parallel")]

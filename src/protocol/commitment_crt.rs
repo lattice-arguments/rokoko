@@ -25,6 +25,17 @@ use rayon::prelude::*;
 
 pub const PRIMES: [i32; 8] = [3329, 7681, 7937, 9473, 10753, 11777, 12289, 13313];
 
+const _: () = {
+    let mut i = 0;
+    while i < PRIMES.len() {
+        assert!(
+            PRIMES[i] as usize % DEGREE == 1,
+            "every CRT prime must be 1 mod DEGREE to hold primitive DEGREE-th roots of unity"
+        );
+        i += 1;
+    }
+};
+
 const SLOTS: usize = HALF_DEGREE;
 const STAGES: u32 = SLOTS.trailing_zeros();
 

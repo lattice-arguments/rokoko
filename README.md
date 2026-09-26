@@ -158,9 +158,9 @@ Currently, a framework for supporting different kinds of relations is not fully 
 
 ## Configuration and Structure
 
-Ring degrees `DEGREE`, modulus `MOD_Q`, and number of batches `NOF_BATCHED` are defined as constants in `src/common.config.rs`.
+The ring degree `DEGREE` and modulus `MOD_Q` are constants in `src/common/config.rs`, generated from the ring spec (see [Ring](#ring)); the number of batches `NOF_BATCHES` is defined there too.
 
-Protocol configuration is defined in `src/protocol/config.rs`. Currently, parameters for the configuration are concretely defined in `src/protocol/params.rs`. In the future, we plan to provide automatic selection.
+Protocol configuration is defined in `src/protocol/config.rs`. The library takes the chain of rounds as a runtime value, `protocol::params::Instantiation`, which bundles the chain `Config` with the parameters of the initial witness. The concrete parameter sets are defined in the binary, `src/instantiation.rs`, and selected by its command-line argument. In the future, we plan to provide automatic selection.
 
 Each run executed by the prover or verifier consists of one or more **rounds**. Each round is either:
 
@@ -259,6 +259,26 @@ Due to memory requirements for polynomial degree 2^30 exceeding 64 GB, the respe
 ## Parameter sets
 
 The binary takes the parameter set as its argument: `p-22`, `p-24`, `p-26`, `p-28` (default) and `p-30` for polynomial degrees 2^22 to 2^30, e.g. `cargo run --release -- p-26`; `p-29` exists as an exact-norm chain for `snark` mode. The sets are defined in `src/instantiation.rs`.
+
+## Ring
+
+The ring R_q = Z_q[X]/(X^N + 1) and the challenge set are fixed at build time by a spec file read by `build.rs`:
+
+```toml
+degree = 128
+mod_q = 1125899906839937 # 2^50 - 2687
+tau = 22
+op_norm_bound = 9.8
+```
+
+`rings/default.toml` holds these values and is used unless the environment variable `ROKOKO_RING` names another spec; a relative path is resolved against this crate's root, e.g. `ROKOKO_RING=rings/n256.toml cargo build --release`. The build fails with a message unless N is a power of two in [128, 256], q is a prime in (2^15, 2^50), q - 1 has 2-adic valuation exactly log2(N) (so X^N + 1 splits into irreducible quadratics), and 1 <= tau <= N; every prime of the CRT commitment must also be 1 mod N.
+
+A crate depending on `rokoko` sets the ring in its own `.cargo/config.toml`; cargo passes `[env]` to the build scripts of dependencies as well, and `relative = true` resolves the path against the directory holding `.cargo`:
+
+```toml
+[env]
+ROKOKO_RING = { value = "rings/mine.toml", relative = true }
+```
 
 ## Features
 

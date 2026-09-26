@@ -2,7 +2,7 @@
 //! interleaved rANS against a histogram measured on the proof being sent — one per field role,
 //! quantised and written in the header, so nothing is read from the norm schedule — and a raw
 //! `b`-bit field holding the mantissa and the sign. Uniform residues land on the octave law
-//! `Pr[b = k] = 2^(k-50)`, of entropy 2, and so pay `ceil(log2 q)` exactly; the folded witness
+//! `Pr[b = k] = 2^(k - bitlen(q))`, of entropy 2, and so pay `ceil(log2 q)` exactly; the folded witness
 //! and the norm claims pay their own scale, and zero carries no field at all. Ring elements are
 //! coded in the representation they are held in unless the coefficient one saves more than a bit
 //! per coefficient, and shapes travel as varints rather than being re-derived from `Config`. At
