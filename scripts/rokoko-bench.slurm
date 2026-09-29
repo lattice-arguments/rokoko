@@ -14,9 +14,9 @@
 
 set -u
 
-MODES="serial parallel"
-SIZES="p26 p28 p30"
-REPS=3
+MODES=${1:-"serial parallel"}
+SIZES=${2:-"p26 p28 p30"}
+REPS=${3:-3}
 TOOLCHAIN="+nightly"
 
 cd "$SLURM_SUBMIT_DIR" || exit 1
