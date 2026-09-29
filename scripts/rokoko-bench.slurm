@@ -3,6 +3,7 @@
 #SBATCH --partition=gpu-h200-71g-ia
 #SBATCH --constraint=emerald
 #SBATCH --gres=gpu:1
+#SBATCH --mem-bind=local
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
 #SBATCH --hint=nomultithread

@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # Usage: ./scripts/submit-rokoko-bench.sh [sbatch options...]
-# Preview Slurm's estimated start time, then confirm submission.
+# Preview Slurm's estimated start time, override sbatch options, then confirm submission.
 # The main slurm file is defined in rokoko-bench.slum.
-# Example: ./scripts/submit-rokoko-bench.sh --exclusive --mem=80G
 
 set -euo pipefail
 
 if [[ ${1:-} == -h || ${1:-} == --help ]]; then
   cat <<'EOF'
 Usage: ./scripts/submit-rokoko-bench.sh [sbatch options...]
-Preview Slurm's estimated start time, then confirm submission.
+Preview Slurm's estimated start time, override sbatch options, then confirm submission.
 Example: ./scripts/submit-rokoko-bench.sh --exclusive --mem=80G
 EOF
   exit 0
