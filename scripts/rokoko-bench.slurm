@@ -1,14 +1,15 @@
 #!/bin/bash -l
 #SBATCH --job-name=rokoko-bench
-#SBATCH --partition=gpu-h100-80g
-#SBATCH --constraint=saphr
+#SBATCH --partition=gpu-h200-71g-ia
+#SBATCH --constraint=emerald
 #SBATCH --gres=gpu:1
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16
 #SBATCH --hint=nomultithread
 #SBATCH --mem=100G
-#SBATCH --time=2:00:00
+#SBATCH --time=3:00:00
 #SBATCH --output=rokoko-bench-%j.out
+#SBATCH --error=rokoko-bench-%j.out
 
 set -u
 
