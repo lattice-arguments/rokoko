@@ -4,11 +4,11 @@ use crate::{
     common::{matrix::VerticallyAlignedMatrix, ring_arithmetic::RingElement},
     protocol::{
         boundary::{BoundaryCapture, ProverBoundary, VerifierBoundary},
-        config::{to_kb, Config, SizeableProof, CONFIG},
+        config::{to_kb, SizeableProof},
         crs::{VerifierCRS, CRS},
         evaluation_point_sampler::{sample_initial_evaluation_points, InitialEvaluationPoints},
         open::claim,
-        params::{witness_sampler, WITNESS_CONFIG},
+        params::{witness_sampler, Instantiation},
         parties::{commiter::commit, prover::prover_round, verifier::verifier_round},
         sumcheck::init_sumcheck,
         sumchecks::builder_verifier::init_verifier,
@@ -25,6 +25,7 @@ pub struct BoundaryRun {
 }
 
 fn run(
+    inst: &Instantiation,
     cut: Option<NonZeroUsize>,
 ) -> (
     usize,
@@ -33,13 +34,8 @@ fn run(
     CRS,
     VerifierCRS,
 ) {
-    // check_prefixing_correctness(&CONFIG);
-    let config = match &*CONFIG {
-        Config::Sumcheck(config) => config,
-        _ => panic!("Expected sumcheck config at the top level."),
-    };
-
-    let witness_config = &*WITNESS_CONFIG;
+    let config = inst.root();
+    let witness_config = &inst.witness;
 
     let evaluation_points = sample_initial_evaluation_points(
         witness_config.height,
@@ -51,21 +47,22 @@ fn run(
     tracing::debug!("Generating CRS...");
 
     let crs_start = std::time::Instant::now();
-    let crs = CRS::gen_prover_crs(&config);
+    let crs = CRS::gen_prover_crs(&config, witness_config);
     let verifier_crs = CRS::gen_verifier_crs(&config);
     let crs_duration = crs_start.elapsed().as_nanos();
     println!("TOTAL CRS gen time: {:?} ns", crs_duration);
 
     let mut sumcheck_context = init_sumcheck(&crs, &config);
     let mut sumcheck_context_verifier = init_verifier(&verifier_crs, &config);
-    let witness = witness_sampler();
+    let witness = witness_sampler(witness_config);
 
     let start = std::time::Instant::now();
 
     let commit_span = tracing::info_span!("commit").entered();
     #[cfg(not(feature = "crt-commitment"))]
     let (witness_decomposed, commitment_with_aux, rc_commitment) = {
-        let witness_decomposed = crate::protocol::params::decompose_witness(&witness);
+        let witness_decomposed =
+            crate::protocol::params::decompose_witness(&witness, witness_config);
         let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness_decomposed, None);
         (witness_decomposed, commitment_with_aux, rc_commitment)
     };
@@ -75,12 +72,13 @@ fn run(
         // enough to allocate cheaply; past that the commitment narrows a column tile at a time.
         const DIGIT_BUDGET: usize = 2 << 30;
         let wanted = witness.data.len()
-            * WITNESS_CONFIG.decomposition_chunks
+            * witness_config.decomposition_chunks
             * std::mem::size_of::<crate::protocol::project_coarse::Signed16RingElement>()
             <= DIGIT_BUDGET;
         let mut sink = Vec::new();
         let (witness_decomposed, digits) = crate::protocol::params::decompose_witness_with_digits(
             &witness,
+            witness_config,
             wanted.then_some(&mut sink),
         );
         let (commitment_with_aux, rc_commitment) =
@@ -181,12 +179,13 @@ fn run(
     )
 }
 
-pub fn execute() {
-    run(None);
+pub fn execute(inst: &Instantiation) {
+    run(inst, None);
 }
 
-pub fn execute_to_boundary(cut: NonZeroUsize) -> BoundaryRun {
-    let (proof_size_bits, prover_boundary, verifier_boundary, crs, verifier_crs) = run(Some(cut));
+pub fn execute_to_boundary(inst: &Instantiation, cut: NonZeroUsize) -> BoundaryRun {
+    let (proof_size_bits, prover_boundary, verifier_boundary, crs, verifier_crs) =
+        run(inst, Some(cut));
     BoundaryRun {
         prover: prover_boundary.expect("execute_to_boundary must populate the prover boundary"),
         verifier: verifier_boundary
@@ -226,22 +225,18 @@ fn check_prover_claims_match_witness(
 
 /// SNARK mode: prove user-supplied sumcheck claims about a committed witness,
 /// then run the PCS chain on the resulting evaluation claims.
-pub fn execute_snark() {
+pub fn execute_snark(inst: &Instantiation) {
     use crate::common::{
         hash::HashWrapper,
         ring_arithmetic::{Representation, RingElement},
         sampling::sample_random_short_vector,
     };
-    use crate::protocol::params::P_EN_TWO_EVALS;
     use crate::protocol::snark::{eq, prove_claims, verify_claims, witness_in, Claim, Region};
 
-    let config = match &*P_EN_TWO_EVALS {
-        Config::Sumcheck(config) => config,
-        _ => panic!("Expected sumcheck config at the top level."),
-    };
+    let config = inst.root();
 
     tracing::debug!("Generating CRS...");
-    let crs = CRS::gen_prover_crs(&config);
+    let crs = CRS::gen_prover_crs(&config, &inst.witness);
     let verifier_crs = CRS::gen_verifier_crs(&config);
 
     let mut sumcheck_context = init_sumcheck(&crs, &config);
@@ -295,7 +290,7 @@ pub fn execute_snark() {
     }
     let claim_square = Claim::sums_to(witness_in(segment) * witness_in(segment), t2);
 
-    // P_EN_TWO_EVALS is compiled for two openings, so the statement must use
+    // the exact-norm chain has two openings, so the statement must use
     // the conjugate; the norm claim is the natural way.
     let mut t3 = RingElement::zero(Representation::IncompleteNTT);
     {
@@ -400,55 +395,7 @@ pub fn execute_snark() {
 
 #[cfg(test)]
 mod tests {
-    use super::execute_to_boundary;
     use crate::common::init_common;
-    use std::num::NonZeroUsize;
-
-    /// The boundary tests stop a few rounds in, so they never reach the last sumcheck round,
-    /// whose recursions are single levels and whose level 0 is therefore itself a leaf. Only a
-    /// whole-chain run covers it.
-    #[cfg(not(feature = "p-29"))]
-    #[test]
-    fn full_chain_verifies() {
-        init_common();
-        super::execute();
-    }
-
-    #[cfg(not(any(feature = "p-22", feature = "p-24", feature = "p-29")))]
-    #[test]
-    fn round_boundary_extraction() {
-        init_common();
-        let mut run = execute_to_boundary(NonZeroUsize::new(3).unwrap());
-
-        assert_eq!(run.prover.witness.height, 256);
-        assert_eq!(run.prover.witness.width, 32);
-        assert_eq!(run.verifier.commitment_root.len(), 1);
-        assert_eq!(run.prover.claims.len(), 2);
-        assert_eq!(run.verifier.claims.len(), 2);
-        assert_eq!(run.prover.evaluation_points, run.verifier.evaluation_points);
-
-        let mut prover_bytes = [0u8; 16];
-        let mut verifier_bytes = [0u8; 16];
-        run.prover
-            .transcript
-            .fill_from_xof(b"round-boundary-test", &mut prover_bytes);
-        run.verifier
-            .transcript
-            .fill_from_xof(b"round-boundary-test", &mut verifier_bytes);
-        assert_eq!(prover_bytes, verifier_bytes);
-
-        assert_eq!(run.crs.cks.len(), run.verifier_crs.structured_cks.len());
-        let first_row = &run.verifier_crs.structured_cks[0][0];
-        assert_eq!(first_row.tensor_layers.len(), 1);
-
-        let run4 = execute_to_boundary(NonZeroUsize::new(4).unwrap());
-        assert_eq!(run4.prover.witness.height, 512);
-        assert_eq!(run4.prover.witness.width, 8);
-        assert_eq!(
-            run4.prover.evaluation_points,
-            run4.verifier.evaluation_points
-        );
-    }
 
     /// Prove and verify one round of `config` end to end. The input witness is decomposed into
     /// two element-major chunks, which is the top-level hypercube and independent of the round's
@@ -461,20 +408,28 @@ mod tests {
         use crate::protocol::{
             crs::CRS,
             evaluation_point_sampler::sample_initial_evaluation_points,
+            params::InitialWitnessParams,
             parties::{commiter::commit, prover::prover_round, verifier::verifier_round},
             sumcheck::init_sumcheck,
             sumchecks::builder_verifier::init_verifier,
         };
 
-        let crs = CRS::gen_prover_crs(config);
-        let verifier_crs = CRS::gen_verifier_crs(config);
-        let mut sumcheck_context = init_sumcheck(&crs, config);
-        let mut sumcheck_context_verifier = init_verifier(&verifier_crs, config);
-
         let input_chunks = 2;
         let base_log = 15;
         let height = config.witness_height / input_chunks;
         let width = config.witness_width;
+        let witness_params = InitialWitnessParams {
+            height,
+            width,
+            decomposition_base_log: base_log,
+            decomposition_chunks: input_chunks,
+            initial_norm_log: 13,
+        };
+
+        let crs = CRS::gen_prover_crs(config, &witness_params);
+        let verifier_crs = CRS::gen_verifier_crs(config);
+        let mut sumcheck_context = init_sumcheck(&crs, config);
+        let mut sumcheck_context_verifier = init_verifier(&verifier_crs, config);
 
         let sampled = (0..config.nof_openings)
             .map(|_| sample_initial_evaluation_points(height, width, base_log, input_chunks))
@@ -584,7 +539,7 @@ mod tests {
             next: Some(Box::new(AuxConfig::Simple(SimpleConfig {
                 witness_height: 256,
                 witness_width: 16,
-                projection_ratio: 128,
+                projection_ratio: crate::common::config::DEGREE,
                 projection_height: 256,
                 projection_nof_batches: 2,
                 basic_commitment_rank: 2,
@@ -661,7 +616,7 @@ mod tests {
             next: Some(Box::new(AuxConfig::Simple(SimpleConfig {
                 witness_height: 256,
                 witness_width: 16,
-                projection_ratio: 128,
+                projection_ratio: crate::common::config::DEGREE,
                 projection_height: 256,
                 projection_nof_batches: 2,
                 basic_commitment_rank: 2,

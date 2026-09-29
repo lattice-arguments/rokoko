@@ -28,7 +28,8 @@ pub struct TracingGuards(#[allow(dead_code)] Vec<Box<dyn Any>>);
 /// Level filtering is `info` by default; the env `RUST_LOG` is set to control the logging level
 ///
 /// Panics if called more than once — the global subscriber can only be set once.
-pub fn setup() -> TracingGuards {
+#[cfg_attr(not(feature = "profile"), allow(unused_variables))]
+pub fn setup(param_set: &str) -> TracingGuards {
     let filter = RustLog::from_default_env();
 
     let mut layers: Vec<Box<dyn Layer<Registry> + Send + Sync>> = Vec::new();
@@ -51,7 +52,10 @@ pub fn setup() -> TracingGuards {
 
     #[cfg(feature = "profile")]
     {
-        let features = super::snapshot::active_features();
+        let features = super::snapshot::active_features(param_set);
+        PARAM_SET
+            .set(param_set.replace('-', ""))
+            .expect("tracing::setup runs once");
         let dir = run_dir();
         std::fs::create_dir_all(dir).expect("create profile run dir");
         let (snapshot_layer, snapshot_guard) = SnapshotLayer::new(dir, &features);
@@ -66,9 +70,17 @@ pub fn setup() -> TracingGuards {
 
 /// Directory holding run's artifacts: `profiles/<params>_<timestamp>/`.
 #[cfg(feature = "profile")]
+static PARAM_SET: OnceLock<String> = OnceLock::new();
+
+#[cfg(feature = "profile")]
 pub fn run_dir() -> &'static str {
     static RUN_DIR: OnceLock<String> = OnceLock::new();
-    RUN_DIR.get_or_init(|| format!("profiles/{}_{}", trace_name(), timestamp_for_filename()))
+    RUN_DIR.get_or_init(|| {
+        let param_set = PARAM_SET
+            .get()
+            .expect("tracing::setup names the parameter set");
+        format!("profiles/{}_{}", param_set, timestamp_for_filename())
+    })
 }
 
 /// UTC `YYYYMMDD-HHMMSS`
@@ -93,15 +105,4 @@ pub fn print_artifact_paths(run_dir: &str) {
         https://profiler.firefox.com/\n  \
         https://ui.perfetto.dev/"
     );
-}
-
-/// Parameter set of the build, used to name the artifact directory.
-#[cfg(feature = "profile")]
-fn trace_name() -> &'static str {
-    use crate::protocol::params::{compiled_size, SizeConfig};
-    match compiled_size() {
-        SizeConfig::Small => "p26",
-        SizeConfig::Medium => "p28",
-        SizeConfig::Large => "p30",
-    }
 }

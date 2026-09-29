@@ -4,7 +4,10 @@ use crate::common::{
     sampling::{sample_public_vector_from_seed, PUBLIC_CRS_SEED},
     structured_row::{PreprocessedRow, StructuredRow},
 };
-use crate::protocol::config::{Config, SimpleConfig, SumcheckConfig};
+use crate::protocol::{
+    config::{Config, SimpleConfig, SumcheckConfig},
+    params::InitialWitnessParams,
+};
 
 pub type CK = Vec<PreprocessedRow>;
 pub type SCK = Vec<StructuredRow>;
@@ -114,7 +117,8 @@ impl CRS {
     }
 
     /// Two rows of headroom over the basic rank cover the inner rounds.
-    pub fn gen_prover_crs(config: &SumcheckConfig) -> CRS {
+    #[cfg_attr(not(feature = "crt-commitment"), allow(unused_variables))]
+    pub fn gen_prover_crs(config: &SumcheckConfig, witness: &InitialWitnessParams) -> CRS {
         #[allow(unused_mut)]
         let mut crs = CRS::gen_crs(
             config.composed_witness_length,
@@ -123,10 +127,8 @@ impl CRS {
         #[cfg(feature = "crt-commitment")]
         {
             use crate::protocol::commitment_crt::{CrtKey, Plan};
-            use crate::protocol::params::WITNESS_CONFIG;
             let rows = config.witness_height;
-            let bound = 1u64 << (WITNESS_CONFIG.decomposition_base_log - 1);
-            let plan = Plan::for_shape(rows, bound, config.basic_commitment_rank);
+            let plan = Plan::for_shape(rows, witness.digit_bound(), config.basic_commitment_rank);
             let key = CrtKey::preprocess(
                 crs.ck_for_wit_dim(rows),
                 config.basic_commitment_rank,

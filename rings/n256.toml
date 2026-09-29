@@ -1,0 +1,4 @@
+degree = 256
+mod_q = 1125899906840833 # 2^50 - 1791
+tau = 17 # C(256,17) * 2^17 = 2^103.88 challenges before rejection
+op_norm_bound = 9.1 # about 2.27 sampling attempts per challenge

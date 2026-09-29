@@ -258,7 +258,7 @@ pub fn compose_from_decomposed(
         recomposed[i] = RingElement::all(0, Representation::IncompleteNTT);
         for j in 0..radix {
             let mut term = decomposed[i * radix + j].clone();
-            // Reduced mod q: 1u64 << k overflows the modulus (and then u64) once k >= 50.
+            // Reduced mod q: 1u64 << k overflows the modulus (and then u64) once k >= log2 q.
             let shift = RingElement::constant(
                 pow_mod(2, j as u64 * base_log),
                 Representation::IncompleteNTT,
@@ -364,7 +364,7 @@ fn test_decompose_bits_roundtrip() {
         .map(|_| RingElement::random(Representation::IncompleteNTT))
         .collect();
 
-    // 64 exercises the composer at shifts >= 50, where an unreduced 2^k would wrap.
+    // 64 exercises the composer at shifts >= log2 q, where an unreduced 2^k would wrap.
     for radix in [MOD_Q.ilog2() as usize + 1, 64] {
         let decomposed = decompose_bits(&input, radix);
         debug_assert_eq!(decomposed.len(), input.len() * radix);

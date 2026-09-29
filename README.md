@@ -158,9 +158,9 @@ Currently, a framework for supporting different kinds of relations is not fully 
 
 ## Configuration and Structure
 
-Ring degrees `DEGREE`, modulus `MOD_Q`, and number of batches `NOF_BATCHED` are defined as constants in `src/common.config.rs`.
+The ring degree `DEGREE` and modulus `MOD_Q` are constants in `src/common/config.rs`, generated from the ring spec (see [Ring](#ring)); the number of batches `NOF_BATCHES` is defined there too.
 
-Protocol configuration is defined in `src/protocol/config.rs`. Currently, parameters for the configuration are concretely defined in `src/protocol/params.rs`. In the future, we plan to provide automatic selection.
+Protocol configuration is defined in `src/protocol/config.rs`. The library takes the chain of rounds as a runtime value, `protocol::params::Instantiation`, which bundles the chain `Config` with the parameters of the initial witness. The concrete parameter sets are defined in the binary, `src/instantiation.rs`, and selected by its command-line argument. In the future, we plan to provide automatic selection.
 
 Each run executed by the prover or verifier consists of one or more **rounds**. Each round is either:
 
@@ -218,7 +218,7 @@ Without either flag a global subscriber is still installed, so `tracing` log mes
 ### Console summary (`events`)
 
 ```
-cargo +nightly run --release --features incomplete-rexl,p-28,events
+cargo +nightly run --release --features incomplete-rexl,events -- p-28
 ```
 
 The summary is aggregated by `(parent, child)` edge — that is, it reports where time went within each phase, showing per-edge totals, call counts, and the share of the parent's time. Repeated rounds are collapsed into a single `total <round>` line.
@@ -228,7 +228,7 @@ The summary is aggregated by `(parent, child)` edge — that is, it reports wher
 Level filtering is controlled by `RUST_LOG` and defaults to `info`:
 
 ```
-RUST_LOG=debug cargo +nightly run --release --features incomplete-rexl,p-28,events
+RUST_LOG=debug cargo +nightly run --release --features incomplete-rexl,events -- p-28
 ```
 
 Beyond enabling `debug!` messages, the level changes how `events` renders: at `info` the summary is aggregated as described above, while at `debug` (or lower) it switches to a **linear** trace that prints spans in execution order, indented by nesting depth. Use `info` to see where time is spent, `debug` to follow what happened in sequence.
@@ -240,10 +240,10 @@ Valid log levels to be set for RUST_LOG are (all case insensitive) `debug`, `war
 ### File artifacts (`profile`)
 
 ```
-cargo +nightly run --release --features incomplete-rexl,p-28,profile
+cargo +nightly run --release --features incomplete-rexl,profile -- p-28
 ```
 
-Artifacts are written to `profiles/<params>_<timestamp>/`, where `<params>` is the parameter set of the build (`p26`, `p28`, `p30`):
+Artifacts are written to `profiles/<params>_<timestamp>/`, where `<params>` is the parameter set of the run (`p26`, `p28`, `p30`, ...):
 
 * `trace.json` — a Chrome trace. Drag it into [Firefox Profiler](https://profiler.firefox.com/) or [Perfetto](https://ui.perfetto.dev/) to inspect the run as a flame chart.
 * `snapshot.json` — per-span totals (`total_ns`, `calls`) plus run metadata: git SHA, date, enabled features, and machine description. Aggregation is by span *name*, i.e. total time spent in a span anywhere in the tree, which makes snapshots comparable across runs.
@@ -256,11 +256,34 @@ Additionally, benchmarks of [Greyhound](https://github.com/lattice-dogs/labrador
 
 Due to memory requirements for polynomial degree 2^30 exceeding 64 GB, the respective benchmarks for Greyhound and SALSAA were run on a different machine (Dell PowerEdge XE8640 with Xeon Platinum 8468) and placed in the [experiments/sapphire_rapids](experiments/sapphire_rapids) folder.
 
+## Parameter sets
+
+The binary takes the parameter set as its argument: `p-22`, `p-24`, `p-26`, `p-28` (default) and `p-30` for polynomial degrees 2^22 to 2^30, e.g. `cargo run --release -- p-26`; `p-29` exists as an exact-norm chain for `snark` mode. The sets are defined in `src/instantiation.rs`.
+
+## Ring
+
+The ring R_q = Z_q[X]/(X^N + 1) and the challenge set are fixed at build time by a spec file read by `build.rs`:
+
+```toml
+degree = 128
+mod_q = 1125899906839937 # 2^50 - 2687
+tau = 22
+op_norm_bound = 9.8
+```
+
+`rings/default.toml` holds these values and is used unless the environment variable `ROKOKO_RING` names another spec; a relative path is resolved against this crate's root, e.g. `ROKOKO_RING=rings/n256.toml cargo build --release`. The build fails with a message unless N is a power of two in [128, 256], q is a prime in (2^15, 2^50), q - 1 has 2-adic valuation exactly log2(N) (so X^N + 1 splits into irreducible quadratics), and 1 <= tau <= N; every prime of the CRT commitment must also be 1 mod N.
+
+A crate depending on `rokoko` sets the ring in its own `.cargo/config.toml`; cargo passes `[env]` to the build scripts of dependencies as well, and `relative = true` resolves the path against the directory holding `.cargo`:
+
+```toml
+[env]
+ROKOKO_RING = { value = "rings/mine.toml", relative = true }
+```
+
 ## Features
 
 * `incomplete-rexl`: enables the pure-Rust ring arithmetic back-end
 * `snark`: runs the executor in SNARK mode; without it, the executor runs the PCS chain (disclaimer: snark mode is currently highly experimental). The claim-language guide is [docs/snark.md](docs/snark.md), and `cargo run --release --example claims` is a runnable walk-through.
-* `p-22`, `p-24`, `p-26`, `p-28`, `p-30`: parameters for polynomial degrees 2^22, 2^24, 2^26, 2^28, and 2^30 respectively
 * `events`: prints a per-phase timing summary to the console at the end of the run (see [Tracing and Profiling](#tracing-and-profiling))
 * `profile`: writes a Chrome trace and a per-span snapshot to `profiles/` for offline analysis (see [Tracing and Profiling](#tracing-and-profiling))
 * `unsafe-sumcheck`: enables zero-cost borrow checking by using `UnsafeCell` instead of `RefCell` in sumcheck subprotocols
