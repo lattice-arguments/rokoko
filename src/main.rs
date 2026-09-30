@@ -1,4 +1,13 @@
+#[cfg_attr(rokoko_ring = "n128_d4", allow(dead_code))]
 mod instantiation;
+#[cfg(rokoko_ring = "n128_d4")]
+mod instantiation_n128_d4;
+
+/// The parameter sets of the ring spec the crate is built with.
+#[cfg(not(rokoko_ring = "n128_d4"))]
+use instantiation as ring_instantiation;
+#[cfg(rokoko_ring = "n128_d4")]
+use instantiation_n128_d4 as ring_instantiation;
 
 use instantiation::ParamSet;
 use rokoko::common::init_common;
@@ -18,9 +27,9 @@ fn main() {
         None => ParamSet::P28,
     };
     let (inst, chain) = if cfg!(feature = "snark") {
-        (instantiation::snark_instantiation(set), "exact-norm")
+        (ring_instantiation::snark_instantiation(set), "exact-norm")
     } else {
-        (instantiation::instantiation(set), "plain")
+        (ring_instantiation::instantiation(set), "plain")
     };
     let inst = inst.unwrap_or_else(|| {
         eprintln!("{} has no {chain} chain", set.name());
@@ -128,4 +137,70 @@ fn main() {
     drop(tracing_guards);
     #[cfg(feature = "profile")]
     rokoko::tracing::print_artifact_paths(rokoko::tracing::run_dir());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ring_instantiation::instantiation;
+    use super::ParamSet;
+    use rokoko::common::init_common;
+    use rokoko::protocol::parties::executor::{execute, execute_to_boundary};
+    use std::num::NonZeroUsize;
+
+    #[test]
+    fn initial_witness_fills_the_root() {
+        for inst in ParamSet::ALL.into_iter().filter_map(instantiation) {
+            let root = inst.root();
+            assert_eq!(
+                inst.witness.height * inst.witness.decomposition_chunks,
+                root.witness_height
+            );
+            assert_eq!(inst.witness.width, root.witness_width);
+        }
+    }
+
+    /// The boundary tests stop a few rounds in, so they never reach the last sumcheck round,
+    /// whose recursions are single levels and whose level 0 is therefore itself a leaf. Only a
+    /// whole-chain run covers it.
+    #[test]
+    fn full_chain_verifies() {
+        init_common();
+        execute(&instantiation(ParamSet::P28).unwrap());
+    }
+
+    #[test]
+    fn round_boundary_extraction() {
+        init_common();
+        let inst = instantiation(ParamSet::P28).unwrap();
+        let mut run = execute_to_boundary(&inst, NonZeroUsize::new(3).unwrap());
+
+        assert_eq!(run.prover.witness.height, 256);
+        assert_eq!(run.prover.witness.width, 32);
+        assert_eq!(run.verifier.commitment_root.len(), 1);
+        assert_eq!(run.prover.claims.len(), 2);
+        assert_eq!(run.verifier.claims.len(), 2);
+        assert_eq!(run.prover.evaluation_points, run.verifier.evaluation_points);
+
+        let mut prover_bytes = [0u8; 16];
+        let mut verifier_bytes = [0u8; 16];
+        run.prover
+            .transcript
+            .fill_from_xof(b"round-boundary-test", &mut prover_bytes);
+        run.verifier
+            .transcript
+            .fill_from_xof(b"round-boundary-test", &mut verifier_bytes);
+        assert_eq!(prover_bytes, verifier_bytes);
+
+        assert_eq!(run.crs.cks.len(), run.verifier_crs.structured_cks.len());
+        let first_row = &run.verifier_crs.structured_cks[0][0];
+        assert_eq!(first_row.tensor_layers.len(), 1);
+
+        let run4 = execute_to_boundary(&inst, NonZeroUsize::new(4).unwrap());
+        assert_eq!(run4.prover.witness.height, 512);
+        assert_eq!(run4.prover.witness.width, 8);
+        assert_eq!(
+            run4.prover.evaluation_points,
+            run4.verifier.evaluation_points
+        );
+    }
 }

@@ -27,8 +27,8 @@ use super::{
         OuterEvalClaimSumcheckContext, SumcheckContext,
     },
     helpers::{
-        ck_segment_sumcheck, ck_sumcheck, row_committed_pieces, sum_of, sumcheck_from_prefix,
-        FoldedLeaves, Recomposition,
+        batch_piece, ck_segment_sumcheck, ck_sumcheck, row_committed_pieces, sum_of,
+        sumcheck_from_prefix, FoldedLeaves, Recomposition,
     },
 };
 
@@ -466,21 +466,16 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                 .borrow_mut()
                 .load_from(&[ONE.clone()]);
 
-            // Each batch is one piece of every digit plane of the batched-projection component.
+            let recursion = &projection_recursion.recursion_batched_projection;
             let batched: [Recomposition; NOF_BATCHES] = std::array::from_fn(|i| {
+                let (placement, parts, part) = batch_piece(recursion, i);
                 leaves.recomposition(
-                    projection_recursion
-                        .recursion_batched_projection
-                        .placement(),
-                    projection_recursion
-                        .recursion_batched_projection
-                        .decomposition_chunks,
-                    projection_recursion
-                        .recursion_batched_projection
-                        .decomposition_base_log,
+                    placement,
+                    recursion.decomposition_chunks,
+                    recursion.decomposition_base_log,
                     total_vars,
-                    NOF_BATCHES,
-                    i,
+                    parts,
+                    part,
                 )
             });
 

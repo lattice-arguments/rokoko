@@ -520,7 +520,6 @@ mod tests {
                 next: None,
             },
             projection_recursion: AuxProjection::Fine {
-                nof_batches: 2,
                 recursion_constant_term: AuxRecursionConfig {
                     decomposition_base_log: 15,
                     decomposition_chunks: 2,
@@ -541,7 +540,6 @@ mod tests {
                 witness_width: 16,
                 projection_ratio: crate::common::config::DEGREE,
                 projection_height: 256,
-                projection_nof_batches: 2,
                 basic_commitment_rank: 2,
                 witness_norm_bound: f64::INFINITY,
                 projection_norm_bound: f64::INFINITY,
@@ -597,7 +595,6 @@ mod tests {
                 next: None,
             },
             projection_recursion: AuxProjection::Fine {
-                nof_batches: 2,
                 recursion_constant_term: AuxRecursionConfig {
                     decomposition_base_log: 15,
                     decomposition_chunks: 2,
@@ -618,7 +615,6 @@ mod tests {
                 witness_width: 16,
                 projection_ratio: crate::common::config::DEGREE,
                 projection_height: 256,
-                projection_nof_batches: 2,
                 basic_commitment_rank: 2,
                 witness_norm_bound: f64::INFINITY,
                 projection_norm_bound: f64::INFINITY,

@@ -13,7 +13,8 @@ without an argument the binary runs `p-28`. `p-29` has only the exact-norm chain
 `--features snark`. The parameter set is a runtime argument, so one build serves every set.
 
 The sets themselves live in `src/instantiation.rs` (binary crate); the library only receives the
-chain as a `rokoko::protocol::params::Instantiation`.
+chain as a `rokoko::protocol::params::Instantiation`. A build for `rings/n128_d4.toml` uses
+`src/instantiation_n128_d4.rs` instead, chosen in `src/main.rs` by the spec's file name.
 
 Features are defined in `Cargo.toml`; the defaults already include:
 - `unsafe-sumcheck` — turns on unsafe sumcheck optimizations

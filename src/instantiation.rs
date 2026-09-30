@@ -1,5 +1,6 @@
 use std::sync::LazyLock;
 
+use rokoko::common::config::NOF_BATCHES;
 use rokoko::protocol::{
     config::{Config, SimpleConfig},
     config_generator::{AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig},
@@ -82,7 +83,7 @@ pub fn snark_instantiation(set: ParamSet) -> Option<Instantiation> {
 
 /// 2^28 Z_q elements of norm 2^32 => 2^29 Z_q elements of norm 2^16 (signed 2^15)
 /// => 2^22 R_q elements => height 2^15, width 2^7
-fn initial_witness(set: ParamSet) -> InitialWitnessParams {
+pub(crate) fn initial_witness(set: ParamSet) -> InitialWitnessParams {
     let root = root_aux(set, 1);
     let decomposition_chunks = 2;
     InitialWitnessParams {
@@ -94,7 +95,7 @@ fn initial_witness(set: ParamSet) -> InitialWitnessParams {
     }
 }
 
-fn root_aux(set: ParamSet, nof_openings: usize) -> AuxSumcheckConfig {
+pub(crate) fn root_aux(set: ParamSet, nof_openings: usize) -> AuxSumcheckConfig {
     match set {
         ParamSet::P22 | ParamSet::P24 => p_root_aux_short(set, nof_openings),
         _ => p_root_aux(set, nof_openings),
@@ -102,6 +103,7 @@ fn root_aux(set: ParamSet, nof_openings: usize) -> AuxSumcheckConfig {
 }
 
 pub fn chain(set: ParamSet) -> Option<Config> {
+    assert_two_batches();
     let bounds: &[[f64; 3]] = match set {
         ParamSet::P22 => &NB_P_22,
         ParamSet::P24 => &NB_P_24,
@@ -116,6 +118,7 @@ pub fn chain(set: ParamSet) -> Option<Config> {
 }
 
 pub fn exact_norm_chain(set: ParamSet, nof_openings: usize) -> Option<Config> {
+    assert_two_batches();
     let bounds: Option<&[[f64; 3]]> = match set {
         ParamSet::P22 | ParamSet::P24 => return None,
         ParamSet::P26 => Some(&NB_P_EN_26),
@@ -128,6 +131,15 @@ pub fn exact_norm_chain(set: ParamSet, nof_openings: usize) -> Option<Config> {
         assign_norm_bounds(&mut c, bounds);
     }
     Some(c)
+}
+
+/// The norm tables below are measured with two projection batches.
+fn assert_two_batches() {
+    assert_eq!(
+        NOF_BATCHES, 2,
+        "src/instantiation.rs is measured for 2 projection batches and the ring spec sets \
+         {NOF_BATCHES}; src/main.rs selects the instantiation of a ring"
+    );
 }
 
 pub static DECOMP_11_LAST_LEVEL: AuxRecursionConfig = AuxRecursionConfig {
@@ -440,7 +452,6 @@ pub fn p_2(set: ParamSet) -> AuxSumcheckConfig {
             next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
         },
         projection_recursion: AuxProjection::Fine {
-            nof_batches: 2,
             recursion_constant_term: AuxRecursionConfig {
                 decomposition_base_log: 9,
                 decomposition_chunks: 2,
@@ -484,7 +495,6 @@ pub static P_3: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
         next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
     },
     projection_recursion: AuxProjection::Fine {
-        nof_batches: 2,
         recursion_constant_term: AuxRecursionConfig {
             decomposition_base_log: 10,
             decomposition_chunks: 2,
@@ -526,7 +536,6 @@ pub static P_4: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
         next: Some(Box::new(DECOMP_11_LAST_LEVEL.clone())),
     },
     projection_recursion: AuxProjection::Fine {
-        nof_batches: 2,
         recursion_constant_term: AuxRecursionConfig {
             decomposition_base_log: 9,
             decomposition_chunks: 2,
@@ -568,7 +577,6 @@ pub static P_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
         next: None,
     },
     projection_recursion: AuxProjection::Fine {
-        nof_batches: 2,
         recursion_constant_term: AuxRecursionConfig {
             decomposition_base_log: 9,
             decomposition_chunks: 2,
@@ -595,18 +603,15 @@ pub static P_LAST: LazyLock<SimpleConfig> = LazyLock::new(|| SimpleConfig {
     projection_ratio: 2usize.pow(7),
     projection_height: 2usize.pow(8),
     basic_commitment_rank: 4,
-    projection_nof_batches: 2,
     witness_norm_bound: f64::INFINITY,
     projection_norm_bound: f64::INFINITY,
 });
 
-#[cfg(test)]
+// The chains of an n128_d4 build are those of `crate::instantiation_n128_d4`.
+#[cfg(all(test, not(rokoko_ring = "n128_d4")))]
 mod tests {
-    use super::{exact_norm_chain, instantiation, p_root_aux, ParamSet};
-    use rokoko::common::init_common;
+    use super::{exact_norm_chain, p_root_aux, ParamSet};
     use rokoko::protocol::config::Config;
-    use rokoko::protocol::parties::executor::{execute, execute_to_boundary};
-    use std::num::NonZeroUsize;
 
     fn assert_chain_dims(mut config: &Config) {
         while let Config::Sumcheck(sc) = config {
@@ -661,63 +666,6 @@ mod tests {
             (front.witness_height * front.witness_width * rokoko::common::config::DEGREE / 2)
                 .ilog2(),
             29
-        );
-    }
-
-    #[test]
-    fn initial_witness_fills_the_root() {
-        for inst in ParamSet::ALL.into_iter().filter_map(instantiation) {
-            let root = inst.root();
-            assert_eq!(
-                inst.witness.height * inst.witness.decomposition_chunks,
-                root.witness_height
-            );
-            assert_eq!(inst.witness.width, root.witness_width);
-        }
-    }
-
-    /// The boundary tests stop a few rounds in, so they never reach the last sumcheck round,
-    /// whose recursions are single levels and whose level 0 is therefore itself a leaf. Only a
-    /// whole-chain run covers it.
-    #[test]
-    fn full_chain_verifies() {
-        init_common();
-        execute(&instantiation(ParamSet::P28).unwrap());
-    }
-
-    #[test]
-    fn round_boundary_extraction() {
-        init_common();
-        let inst = instantiation(ParamSet::P28).unwrap();
-        let mut run = execute_to_boundary(&inst, NonZeroUsize::new(3).unwrap());
-
-        assert_eq!(run.prover.witness.height, 256);
-        assert_eq!(run.prover.witness.width, 32);
-        assert_eq!(run.verifier.commitment_root.len(), 1);
-        assert_eq!(run.prover.claims.len(), 2);
-        assert_eq!(run.verifier.claims.len(), 2);
-        assert_eq!(run.prover.evaluation_points, run.verifier.evaluation_points);
-
-        let mut prover_bytes = [0u8; 16];
-        let mut verifier_bytes = [0u8; 16];
-        run.prover
-            .transcript
-            .fill_from_xof(b"round-boundary-test", &mut prover_bytes);
-        run.verifier
-            .transcript
-            .fill_from_xof(b"round-boundary-test", &mut verifier_bytes);
-        assert_eq!(prover_bytes, verifier_bytes);
-
-        assert_eq!(run.crs.cks.len(), run.verifier_crs.structured_cks.len());
-        let first_row = &run.verifier_crs.structured_cks[0][0];
-        assert_eq!(first_row.tensor_layers.len(), 1);
-
-        let run4 = execute_to_boundary(&inst, NonZeroUsize::new(4).unwrap());
-        assert_eq!(run4.prover.witness.height, 512);
-        assert_eq!(run4.prover.witness.width, 8);
-        assert_eq!(
-            run4.prover.evaluation_points,
-            run4.verifier.evaluation_points
         );
     }
 }

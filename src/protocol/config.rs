@@ -15,7 +15,6 @@ use crate::{
 
 #[derive(Clone, Debug)]
 pub struct FineProjectionConfig {
-    pub nof_batches: usize,
     pub recursion_constant_term: RecursionConfig, // carries the norm claim
     pub recursion_batched_projection: RecursionConfig, // carries the consistency checks
 }
@@ -130,7 +129,6 @@ pub struct IntermediateConfig {
     pub projection_ratio: usize,
     pub projection_height: usize,
     pub nof_openings: usize,
-    pub projection_nof_batches: usize,
     pub basic_commitment_rank: usize,
 
     pub witness_decomposition_base_log: usize,
@@ -169,7 +167,6 @@ pub struct SimpleConfig {
     pub witness_width: usize,
     pub projection_ratio: usize,  // shall be likely the witness_height
     pub projection_height: usize, // likely 256 unless for testing
-    pub projection_nof_batches: usize,
     pub basic_commitment_rank: usize,
     pub witness_norm_bound: f64,
     pub projection_norm_bound: f64,

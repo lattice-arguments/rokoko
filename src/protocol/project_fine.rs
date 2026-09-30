@@ -720,34 +720,25 @@ pub fn batch_projection_n_times(
     witness: &VerticallyAlignedMatrix<RingElement>,
     projection_matrix: &ProjectionMatrix,
     hash_wrapper: &mut HashWrapper,
-    n: usize,
     is_simple_config: bool,
 ) -> (
     HorizontallyAlignedMatrix<RingElement>,
     [BatchedProjectionChallenges; NOF_BATCHES],
 ) {
-    debug_assert_eq!(n, NOF_BATCHES, "Only n=NOF_BATCHES is expected");
     let mut result = HorizontallyAlignedMatrix {
-        data: vec![RingElement::zero(Representation::IncompleteNTT); n * witness.width],
+        data: vec![RingElement::zero(Representation::IncompleteNTT); NOF_BATCHES * witness.width],
         width: witness.width,
-        height: n,
+        height: NOF_BATCHES,
     };
-    let challenges = [
+    let challenges = std::array::from_fn(|b| {
         batch_projection_into(
-            &mut result.row_slice_mut(0),
+            &mut result.row_slice_mut(b),
             witness,
             projection_matrix,
             hash_wrapper,
             is_simple_config,
-        ),
-        batch_projection_into(
-            &mut result.row_slice_mut(1),
-            witness,
-            projection_matrix,
-            hash_wrapper,
-            is_simple_config,
-        ),
-    ];
+        )
+    });
 
     // let expanded_c_0 = challenges[0]
     //     .c_0_values

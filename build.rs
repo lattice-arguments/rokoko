@@ -22,6 +22,7 @@ struct RingSpec {
     mod_q: u64,
     tau: u64,
     op_norm_bound: f64,
+    projection_batches: u64,
 }
 
 fn emit_ring() {
@@ -32,6 +33,10 @@ fn emit_ring() {
         None => manifest_dir.join("rings/default.toml"),
     };
     println!("cargo:rerun-if-changed={}", path.display());
+    println!("cargo::rustc-check-cfg=cfg(rokoko_ring, values(any()))");
+    if let Some(stem) = path.file_stem() {
+        println!("cargo::rustc-cfg=rokoko_ring={:?}", stem.to_string_lossy());
+    }
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| fail(&path, &format!("cannot read the ring spec: {e}")));
     let spec = parse_ring(&text).unwrap_or_else(|e| fail(&path, &e));
@@ -44,12 +49,14 @@ fn emit_ring() {
         out.join("ring.rs"),
         format!(
             "pub const DEGREE: usize = {};\npub const HALF_DEGREE: usize = {};\npub const MOD_Q: u64 = {};\n\
-             pub const SLOT_DEGREE: usize = {};\npub const NUM_SLOTS: usize = {};\n",
+             pub const SLOT_DEGREE: usize = {};\npub const NUM_SLOTS: usize = {};\n\
+             pub const NOF_BATCHES: usize = {};\n",
             spec.degree,
             spec.degree / 2,
             spec.mod_q,
             slot_degree,
             spec.degree / slot_degree,
+            spec.projection_batches,
         ),
     )
     .unwrap();
@@ -98,6 +105,10 @@ fn parse_ring(text: &str) -> Result<RingSpec, String> {
             value
                 .parse::<f64>()
                 .map_err(|_| format!("`op_norm_bound` must be a number, found {value:?}"))?
+        },
+        projection_batches: match fields.remove("projection_batches") {
+            Some(value) => int("projection_batches", value)?,
+            None => 2,
         },
     };
     match fields.keys().next() {
@@ -148,6 +159,12 @@ fn validate_ring(spec: &RingSpec) -> Result<(), String> {
         return Err(format!(
             "op_norm_bound {} must be positive",
             spec.op_norm_bound
+        ));
+    }
+    if !matches!(spec.projection_batches, 2 | 3) {
+        return Err(format!(
+            "projection_batches {} must be 2 or 3",
+            spec.projection_batches
         ));
     }
     Ok(())

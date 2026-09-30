@@ -31,7 +31,9 @@ use crate::{
             InnerEvalFoldVerifierContext, NextVerifierSumcheckContext, NormCheckVerifierContext,
             OuterEvalClaimVerifierContext, VerifierSumcheckContext,
         },
-        sumchecks::helpers::{block_recomposition_weights, row_committed_pieces, BlockWeights},
+        sumchecks::helpers::{
+            batch_piece, block_recomposition_weights, row_committed_pieces, BlockWeights,
+        },
     },
 };
 
@@ -570,18 +572,16 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 RingToFieldWrapperEvaluation::new(lhs_scalar_consistency_evaluation_field.clone()),
             );
 
+            let recursion = &proj_config.recursion_batched_projection;
             let batched: [RecompositionEvaluation; NOF_BATCHES] = std::array::from_fn(|i| {
+                let (placement, parts, part) = batch_piece(recursion, i);
                 recomposition_evaluation(
-                    proj_config.recursion_batched_projection.placement(),
-                    proj_config
-                        .recursion_batched_projection
-                        .decomposition_chunks,
-                    proj_config
-                        .recursion_batched_projection
-                        .decomposition_base_log,
+                    placement,
+                    recursion.decomposition_chunks,
+                    recursion.decomposition_base_log,
                     total_vars,
-                    NOF_BATCHES,
-                    i,
+                    parts,
+                    part,
                 )
             });
 
