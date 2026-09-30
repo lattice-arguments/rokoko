@@ -20,6 +20,12 @@ multiplication.
 - **Fused incomplete-NTT multiplication** – `fused_incomplete_ntt_mult`,
   a single-call ring multiplication over incomplete-NTT operands with
   internally cached shift factors.
+- **Degree-2 and degree-4 slots** – `slot_degree(N, q)` infers the degree `d`
+  of the irreducible factors `X^d - zeta` of `X^N + 1` mod `q` from `v2(q-1)`;
+  `coefficients_to_strided` / `strided_to_coefficients`,
+  `strided_ntt_forward_in_place` / `strided_ntt_inverse_in_place` and
+  `fused_slot_mult` work in the matching layout (`d` blocks of `N/d`, each
+  NTT-transformed) for `d` in {2, 4}.
 - **AVX-512 fast paths** – transparent runtime dispatch to AVX-512 kernels
   (avx512f, avx512dq, avx512ifma) when supported; falls back to portable
   scalar code otherwise.
@@ -158,12 +164,18 @@ All operate on slices of equal length and write to `result`.
 | `ntt_inverse_in_place` | In-place inverse NTT |
 | `incomplete_ntt_forward_in_place` | Coefficient → even-odd incomplete-NTT |
 | `incomplete_ntt_inverse_in_place` | Even-odd incomplete-NTT → coefficient |
+| `slot_degree` | Slot degree `d = N / 2^(v2(q-1) - 1)` of `X^N + 1` mod `q` (`1` when it splits fully) |
+| `coefficients_to_strided` | Coefficient → `d` blocks grouped by index mod `d` |
+| `strided_to_coefficients` | `d` strided blocks → coefficient |
+| `strided_ntt_forward_in_place` | Length-`N/d` NTT of each strided block |
+| `strided_ntt_inverse_in_place` | Inverse of `strided_ntt_forward_in_place` |
 
 ### Ring multiplication
 
 | Function | Description |
 |----------|-------------|
 | `fused_incomplete_ntt_mult` | Multiply two polynomials in incomplete-NTT form. Shift factors are computed once and cached per `(n, modulus)` pair. |
+| `fused_slot_mult` | Multiply two strided-NTT elements slot by slot modulo `Y^d - zeta_i`, `d` in {2, 4}; `d = 2` is `fused_incomplete_ntt_mult`. |
 
 ## Running the demo
 

@@ -221,3 +221,111 @@ pub fn fused_incomplete_ntt_mult(
         );
     });
 }
+
+/// Degree `d` of the irreducible factors `X^d - zeta` of `X^N + 1` over `Z_q`:
+/// `d = N / 2^(v2(q-1) - 1)` when `v2(q-1) <= log2 N`, else `1` (full splitting).
+pub fn slot_degree(ring_degree: usize, modulus: u64) -> usize {
+    assert!(
+        ring_degree.is_power_of_two(),
+        "ring degree {ring_degree} is not a power of two"
+    );
+    let v = (modulus - 1).trailing_zeros();
+    (2 * ring_degree).checked_shr(v).unwrap_or(0).max(1)
+}
+
+fn supported_slot_degree(ring_degree: usize, modulus: u64) -> usize {
+    let d = slot_degree(ring_degree, modulus);
+    assert!(
+        d == 2 || d == 4,
+        "N = {ring_degree}, q = {modulus}, v2(q-1) = {}: slot degree {d} is not supported (only 2 and 4)",
+        (modulus - 1).trailing_zeros()
+    );
+    d
+}
+
+/// Strided layout with `d = slot_degree(N, q)`: block `j` in `0..d` is
+/// `result[j*N/d..(j+1)*N/d] = (a_j, a_{j+d}, a_{j+2d}, …)`.
+pub fn coefficients_to_strided(
+    result: &mut [u64],
+    coefficients: &[u64],
+    ring_degree: usize,
+    modulus: u64,
+) {
+    let d = supported_slot_degree(ring_degree, modulus);
+    let n = ring_degree / d;
+    for (i, chunk) in coefficients[..ring_degree].chunks_exact(d).enumerate() {
+        for (j, &c) in chunk.iter().enumerate() {
+            result[j * n + i] = c;
+        }
+    }
+}
+
+pub fn strided_to_coefficients(
+    result: &mut [u64],
+    strided: &[u64],
+    ring_degree: usize,
+    modulus: u64,
+) {
+    let d = supported_slot_degree(ring_degree, modulus);
+    let n = ring_degree / d;
+    for (i, chunk) in result[..ring_degree].chunks_exact_mut(d).enumerate() {
+        for (j, c) in chunk.iter_mut().enumerate() {
+            *c = strided[j * n + i];
+        }
+    }
+}
+
+/// Length-`N/d` negacyclic NTT of each block of a strided element. Slot `i` is then
+/// `(block_0[i], …, block_{d-1}[i]) = a mod (X^d - zeta_i)`, `zeta_i = NTT_{N/d}(X)[i]`.
+pub fn strided_ntt_forward_in_place(data: &mut [u64], ring_degree: usize, modulus: u64) {
+    let n = ring_degree / supported_slot_degree(ring_degree, modulus);
+    for block in data[..ring_degree].chunks_exact_mut(n) {
+        ntt_forward_in_place(block, n, modulus);
+    }
+}
+
+pub fn strided_ntt_inverse_in_place(data: &mut [u64], ring_degree: usize, modulus: u64) {
+    let n = ring_degree / supported_slot_degree(ring_degree, modulus);
+    for block in data[..ring_degree].chunks_exact_mut(n) {
+        ntt_inverse_in_place(block, n, modulus);
+    }
+}
+
+/// Ring multiplication of two outputs of [`strided_ntt_forward_in_place`], slot by slot
+/// modulo `Y^d - zeta_i`; `d = 2` is [`fused_incomplete_ntt_mult`].
+pub fn fused_slot_mult(
+    result: &mut [u64],
+    operand1: &[u64],
+    operand2: &[u64],
+    ring_degree: usize,
+    modulus: u64,
+) {
+    let d = supported_slot_degree(ring_degree, modulus);
+    assert!(
+        (ring_degree / d) % 8 == 0,
+        "N/d = {} is not divisible by 8",
+        ring_degree / d
+    );
+    assert!(
+        result.len() >= ring_degree
+            && operand1.len() >= ring_degree
+            && operand2.len() >= ring_degree
+    );
+    match d {
+        2 => fused_incomplete_ntt_mult(result, operand1, operand2, ring_degree / 2, modulus),
+        _ => {
+            let n = ring_degree / 4;
+            with_ntt(n, modulus, |ntt| {
+                eltwise::fused_slot4_mult_inner(
+                    result,
+                    operand1,
+                    operand2,
+                    ntt.shift_factors(),
+                    ntt.shift_factors_f64(),
+                    n,
+                    modulus,
+                );
+            });
+        }
+    }
+}

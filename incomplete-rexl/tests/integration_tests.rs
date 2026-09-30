@@ -368,3 +368,187 @@ fn test_shift_factors_cached_correctly() {
         }
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Strided slots of degree d = slot_degree(N, q)
+// ──────────────────────────────────────────────────────────────────────────────
+
+const Q_V6: u64 = 1125899906842177;
+const Q_V7: u64 = 1125899906839937;
+const Q_V8: u64 = 1125899906840833;
+
+/// (N, q, v2(q-1), d)
+const SLOT_CASES: [(usize, u64, u32, usize); 4] = [
+    (128, Q_V6, 6, 4),
+    (256, Q_V7, 7, 4),
+    (128, Q_V7, 7, 2),
+    (256, Q_V8, 8, 2),
+];
+
+fn slot_product(a: &[u64], b: &[u64], ring_degree: usize, modulus: u64) -> Vec<u64> {
+    let mut sa = vec![0u64; ring_degree];
+    let mut sb = vec![0u64; ring_degree];
+    coefficients_to_strided(&mut sa, a, ring_degree, modulus);
+    coefficients_to_strided(&mut sb, b, ring_degree, modulus);
+    strided_ntt_forward_in_place(&mut sa, ring_degree, modulus);
+    strided_ntt_forward_in_place(&mut sb, ring_degree, modulus);
+    let mut sc = vec![0u64; ring_degree];
+    fused_slot_mult(&mut sc, &sa, &sb, ring_degree, modulus);
+    strided_ntt_inverse_in_place(&mut sc, ring_degree, modulus);
+    let mut c = vec![0u64; ring_degree];
+    strided_to_coefficients(&mut c, &sc, ring_degree, modulus);
+    c
+}
+
+#[test]
+fn test_slot_degree() {
+    for (ring_degree, modulus, v2, d) in SLOT_CASES {
+        assert_eq!(
+            (modulus - 1).trailing_zeros(),
+            v2,
+            "v2(q-1) for q={modulus}"
+        );
+        assert_eq!(
+            slot_degree(ring_degree, modulus),
+            d,
+            "N={ring_degree} q={modulus}"
+        );
+    }
+    assert_eq!(slot_degree(256, Q_V6), 8);
+    assert_eq!(slot_degree(128, MOD_SMALL), 1);
+    assert_eq!(slot_degree(128, Q_V8), 1);
+}
+
+#[test]
+#[should_panic(expected = "slot degree 8 is not supported")]
+fn test_slot_degree_8_rejected() {
+    let mut data = vec![0u64; 256];
+    strided_ntt_forward_in_place(&mut data, 256, Q_V6);
+}
+
+#[test]
+#[should_panic(expected = "slot degree 1 is not supported")]
+fn test_slot_degree_1_rejected() {
+    let zero = vec![0u64; 128];
+    let mut out = vec![0u64; 128];
+    fused_slot_mult(&mut out, &zero, &zero, 128, MOD_SMALL);
+}
+
+#[test]
+fn test_strided_roundtrip() {
+    for (ring_degree, modulus, _, _) in SLOT_CASES {
+        for _ in 0..5 {
+            let original = random_vec(ring_degree, modulus);
+            let mut strided = vec![0u64; ring_degree];
+            coefficients_to_strided(&mut strided, &original, ring_degree, modulus);
+            let layout = strided.clone();
+            strided_ntt_forward_in_place(&mut strided, ring_degree, modulus);
+            assert_ne!(
+                strided, layout,
+                "NTT didn't change data N={ring_degree} q={modulus}"
+            );
+            strided_ntt_inverse_in_place(&mut strided, ring_degree, modulus);
+            assert_eq!(
+                strided, layout,
+                "NTT round-trip N={ring_degree} q={modulus}"
+            );
+            let mut back = vec![0u64; ring_degree];
+            strided_to_coefficients(&mut back, &strided, ring_degree, modulus);
+            assert_eq!(
+                back, original,
+                "stride round-trip N={ring_degree} q={modulus}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_fused_slot_mult_end_to_end() {
+    for (ring_degree, modulus, _, _) in SLOT_CASES {
+        for _ in 0..5 {
+            let a = random_vec(ring_degree, modulus);
+            let b = random_vec(ring_degree, modulus);
+            assert_eq!(
+                slot_product(&a, &b, ring_degree, modulus),
+                poly_mul_schoolbook(&a, &b, ring_degree, modulus),
+                "N={ring_degree} q={modulus}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_fused_slot_mult_edge_values() {
+    for (ring_degree, modulus, _, _) in SLOT_CASES {
+        let top = vec![modulus - 1; ring_degree];
+        let mixed: Vec<u64> = (0..ring_degree)
+            .map(|i| [modulus - 1, 0, 1, modulus - 2][i % 4])
+            .collect();
+        let random = random_vec(ring_degree, modulus);
+        for (a, b) in [
+            (&top, &top),
+            (&top, &mixed),
+            (&mixed, &random),
+            (&top, &random),
+        ] {
+            assert_eq!(
+                slot_product(a, b, ring_degree, modulus),
+                poly_mul_schoolbook(a, b, ring_degree, modulus),
+                "N={ring_degree} q={modulus}"
+            );
+        }
+
+        let mut ntt_top = vec![0u64; ring_degree];
+        coefficients_to_strided(&mut ntt_top, &top, ring_degree, modulus);
+        strided_ntt_forward_in_place(&mut ntt_top, ring_degree, modulus);
+        let all_top = vec![modulus - 1; ring_degree];
+        for (x, y) in [(&all_top, &all_top), (&all_top, &ntt_top)] {
+            let mut c = vec![0u64; ring_degree];
+            fused_slot_mult(&mut c, x, y, ring_degree, modulus);
+            assert!(
+                c.iter().all(|&v| v < modulus),
+                "unreduced output N={ring_degree}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_fused_slot_mult_degree2_matches_even_odd() {
+    for (ring_degree, modulus, _, d) in SLOT_CASES {
+        if d != 2 {
+            continue;
+        }
+        let n = ring_degree / 2;
+        for _ in 0..5 {
+            let a = random_vec(ring_degree, modulus);
+            let b = random_vec(ring_degree, modulus);
+
+            let mut ea = a.clone();
+            let mut eb = b.clone();
+            incomplete_ntt_forward_in_place(&mut ea, n, modulus);
+            incomplete_ntt_forward_in_place(&mut eb, n, modulus);
+            let mut ec = vec![0u64; ring_degree];
+            fused_incomplete_ntt_mult(&mut ec, &ea, &eb, n, modulus);
+
+            let mut sa = vec![0u64; ring_degree];
+            let mut sb = vec![0u64; ring_degree];
+            coefficients_to_strided(&mut sa, &a, ring_degree, modulus);
+            coefficients_to_strided(&mut sb, &b, ring_degree, modulus);
+            strided_ntt_forward_in_place(&mut sa, ring_degree, modulus);
+            strided_ntt_forward_in_place(&mut sb, ring_degree, modulus);
+            let mut sc = vec![0u64; ring_degree];
+            fused_slot_mult(&mut sc, &sa, &sb, ring_degree, modulus);
+
+            assert_eq!(sa, ea, "forward N={ring_degree}");
+            assert_eq!(sb, eb, "forward N={ring_degree}");
+            assert_eq!(sc, ec, "product N={ring_degree}");
+
+            incomplete_ntt_inverse_in_place(&mut ec, n, modulus);
+            strided_ntt_inverse_in_place(&mut sc, ring_degree, modulus);
+            let mut c = vec![0u64; ring_degree];
+            strided_to_coefficients(&mut c, &sc, ring_degree, modulus);
+            assert_eq!(c, ec, "inverse N={ring_degree}");
+        }
+    }
+}
