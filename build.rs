@@ -130,12 +130,15 @@ fn validate_ring(spec: &RingSpec) -> Result<(), String> {
     if !is_prime(q) {
         return Err(format!("mod_q {q} is not prime"));
     }
-    if (q - 1).trailing_zeros() != n.trailing_zeros() {
+    if !matches!(slot_degree(n, q), 2 | 4) {
         return Err(format!(
-            "X^{n}+1 must split into degree-2 factors mod q, so q - 1 must have 2-adic valuation \
-             exactly log2(degree) = {}; {q} - 1 has {}",
+            "X^{n}+1 must split into irreducible factors of degree 2 or 4 mod q, so q - 1 must \
+             have 2-adic valuation log2(degree) = {} or log2(degree) - 1 = {}; {q} - 1 has {}, \
+             which gives factors of degree {}",
             n.trailing_zeros(),
-            (q - 1).trailing_zeros()
+            n.trailing_zeros() - 1,
+            (q - 1).trailing_zeros(),
+            slot_degree(n, q)
         ));
     }
     if spec.tau == 0 || spec.tau > n {
