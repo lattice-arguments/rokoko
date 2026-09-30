@@ -16,7 +16,6 @@ The sets themselves live in `src/instantiation.rs` (binary crate); the library o
 chain as a `rokoko::protocol::params::Instantiation`.
 
 Features are defined in `Cargo.toml`; the defaults already include:
-- `incomplete-rexl` — optional dep for reduced-extension ring, always enabled for these benches
 - `unsafe-sumcheck` — turns on unsafe sumcheck optimizations
 - `crt-commitment` — the root commitment through the CRT kernel
 

@@ -78,11 +78,8 @@ fn main() {
         }
     }
 
-    #[cfg(feature = "incomplete-rexl")]
-    {
-        // Trigger CPU feature detection and print features if enabled
-        incomplete_rexl::cpu_features::print_features();
-    }
+    // Trigger CPU feature detection and print the detected features
+    incomplete_rexl::cpu_features::print_features();
 
     #[cfg(feature = "crt-commitment")]
     {

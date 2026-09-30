@@ -14,45 +14,13 @@ We implement two variants of committed random projections based on the Johnson-L
 
 ## Build and Run Instructions
 
-The project supports two interchangeable back-ends for ring arithmetic:
-
-- `incomplete-rexl` — a [pure Rust implementation](incomplete-rexl/README.md) for modular arithmetic and NTT operations.
-- HEXL C++ bindings — native bindings to the Intel HEXL library  
-
-Unlike HEXL, `incomplete-rexl` can run on any Rust-supported platform (with degraded performance).
+Ring arithmetic runs on `incomplete-rexl`, a [pure Rust implementation](incomplete-rexl/README.md) of modular arithmetic and NTT operations. It runs on any Rust-supported platform (with degraded performance).
 
 For the best performance, it is required to compile and run the project on an AVX-512-enabled processor.
 Note that your processor may not support all AVX-512 instruction subsets, as listed here: https://en.wikipedia.org/wiki/AVX-512#CPUs_with_AVX-512.  
 If your platform does not support some of the instruction subsets (such as `avx512dq` or `avx512vbmi2`), performance will degrade accordingly.
 
-#### Using the `incomplete-rexl` feature (pure Rust back-end)
-
 The protocol can be compiled and run directly with:
-
-```
-cargo +nightly run --release --features incomplete-rexl
-```
-
-
-#### Using HEXL C++ bindings
-
-It is first necessary to build the library submodule separately.
-
-Clone and build the HEXL submodule:
-
-```
-git submodule update --init --recursive
-```
-
-Then run:
-
-```
-make hexl
-make wrapper
-export LD_LIBRARY_PATH=./hexl-bindings/hexl/build/hexl/lib:$(pwd)
-```
-
-Finally, run:
 
 ```
 cargo +nightly run --release
@@ -218,7 +186,7 @@ Without either flag a global subscriber is still installed, so `tracing` log mes
 ### Console summary (`events`)
 
 ```
-cargo +nightly run --release --features incomplete-rexl,events -- p-28
+cargo +nightly run --release --features events -- p-28
 ```
 
 The summary is aggregated by `(parent, child)` edge — that is, it reports where time went within each phase, showing per-edge totals, call counts, and the share of the parent's time. Repeated rounds are collapsed into a single `total <round>` line.
@@ -228,7 +196,7 @@ The summary is aggregated by `(parent, child)` edge — that is, it reports wher
 Level filtering is controlled by `RUST_LOG` and defaults to `info`:
 
 ```
-RUST_LOG=debug cargo +nightly run --release --features incomplete-rexl,events -- p-28
+RUST_LOG=debug cargo +nightly run --release --features events -- p-28
 ```
 
 Beyond enabling `debug!` messages, the level changes how `events` renders: at `info` the summary is aggregated as described above, while at `debug` (or lower) it switches to a **linear** trace that prints spans in execution order, indented by nesting depth. Use `info` to see where time is spent, `debug` to follow what happened in sequence.
@@ -240,7 +208,7 @@ Valid log levels to be set for RUST_LOG are (all case insensitive) `debug`, `war
 ### File artifacts (`profile`)
 
 ```
-cargo +nightly run --release --features incomplete-rexl,profile -- p-28
+cargo +nightly run --release --features profile -- p-28
 ```
 
 Artifacts are written to `profiles/<params>_<timestamp>/`, where `<params>` is the parameter set of the run (`p26`, `p28`, `p30`, ...):
@@ -282,7 +250,6 @@ ROKOKO_RING = { value = "rings/mine.toml", relative = true }
 
 ## Features
 
-* `incomplete-rexl`: enables the pure-Rust ring arithmetic back-end
 * `snark`: runs the executor in SNARK mode; without it, the executor runs the PCS chain (disclaimer: snark mode is currently highly experimental). The claim-language guide is [docs/snark.md](docs/snark.md), and `cargo run --release --example claims` is a runnable walk-through.
 * `events`: prints a per-phase timing summary to the console at the end of the run (see [Tracing and Profiling](#tracing-and-profiling))
 * `profile`: writes a Chrome trace and a per-span snapshot to `profiles/` for offline analysis (see [Tracing and Profiling](#tracing-and-profiling))

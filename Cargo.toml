@@ -4,9 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = ["unsafe-sumcheck", "incomplete-rexl","crt-commitment"]
+default = ["unsafe-sumcheck", "crt-commitment"]
 
-incomplete-rexl = ["dep:incomplete-rexl"]
 unsafe-sumcheck = []
 debug-hardness = []
 # Measure the norm schedule instead of enforcing it; prints a paste-ready NB_* table.
@@ -28,8 +27,7 @@ rand = "0.9.2"
 blake3 = "1.5.1"
 aes = "0.8"
 ctr = "0.9"
-incomplete-rexl = { path = "incomplete-rexl", optional = true }
-libloading = "0.8.6"
+incomplete-rexl = { path = "incomplete-rexl" }
 libm = "0.2"
 time = { version = "0.3", default-features = false, features = ["std", "formatting", "macros"], optional = true }
 tracing = "0.1"
@@ -70,4 +68,3 @@ harness = false
 [[bench]]
 name = "eltwise_bench"
 harness = false
-required-features = ["incomplete-rexl"]

@@ -262,7 +262,6 @@ impl Visit for ArgVisitor {
 pub fn active_features(param_set: &str) -> String {
     [
         Some(param_set),
-        cfg!(feature = "incomplete-rexl").then_some("incomplete-rexl"),
         cfg!(feature = "unsafe-sumcheck").then_some("unsafe-sumcheck"),
         cfg!(feature = "debug-hardness").then_some("debug-hardness"),
         cfg!(feature = "debug-decomp").then_some("debug-decomp"),
