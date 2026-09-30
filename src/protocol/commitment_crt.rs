@@ -422,9 +422,9 @@ fn transform_rows(limb: &Limb, source: &[i16], out: &mut [i16]) {
 
 fn centre_row(key: &PreprocessedRow, out: &mut [i64]) {
     for (k, element) in key.preprocessed_row.iter().enumerate() {
-        let mut even_odd = element.clone();
-        even_odd.to_representation(Representation::EvenOddCoefficients);
-        for (slot, value) in even_odd.v.iter().enumerate() {
+        let mut strided = element.clone();
+        strided.to_representation(Representation::StridedCoefficients);
+        for (slot, value) in strided.v.iter().enumerate() {
             out[k * DEGREE + slot] = if *value > MOD_Q / 2 {
                 *value as i64 - MOD_Q as i64
             } else {
@@ -1091,7 +1091,7 @@ const TRANSFORM_BATCH: usize = 16 / REGISTERS;
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 const LOW_LANES: [u32; 4] = [0x0000_ffff, 0x00ff_00ff, 0x0f0f_0f0f, 0x3333_3333];
 
-/// Even-odd storage into natural coefficient order: output lane `2i` takes the even half,
+/// Strided storage (stride 2) into natural coefficient order: output lane `2i` takes the even half,
 /// lane `2i + 1` the odd one.
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 const INTERLEAVE: [[i16; 32]; 2] = {

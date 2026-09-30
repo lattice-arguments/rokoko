@@ -214,8 +214,8 @@ pub fn load_sumcheck_data(
                     for (i, &val) in e_1_values.iter().enumerate() {
                         e.v[i as usize] = val;
                     }
-                    e.from_coefficients_to_even_odd_coefficients();
-                    e.from_even_odd_coefficients_to_incomplete_ntt_representation();
+                    e.from_coefficients_to_strided_coefficients();
+                    e.from_strided_coefficients_to_incomplete_ntt_representation();
                     e.conjugate_in_place();
                     e
                 };

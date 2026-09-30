@@ -48,7 +48,7 @@ pub fn decompose_into(
     for i in 0..radix {
         big_shift_val += small_shift_val << (i as u64 * base_log);
     }
-    let big_shift = RingElement::all(big_shift_val, Representation::EvenOddCoefficients);
+    let big_shift = RingElement::all(big_shift_val, Representation::StridedCoefficients);
     let mask = (1u64 << base_log) - 1;
 
     #[cfg(feature = "debug-decomp")]
@@ -70,11 +70,11 @@ pub fn decompose_into(
                digits: Option<&mut [std::mem::MaybeUninit<Signed16RingElement>]>,
                input: &[RingElement]| {
         let mut digits = digits;
-        let mut temp = RingElement::all(0, Representation::EvenOddCoefficients);
-        let mut digit = RingElement::new(Representation::EvenOddCoefficients);
+        let mut temp = RingElement::all(0, Representation::StridedCoefficients);
+        let mut digit = RingElement::new(Representation::StridedCoefficients);
         for (index, (el, slots)) in input.iter().zip(slots.chunks_exact_mut(radix)).enumerate() {
             temp.set_from(el);
-            temp.to_representation(Representation::EvenOddCoefficients);
+            temp.to_representation(Representation::StridedCoefficients);
             #[cfg(feature = "debug-decomp")]
             {
                 let q = crate::common::config::MOD_Q;
@@ -101,7 +101,7 @@ pub fn decompose_into(
                         value + MOD_Q - small_shift_val
                     };
                 }
-                digit.representation = Representation::EvenOddCoefficients;
+                digit.representation = Representation::StridedCoefficients;
                 if let Some(digits) = digits.as_deref_mut() {
                     let mut narrow = Signed16RingElement([0i16; DEGREE]);
                     centered_i16_from_u64_mod_q(&mut narrow.0, &digit.v);
@@ -179,17 +179,17 @@ pub fn decompose_bits(input: &[RingElement], radix: usize) -> Vec<RingElement> {
     let mut decomposed =
         vec![RingElement::zero(Representation::IncompleteNTT); input.len() * radix];
 
-    let mut temp = RingElement::all(0, Representation::EvenOddCoefficients);
+    let mut temp = RingElement::all(0, Representation::StridedCoefficients);
 
     for (index, el) in input.iter().enumerate() {
         temp.set_from(el);
-        // Bit extraction is per coefficient, so the even/odd ordering is irrelevant here.
-        temp.to_representation(Representation::EvenOddCoefficients);
+        // Bit extraction is per coefficient, so the strided ordering is irrelevant here.
+        temp.to_representation(Representation::StridedCoefficients);
         debug_assert!(temp.v.iter().all(|&c| c < (1u64 << n_bits)));
 
         let digits = &mut decomposed[index * radix..index * radix + n_bits];
         for (i, d) in digits.iter_mut().enumerate() {
-            d.representation = Representation::EvenOddCoefficients;
+            d.representation = Representation::StridedCoefficients;
 
             #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
             unsafe {
@@ -336,7 +336,7 @@ fn test_random_mod_q() {
 
     let mut inf_norm = 0;
     for d in decomposed.iter_mut() {
-        d.from_incomplete_ntt_to_even_odd_coefficients();
+        d.from_incomplete_ntt_to_strided_coefficients();
         for &v in d.v.iter() {
             let abs_v = if v > MOD_Q / 2 { MOD_Q - v } else { v };
             if abs_v > inf_norm {
@@ -386,7 +386,7 @@ fn test_decompose_bits_digits_are_binary() {
     let mut decomposed = decompose_bits(&input, radix);
 
     for d in decomposed.iter_mut() {
-        d.from_incomplete_ntt_to_even_odd_coefficients();
+        d.from_incomplete_ntt_to_strided_coefficients();
         for &v in d.v.iter() {
             debug_assert_eq!(v == 0 || v == 1, true);
         }
@@ -434,7 +434,7 @@ fn test_decompose_bits_edge_values() {
 
 #[test]
 fn test_decompose_bits_non_uniform_coefficients() {
-    let mut el = RingElement::zero(Representation::EvenOddCoefficients);
+    let mut el = RingElement::zero(Representation::StridedCoefficients);
     for j in 0..el.v.len() {
         el.v[j] = (j as u64).wrapping_mul(0x9E3779B97F4A7C15) % MOD_Q;
     }
@@ -445,10 +445,10 @@ fn test_decompose_bits_non_uniform_coefficients() {
     let decomposed = decompose_bits(&input, radix);
 
     let mut coefficients = input[0].clone();
-    coefficients.to_representation(Representation::EvenOddCoefficients);
+    coefficients.to_representation(Representation::StridedCoefficients);
     for i in 0..radix {
         let mut digit = decomposed[i].clone();
-        digit.to_representation(Representation::EvenOddCoefficients);
+        digit.to_representation(Representation::StridedCoefficients);
         for j in 0..digit.v.len() {
             debug_assert_eq!(digit.v[j], (coefficients.v[j] >> i) & 1);
         }
@@ -462,7 +462,7 @@ fn test_decompose_bits_non_uniform_coefficients() {
 fn test_decompose_bits_preserves_input() {
     let input = vec![
         RingElement::random(Representation::IncompleteNTT),
-        RingElement::random(Representation::EvenOddCoefficients),
+        RingElement::random(Representation::StridedCoefficients),
     ];
     let before = input.clone();
 

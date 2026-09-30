@@ -29,7 +29,7 @@ pub fn inf_norm(vec: &[RingElement]) -> u64 {
     vec.iter()
         .map(|el| {
             let mut el_cloned = el.clone();
-            el_cloned.from_incomplete_ntt_to_even_odd_coefficients();
+            el_cloned.from_incomplete_ntt_to_strided_coefficients();
             el_cloned
                 .v
                 .map(|x| x)
@@ -69,7 +69,7 @@ pub fn l2_norm(vec: &[RingElement]) -> f64 {
     let mut sum = 0u128;
     for el in vec {
         let mut el_cloned = el.clone();
-        el_cloned.from_incomplete_ntt_to_even_odd_coefficients();
+        el_cloned.from_incomplete_ntt_to_strided_coefficients();
         if !accumulate_squares(&mut sum, &el_cloned.v) {
             return f64::INFINITY;
         }

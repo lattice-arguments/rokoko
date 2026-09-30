@@ -39,9 +39,9 @@ pub fn init_common() {
     LazyLock::force(&CONSTANT_TERM_FACTORS);
 
     // init some caches of HEXL
-    let mut a = RingElement::new(Representation::EvenOddCoefficients);
+    let mut a = RingElement::new(Representation::StridedCoefficients);
     let mut b = RingElement::new(Representation::IncompleteNTT);
-    a.from_even_odd_coefficients_to_incomplete_ntt_representation();
+    a.from_strided_coefficients_to_incomplete_ntt_representation();
     incomplete_ntt_multiplication(&mut b, &a, &a);
-    a.from_incomplete_ntt_to_even_odd_coefficients();
+    a.from_incomplete_ntt_to_strided_coefficients();
 }

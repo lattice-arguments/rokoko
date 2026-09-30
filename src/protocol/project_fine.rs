@@ -300,9 +300,9 @@ pub fn project_coefficients(
     witness_coeff.data.clone_from_slice(&witness.data);
 
     for i in 0..witness_coeff.data.len() {
-        witness_coeff.data[i].from_incomplete_ntt_to_even_odd_coefficients();
-        // this is possible to operate on even-odd representation directly, but coeeficent rep is better for locality.
-        witness_coeff.data[i].from_even_odd_coefficients_to_coefficients();
+        witness_coeff.data[i].from_incomplete_ntt_to_strided_coefficients();
+        // this is possible to operate on strided representation directly, but coeeficent rep is better for locality.
+        witness_coeff.data[i].from_strided_coefficients_to_coefficients();
     }
 
     #[cfg(feature = "debug-hardness")]
@@ -1045,8 +1045,8 @@ mod tests {
             for (i, &val) in e_1_values.iter().enumerate() {
                 e.v[i as usize] = val;
             }
-            e.from_coefficients_to_even_odd_coefficients();
-            e.from_even_odd_coefficients_to_incomplete_ntt_representation();
+            e.from_coefficients_to_strided_coefficients();
+            e.from_strided_coefficients_to_incomplete_ntt_representation();
             e.conjugate_in_place();
             e
         };

@@ -1020,7 +1020,7 @@ impl<'a> Decoder<'a> {
 fn representation(tag: u64) -> Result<Representation, WireError> {
     Ok(match tag {
         0 => Representation::Coefficients,
-        1 => Representation::EvenOddCoefficients,
+        1 => Representation::StridedCoefficients,
         2 => Representation::IncompleteNTT,
         3 => Representation::HomogenizedFieldExtensions,
         _ => return Err(WireError::Malformed),

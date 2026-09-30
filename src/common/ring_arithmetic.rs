@@ -9,7 +9,7 @@ use std::sync::LazyLock;
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum Representation {
     Coefficients, // This should not be used almost ever. Use only for printing or debugging.
-    EvenOddCoefficients, // In this representation, coefficients are stored as even part followed by odd part. This is so that NTT can be applied more easily.
+    StridedCoefficients, // Coefficients grouped by index modulo the stride (2: even-indexed then odd-indexed), so that each group gets its own NTT.
     IncompleteNTT, // Incomplete NTT representation, where even and odd parts are separately transformed.
     HomogenizedFieldExtensions, // We use that reprentation so that "Incomplete NTT slots" are homogenized, i.e. they are all of
                                 // the structure Zq[X] / <X^2 + \alpha>, i.e. \alpha is the same for each slot.
@@ -64,7 +64,7 @@ impl RingElement {
     pub fn one(representation: Representation) -> Self {
         let mut element = Self {
             v: [0; DEGREE],
-            representation: Representation::EvenOddCoefficients,
+            representation: Representation::StridedCoefficients,
         };
         element.v[0] = 1;
 
@@ -76,7 +76,7 @@ impl RingElement {
     pub fn all(value: u64, representation: Representation) -> Self {
         let mut element = Self {
             v: [0; DEGREE],
-            representation: Representation::EvenOddCoefficients,
+            representation: Representation::StridedCoefficients,
         };
         for i in 0..DEGREE {
             element.v[i] = value;
@@ -100,7 +100,7 @@ impl RingElement {
     pub fn constant(value: u64, representation: Representation) -> Self {
         let mut element = Self {
             v: [0; DEGREE],
-            representation: Representation::EvenOddCoefficients,
+            representation: Representation::StridedCoefficients,
         };
 
         element.v[0] = value;
@@ -160,9 +160,9 @@ impl RingElement {
         element
     }
 
-    pub fn from_even_odd_coefficients_to_incomplete_ntt_representation(&mut self) {
+    pub fn from_strided_coefficients_to_incomplete_ntt_representation(&mut self) {
         debug_assert!(
-            self.representation == Representation::EvenOddCoefficients,
+            self.representation == Representation::StridedCoefficients,
             "Already in Incomplete NTT representation"
         );
 
@@ -174,7 +174,7 @@ impl RingElement {
         self.representation = Representation::IncompleteNTT;
     }
 
-    pub fn from_incomplete_ntt_to_even_odd_coefficients(&mut self) {
+    pub fn from_incomplete_ntt_to_strided_coefficients(&mut self) {
         debug_assert!(
             self.representation == Representation::IncompleteNTT,
             "Not in Incomplete NTT representation"
@@ -185,10 +185,10 @@ impl RingElement {
             ntt_inverse_in_place(self.v.as_mut_ptr().add(HALF_DEGREE), HALF_DEGREE, MOD_Q);
         }
 
-        self.representation = Representation::EvenOddCoefficients;
+        self.representation = Representation::StridedCoefficients;
     }
 
-    pub fn from_coefficients_to_even_odd_coefficients(&mut self) {
+    pub fn from_coefficients_to_strided_coefficients(&mut self) {
         debug_assert!(
             self.representation == Representation::Coefficients,
             "Not in Coefficients representation"
@@ -202,13 +202,13 @@ impl RingElement {
         }
 
         self.v = temp;
-        self.representation = Representation::EvenOddCoefficients;
+        self.representation = Representation::StridedCoefficients;
     }
 
-    pub fn from_even_odd_coefficients_to_coefficients(&mut self) {
+    pub fn from_strided_coefficients_to_coefficients(&mut self) {
         debug_assert!(
-            self.representation == Representation::EvenOddCoefficients,
-            "Not in Even-Odd Coefficients representation"
+            self.representation == Representation::StridedCoefficients,
+            "Not in Strided Coefficients representation"
         );
 
         let mut temp = [0u64; DEGREE];
@@ -260,23 +260,23 @@ impl RingElement {
 
     pub fn to_representation(&mut self, representation: Representation) {
         match (self.representation, representation) {
-            (Representation::Coefficients, Representation::EvenOddCoefficients) => {
-                self.from_coefficients_to_even_odd_coefficients()
+            (Representation::Coefficients, Representation::StridedCoefficients) => {
+                self.from_coefficients_to_strided_coefficients()
             }
             (Representation::Coefficients, Representation::IncompleteNTT) => {
-                self.from_coefficients_to_even_odd_coefficients();
-                self.from_even_odd_coefficients_to_incomplete_ntt_representation();
+                self.from_coefficients_to_strided_coefficients();
+                self.from_strided_coefficients_to_incomplete_ntt_representation();
             }
             (Representation::Coefficients, Representation::HomogenizedFieldExtensions) => {
-                self.from_coefficients_to_even_odd_coefficients();
-                self.from_even_odd_coefficients_to_incomplete_ntt_representation();
+                self.from_coefficients_to_strided_coefficients();
+                self.from_strided_coefficients_to_incomplete_ntt_representation();
                 self.from_incomplete_ntt_to_homogenized_field_extensions();
             }
-            (Representation::EvenOddCoefficients, Representation::IncompleteNTT) => {
-                self.from_even_odd_coefficients_to_incomplete_ntt_representation()
+            (Representation::StridedCoefficients, Representation::IncompleteNTT) => {
+                self.from_strided_coefficients_to_incomplete_ntt_representation()
             }
-            (Representation::EvenOddCoefficients, Representation::HomogenizedFieldExtensions) => {
-                self.from_even_odd_coefficients_to_incomplete_ntt_representation();
+            (Representation::StridedCoefficients, Representation::HomogenizedFieldExtensions) => {
+                self.from_strided_coefficients_to_incomplete_ntt_representation();
                 self.from_incomplete_ntt_to_homogenized_field_extensions();
             }
             (Representation::IncompleteNTT, Representation::HomogenizedFieldExtensions) => {
@@ -285,24 +285,24 @@ impl RingElement {
             (Representation::HomogenizedFieldExtensions, Representation::IncompleteNTT) => {
                 self.from_homogenized_field_extensions_to_incomplete_ntt()
             }
-            (Representation::HomogenizedFieldExtensions, Representation::EvenOddCoefficients) => {
+            (Representation::HomogenizedFieldExtensions, Representation::StridedCoefficients) => {
                 self.from_homogenized_field_extensions_to_incomplete_ntt();
-                self.from_incomplete_ntt_to_even_odd_coefficients();
+                self.from_incomplete_ntt_to_strided_coefficients();
             }
             (Representation::HomogenizedFieldExtensions, Representation::Coefficients) => {
                 self.from_homogenized_field_extensions_to_incomplete_ntt();
-                self.from_incomplete_ntt_to_even_odd_coefficients();
-                self.from_even_odd_coefficients_to_coefficients();
+                self.from_incomplete_ntt_to_strided_coefficients();
+                self.from_strided_coefficients_to_coefficients();
             }
-            (Representation::IncompleteNTT, Representation::EvenOddCoefficients) => {
-                self.from_incomplete_ntt_to_even_odd_coefficients();
+            (Representation::IncompleteNTT, Representation::StridedCoefficients) => {
+                self.from_incomplete_ntt_to_strided_coefficients();
             }
             (Representation::IncompleteNTT, Representation::Coefficients) => {
-                self.from_incomplete_ntt_to_even_odd_coefficients();
-                self.from_even_odd_coefficients_to_coefficients();
+                self.from_incomplete_ntt_to_strided_coefficients();
+                self.from_strided_coefficients_to_coefficients();
             }
-            (Representation::EvenOddCoefficients, Representation::Coefficients) => {
-                self.from_even_odd_coefficients_to_coefficients();
+            (Representation::StridedCoefficients, Representation::Coefficients) => {
+                self.from_strided_coefficients_to_coefficients();
             }
             _ => {
                 // nothing to do
@@ -349,8 +349,8 @@ impl RingElement {
         // In coefficient form: [c_0, c_1, ..., c_{n-1}] -> [c_0, -c_{n-1}, -c_{n-2}, ..., -c_1]
         // Reference implementation used for deriving NTT-domain transformations
         debug_assert_eq!(self.representation, Representation::IncompleteNTT);
-        self.from_incomplete_ntt_to_even_odd_coefficients();
-        self.from_even_odd_coefficients_to_coefficients();
+        self.from_incomplete_ntt_to_strided_coefficients();
+        self.from_strided_coefficients_to_coefficients();
 
         // Reverse and negate coefficients 1 to n-1
         for i in 1..(DEGREE / 2 + 1) {
@@ -359,8 +359,8 @@ impl RingElement {
             self.v[DEGREE - i] = MOD_Q - temp;
         }
 
-        self.from_coefficients_to_even_odd_coefficients();
-        self.from_even_odd_coefficients_to_incomplete_ntt_representation();
+        self.from_coefficients_to_strided_coefficients();
+        self.from_strided_coefficients_to_incomplete_ntt_representation();
     }
 
     #[inline]
@@ -1281,12 +1281,12 @@ impl RingElement {
         let mut other = self.clone();
         match self.representation {
             Representation::IncompleteNTT => {
-                other.from_incomplete_ntt_to_even_odd_coefficients();
-                other.from_even_odd_coefficients_to_coefficients();
+                other.from_incomplete_ntt_to_strided_coefficients();
+                other.from_strided_coefficients_to_coefficients();
             }
             Representation::Coefficients => {
-                other.from_coefficients_to_even_odd_coefficients();
-                other.from_even_odd_coefficients_to_incomplete_ntt_representation();
+                other.from_coefficients_to_strided_coefficients();
+                other.from_strided_coefficients_to_incomplete_ntt_representation();
             }
             _ => return resident,
         }
@@ -1343,15 +1343,15 @@ mod tests {
 
         naive_polynomial_multiplication(&mut c, &a, &b);
 
-        a.from_coefficients_to_even_odd_coefficients();
-        b.from_coefficients_to_even_odd_coefficients();
-        a.from_even_odd_coefficients_to_incomplete_ntt_representation();
-        b.from_even_odd_coefficients_to_incomplete_ntt_representation();
+        a.from_coefficients_to_strided_coefficients();
+        b.from_coefficients_to_strided_coefficients();
+        a.from_strided_coefficients_to_incomplete_ntt_representation();
+        b.from_strided_coefficients_to_incomplete_ntt_representation();
 
         let mut d = RingElement::new(Representation::IncompleteNTT);
         incomplete_ntt_multiplication(&mut d, &a, &b);
-        d.from_incomplete_ntt_to_even_odd_coefficients();
-        d.from_even_odd_coefficients_to_coefficients();
+        d.from_incomplete_ntt_to_strided_coefficients();
+        d.from_strided_coefficients_to_coefficients();
 
         debug_assert_eq!(c.v, d.v);
     }
@@ -1360,8 +1360,8 @@ mod tests {
     fn test_homogenized_field_extension_conversion_roundtrip() {
         init_common();
         let mut b = RingElement::random(Representation::Coefficients);
-        b.from_coefficients_to_even_odd_coefficients();
-        b.from_even_odd_coefficients_to_incomplete_ntt_representation();
+        b.from_coefficients_to_strided_coefficients();
+        b.from_strided_coefficients_to_incomplete_ntt_representation();
 
         let mut b_c = b.clone();
         b_c.from_incomplete_ntt_to_homogenized_field_extensions();
@@ -1374,8 +1374,8 @@ mod tests {
     fn test_field_extension_split_combine_roundtrip() {
         init_common();
         let mut b = RingElement::random(Representation::Coefficients);
-        b.from_coefficients_to_even_odd_coefficients();
-        b.from_even_odd_coefficients_to_incomplete_ntt_representation();
+        b.from_coefficients_to_strided_coefficients();
+        b.from_strided_coefficients_to_incomplete_ntt_representation();
         b.from_incomplete_ntt_to_homogenized_field_extensions();
 
         let ext_b: [FieldExtension; HALF_DEGREE] = b.split_into_field_extensions();
@@ -1394,10 +1394,10 @@ mod tests {
 
         naive_polynomial_multiplication(&mut c, &a, &b);
 
-        a.from_coefficients_to_even_odd_coefficients();
-        b.from_coefficients_to_even_odd_coefficients();
-        a.from_even_odd_coefficients_to_incomplete_ntt_representation();
-        b.from_even_odd_coefficients_to_incomplete_ntt_representation();
+        a.from_coefficients_to_strided_coefficients();
+        b.from_coefficients_to_strided_coefficients();
+        a.from_strided_coefficients_to_incomplete_ntt_representation();
+        b.from_strided_coefficients_to_incomplete_ntt_representation();
         a.from_incomplete_ntt_to_homogenized_field_extensions();
         b.from_incomplete_ntt_to_homogenized_field_extensions();
 
@@ -1415,8 +1415,8 @@ mod tests {
         let mut c_c = RingElement::new(Representation::HomogenizedFieldExtensions);
         c_c.combine_from_field_extensions(&field_extensions_hadamard);
         c_c.from_homogenized_field_extensions_to_incomplete_ntt();
-        c_c.from_incomplete_ntt_to_even_odd_coefficients();
-        c_c.from_even_odd_coefficients_to_coefficients();
+        c_c.from_incomplete_ntt_to_strided_coefficients();
+        c_c.from_strided_coefficients_to_coefficients();
 
         debug_assert_eq!(c.v, c_c.v);
     }
@@ -1430,30 +1430,30 @@ mod tests {
 
         naive_polynomial_multiplication(&mut c, &a, &b);
 
-        a.from_coefficients_to_even_odd_coefficients();
-        b.from_coefficients_to_even_odd_coefficients();
-        a.from_even_odd_coefficients_to_incomplete_ntt_representation();
-        b.from_even_odd_coefficients_to_incomplete_ntt_representation();
+        a.from_coefficients_to_strided_coefficients();
+        b.from_coefficients_to_strided_coefficients();
+        a.from_strided_coefficients_to_incomplete_ntt_representation();
+        b.from_strided_coefficients_to_incomplete_ntt_representation();
         a.from_incomplete_ntt_to_homogenized_field_extensions();
         b.from_incomplete_ntt_to_homogenized_field_extensions();
 
         let mut e = RingElement::new(Representation::HomogenizedFieldExtensions);
         incomplete_ntt_multiplication_homogenized(&mut e, &a, &b);
         e.from_homogenized_field_extensions_to_incomplete_ntt();
-        e.from_incomplete_ntt_to_even_odd_coefficients();
-        e.from_even_odd_coefficients_to_coefficients();
+        e.from_incomplete_ntt_to_strided_coefficients();
+        e.from_strided_coefficients_to_coefficients();
 
         debug_assert_eq!(c.v, e.v);
     }
 
     #[test]
-    fn test_even_odd_coefficients_conversion_roundtrip() {
+    fn test_strided_coefficients_conversion_roundtrip() {
         init_common();
         let original = RingElement::random(Representation::Coefficients);
         let mut a = original.clone();
 
-        a.from_coefficients_to_even_odd_coefficients();
-        a.from_even_odd_coefficients_to_coefficients();
+        a.from_coefficients_to_strided_coefficients();
+        a.from_strided_coefficients_to_coefficients();
 
         debug_assert_eq!(original.v, a.v);
     }
@@ -1557,8 +1557,8 @@ mod tests {
             prod *= (e1, e2);
             inner_product += &prod;
         }
-        inner_product.from_incomplete_ntt_to_even_odd_coefficients();
-        inner_product.from_even_odd_coefficients_to_coefficients();
+        inner_product.from_incomplete_ntt_to_strided_coefficients();
+        inner_product.from_strided_coefficients_to_coefficients();
         let ct = inner_product.v[0];
 
         debug_assert_eq!(ct, two_norm_squared);
@@ -1569,8 +1569,8 @@ mod tests {
         init_common();
 
         let mut a = RingElement::random(Representation::Coefficients);
-        a.from_coefficients_to_even_odd_coefficients();
-        a.from_even_odd_coefficients_to_incomplete_ntt_representation();
+        a.from_coefficients_to_strided_coefficients();
+        a.from_strided_coefficients_to_incomplete_ntt_representation();
 
         let original = a.clone();
 
@@ -1590,8 +1590,8 @@ mod tests {
 
         let mut a = RingElement::random(Representation::IncompleteNTT);
         let computed_constant_term = a.constant_term_from_incomplete_ntt();
-        a.from_incomplete_ntt_to_even_odd_coefficients();
-        a.from_even_odd_coefficients_to_coefficients();
+        a.from_incomplete_ntt_to_strided_coefficients();
+        a.from_strided_coefficients_to_coefficients();
         let expected_constant_term = a.v[0];
 
         debug_assert_eq!(expected_constant_term, computed_constant_term % MOD_Q);
