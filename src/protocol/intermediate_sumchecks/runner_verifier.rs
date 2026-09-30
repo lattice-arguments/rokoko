@@ -4,7 +4,7 @@ use crate::{
         config::{HALF_DEGREE, NOF_BATCHES},
         hash::HashWrapper,
         norms::assert_norm_bounded,
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::StructuredRow,
         sumcheck_element::SumcheckElement,
     },
@@ -77,8 +77,7 @@ pub fn intermediate_sumcheck_verifier(
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
-    let qe: [QuadraticExtension; HALF_DEGREE] =
-        combination_to_field.split_into_quadratic_extensions();
+    let fe: [FieldExtension; HALF_DEGREE] = combination_to_field.split_into_field_extensions();
 
     let (mut batched_claim, idx) = batch_claims_linear(folded_commitment, &combination, 0);
     let (batched_inner_eval_claims, idx) =
@@ -100,28 +99,27 @@ pub fn intermediate_sumcheck_verifier(
     let mut batched_claim_over_field = {
         let mut temp = batched_claim.clone();
         temp.from_incomplete_ntt_to_homogenized_field_extensions();
-        let mut split = temp.split_into_quadratic_extensions();
-        let mut result = QuadraticExtension::zero();
+        let mut split = temp.split_into_field_extensions();
+        let mut result = FieldExtension::zero();
 
         for i in 0..HALF_DEGREE {
-            split[i] *= &qe[i];
+            split[i] *= &fe[i];
             result += &split[i];
         }
         result
     };
 
-    let mut evaluation_points_field: Vec<QuadraticExtension> =
-        Vec::with_capacity(proof.polys.len());
+    let mut evaluation_points_field: Vec<FieldExtension> = Vec::with_capacity(proof.polys.len());
 
     for poly_over_field in proof.polys.iter() {
-        hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
+        hash_wrapper.update_with_field_extension_slice(&poly_over_field.coefficients);
 
         assert_eq!(
             poly_over_field.at_zero() + poly_over_field.at_one(),
             batched_claim_over_field
         );
 
-        let mut challenge = QuadraticExtension::zero();
+        let mut challenge = FieldExtension::zero();
         hash_wrapper.sample_field_element_into(&mut challenge);
 
         batched_claim_over_field = poly_over_field.at(&challenge);
@@ -135,7 +133,7 @@ pub fn intermediate_sumcheck_verifier(
         evaluation_points_inner,
         &combination,
         fine_proj_batching_challenges,
-        &qe,
+        &fe,
     );
 
     assert_eq!(

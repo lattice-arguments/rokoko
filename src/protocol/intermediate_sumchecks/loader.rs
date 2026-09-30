@@ -1,7 +1,7 @@
 use crate::{
     common::{
         config::{HALF_DEGREE, NOF_BATCHES},
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{config::IntermediateConfig, project_fine::BatchedProjectionChallenges},
@@ -17,7 +17,7 @@ pub fn load_intermediate_sumcheck_data(
     evaluation_points_inner: &[StructuredRow],
     combination: &[RingElement],
     fine_proj_batching_challenges: &[BatchedProjectionChallenges; NOF_BATCHES],
-    qe: &[QuadraticExtension; HALF_DEGREE],
+    fe: &[FieldExtension; HALF_DEGREE],
 ) {
     let expected_witness_len = config.witness_height * config.witness_decomposition_chunks;
     assert_eq!(
@@ -82,5 +82,5 @@ pub fn load_intermediate_sumcheck_data(
     sumcheck_context
         .field_combiner
         .borrow_mut()
-        .load_challenges_from(*qe);
+        .load_challenges_from(*fe);
 }

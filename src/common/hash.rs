@@ -59,8 +59,8 @@ impl HashWrapper {
         }
     }
 
-    pub fn update_with_quadratic_extension_element(&mut self, element: &QuadraticExtension) {
-        self.dbg_fs("update_with_quadratic_extension_element", 1);
+    pub fn update_with_field_extension_element(&mut self, element: &FieldExtension) {
+        self.dbg_fs("update_with_field_extension_element", 1);
         // hack: treat the coeffs slice as raw bytes (native endianness)
         let ptr = element.coeffs.as_ptr() as *const u8;
         let len = element.coeffs.len() * std::mem::size_of::<u64>();
@@ -68,10 +68,10 @@ impl HashWrapper {
         self.transcript.update(bytes);
     }
 
-    pub fn update_with_quadratic_extension_slice(&mut self, elements: &[QuadraticExtension]) {
-        self.dbg_fs("update_with_quadratic_extension_slice", elements.len());
+    pub fn update_with_field_extension_slice(&mut self, elements: &[FieldExtension]) {
+        self.dbg_fs("update_with_field_extension_slice", elements.len());
         for element in elements {
-            self.update_with_quadratic_extension_element(element);
+            self.update_with_field_extension_element(element);
         }
     }
 
@@ -174,7 +174,7 @@ impl HashWrapper {
         }
     }
 
-    pub fn sample_field_element_into(&mut self, output: &mut QuadraticExtension) {
+    pub fn sample_field_element_into(&mut self, output: &mut FieldExtension) {
         self.dbg_fs("sample_field_element_into", 1);
         let buf = output.coeffs.as_mut_ptr() as *mut u8;
         let len = output.coeffs.len() * std::mem::size_of::<u64>();
@@ -199,7 +199,7 @@ impl HashWrapper {
 
     pub fn sample_ring_element_ntt_slots_same_vec_into(&mut self, output: &mut [RingElement]) {
         self.dbg_fs("sample_ring_element_ntt_slots_same_vec_into", output.len());
-        let mut f = QuadraticExtension::zero();
+        let mut f = FieldExtension::zero();
         for element in output.iter_mut() {
             self.sample_field_element_into(&mut f);
             field_to_ring_element_into(&mut *element, &f);
@@ -209,7 +209,7 @@ impl HashWrapper {
 
     pub fn sample_ring_element_ntt_slots_into(&mut self, output: &mut RingElement) {
         self.dbg_fs("sample_ring_element_ntt_slots_into", 1);
-        let mut f = QuadraticExtension::zero();
+        let mut f = FieldExtension::zero();
         self.sample_field_element_into(&mut f);
         field_to_ring_element_into(output, &f);
         output.from_homogenized_field_extensions_to_incomplete_ntt();

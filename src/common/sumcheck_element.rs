@@ -1,13 +1,13 @@
 use std::ops::{AddAssign, MulAssign, SubAssign};
 
 use crate::common::{
-    arithmetic::{ONE, ONE_QUAD, TWO, TWO_QUAD, ZERO, ZERO_QUAD},
+    arithmetic::{ONE, ONE_FE, TWO, TWO_FE, ZERO, ZERO_FE},
     ring_arithmetic::{Representation, RingElement},
-    QuadraticExtension,
+    FieldExtension,
 };
 
 /// Minimal operations Sumcheck and Polynomial need from a field-like element.
-/// Designed to be implementable by `RingElement` now and other element types (e.g. `QuadraticExtension`) later.
+/// Implemented by `RingElement` and `FieldExtension`.
 pub trait SumcheckElement:
     Clone
     + for<'a> AddAssign<&'a Self>
@@ -67,25 +67,25 @@ impl SumcheckElement for RingElement {
     }
 }
 
-impl SumcheckElement for QuadraticExtension {
+impl SumcheckElement for FieldExtension {
     fn zero() -> Self {
-        QuadraticExtension { coeffs: [0, 0] }
+        FieldExtension { coeffs: [0, 0] }
     }
 
     fn one() -> Self {
-        QuadraticExtension { coeffs: [1, 0] }
+        FieldExtension { coeffs: [1, 0] }
     }
 
     fn one_ref() -> &'static Self {
-        &ONE_QUAD
+        &ONE_FE
     }
 
     fn two_ref() -> &'static Self {
-        &TWO_QUAD
+        &TWO_FE
     }
 
     fn zero_ref() -> &'static Self {
-        &ZERO_QUAD
+        &ZERO_FE
     }
 
     fn set_zero(&mut self) {
@@ -93,7 +93,7 @@ impl SumcheckElement for QuadraticExtension {
     }
 
     fn allocate_zero_vec(len: usize) -> Vec<Self> {
-        vec![QuadraticExtension { coeffs: [0, 0] }; len]
+        vec![FieldExtension { coeffs: [0, 0] }; len]
     }
 
     fn set_from(&mut self, other: &Self) {

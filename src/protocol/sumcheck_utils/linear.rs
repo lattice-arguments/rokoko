@@ -4,7 +4,7 @@ use crate::{
     common::{
         arithmetic::field_to_ring_element_into,
         config::HALF_DEGREE,
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::StructuredRow,
         sumcheck_element::SumcheckElement,
     },
@@ -460,14 +460,14 @@ impl<E: SumcheckElement> EvaluationSumcheckData for BasicEvaluationLinearSumchec
 }
 
 pub struct RingToFieldWrapperEvaluation {
-    field_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = QuadraticExtension>>,
+    field_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = FieldExtension>>,
     result: RingElement,
     evaluated: bool,
 }
 
 impl RingToFieldWrapperEvaluation {
     pub fn new(
-        field_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = QuadraticExtension>>,
+        field_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = FieldExtension>>,
     ) -> Self {
         RingToFieldWrapperEvaluation {
             field_evaluation,
@@ -481,9 +481,9 @@ impl EvaluationSumcheckData for RingToFieldWrapperEvaluation {
     type Element = RingElement;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
-        let point_field: Vec<QuadraticExtension> = point
+        let point_field: Vec<FieldExtension> = point
             .iter()
-            .map(|r| QuadraticExtension {
+            .map(|r| FieldExtension {
                 coeffs: [r.v[0], r.v[HALF_DEGREE]],
             })
             .collect();

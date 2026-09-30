@@ -3,7 +3,7 @@ use crate::{
         arithmetic::{pow_mod, HALF_WAY_MOD_Q},
         config::{HALF_DEGREE, MOD_Q},
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
         sumcheck_element::SumcheckElement,
     },
@@ -369,7 +369,7 @@ pub(crate) fn split_projection_flatter(
 pub fn projection_flatter_1_times_matrix(
     projection_matrix: &ProjectionMatrix,
     projection_flatter_1: &PreprocessedRow,
-) -> Vec<QuadraticExtension> {
+) -> Vec<FieldExtension> {
     #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
     {
         return projection_flatter_1_times_matrix_ref(projection_matrix, projection_flatter_1);
@@ -378,14 +378,14 @@ pub fn projection_flatter_1_times_matrix(
     let projection_ratio = projection_matrix.projection_ratio;
     let inner_width = projection_ratio * height;
 
-    let mut result_field = vec![QuadraticExtension::zero(); inner_width];
+    let mut result_field = vec![FieldExtension::zero(); inner_width];
     for i in 0..inner_width {
         result_field[i].coeffs.fill(*HALF_WAY_MOD_Q);
     }
 
     for inner_row in 0..height {
         let weight = &projection_flatter_1.preprocessed_row[inner_row];
-        let weight_field = QuadraticExtension {
+        let weight_field = FieldExtension {
             coeffs: [weight.v[0], weight.v[HALF_DEGREE]],
         };
 
@@ -406,8 +406,8 @@ pub fn projection_flatter_1_times_matrix(
                     weight_field.coeffs[0] as i64,
                 );
 
-                // Process 8 QuadraticExtension elements at a time
-                // Each QuadraticExtension has layout: [coeffs[0], coeffs[1]]
+                // Process 8 FieldExtension elements at a time
+                // Each FieldExtension has layout: [coeffs[0], coeffs[1]]
                 // So 8 elements = 16 consecutive u64s in memory (interleaved)
                 for i in (0..inner_width).step_by(8) {
                     if i + 8 > inner_width {
@@ -490,19 +490,19 @@ pub fn projection_flatter_1_times_matrix(
 pub fn projection_flatter_1_times_matrix_ref(
     projection_matrix: &ProjectionMatrix,
     projection_flatter_1: &PreprocessedRow,
-) -> Vec<QuadraticExtension> {
+) -> Vec<FieldExtension> {
     let height = projection_matrix.projection_height;
     let projection_ratio = projection_matrix.projection_ratio;
     let inner_width = projection_ratio * height;
 
-    let mut result_field = vec![QuadraticExtension::zero(); inner_width];
+    let mut result_field = vec![FieldExtension::zero(); inner_width];
     for i in 0..inner_width {
         result_field[i].coeffs.fill(*HALF_WAY_MOD_Q);
     }
 
     for inner_row in 0..height {
         let weight = &projection_flatter_1.preprocessed_row[inner_row];
-        let weight_field = QuadraticExtension {
+        let weight_field = FieldExtension {
             coeffs: [weight.v[0], weight.v[HALF_DEGREE]],
         };
 

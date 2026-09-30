@@ -3,7 +3,7 @@ use std::any::Any;
 use crate::{
     common::{
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
-        ring_arithmetic::{QuadraticExtension, RingElement},
+        ring_arithmetic::{FieldExtension, RingElement},
     },
     protocol::{
         commitment::{
@@ -213,7 +213,7 @@ pub trait SizeableProof {
 }
 
 pub struct SumcheckRoundProof {
-    pub polys: Vec<Polynomial<QuadraticExtension>>,
+    pub polys: Vec<Polynomial<FieldExtension>>,
     pub claim_over_witness: RingElement,
     pub claim_over_witness_conjugate: RingElement,
     pub norm_claim: RingElement,
@@ -398,7 +398,7 @@ impl SizeableProof for SimpleRoundProof {
 
 pub struct IntermediateRoundProof {
     pub opening_rhs: HorizontallyAlignedMatrix<RingElement>,
-    pub polys: Vec<Polynomial<QuadraticExtension>>,
+    pub polys: Vec<Polynomial<FieldExtension>>,
     pub claim_over_witness: RingElement,
     pub claim_over_witness_conjugate: RingElement,
     pub norm_claim: RingElement,

@@ -1,8 +1,8 @@
 use crate::{
     common::{
-        arithmetic::ONE_QUAD,
+        arithmetic::ONE_FE,
         config::{DEGREE, NOF_BATCHES},
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::StructuredRow,
     },
     protocol::{
@@ -465,12 +465,12 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 );
 
                 let lhs_flatter_1_times_matrix_evaluation_field = ElephantCell::new(
-                BasicEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
-                    inner_width,
-                    total_vars - inner_width.ilog2() as usize,
-                    0,
-                ),
-            );
+                    BasicEvaluationLinearSumcheck::<FieldExtension>::new_with_prefixed_sufixed_data(
+                        inner_width,
+                        total_vars - inner_width.ilog2() as usize,
+                        0,
+                    ),
+                );
 
                 let lhs_flatter_1_times_matrix_evaluation =
                     ElephantCell::new(RingToFieldWrapperEvaluation::new(
@@ -557,14 +557,14 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
             );
 
             let lhs_scalar_consistency_evaluation_field = ElephantCell::new(
-                BasicEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
+                BasicEvaluationLinearSumcheck::<FieldExtension>::new_with_prefixed_sufixed_data(
                     1, total_vars, 0,
                 ),
             );
 
             lhs_scalar_consistency_evaluation_field
                 .borrow_mut()
-                .load_from(&[ONE_QUAD.clone()]);
+                .load_from(&[ONE_FE.clone()]);
 
             let lhs_scalar_consistency_evaluation = ElephantCell::new(
                 RingToFieldWrapperEvaluation::new(lhs_scalar_consistency_evaluation_field.clone()),
@@ -591,7 +591,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 let inner_width = config.projection_ratio * height / DEGREE;
                 let blocks = config.witness_height / inner_width;
                 let lhs_flatter_0_evaluation_field = ElephantCell::new(
-                    StructuredRowEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
+                    StructuredRowEvaluationLinearSumcheck::<FieldExtension>::new_with_prefixed_sufixed_data(
                         blocks,
                         total_vars - blocks.ilog2() as usize - inner_width.ilog2() as usize,
                         inner_width.ilog2() as usize,
@@ -622,7 +622,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 let output = ElephantCell::new(DiffSumcheckEvaluation::new(lhs, rhs));
 
                 let lhs_consistency_flatter_evaluation_field = ElephantCell::new(
-                    StructuredRowEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
+                    StructuredRowEvaluationLinearSumcheck::<FieldExtension>::new_with_prefixed_sufixed_data(
                         config.witness_width,
                         total_vars - config.witness_width.ilog2() as usize,
                         0,
@@ -647,7 +647,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                     config.witness_width * blocks * config.projection_height / DEGREE;
 
                 let rhs_consistency_flatter_evaluation_field = ElephantCell::new(
-                    StructuredRowEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
+                    StructuredRowEvaluationLinearSumcheck::<FieldExtension>::new_with_prefixed_sufixed_data(
                         rhs_flatter_len,
                         total_vars - rhs_flatter_len.ilog2() as usize,
                         0,

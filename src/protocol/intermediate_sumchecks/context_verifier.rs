@@ -1,7 +1,7 @@
 use crate::{
     common::{
         config::NOF_BATCHES,
-        ring_arithmetic::{QuadraticExtension, RingElement},
+        ring_arithmetic::{FieldExtension, RingElement},
     },
     protocol::sumcheck_utils::{
         combiner::CombinerEvaluation,
@@ -51,7 +51,7 @@ pub struct IntermediateVerifierSumcheckContext {
 }
 
 impl IntermediateVerifierSumcheckContext {
-    pub fn evaluate_at_point(&mut self, point: &Vec<RingElement>) -> QuadraticExtension {
+    pub fn evaluate_at_point(&mut self, point: &Vec<RingElement>) -> FieldExtension {
         self.field_combiner_evaluation
             .borrow_mut()
             .evaluate_at_ring_point(point)

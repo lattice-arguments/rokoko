@@ -1,6 +1,6 @@
 use crate::common::{
     config::HALF_DEGREE,
-    ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+    ring_arithmetic::{FieldExtension, Representation, RingElement},
     structured_row::StructuredRow,
 };
 use crate::protocol::project_fine::BatchedProjectionChallengesSuccinct;
@@ -14,7 +14,7 @@ pub fn load_intermediate_verifier_sumcheck_data(
     evaluation_points_inner: &[StructuredRow],
     combination: &[RingElement],
     fine_proj_batching_challenges: &[BatchedProjectionChallengesSuccinct; 2],
-    qe: &[QuadraticExtension; HALF_DEGREE],
+    fe: &[FieldExtension; HALF_DEGREE],
 ) {
     verifier_sumcheck_context
         .witness_evaluation
@@ -70,5 +70,5 @@ pub fn load_intermediate_verifier_sumcheck_data(
     verifier_sumcheck_context
         .field_combiner_evaluation
         .borrow_mut()
-        .load_challenges_from(*qe);
+        .load_challenges_from(*fe);
 }

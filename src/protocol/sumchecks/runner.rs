@@ -4,7 +4,7 @@ use crate::{
         config::NOF_BATCHES,
         hash::HashWrapper,
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::PreprocessedRow,
         sumcheck_element::SumcheckElement,
     },
@@ -59,7 +59,7 @@ pub fn sumcheck(
     RingElement,
     RingElement,
     Option<RingElement>,
-    Vec<Polynomial<QuadraticExtension>>,
+    Vec<Polynomial<FieldExtension>>,
     Vec<RingElement>,
     Option<Vec<RingElement>>,
 ) {
@@ -159,7 +159,7 @@ pub fn sumcheck(
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
-    let qe = combination_to_field.split_into_quadratic_extensions();
+    let fe = combination_to_field.split_into_field_extensions();
 
     sumcheck_context
         .combiner
@@ -169,13 +169,13 @@ pub fn sumcheck(
     sumcheck_context
         .field_combiner
         .borrow_mut()
-        .load_challenges_from(qe.clone());
+        .load_challenges_from(fe.clone());
 
     let mut num_vars = sumcheck_context.combiner.borrow().variable_count();
     // Collect evaluation points during sumcheck
     let mut evaluation_points: Vec<RingElement> = vec![];
 
-    let mut polys: Vec<Polynomial<QuadraticExtension>> = vec![];
+    let mut polys: Vec<Polynomial<FieldExtension>> = vec![];
     let mut round = 0u64;
 
     while num_vars > 0 {
@@ -185,7 +185,7 @@ pub fn sumcheck(
 
         let poly_over_field = {
             let _s = tracing::trace_span!("sumcheck::round::poly").entered();
-            let mut poly_over_field = Polynomial::<QuadraticExtension>::new(0);
+            let mut poly_over_field = Polynomial::<FieldExtension>::new(0);
 
             sumcheck_context
                 .field_combiner
@@ -194,10 +194,10 @@ pub fn sumcheck(
             poly_over_field
         };
 
-        hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
+        hash_wrapper.update_with_field_extension_slice(&poly_over_field.coefficients);
 
         let mut r = RingElement::zero(Representation::IncompleteNTT);
-        let mut f = QuadraticExtension::zero();
+        let mut f = FieldExtension::zero();
 
         hash_wrapper.sample_field_element_into(&mut f);
 

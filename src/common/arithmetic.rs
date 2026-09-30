@@ -5,7 +5,7 @@ use crate::{
     common::{
         config::{DEGREE, HALF_DEGREE, MOD_Q},
         ring_arithmetic::{
-            incomplete_ntt_multiplication, QuadraticExtension, Representation, RingElement,
+            incomplete_ntt_multiplication, FieldExtension, Representation, RingElement,
         },
     },
     hexl::bindings::{multiply_mod, sub_mod},
@@ -348,7 +348,7 @@ pub fn inv_mod(a: u64) -> u64 {
 }
 
 #[inline]
-pub fn field_to_ring_element(fe: &QuadraticExtension) -> RingElement {
+pub fn field_to_ring_element(fe: &FieldExtension) -> RingElement {
     let mut result = RingElement::zero(Representation::HomogenizedFieldExtensions);
     for i in 0..2 {
         for j in 0..HALF_DEGREE {
@@ -359,7 +359,7 @@ pub fn field_to_ring_element(fe: &QuadraticExtension) -> RingElement {
 }
 
 #[inline]
-pub fn field_to_ring_element_into(r: &mut RingElement, fe: &QuadraticExtension) {
+pub fn field_to_ring_element_into(r: &mut RingElement, fe: &FieldExtension) {
     for i in 0..2 {
         for j in 0..HALF_DEGREE {
             r.v[j + i * HALF_DEGREE] = fe.coeffs[i];
@@ -380,12 +380,9 @@ pub static TWO: LazyLock<RingElement> =
 pub static ZERO: LazyLock<RingElement> =
     LazyLock::new(|| RingElement::zero(Representation::IncompleteNTT));
 
-pub static ONE_QUAD: LazyLock<QuadraticExtension> =
-    LazyLock::new(|| QuadraticExtension { coeffs: [1, 0] });
-pub static TWO_QUAD: LazyLock<QuadraticExtension> =
-    LazyLock::new(|| QuadraticExtension { coeffs: [2, 0] });
-pub static ZERO_QUAD: LazyLock<QuadraticExtension> =
-    LazyLock::new(|| QuadraticExtension { coeffs: [0, 0] });
+pub static ONE_FE: LazyLock<FieldExtension> = LazyLock::new(|| FieldExtension { coeffs: [1, 0] });
+pub static TWO_FE: LazyLock<FieldExtension> = LazyLock::new(|| FieldExtension { coeffs: [2, 0] });
+pub static ZERO_FE: LazyLock<FieldExtension> = LazyLock::new(|| FieldExtension { coeffs: [0, 0] });
 
 // this is only for u64
 pub fn precompute_structured_values(layers: &[u64]) -> Vec<u64> {
@@ -558,11 +555,11 @@ mod tests {
 
     #[test]
     fn test_field_to_ring_roundtrip() {
-        let fe = QuadraticExtension {
+        let fe = FieldExtension {
             coeffs: [123456789, 987654321],
         };
         let re = field_to_ring_element(&fe);
-        let fes = re.split_into_quadratic_extensions();
+        let fes = re.split_into_field_extensions();
         for f in fes {
             debug_assert_eq!(f, fe);
         }
