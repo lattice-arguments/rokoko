@@ -10,7 +10,7 @@
 //! gap is unreachable: that accounting charges `log2|c|`, the ideal code length for a scale-free
 //! source, whereas the entropy floor of the coefficients actually sent is 110.7 KB.
 
-use crate::common::config::{DEGREE, MOD_Q};
+use crate::common::config::{DEGREE, MOD_Q, SLOT_DEGREE};
 use crate::common::matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix};
 use crate::common::ring_arithmetic::{FieldExtension, Representation, RingElement};
 use crate::protocol::config::{
@@ -913,7 +913,7 @@ impl<'a> Decoder<'a> {
             let mut poly = Polynomial::<FieldExtension>::new(0);
             poly.num_coefficients = num_coefficients;
             for i in 0..num_coefficients {
-                let mut coeffs = [0u64; 2];
+                let mut coeffs = [0u64; SLOT_DEGREE];
                 self.body
                     .fill(&self.models[Role::Poly as usize], &mut coeffs)?;
                 poly.coefficients[i].coeffs = coeffs;
@@ -1093,7 +1093,7 @@ mod tests {
         poly.num_coefficients = num_coefficients;
         for i in 0..num_coefficients {
             poly.coefficients[i] = FieldExtension {
-                coeffs: [uniform().v[0], uniform().v[1]],
+                coeffs: std::array::from_fn(|k| uniform().v[k]),
             };
         }
         poly

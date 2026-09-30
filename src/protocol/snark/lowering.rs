@@ -128,7 +128,7 @@ impl SubTable<'_> {
 }
 
 fn scalar_dense(v: &[FieldExtension]) -> Option<Vec<u64>> {
-    if v.iter().any(|fe| fe.coeffs[1] != 0) {
+    if !v.iter().all(FieldExtension::is_base) {
         return None;
     }
     Some(v.iter().map(|fe| fe.coeffs[0]).collect())
@@ -156,7 +156,7 @@ fn expand_field_tensor_fe(layers: &[FieldExtension]) -> Vec<FieldExtension> {
 
 fn scalar_tensor_expansion(layers: &[FieldExtension]) -> Option<Vec<u64>> {
     use crate::common::config::MOD_Q;
-    if layers.iter().any(|a| a.coeffs[1] != 0) {
+    if !layers.iter().all(FieldExtension::is_base) {
         return None;
     }
     let mut vals = vec![1u64];
@@ -1405,7 +1405,7 @@ pub fn verify_claims(
         t.from_incomplete_ntt_to_homogenized_field_extensions();
         let mut split = t.split_into_field_extensions();
         let mut result = FieldExtension::zero();
-        for i in 0..crate::common::config::HALF_DEGREE {
+        for i in 0..crate::common::config::NUM_SLOTS {
             split[i] *= &fe[i];
             result += &split[i];
         }
@@ -1598,7 +1598,7 @@ mod tests {
 
         let layers: Vec<FieldExtension> = (0..6)
             .map(|i| FieldExtension {
-                coeffs: [7 + 3 * i as u64, 11 + 5 * i as u64],
+                coeffs: std::array::from_fn(|k| 7 + 3 * i as u64 + (4 + 2 * i as u64) * k as u64),
             })
             .collect();
         let dense1 = expand_field_tensor(&layers);
@@ -1663,7 +1663,7 @@ mod tests {
 
         let alpha: Vec<FieldExtension> = (0..mb)
             .map(|i| FieldExtension {
-                coeffs: [7 + 3 * i as u64, 11 + 5 * i as u64],
+                coeffs: std::array::from_fn(|k| 7 + 3 * i as u64 + (4 + 2 * i as u64) * k as u64),
             })
             .collect();
         let k = sample_random_short_vector(1 << in_bits, 50, Representation::IncompleteNTT);
@@ -1731,7 +1731,7 @@ mod tests {
         // field dense table over block 1
         let tab: Vec<FieldExtension> = (0..quarter)
             .map(|i| FieldExtension {
-                coeffs: [3 + i as u64, 5 + 2 * i as u64],
+                coeffs: std::array::from_fn(|k| 3 + i as u64 + (2 + i as u64) * k as u64),
             })
             .collect();
         let table_ring: Vec<RingElement> = tab.iter().map(embed_fe).collect();

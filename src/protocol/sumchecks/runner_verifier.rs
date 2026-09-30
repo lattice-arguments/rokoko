@@ -1,7 +1,7 @@
 use crate::{
     common::{
         arithmetic::field_to_ring_element,
-        config::{HALF_DEGREE, NOF_BATCHES},
+        config::{NOF_BATCHES, NUM_SLOTS},
         hash::HashWrapper,
         norms::assert_norm_bounded,
         projection_matrix::ProjectionMatrix,
@@ -310,8 +310,8 @@ pub fn sumcheck_verifier(
             temp
         };
         let mut temp = batched_claim.split_into_field_extensions();
-        let mut result = FieldExtension { coeffs: [0, 0] };
-        for i in 0..HALF_DEGREE {
+        let mut result = FieldExtension::from_base(0);
+        for i in 0..NUM_SLOTS {
             temp[i] *= &fe[i];
             result += &temp[i];
         }

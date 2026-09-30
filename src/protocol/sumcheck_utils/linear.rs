@@ -3,7 +3,6 @@ use std::{cell::RefCell, ops::Index};
 use crate::{
     common::{
         arithmetic::field_to_ring_element_into,
-        config::HALF_DEGREE,
         ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::StructuredRow,
         sumcheck_element::SumcheckElement,
@@ -481,12 +480,7 @@ impl EvaluationSumcheckData for RingToFieldWrapperEvaluation {
     type Element = RingElement;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
-        let point_field: Vec<FieldExtension> = point
-            .iter()
-            .map(|r| FieldExtension {
-                coeffs: [r.v[0], r.v[HALF_DEGREE]],
-            })
-            .collect();
+        let point_field: Vec<FieldExtension> = point.iter().map(|r| r.slot_zero()).collect();
 
         // Evaluate the field evaluation at the converted point
         field_to_ring_element_into(

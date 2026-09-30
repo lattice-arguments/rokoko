@@ -1,0 +1,4 @@
+degree = 128
+mod_q = 1125899906842177 # 2^50 - 447, degree-4 slots
+tau = 22 # C(128,22) * 2^22 = 2^103.31 challenges before rejection
+op_norm_bound = 9.8

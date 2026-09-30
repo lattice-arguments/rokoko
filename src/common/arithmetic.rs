@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 use crate::protocol::project_coarse::Signed16RingElement;
 use crate::{
     common::{
-        config::{DEGREE, HALF_DEGREE, MOD_Q},
+        config::{DEGREE, MOD_Q, NUM_SLOTS, SLOT_DEGREE},
         ring_arithmetic::{
             incomplete_ntt_multiplication, FieldExtension, Representation, RingElement,
         },
@@ -350,9 +350,9 @@ pub fn inv_mod(a: u64) -> u64 {
 #[inline]
 pub fn field_to_ring_element(fe: &FieldExtension) -> RingElement {
     let mut result = RingElement::zero(Representation::HomogenizedFieldExtensions);
-    for i in 0..2 {
-        for j in 0..HALF_DEGREE {
-            result.v[j + i * HALF_DEGREE] += fe.coeffs[i];
+    for i in 0..SLOT_DEGREE {
+        for j in 0..NUM_SLOTS {
+            result.v[j + i * NUM_SLOTS] += fe.coeffs[i];
         }
     }
     result
@@ -360,9 +360,9 @@ pub fn field_to_ring_element(fe: &FieldExtension) -> RingElement {
 
 #[inline]
 pub fn field_to_ring_element_into(r: &mut RingElement, fe: &FieldExtension) {
-    for i in 0..2 {
-        for j in 0..HALF_DEGREE {
-            r.v[j + i * HALF_DEGREE] = fe.coeffs[i];
+    for i in 0..SLOT_DEGREE {
+        for j in 0..NUM_SLOTS {
+            r.v[j + i * NUM_SLOTS] = fe.coeffs[i];
         }
     }
     r.representation = Representation::HomogenizedFieldExtensions;
@@ -380,9 +380,9 @@ pub static TWO: LazyLock<RingElement> =
 pub static ZERO: LazyLock<RingElement> =
     LazyLock::new(|| RingElement::zero(Representation::IncompleteNTT));
 
-pub static ONE_FE: LazyLock<FieldExtension> = LazyLock::new(|| FieldExtension { coeffs: [1, 0] });
-pub static TWO_FE: LazyLock<FieldExtension> = LazyLock::new(|| FieldExtension { coeffs: [2, 0] });
-pub static ZERO_FE: LazyLock<FieldExtension> = LazyLock::new(|| FieldExtension { coeffs: [0, 0] });
+pub static ONE_FE: LazyLock<FieldExtension> = LazyLock::new(|| FieldExtension::from_base(1));
+pub static TWO_FE: LazyLock<FieldExtension> = LazyLock::new(|| FieldExtension::from_base(2));
+pub static ZERO_FE: LazyLock<FieldExtension> = LazyLock::new(|| FieldExtension::from_base(0));
 
 // this is only for u64
 pub fn precompute_structured_values(layers: &[u64]) -> Vec<u64> {
@@ -556,7 +556,7 @@ mod tests {
     #[test]
     fn test_field_to_ring_roundtrip() {
         let fe = FieldExtension {
-            coeffs: [123456789, 987654321],
+            coeffs: std::array::from_fn(|k| 123456789 + 864197532 * k as u64),
         };
         let re = field_to_ring_element(&fe);
         let fes = re.split_into_field_extensions();

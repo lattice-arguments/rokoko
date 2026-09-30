@@ -1,6 +1,6 @@
 use crate::{
     common::{
-        config::{HALF_DEGREE, NOF_BATCHES},
+        config::{NOF_BATCHES, NUM_SLOTS},
         ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
@@ -17,7 +17,7 @@ pub fn load_intermediate_sumcheck_data(
     evaluation_points_inner: &[StructuredRow],
     combination: &[RingElement],
     fine_proj_batching_challenges: &[BatchedProjectionChallenges; NOF_BATCHES],
-    fe: &[FieldExtension; HALF_DEGREE],
+    fe: &[FieldExtension; NUM_SLOTS],
 ) {
     let expected_witness_len = config.witness_height * config.witness_decomposition_chunks;
     assert_eq!(
