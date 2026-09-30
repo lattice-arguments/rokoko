@@ -1241,24 +1241,27 @@ fn reduce_wide(x: u128) -> u64 {
     }
 }
 
-/// Schoolbook product modulo `Y^4 - alpha`, the products accumulated in `u128` and reduced once
-/// per coefficient.
+/// Product modulo `Y^4 - alpha` by two-level Karatsuba over the integers: `l`, `h`, `s` are the
+/// products of the low halves, high halves and half sums of `a = (a0 + a1 Y) + Y^2 (a2 + a3 Y)`,
+/// so every difference is a nonnegative sum of `a_i b_j` below `16 q^2`, reduced once per
+/// coefficient.
 #[inline(always)]
 fn degree4_mul(a: &[u64; SLOT_DEGREE], b: &[u64; SLOT_DEGREE]) -> [u64; SLOT_DEGREE] {
-    let product = |i: usize, j: usize| a[i] as u128 * b[j] as u128;
+    let product = |x: u64, y: u64| x as u128 * y as u128;
     let alpha = *FIELD_SHIFT_FACTOR as u128;
-    let low = [
-        product(0, 0),
-        product(0, 1) + product(1, 0),
-        product(0, 2) + product(1, 1) + product(2, 0),
-        product(0, 3) + product(1, 2) + product(2, 1) + product(3, 0),
-    ];
-    let high = [
-        product(1, 3) + product(2, 2) + product(3, 1),
-        product(2, 3) + product(3, 2),
-        product(3, 3),
-        0,
-    ];
+    let [a0, a1, a2, a3]: [u64; 4] = std::array::from_fn(|i| a[i]);
+    let [b0, b1, b2, b3]: [u64; 4] = std::array::from_fn(|i| b[i]);
+    let (a02, a13, b02, b13) = (a0 + a2, a1 + a3, b0 + b2, b1 + b3);
+    let (l0, l2, lm) = (product(a0, b0), product(a1, b1), product(a0 + a1, b0 + b1));
+    let (h0, h2, hm) = (product(a2, b2), product(a3, b3), product(a2 + a3, b2 + b3));
+    let (s0, s2, sm) = (
+        product(a02, b02),
+        product(a13, b13),
+        product(a02 + a13, b02 + b13),
+    );
+    let (l1, h1) = (lm - l0 - l2, hm - h0 - h2);
+    let low = [l0, l1, l2 + s0 - l0 - h0, sm - s0 - s2 - l1 - h1];
+    let high = [h0 + s2 - l2 - h2, h1, h2, 0];
     std::array::from_fn(|k| reduce_wide(low[k] + reduce_wide(high[k]) as u128 * alpha))
 }
 
