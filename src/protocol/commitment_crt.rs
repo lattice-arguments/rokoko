@@ -10,7 +10,7 @@ use core::arch::x86_64::*;
 use crate::common::structured_row::PreprocessedRow;
 use crate::common::{
     arithmetic::centered_i16_from_u64_mod_q,
-    config::{DEGREE, HALF_DEGREE, MOD_Q},
+    config::{DEGREE, HALF_DEGREE, MOD_Q, NUM_SLOTS, SLOT_DEGREE},
     matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
     ring_arithmetic::{Representation, RingElement},
 };
@@ -511,11 +511,13 @@ impl CrtKey {
     }
 }
 
+/// Strided storage (stride `SLOT_DEGREE`, as `q`'s slots lay it out) into natural order.
 fn natural(element: &Signed16RingElement) -> [i16; DEGREE] {
     let mut coefficients = [0i16; DEGREE];
-    for i in 0..HALF_DEGREE {
-        coefficients[2 * i] = element.0[i];
-        coefficients[2 * i + 1] = element.0[HALF_DEGREE + i];
+    for i in 0..NUM_SLOTS {
+        for part in 0..SLOT_DEGREE {
+            coefficients[SLOT_DEGREE * i + part] = element.0[part * NUM_SLOTS + i];
+        }
     }
     coefficients
 }
@@ -622,19 +624,15 @@ fn narrow(source: &[RingElement], out: &mut [Signed16RingElement]) {
     let mut coefficients = Buffer([0u64; DEGREE]);
     for (element, slot) in source.iter().zip(out.iter_mut()) {
         debug_assert_eq!(element.representation, Representation::IncompleteNTT);
-        unsafe {
-            ntt_inverse(
-                coefficients.0.as_mut_ptr(),
-                element.v.as_ptr(),
-                HALF_DEGREE,
-                MOD_Q,
-            );
-            ntt_inverse(
-                coefficients.0.as_mut_ptr().add(HALF_DEGREE),
-                element.v.as_ptr().add(HALF_DEGREE),
-                HALF_DEGREE,
-                MOD_Q,
-            );
+        for part in 0..SLOT_DEGREE {
+            unsafe {
+                ntt_inverse(
+                    coefficients.0.as_mut_ptr().add(part * NUM_SLOTS),
+                    element.v.as_ptr().add(part * NUM_SLOTS),
+                    NUM_SLOTS,
+                    MOD_Q,
+                );
+            }
         }
         centered_i16_from_u64_mod_q(&mut slot.0, &coefficients.0);
     }
@@ -1109,14 +1107,38 @@ const INTERLEAVE: [[i16; 32]; 2] = {
     index
 };
 
+/// Stride 4 into natural order, from the four parts' eight coefficients gathered one per 128-bit
+/// lane: output lane `4i + p` takes lane `8p + i`.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+const DESTRIDE_4: [i16; 32] = {
+    let mut index = [0i16; 32];
+    let mut lane = 0;
+    while lane < 32 {
+        index[lane] = (8 * (lane % 4) + lane / 4) as i16;
+        lane += 1;
+    }
+    index
+};
+
+/// Natural-order coefficients `32 * register ..` of a strided element.
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 #[inline(always)]
 unsafe fn interleave(source: *const i16, register: usize) -> __m512i {
-    let half = 32 * (register / 2);
-    _mm512_permutex2var_epi16(
-        _mm512_loadu_si512(source.add(half) as *const _),
-        _mm512_loadu_si512(INTERLEAVE[register % 2].as_ptr() as *const _),
-        _mm512_loadu_si512(source.add(HALF_DEGREE + half) as *const _),
+    if SLOT_DEGREE == 2 {
+        let half = 32 * (register / 2);
+        return _mm512_permutex2var_epi16(
+            _mm512_loadu_si512(source.add(half) as *const _),
+            _mm512_loadu_si512(INTERLEAVE[register % 2].as_ptr() as *const _),
+            _mm512_loadu_si512(source.add(HALF_DEGREE + half) as *const _),
+        );
+    }
+    let part = |p: usize| _mm_loadu_si128(source.add(p * NUM_SLOTS + 8 * register) as *const _);
+    let gathered = _mm512_inserti32x4::<1>(_mm512_castsi128_si512(part(0)), part(1));
+    let gathered = _mm512_inserti32x4::<2>(gathered, part(2));
+    let gathered = _mm512_inserti32x4::<3>(gathered, part(3));
+    _mm512_permutexvar_epi16(
+        _mm512_loadu_si512(DESTRIDE_4.as_ptr() as *const _),
+        gathered,
     )
 }
 
