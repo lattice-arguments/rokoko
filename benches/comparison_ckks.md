@@ -3,12 +3,12 @@
 Run the eltwise multiplication benchmarks (requires AVX-512):
 
 ```bash
-cargo bench --bench eltwise_bench --features incomplete-rexl
+cargo bench --bench eltwise_bench
 ```
 
 This benchmarks three kernels across polynomial degrees 2^6 through 2^13:
 - `hexl_rust/eltwise_mult_mod` — single element-wise modular multiply
-- `bindings/eltwise_mult_mod` — C++ HEXL FFI element-wise modular multiply
+- `bindings/eltwise_mult_mod` — the same multiply through the raw-pointer wrappers in `rokoko::hexl::bindings`
 - `hexl_rust/fused_incomplete_ntt_mult` — fused incomplete-NTT multiplication (split_degree=2 Karatsuba)
 
 

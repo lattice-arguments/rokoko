@@ -1,6 +1,3 @@
-[submodule "hexl-bindings/hexl"]
-	path = hexl-bindings/hexl
-	url = git@github.com:IntelLabs/hexl.git
 [submodule "lattice-estimator"]
 	path = lattice-estimator
 	url = git@github.com:malb/lattice-estimator.git
