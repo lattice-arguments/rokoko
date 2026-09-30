@@ -1206,6 +1206,8 @@ impl MulAssign<(&RingElement, &RingElement)> for RingElement {
 // They are small so we can store them on stack.
 /// An element of `Z_q[Y]/(Y^D - alpha)`, `alpha = FIELD_SHIFT_FACTOR`: one homogenized slot.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+// Transparent so a slice of field elements can be read as `SLOT_DEGREE * len` contiguous `u64`s.
+#[repr(transparent)]
 pub struct FieldExtension {
     pub coeffs: [u64; SLOT_DEGREE],
 }
