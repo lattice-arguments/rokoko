@@ -1,6 +1,8 @@
 mod instantiation;
+mod instantiation_n256;
 
 use instantiation::ParamSet;
+use rokoko::common::config::DEGREE;
 use rokoko::common::init_common;
 use rokoko::common::short_challenge::repetition_rate;
 
@@ -17,10 +19,12 @@ fn main() {
         }),
         None => ParamSet::P28,
     };
-    let (inst, chain) = if cfg!(feature = "snark") {
-        (instantiation::snark_instantiation(set), "exact-norm")
-    } else {
-        (instantiation::instantiation(set), "plain")
+    let (inst, chain) = match (DEGREE, cfg!(feature = "snark")) {
+        (128, true) => (instantiation::snark_instantiation(set), "exact-norm"),
+        (128, false) => (instantiation::instantiation(set), "plain"),
+        (256, false) => (instantiation_n256::instantiation(set), "plain"),
+        (_, true) => (None, "exact-norm"),
+        (_, false) => (None, "plain"),
     };
     let inst = inst.unwrap_or_else(|| {
         eprintln!("{} has no {chain} chain", set.name());
