@@ -241,8 +241,6 @@ op_norm_bound = 9.8
 
 `rings/default.toml` holds these values and is used unless the environment variable `ROKOKO_RING` names another spec; a relative path is resolved against this crate's root, e.g. `ROKOKO_RING=rings/n256.toml cargo build --release`. The build fails with a message unless N is a power of two in [128, 256], q is a prime in (2^15, 2^50), q - 1 has 2-adic valuation exactly log2(N) (so X^N + 1 splits into irreducible quadratics), and 1 <= tau <= N; every prime of the CRT commitment must also be 1 mod N.
 
-The optional key `projection_batches` (2 or 3, default 2) sets `NOF_BATCHES`. Each batch of the fine projection samples fresh tensor challenges over Z_q, l layers in all, and has soundness error about l/q ≈ 2^-45, so 2 batches give about 2^-90 and 3 about 2^-135; `rings/n128_d4.toml` and `rings/n256_d4.toml` use 3.
-
 A crate depending on `rokoko` sets the ring in its own `.cargo/config.toml`; cargo passes `[env]` to the build scripts of dependencies as well, and `relative = true` resolves the path against the directory holding `.cargo`:
 
 ```toml
