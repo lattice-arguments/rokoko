@@ -126,7 +126,7 @@ Currently, a framework for supporting different kinds of relations is not fully 
 
 ## Configuration and Structure
 
-The ring degree `DEGREE` and modulus `MOD_Q` are constants in `src/common/config.rs`, generated from the ring spec (see [Ring](#ring)); the number of batches `NOF_BATCHES` is defined there too.
+The ring degree `DEGREE`, the modulus `MOD_Q` and the number of fine-projection batches `NOF_BATCHES` are constants in `src/common/config.rs`, generated from the ring spec (see [Ring](#ring)).
 
 Protocol configuration is defined in `src/protocol/config.rs`. The library takes the chain of rounds as a runtime value, `protocol::params::Instantiation`, which bundles the chain `Config` with the parameters of the initial witness. The concrete parameter sets are defined in the binary, `src/instantiation.rs`, and selected by its command-line argument. In the future, we plan to provide automatic selection.
 
@@ -226,7 +226,7 @@ Due to memory requirements for polynomial degree 2^30 exceeding 64 GB, the respe
 
 ## Parameter sets
 
-The binary takes the parameter set as its argument: `p-22`, `p-24`, `p-26`, `p-28` (default) and `p-30` for polynomial degrees 2^22 to 2^30, e.g. `cargo run --release -- p-26`; `p-29` exists as an exact-norm chain for `snark` mode. The sets are defined in `src/instantiation.rs`.
+The binary takes the parameter set as its argument: `p-22`, `p-24`, `p-26`, `p-28` (default) and `p-30` for polynomial degrees 2^22 to 2^30, e.g. `cargo run --release -- p-26`; `p-29` exists as an exact-norm chain for `snark` mode. The sets are defined in `src/instantiation.rs`, measured for rings with 2 projection batches. The build script passes the spec's file name to the crate as the cfg `rokoko_ring`, and `src/main.rs` selects `src/instantiation_n128_d4.rs` for `rokoko_ring = "n128_d4"`; that module retunes the default chains for `rings/n128_d4.toml` and fails to compile against any other ring.
 
 ## Ring
 
@@ -240,6 +240,8 @@ op_norm_bound = 9.8
 ```
 
 `rings/default.toml` holds these values and is used unless the environment variable `ROKOKO_RING` names another spec; a relative path is resolved against this crate's root, e.g. `ROKOKO_RING=rings/n256.toml cargo build --release`. The build fails with a message unless N is a power of two in [128, 256], q is a prime in (2^15, 2^50), q - 1 has 2-adic valuation exactly log2(N) (so X^N + 1 splits into irreducible quadratics), and 1 <= tau <= N; every prime of the CRT commitment must also be 1 mod N.
+
+The optional key `projection_batches` (2 or 3, default 2) sets `NOF_BATCHES`. Each batch of the fine projection samples fresh tensor challenges over Z_q, l layers in all, and has soundness error about l/q ≈ 2^-45, so 2 batches give about 2^-90 and 3 about 2^-135; `rings/n128_d4.toml` and `rings/n256_d4.toml` use 3.
 
 A crate depending on `rokoko` sets the ring in its own `.cargo/config.toml`; cargo passes `[env]` to the build scripts of dependencies as well, and `relative = true` resolves the path against the directory holding `.cargo`:
 

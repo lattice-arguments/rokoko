@@ -1,7 +1,18 @@
+use crate::common::config::NOF_BATCHES;
 use crate::protocol::commitment::{block_sizes, Placement, Prefix, RecursionConfig};
 use crate::protocol::config::{
     Config, FineProjectionConfig, IntermediateConfig, Projection, SimpleConfig, SumcheckConfig,
 };
+
+/// The batched projection is committed as one row of all `NOF_BATCHES` batches when that row is
+/// a power of two long, and otherwise as one row per batch, padded like the openings.
+fn batched_projection_rows() -> usize {
+    if NOF_BATCHES.is_power_of_two() {
+        1
+    } else {
+        NOF_BATCHES
+    }
+}
 
 #[derive(Clone)]
 pub struct AuxRecursionConfig {
@@ -15,7 +26,6 @@ pub struct AuxRecursionConfig {
 pub enum AuxProjection {
     Coarse(AuxRecursionConfig),
     Fine {
-        nof_batches: usize,
         recursion_constant_term: AuxRecursionConfig,
         recursion_batched_projection: AuxRecursionConfig,
     },
@@ -256,7 +266,6 @@ impl AuxSumcheckConfig {
                 );
             }
             AuxProjection::Fine {
-                nof_batches,
                 recursion_constant_term,
                 recursion_batched_projection,
             } => {
@@ -274,17 +283,17 @@ impl AuxSumcheckConfig {
                     1,
                 );
 
-                let batched_size = self.witness_width * nof_batches;
+                let rows = batched_projection_rows();
                 self.collect_recursion_components(
                     recursion_batched_projection,
                     "projection_batched",
-                    batched_size,
+                    self.witness_width * NOF_BATCHES / rows,
                     components,
                     vec![
                         "projection_recursion".to_string(),
                         "batched_projection".to_string(),
                     ],
-                    1,
+                    rows,
                 );
             }
             AuxProjection::Skip => {
@@ -387,7 +396,6 @@ impl AuxSumcheckConfig {
                 1,
             )),
             AuxProjection::Fine {
-                nof_batches,
                 recursion_constant_term,
                 recursion_batched_projection,
             } => {
@@ -408,11 +416,10 @@ impl AuxSumcheckConfig {
                         "projection_recursion".to_string(),
                         "batched_projection".to_string(),
                     ],
-                    1,
+                    batched_projection_rows(),
                 );
 
                 Projection::Fine(FineProjectionConfig {
-                    nof_batches: *nof_batches,
                     recursion_constant_term: constant_term,
                     recursion_batched_projection: batched_projection,
                 })
@@ -577,7 +584,6 @@ mod tests {
                 next: None,
             },
             projection_recursion: AuxProjection::Fine {
-                nof_batches: 2,
                 recursion_constant_term: AuxRecursionConfig {
                     decomposition_base_log: 15,
                     decomposition_chunks: 2,

@@ -1,7 +1,7 @@
 use crate::{
     common::{
         arithmetic::{pow_mod, HALF_WAY_MOD_Q},
-        config::{MOD_Q, SLOT_DEGREE},
+        config::{MOD_Q, NOF_BATCHES, SLOT_DEGREE},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
@@ -101,6 +101,16 @@ pub(crate) struct BlockWeights {
     pub prefix: Prefix,
     pub weights: Vec<RingElement>,
     pub suffix: usize,
+}
+
+/// Where batch `batch` of the batched projection lives, as `(placement, parts, part)` for
+/// `block_recomposition_weights`: its own row of a level with one row per batch, or else the
+/// `batch`-th piece of every digit plane of the level's single row.
+pub(crate) fn batch_piece(recursion: &RecursionConfig, batch: usize) -> (&Placement, usize, usize) {
+    match recursion.placements.len() {
+        1 => (recursion.placement(), NOF_BATCHES, batch),
+        _ => (&recursion.placements[batch], 1, 0),
+    }
 }
 
 /// The dyadic blocks of a placed component, each with the radix weights it carries. A block holds

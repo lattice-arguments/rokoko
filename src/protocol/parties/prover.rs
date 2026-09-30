@@ -1,6 +1,5 @@
 use crate::{
     common::{
-        config::NOF_BATCHES,
         decomposition::{decompose, decompose_chunks_into},
         hash::HashWrapper,
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
@@ -169,22 +168,18 @@ pub fn prover_round(
 
             let (projection_batched, fine_proj_batching_challenges) = {
                 let _s = tracing::info_span!("prover_round::batch_projection_n_times").entered();
-                batch_projection_n_times(
-                    &witness,
-                    &projection_matrix,
-                    &mut hash_wrapper,
-                    proj_config.nof_batches,
-                    false,
-                )
+                batch_projection_n_times(&witness, &projection_matrix, &mut hash_wrapper, false)
             };
 
             let rc_projection_batched = {
                 let _s = tracing::info_span!("prover_round::rc_projection_batched").entered();
-                recursive_commit(
-                    &crs,
-                    &proj_config.recursion_batched_projection,
-                    &projection_batched.data,
-                )
+                // A batch count that is not a power of two commits one zero padding row.
+                let mut rows = projection_batched.data.clone();
+                rows.resize(
+                    rows.len().next_power_of_two(),
+                    RingElement::zero(Representation::IncompleteNTT),
+                );
+                recursive_commit(&crs, &proj_config.recursion_batched_projection, &rows)
             };
             hash_wrapper
                 .update_with_ring_element_slice(&rc_projection_batched.most_inner_commitment());
@@ -564,17 +559,8 @@ pub fn prover_round_intermediate(
     projection_matrix.sample(&mut hash_wrapper);
     let projection_image_ct = project_coefficients(witness, &projection_matrix);
     hash_wrapper.update_with_ring_element_slice(&projection_image_ct.data);
-    assert_eq!(
-        config.projection_nof_batches, NOF_BATCHES,
-        "projection_nof_batches must equal NOF_BATCHES"
-    );
-    let (batched_projection_image, fine_proj_batching_challenges) = batch_projection_n_times(
-        witness,
-        &projection_matrix,
-        &mut hash_wrapper,
-        config.projection_nof_batches,
-        false,
-    );
+    let (batched_projection_image, fine_proj_batching_challenges) =
+        batch_projection_n_times(witness, &projection_matrix, &mut hash_wrapper, false);
 
     hash_wrapper.update_with_ring_element_slice(&batched_projection_image.data);
 
@@ -759,7 +745,6 @@ pub fn prover_round_simple(
         &witness,
         &projection_matrix,
         &mut hash_wrapper,
-        config.projection_nof_batches,
         true,
     );
 
