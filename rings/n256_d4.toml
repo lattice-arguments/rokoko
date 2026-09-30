@@ -1,5 +1,5 @@
 degree = 256
 mod_q = 1125899906839937 # 2^50 - 2687, degree-4 slots
-tau = 17 # C(256,17) * 2^17 = 2^103.88 challenges before rejection
-op_norm_bound = 9.1 # about 2.27 sampling attempts per challenge
+tau = 23 # C(256,23) * 2^23 = 2^131.08 challenges before rejection
+op_norm_bound = 9.8 # about 7.55 sampling attempts per challenge, 2^128.16 after rejection
 projection_batches = 3
