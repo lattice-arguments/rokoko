@@ -1515,6 +1515,8 @@ pub(crate) fn fused_slot4_mult_inner(
     fused_slot4_mult_native(result, operand1, operand2, zetas, n, modulus);
 }
 
+// Karatsuba over `a = (a0 + a1 Y) + Y^2 (a2 + a3 Y)`: products `l*`, `h*`, `s*` of the low
+// halves, high halves and half sums; `Y^4..Y^6` fold back through `zeta`.
 pub(crate) fn fused_slot4_mult_native(
     result: &mut [u64],
     operand1: &[u64],
@@ -1523,39 +1525,52 @@ pub(crate) fn fused_slot4_mult_native(
     n: usize,
     modulus: u64,
 ) {
-    use crate::number_theory::multiply_mod;
+    use crate::number_theory::{multiply_mod, sub_uint_mod};
 
-    let dot = |x: [u64; 4], y: [u64; 4]| {
-        x.iter().zip(y).fold(0u64, |acc, (&xj, yj)| {
-            add_uint_mod(acc, multiply_mod(xj, yj, modulus), modulus)
-        })
-    };
+    let add = |x, y| add_uint_mod(x, y, modulus);
+    let sub = |x, y| sub_uint_mod(x, y, modulus);
+    let mul = |x, y| multiply_mod(x, y, modulus);
 
     for i in 0..n {
-        let a = [
+        let (a0, a1, a2, a3) = (
             operand1[i],
             operand1[n + i],
             operand1[2 * n + i],
             operand1[3 * n + i],
-        ];
-        let b = [
+        );
+        let (b0, b1, b2, b3) = (
             operand2[i],
             operand2[n + i],
             operand2[2 * n + i],
             operand2[3 * n + i],
-        ];
-        let z = zetas[i];
-        let zb1 = multiply_mod(z, b[1], modulus);
-        let zb2 = multiply_mod(z, b[2], modulus);
-        let zb3 = multiply_mod(z, b[3], modulus);
+        );
+        let (a01, a23, a02, a13) = (add(a0, a1), add(a2, a3), add(a0, a2), add(a1, a3));
+        let (b01, b23, b02, b13) = (add(b0, b1), add(b2, b3), add(b0, b2), add(b1, b3));
 
-        result[i] = dot(a, [b[0], zb3, zb2, zb1]);
-        result[n + i] = dot(a, [b[1], b[0], zb3, zb2]);
-        result[2 * n + i] = dot(a, [b[2], b[1], b[0], zb3]);
-        result[3 * n + i] = dot(a, [b[3], b[2], b[1], b[0]]);
+        let (l0, l2, lm) = (mul(a0, b0), mul(a1, b1), mul(a01, b01));
+        let (h0, h2, hm) = (mul(a2, b2), mul(a3, b3), mul(a23, b23));
+        let (s0, s2, sm) = (
+            mul(a02, b02),
+            mul(a13, b13),
+            mul(add(a02, a13), add(b02, b13)),
+        );
+
+        let p1 = sub(sub(lm, l0), l2);
+        let p4 = sub(sub(add(s2, h0), l2), h2);
+        let p5 = sub(sub(hm, h0), h2);
+        let z = zetas[i];
+
+        result[i] = add(l0, mul(z, p4));
+        result[n + i] = add(p1, mul(z, p5));
+        result[2 * n + i] = add(sub(sub(add(l2, s0), l0), h0), mul(z, h2));
+        result[3 * n + i] = sub(sub(sub(sub(sm, s0), s2), p1), p5);
     }
 }
 
+// Lazy float reduction, p < 2^50: `fmul!` on |x| <= X p, |y| <= Y p returns x y mod p within
+// (1/2 + 0.376 X Y) p of zero. With centred operand sums the products stay below 0.876 p
+// (`sm` below 2.01 p) and, with `p5` reduced, every later sum below 7.4 p < 2^53, so all
+// float sums are exact; `reduce!` maps |t| < 8p to [0, p).
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 #[inline]
@@ -1568,36 +1583,33 @@ pub(crate) unsafe fn fused_slot4_mult_avx512_float(
     modulus: u64,
 ) {
     let v_p = _mm512_set1_pd(modulus as f64);
-    let u_bar = (1.0 + f64::EPSILON) / modulus as f64;
-    let v_u = _mm512_set1_pd(u_bar);
+    let v_u = _mm512_set1_pd(1.0 / modulus as f64);
     let v_zero = _mm512_setzero_pd();
 
     const ROUND_MODE: i32 = _MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC;
-    const FLOOR: i32 = _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC;
+    const NEAREST: i32 = _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC;
 
     let op1 = operand1.as_ptr();
     let op2 = operand2.as_ptr();
     let zeta = zetas_f64.as_ptr();
     let res = result.as_mut_ptr();
 
-    macro_rules! fmul_mod {
+    macro_rules! fmul {
         ($x:expr, $y:expr) => {{
             let h = _mm512_mul_pd($x, $y);
             let l = _mm512_fmsub_pd($x, $y, h);
-            let b = _mm512_mul_pd(h, v_u);
-            let c = _mm512_roundscale_pd(b, FLOOR);
-            let d = _mm512_fnmadd_pd(c, v_p, h);
-            let g = _mm512_add_pd(d, l);
-            let m = _mm512_cmp_pd_mask(g, v_zero, _CMP_LT_OQ);
-            _mm512_mask_add_pd(g, m, g, v_p)
+            let c = _mm512_roundscale_pd(_mm512_mul_pd(h, v_u), NEAREST);
+            _mm512_add_pd(_mm512_fnmadd_pd(c, v_p, h), l)
         }};
     }
 
-    macro_rules! fadd_mod {
-        ($a:expr, $b:expr) => {{
-            let sum = _mm512_add_pd($a, $b);
-            let m = _mm512_cmp_pd_mask(v_p, sum, _CMP_LE_OQ);
-            _mm512_mask_sub_pd(sum, m, sum, v_p)
+    macro_rules! reduce {
+        ($t:expr) => {{
+            let t = $t;
+            let c = _mm512_roundscale_pd(_mm512_mul_pd(t, v_u), NEAREST);
+            let r = _mm512_fnmadd_pd(c, v_p, t);
+            let m = _mm512_cmp_pd_mask(r, v_zero, _CMP_LT_OQ);
+            _mm512_mask_add_pd(r, m, r, v_p)
         }};
     }
 
@@ -1610,41 +1622,70 @@ pub(crate) unsafe fn fused_slot4_mult_avx512_float(
         };
     }
 
-    macro_rules! dot4 {
-        ($a:ident; $x0:expr, $x1:expr, $x2:expr, $x3:expr) => {{
-            let s01 = fadd_mod!(fmul_mod!($a[0], $x0), fmul_mod!($a[1], $x1));
-            let s23 = fadd_mod!(fmul_mod!($a[2], $x2), fmul_mod!($a[3], $x3));
-            _mm512_cvt_roundpd_epu64(fadd_mod!(s01, s23), ROUND_MODE)
+    macro_rules! store {
+        ($offset:expr, $x:expr) => {
+            _mm512_storeu_si512(
+                res.add($offset) as *mut __m512i,
+                _mm512_cvt_roundpd_epu64($x, ROUND_MODE),
+            )
+        };
+    }
+
+    macro_rules! centred_sums {
+        ($x0:expr, $x1:expr, $x2:expr, $x3:expr) => {{
+            let x0 = _mm512_sub_pd($x0, v_p);
+            let x3 = _mm512_sub_pd($x3, v_p);
+            let x01 = _mm512_add_pd(x0, $x1);
+            let x23 = _mm512_add_pd($x2, x3);
+            (
+                x01,
+                x23,
+                _mm512_add_pd(x0, $x2),
+                _mm512_add_pd($x1, x3),
+                _mm512_add_pd(x01, x23),
+            )
         }};
     }
 
     let mut i = 0usize;
     while i < n {
-        let a = [
+        let (a0, a1, a2, a3) = (
             load!(op1, i),
             load!(op1, n + i),
             load!(op1, 2 * n + i),
             load!(op1, 3 * n + i),
-        ];
-        let b0 = load!(op2, i);
-        let b1 = load!(op2, n + i);
-        let b2 = load!(op2, 2 * n + i);
-        let b3 = load!(op2, 3 * n + i);
+        );
+        let (b0, b1, b2, b3) = (
+            load!(op2, i),
+            load!(op2, n + i),
+            load!(op2, 2 * n + i),
+            load!(op2, 3 * n + i),
+        );
         let z = _mm512_loadu_pd(zeta.add(i));
+        let (a01, a23, a02, a13, a0123) = centred_sums!(a0, a1, a2, a3);
+        let (b01, b23, b02, b13, b0123) = centred_sums!(b0, b1, b2, b3);
 
-        let zb1 = fmul_mod!(z, b1);
-        let zb2 = fmul_mod!(z, b2);
-        let zb3 = fmul_mod!(z, b3);
+        let (l0, l2, lm) = (fmul!(a0, b0), fmul!(a1, b1), fmul!(a01, b01));
+        let (h0, h2, hm) = (fmul!(a2, b2), fmul!(a3, b3), fmul!(a23, b23));
+        let (s0, s2, sm) = (fmul!(a02, b02), fmul!(a13, b13), fmul!(a0123, b0123));
 
-        let c0 = dot4!(a; b0, zb3, zb2, zb1);
-        let c1 = dot4!(a; b1, b0, zb3, zb2);
-        let c2 = dot4!(a; b2, b1, b0, zb3);
-        let c3 = dot4!(a; b3, b2, b1, b0);
+        let p1 = _mm512_sub_pd(_mm512_sub_pd(lm, l0), l2);
+        let p4 = _mm512_sub_pd(_mm512_sub_pd(_mm512_add_pd(s2, h0), l2), h2);
+        let p5 = reduce!(_mm512_sub_pd(_mm512_sub_pd(hm, h0), h2));
 
-        _mm512_storeu_si512(res.add(i) as *mut __m512i, c0);
-        _mm512_storeu_si512(res.add(n + i) as *mut __m512i, c1);
-        _mm512_storeu_si512(res.add(2 * n + i) as *mut __m512i, c2);
-        _mm512_storeu_si512(res.add(3 * n + i) as *mut __m512i, c3);
+        let c0 = _mm512_add_pd(l0, fmul!(z, p4));
+        let c1 = _mm512_add_pd(p1, fmul!(z, p5));
+        let l2s0 = _mm512_add_pd(l2, s0);
+        let c2 = _mm512_add_pd(_mm512_sub_pd(l2s0, _mm512_add_pd(l0, h0)), fmul!(z, h2));
+        let c3 = _mm512_sub_pd(
+            _mm512_sub_pd(_mm512_sub_pd(sm, s0), s2),
+            _mm512_add_pd(p1, p5),
+        );
+
+        store!(i, reduce!(c0));
+        store!(n + i, reduce!(c1));
+        store!(2 * n + i, reduce!(c2));
+        store!(3 * n + i, reduce!(c3));
 
         i += 8;
     }
@@ -2014,6 +2055,72 @@ mod slot_tests {
                     fused_slot4_mult_avx512_float(&mut avx, &op1, &op2, &zetas_f64, n, modulus);
                 }
                 assert_eq!(native, avx, "m={modulus} seed={seed}");
+            }
+        }
+    }
+
+    fn slot4_schoolbook(a: &[u64], b: &[u64], zetas: &[u64], n: usize, modulus: u64) -> Vec<u64> {
+        let q = modulus as u128;
+        let mut c = vec![0u64; 4 * n];
+        for i in 0..n {
+            let mut acc = [0u128; 7];
+            for j in 0..4 {
+                for l in 0..4 {
+                    acc[j + l] += (a[j * n + i] as u128 * b[l * n + i] as u128) % q;
+                }
+            }
+            for k in 0..4 {
+                let high = if k < 3 { acc[k + 4] % q } else { 0 };
+                c[k * n + i] = ((acc[k] + zetas[i] as u128 * high) % q) as u64;
+            }
+        }
+        c
+    }
+
+    #[test]
+    fn test_slot4_karatsuba_matches_schoolbook() {
+        let n = 1 << 13;
+        let moduli = [
+            1125899906842177u64,
+            1125899906839937,
+            (1 << 50) - 1,
+            (1 << 50) - 3,
+            (1 << 49) + 1,
+            1 << 40 | 1,
+            (1 << 20) + 7,
+        ];
+        for modulus in moduli {
+            for seed in 0..6u64 {
+                let (op1, op2, zetas) = match seed % 3 {
+                    0 => (
+                        xorshift_vec(4 * n, modulus, 0x5000 + seed),
+                        xorshift_vec(4 * n, modulus, 0x6000 + seed),
+                        xorshift_vec(n, modulus, 0x7000 + seed),
+                    ),
+                    1 => (
+                        edge_vec(4 * n, modulus, 0x5000 + seed),
+                        edge_vec(4 * n, modulus, 0x6000 + seed),
+                        edge_vec(n, modulus, 0x7000 + seed),
+                    ),
+                    _ => (
+                        vec![modulus - 1; 4 * n],
+                        edge_vec(4 * n, modulus, 0x6000 + seed),
+                        vec![modulus - 1; n],
+                    ),
+                };
+                let expected = slot4_schoolbook(&op1, &op2, &zetas, n, modulus);
+                let mut native = vec![0u64; 4 * n];
+                fused_slot4_mult_native(&mut native, &op1, &op2, &zetas, n, modulus);
+                assert_eq!(native, expected, "native m={modulus} seed={seed}");
+                #[cfg(target_arch = "x86_64")]
+                if *HAS_AVX512DQ {
+                    let zetas_f64: Vec<f64> = zetas.iter().map(|&z| z as f64).collect();
+                    let mut avx = vec![0u64; 4 * n];
+                    unsafe {
+                        fused_slot4_mult_avx512_float(&mut avx, &op1, &op2, &zetas_f64, n, modulus);
+                    }
+                    assert_eq!(avx, expected, "avx m={modulus} seed={seed}");
+                }
             }
         }
     }
