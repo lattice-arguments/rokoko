@@ -1,7 +1,7 @@
 use crate::{
     common::{
         arithmetic::{pow_mod, HALF_WAY_MOD_Q},
-        config::{HALF_DEGREE, MOD_Q},
+        config::{MOD_Q, SLOT_DEGREE},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
@@ -385,30 +385,31 @@ pub fn projection_flatter_1_times_matrix(
 
     for inner_row in 0..height {
         let weight = &projection_flatter_1.preprocessed_row[inner_row];
-        let weight_field = FieldExtension {
-            coeffs: [weight.v[0], weight.v[HALF_DEGREE]],
-        };
+        let weight_field = weight.slot_zero();
 
         #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
         {
             use std::arch::x86_64::*;
 
-            unsafe {
-                // Interleave weight values: [weight.coeffs[0], weight.coeffs[1], weight.coeffs[0], weight.coeffs[1], ...]
-                let weight_vec = _mm512_set_epi64(
-                    weight_field.coeffs[1] as i64,
-                    weight_field.coeffs[0] as i64,
-                    weight_field.coeffs[1] as i64,
-                    weight_field.coeffs[0] as i64,
-                    weight_field.coeffs[1] as i64,
-                    weight_field.coeffs[0] as i64,
-                    weight_field.coeffs[1] as i64,
-                    weight_field.coeffs[0] as i64,
-                );
+            /// Bit 0 of each group of `SLOT_DEGREE` bits, spreading a column mask over the
+            /// coefficients of its field elements.
+            const LANE_REPEAT: u32 = {
+                let mut mask = 0u32;
+                let mut i = 0;
+                while i < 8 {
+                    mask |= 1 << (i * SLOT_DEGREE);
+                    i += 1;
+                }
+                mask
+            };
 
-                // Process 8 FieldExtension elements at a time
-                // Each FieldExtension has layout: [coeffs[0], coeffs[1]]
-                // So 8 elements = 16 consecutive u64s in memory (interleaved)
+            unsafe {
+                // Weight coefficients repeated across the register: lane l holds coeffs[l % D].
+                let w = |lane: usize| weight_field.coeffs[lane % SLOT_DEGREE] as i64;
+                let weight_vec = _mm512_set_epi64(w(7), w(6), w(5), w(4), w(3), w(2), w(1), w(0));
+
+                // Process 8 FieldExtension elements at a time: SLOT_DEGREE registers of
+                // consecutive u64s, the coefficients of each element adjacent.
                 for i in (0..inner_width).step_by(8) {
                     if i + 8 > inner_width {
                         break; // Handle remainder with scalar code
@@ -416,44 +417,35 @@ pub fn projection_flatter_1_times_matrix(
 
                     let (k_pos, k_inc) = projection_matrix.get_row_masks_u8(inner_row, i);
 
-                    // Duplicate each bit in the mask for interleaved access
-                    // k_pos has 8 bits for 8 elements, we need 16 bits for 16 u64s (interleaved coeffs)
-                    // Bit pattern: abcdefgh -> aabbccddeeffgghh
-                    // Use BMI2 PDEP instruction to efficiently duplicate bits
-                    let k_pos_16 =
-                        (_pdep_u32(k_pos as u32, 0x5555) | _pdep_u32(k_pos as u32, 0xAAAA)) as u16;
-                    let k_inc_16 =
-                        (_pdep_u32(k_inc as u32, 0x5555) | _pdep_u32(k_inc as u32, 0xAAAA)) as u16;
+                    // Repeat each bit of the mask once per coefficient with BMI2 PDEP:
+                    // abcdefgh -> aabbccddeeffgghh for degree 2.
+                    let expand = |k: u8| {
+                        (0..SLOT_DEGREE)
+                            .fold(0u32, |acc, r| acc | _pdep_u32(k as u32, LANE_REPEAT << r))
+                    };
+                    let k_pos_wide = expand(k_pos);
+                    let k_inc_wide = expand(k_inc);
+                    let k_add = k_inc_wide & k_pos_wide;
+                    let k_sub = k_inc_wide & !k_pos_wide;
 
-                    // Get base pointer to the coeffs array (16 consecutive u64s)
-                    let base_ptr = result_field[i].coeffs.as_mut_ptr();
-
-                    // Load first 8 u64s (coeffs[0] and coeffs[1] for first 4 elements)
-                    let current_low = _mm512_loadu_epi64(base_ptr as *const i64);
-                    // Load next 8 u64s (coeffs[0] and coeffs[1] for next 4 elements)
-                    let current_high = _mm512_loadu_epi64(base_ptr.add(8) as *const i64);
-
-                    // Compute masks for add and subtract operations
-                    let k_add_low = (k_inc_16 & k_pos_16) as u8;
-                    let k_sub_low = (k_inc_16 & !k_pos_16) as u8;
-                    let k_add_high = ((k_inc_16 & k_pos_16) >> 8) as u8;
-                    let k_sub_high = ((k_inc_16 & !k_pos_16) >> 8) as u8;
-
-                    // Apply masked operations for low part
-                    let result_low =
-                        _mm512_mask_add_epi64(current_low, k_add_low, current_low, weight_vec);
-                    let result_low =
-                        _mm512_mask_sub_epi64(result_low, k_sub_low, result_low, weight_vec);
-
-                    // Apply masked operations for high part
-                    let result_high =
-                        _mm512_mask_add_epi64(current_high, k_add_high, current_high, weight_vec);
-                    let result_high =
-                        _mm512_mask_sub_epi64(result_high, k_sub_high, result_high, weight_vec);
-
-                    // Store results back
-                    _mm512_storeu_epi64(base_ptr as *mut i64, result_low);
-                    _mm512_storeu_epi64(base_ptr.add(8) as *mut i64, result_high);
+                    let base_ptr = (result_field.as_mut_ptr() as *mut u64).add(SLOT_DEGREE * i);
+                    for register in 0..SLOT_DEGREE {
+                        let ptr = base_ptr.add(8 * register);
+                        let current = _mm512_loadu_epi64(ptr as *const i64);
+                        let result = _mm512_mask_add_epi64(
+                            current,
+                            (k_add >> (8 * register)) as u8,
+                            current,
+                            weight_vec,
+                        );
+                        let result = _mm512_mask_sub_epi64(
+                            result,
+                            (k_sub >> (8 * register)) as u8,
+                            result,
+                            weight_vec,
+                        );
+                        _mm512_storeu_epi64(ptr as *mut i64, result);
+                    }
                 }
 
                 // Handle remainder with scalar code
@@ -462,12 +454,12 @@ pub fn projection_flatter_1_times_matrix(
                     if !is_non_zero {
                         continue;
                     }
-                    if is_positive {
-                        result_field[i].coeffs[0] += weight_field.coeffs[0];
-                        result_field[i].coeffs[1] += weight_field.coeffs[1];
-                    } else {
-                        result_field[i].coeffs[0] -= weight_field.coeffs[0];
-                        result_field[i].coeffs[1] -= weight_field.coeffs[1];
+                    for k in 0..SLOT_DEGREE {
+                        if is_positive {
+                            result_field[i].coeffs[k] += weight_field.coeffs[k];
+                        } else {
+                            result_field[i].coeffs[k] -= weight_field.coeffs[k];
+                        }
                     }
                 }
             }
@@ -476,12 +468,8 @@ pub fn projection_flatter_1_times_matrix(
 
     unsafe {
         // this is a bit ugly but we want to avoid calling eltwise_reduce_mod separately
-        eltwise_reduce_mod(
-            result_field[0].coeffs.as_mut_ptr(),
-            result_field[0].coeffs.as_ptr(),
-            2 * inner_width as u64,
-            MOD_Q,
-        );
+        let flat = result_field.as_mut_ptr() as *mut u64;
+        eltwise_reduce_mod(flat, flat, (SLOT_DEGREE * inner_width) as u64, MOD_Q);
     }
 
     result_field
@@ -502,34 +490,53 @@ pub fn projection_flatter_1_times_matrix_ref(
 
     for inner_row in 0..height {
         let weight = &projection_flatter_1.preprocessed_row[inner_row];
-        let weight_field = FieldExtension {
-            coeffs: [weight.v[0], weight.v[HALF_DEGREE]],
-        };
+        let weight_field = weight.slot_zero();
 
         for i in 0..inner_width {
             let (is_positive, is_non_zero) = projection_matrix[(inner_row, i)];
             if !is_non_zero {
                 continue;
             }
-            if is_positive {
-                result_field[i].coeffs[0] += weight_field.coeffs[0];
-                result_field[i].coeffs[1] += weight_field.coeffs[1];
-            } else {
-                result_field[i].coeffs[0] -= weight_field.coeffs[0];
-                result_field[i].coeffs[1] -= weight_field.coeffs[1];
+            for k in 0..SLOT_DEGREE {
+                if is_positive {
+                    result_field[i].coeffs[k] += weight_field.coeffs[k];
+                } else {
+                    result_field[i].coeffs[k] -= weight_field.coeffs[k];
+                }
             }
         }
     }
 
     unsafe {
         // this is a bit ugly but we want to avoid calling eltwise_reduce_mod separately
-        eltwise_reduce_mod(
-            result_field[0].coeffs.as_mut_ptr(),
-            result_field[0].coeffs.as_ptr(),
-            2 * inner_width as u64,
-            MOD_Q,
-        );
+        let flat = result_field.as_mut_ptr() as *mut u64;
+        eltwise_reduce_mod(flat, flat, (SLOT_DEGREE * inner_width) as u64, MOD_Q);
     }
 
     result_field
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::{hash::HashWrapper, init_common};
+
+    #[test]
+    fn projection_flatter_1_times_matrix_matches_the_reference() {
+        init_common();
+        for (ratio, height) in [(2, 16), (4, 64), (8, 3)] {
+            let mut projection_matrix = ProjectionMatrix::new(ratio, height);
+            projection_matrix.sample(&mut HashWrapper::new());
+            let flatter_1 = PreprocessedRow {
+                preprocessed_row: (0..height)
+                    .map(|_| RingElement::random(Representation::IncompleteNTT))
+                    .collect(),
+            };
+            assert_eq!(
+                projection_flatter_1_times_matrix(&projection_matrix, &flatter_1),
+                projection_flatter_1_times_matrix_ref(&projection_matrix, &flatter_1),
+                "ratio {ratio}, height {height}"
+            );
+        }
+    }
 }
