@@ -740,15 +740,15 @@ pub fn verifier_round_simple(
         }
     }
 
-    let mut witness_even_odd =
+    let mut witness_strided =
         vec![RingElement::zero(Representation::IncompleteNTT); round_proof.folded_witness.height];
-    witness_even_odd.clone_from_slice(&round_proof.folded_witness.data);
+    witness_strided.clone_from_slice(&round_proof.folded_witness.data);
 
-    for w in witness_even_odd.iter_mut() {
-        w.from_incomplete_ntt_to_even_odd_coefficients();
+    for w in witness_strided.iter_mut() {
+        w.from_incomplete_ntt_to_strided_coefficients();
     }
 
-    let l2_norm_witness = l2_norm_coeffs(&witness_even_odd);
+    let l2_norm_witness = l2_norm_coeffs(&witness_strided);
     let l2_norm_proj = l2_norm_coeffs(&round_proof.projection_image_ct.data);
 
     assert_norm_bounded(

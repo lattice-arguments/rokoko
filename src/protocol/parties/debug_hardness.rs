@@ -53,7 +53,7 @@ fn recomposed_input_l2(rc: &RecursiveCommitmentWithAux, config: &RecursionConfig
 
     let mut sum = 0f64;
     for element in recomposed.iter_mut() {
-        element.from_incomplete_ntt_to_even_odd_coefficients();
+        element.from_incomplete_ntt_to_strided_coefficients();
         for &x in element.v.iter() {
             let centered = if x < MOD_Q / 2 { x } else { MOD_Q - x } as f64;
             sum += centered * centered;

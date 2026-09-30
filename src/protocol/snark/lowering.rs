@@ -1793,14 +1793,14 @@ mod tests {
         let mut data = sample_random_short_vector(n, 100, Representation::IncompleteNTT);
         let quarter = n / 4;
         for (i, w) in data[quarter..2 * quarter].iter_mut().enumerate() {
-            let mut bits = RingElement::zero(Representation::EvenOddCoefficients);
+            let mut bits = RingElement::zero(Representation::StridedCoefficients);
             for (c, b) in bits.v.iter_mut().enumerate() {
                 *b = ((i * 31 + c * 7 + 3) % 5 < 2) as u64;
             }
             if tamper && i == 5 {
                 bits.v[17] = 2;
             }
-            bits.from_even_odd_coefficients_to_incomplete_ntt_representation();
+            bits.from_strided_coefficients_to_incomplete_ntt_representation();
             *w = bits;
         }
         let witness = VerticallyAlignedMatrix {
@@ -1811,11 +1811,11 @@ mod tests {
         };
 
         let ones = {
-            let mut e = RingElement::zero(Representation::EvenOddCoefficients);
+            let mut e = RingElement::zero(Representation::StridedCoefficients);
             for c in e.v.iter_mut() {
                 *c = 1;
             }
-            e.from_even_odd_coefficients_to_incomplete_ntt_representation();
+            e.from_strided_coefficients_to_incomplete_ntt_representation();
             e
         };
         let p = Prefix {

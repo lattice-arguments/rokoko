@@ -116,7 +116,7 @@ pub fn project(
     );
 
     for i in projection_image.data.iter_mut() {
-        i.from_incomplete_ntt_to_even_odd_coefficients();
+        i.from_incomplete_ntt_to_strided_coefficients();
     }
 
     let row_len = projection_matrix.projection_ratio * projection_matrix.projection_height;
@@ -197,7 +197,7 @@ pub fn project(
     }
 
     for i in projection_image.data.iter_mut() {
-        i.from_even_odd_coefficients_to_incomplete_ntt_representation();
+        i.from_strided_coefficients_to_incomplete_ntt_representation();
     }
 
     projection_image
