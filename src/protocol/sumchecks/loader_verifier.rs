@@ -1,7 +1,7 @@
 use crate::{
     common::{
         arithmetic::precompute_structured_values_fast,
-        config::{DEGREE, HALF_DEGREE, NOF_BATCHES},
+        config::{DEGREE, NOF_BATCHES, NUM_SLOTS},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
@@ -30,7 +30,7 @@ pub fn load_verifier_sumcheck_data(
     projection_matrix_flatter_structured: &Option<StructuredRow>, // Only needed for coarse projection
     challenges_3_1: &Option<[BatchedProjectionChallengesSuccinct; NOF_BATCHES]>,
     combination: &[RingElement],
-    fe: &[FieldExtension; HALF_DEGREE],
+    fe: &[FieldExtension; NUM_SLOTS],
 ) {
     verifier_sumcheck_context
         .combined_witness_evaluation
@@ -134,7 +134,7 @@ pub fn load_verifier_sumcheck_data(
                 tensor_layers: challenges
                     .c_0_layers
                     .iter()
-                    .map(|e| FieldExtension { coeffs: [*e, 0] })
+                    .map(|e| FieldExtension::from_base(*e))
                     .collect::<Vec<_>>(),
             };
             fine_proj_eval.sumchecks[batch_idx]
@@ -169,24 +169,22 @@ pub fn load_verifier_sumcheck_data(
                 tensor_layers: challenges
                     .c_2_layers
                     .iter()
-                    .map(|&x| FieldExtension { coeffs: [x, 0] })
+                    .map(|&x| FieldExtension::from_base(x))
                     .collect::<Vec<FieldExtension>>(),
             };
 
             let rhs_layers_field = {
                 let mut layers = Vec::new();
                 for c_2 in &challenges.c_2_layers {
-                    layers.push(FieldExtension { coeffs: [*c_2, 0] });
+                    layers.push(FieldExtension::from_base(*c_2));
                 }
 
                 for c_0 in &challenges.c_0_layers {
-                    layers.push(FieldExtension { coeffs: [*c_0, 0] });
+                    layers.push(FieldExtension::from_base(*c_0));
                 }
 
                 for layer in &e_0_layers {
-                    layers.push(FieldExtension {
-                        coeffs: [*layer, 0],
-                    });
+                    layers.push(FieldExtension::from_base(*layer));
                 }
                 StructuredRow {
                     tensor_layers: layers,

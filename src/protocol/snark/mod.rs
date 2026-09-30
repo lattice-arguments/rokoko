@@ -260,9 +260,7 @@ impl From<Vec<u64>> for Scalars {
     fn from(v: Vec<u64>) -> Scalars {
         Scalars::Field(Arc::new(
             v.into_iter()
-                .map(|x| FieldExtension {
-                    coeffs: [x % MOD_Q, 0],
-                })
+                .map(|x| FieldExtension::from_base(x % MOD_Q))
                 .collect(),
         ))
     }

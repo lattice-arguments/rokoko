@@ -39,13 +39,17 @@ fn emit_ring() {
         fail(&path, &e);
     }
     let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    let slot_degree = slot_degree(spec.degree, spec.mod_q);
     std::fs::write(
         out.join("ring.rs"),
         format!(
-            "pub const DEGREE: usize = {};\npub const HALF_DEGREE: usize = {};\npub const MOD_Q: u64 = {};\n",
+            "pub const DEGREE: usize = {};\npub const HALF_DEGREE: usize = {};\npub const MOD_Q: u64 = {};\n\
+             pub const SLOT_DEGREE: usize = {};\npub const NUM_SLOTS: usize = {};\n",
             spec.degree,
             spec.degree / 2,
             spec.mod_q,
+            slot_degree,
+            spec.degree / slot_degree,
         ),
     )
     .unwrap();
@@ -144,6 +148,15 @@ fn validate_ring(spec: &RingSpec) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// Degree `2N / 2^v2(q-1)` of the irreducible factors `X^d - zeta` of `X^N + 1` over `Z_q`, or 1
+/// when `X^N + 1` splits completely.
+fn slot_degree(n: u64, q: u64) -> u64 {
+    (2 * n)
+        .checked_shr((q - 1).trailing_zeros())
+        .unwrap_or(0)
+        .max(1)
 }
 
 fn is_prime(n: u64) -> bool {

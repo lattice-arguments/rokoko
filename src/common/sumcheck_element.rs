@@ -2,6 +2,7 @@ use std::ops::{AddAssign, MulAssign, SubAssign};
 
 use crate::common::{
     arithmetic::{ONE, ONE_FE, TWO, TWO_FE, ZERO, ZERO_FE},
+    config::SLOT_DEGREE,
     ring_arithmetic::{Representation, RingElement},
     FieldExtension,
 };
@@ -69,11 +70,11 @@ impl SumcheckElement for RingElement {
 
 impl SumcheckElement for FieldExtension {
     fn zero() -> Self {
-        FieldExtension { coeffs: [0, 0] }
+        FieldExtension::from_base(0)
     }
 
     fn one() -> Self {
-        FieldExtension { coeffs: [1, 0] }
+        FieldExtension::from_base(1)
     }
 
     fn one_ref() -> &'static Self {
@@ -89,11 +90,11 @@ impl SumcheckElement for FieldExtension {
     }
 
     fn set_zero(&mut self) {
-        self.coeffs = [0, 0];
+        self.coeffs = [0; SLOT_DEGREE];
     }
 
     fn allocate_zero_vec(len: usize) -> Vec<Self> {
-        vec![FieldExtension { coeffs: [0, 0] }; len]
+        vec![FieldExtension::from_base(0); len]
     }
 
     fn set_from(&mut self, other: &Self) {

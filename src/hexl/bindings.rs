@@ -149,3 +149,19 @@ pub unsafe fn fused_incomplete_ntt_mult(
     let operand2 = std::slice::from_raw_parts(operand2, 2 * n);
     hexl::fused_incomplete_ntt_mult(result, operand1, operand2, n, modulus);
 }
+
+/// Slot-wise ring multiplication for slots of any supported degree; `result` may alias
+/// `operand1`, as in [`fused_incomplete_ntt_mult`].
+#[inline(always)]
+pub unsafe fn fused_slot_mult(
+    result: *mut u64,
+    operand1: *const u64,
+    operand2: *const u64,
+    ring_degree: usize,
+    modulus: u64,
+) {
+    let result = std::slice::from_raw_parts_mut(result, ring_degree);
+    let operand1 = std::slice::from_raw_parts(operand1, ring_degree);
+    let operand2 = std::slice::from_raw_parts(operand2, ring_degree);
+    hexl::fused_slot_mult(result, operand1, operand2, ring_degree, modulus);
+}

@@ -1,7 +1,7 @@
 use crate::{
     common::{
         arithmetic::field_to_ring_element_into,
-        config::{HALF_DEGREE, NOF_BATCHES},
+        config::{NOF_BATCHES, NUM_SLOTS},
         hash::HashWrapper,
         ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::StructuredRow,
@@ -64,7 +64,7 @@ pub fn run_intermediate_sumcheck(
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
-    let fe: [FieldExtension; HALF_DEGREE] = combination_to_field.split_into_field_extensions();
+    let fe: [FieldExtension; NUM_SLOTS] = combination_to_field.split_into_field_extensions();
 
     load_intermediate_sumcheck_data(
         sumcheck_context,

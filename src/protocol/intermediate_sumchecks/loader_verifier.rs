@@ -1,5 +1,5 @@
 use crate::common::{
-    config::HALF_DEGREE,
+    config::NUM_SLOTS,
     ring_arithmetic::{FieldExtension, Representation, RingElement},
     structured_row::StructuredRow,
 };
@@ -14,7 +14,7 @@ pub fn load_intermediate_verifier_sumcheck_data(
     evaluation_points_inner: &[StructuredRow],
     combination: &[RingElement],
     fine_proj_batching_challenges: &[BatchedProjectionChallengesSuccinct; 2],
-    fe: &[FieldExtension; HALF_DEGREE],
+    fe: &[FieldExtension; NUM_SLOTS],
 ) {
     verifier_sumcheck_context
         .witness_evaluation

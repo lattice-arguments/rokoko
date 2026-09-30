@@ -1,7 +1,7 @@
 use crate::{
     common::{
         arithmetic::field_to_ring_element,
-        config::{HALF_DEGREE, NOF_BATCHES},
+        config::{NOF_BATCHES, NUM_SLOTS},
         hash::HashWrapper,
         norms::assert_norm_bounded,
         ring_arithmetic::{FieldExtension, Representation, RingElement},
@@ -77,7 +77,7 @@ pub fn intermediate_sumcheck_verifier(
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
-    let fe: [FieldExtension; HALF_DEGREE] = combination_to_field.split_into_field_extensions();
+    let fe: [FieldExtension; NUM_SLOTS] = combination_to_field.split_into_field_extensions();
 
     let (mut batched_claim, idx) = batch_claims_linear(folded_commitment, &combination, 0);
     let (batched_inner_eval_claims, idx) =
@@ -102,7 +102,7 @@ pub fn intermediate_sumcheck_verifier(
         let mut split = temp.split_into_field_extensions();
         let mut result = FieldExtension::zero();
 
-        for i in 0..HALF_DEGREE {
+        for i in 0..NUM_SLOTS {
             split[i] *= &fe[i];
             result += &split[i];
         }
