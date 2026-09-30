@@ -1,7 +1,7 @@
 use crate::{
     common::{
         config::NOF_BATCHES,
-        ring_arithmetic::{QuadraticExtension, RingElement},
+        ring_arithmetic::{FieldExtension, RingElement},
     },
     protocol::{
         intermediate_sumchecks::context_verifier::IntermediateVerifierSumcheckContext,
@@ -51,7 +51,7 @@ pub enum NextVerifierSumcheckContext {
 }
 
 impl VerifierSumcheckContext {
-    pub fn evaluate_at_point(&mut self, point: &Vec<RingElement>) -> QuadraticExtension {
+    pub fn evaluate_at_point(&mut self, point: &Vec<RingElement>) -> FieldExtension {
         self.field_combiner_evaluation
             .borrow_mut()
             .evaluate_at_ring_point(point)
@@ -76,7 +76,7 @@ pub struct OuterEvalClaimVerifierContext {
 pub struct CoarseProjVerifierContext {
     pub lhs_flatter_0_evaluation: ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>,
     pub lhs_flatter_1_times_matrix_evaluation_field:
-        ElephantCell<BasicEvaluationLinearSumcheck<QuadraticExtension>>,
+        ElephantCell<BasicEvaluationLinearSumcheck<FieldExtension>>,
     pub lhs_flatter_1_times_matrix_evaluation: ElephantCell<RingToFieldWrapperEvaluation>,
     // RHS: Split into projection_flatter and fold_challenge
     pub rhs_projection_flatter_evaluation:
@@ -87,16 +87,16 @@ pub struct CoarseProjVerifierContext {
 
 pub struct FineProjVerifierContext {
     pub lhs_flatter_0_evaluation_field:
-        ElephantCell<StructuredRowEvaluationLinearSumcheck<QuadraticExtension>>,
+        ElephantCell<StructuredRowEvaluationLinearSumcheck<FieldExtension>>,
     pub lhs_flatter_0_evaluation: ElephantCell<RingToFieldWrapperEvaluation>,
     pub lhs_flatter_1_times_matrix_evaluation:
         ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub output: ElephantCell<DiffSumcheckEvaluation>,
 
     pub lhs_consistency_flatter_evaluation_field:
-        ElephantCell<StructuredRowEvaluationLinearSumcheck<QuadraticExtension>>,
+        ElephantCell<StructuredRowEvaluationLinearSumcheck<FieldExtension>>,
     pub rhs_consistency_flatter_evaluation_field:
-        ElephantCell<StructuredRowEvaluationLinearSumcheck<QuadraticExtension>>,
+        ElephantCell<StructuredRowEvaluationLinearSumcheck<FieldExtension>>,
 
     pub lhs_consistency_flatter_evaluation: ElephantCell<RingToFieldWrapperEvaluation>,
     pub rhs_consistency_flatter_evaluation: ElephantCell<RingToFieldWrapperEvaluation>,
@@ -109,7 +109,7 @@ pub struct FineProjVerifierContextWrapper {
     pub sumchecks: [FineProjVerifierContext; NOF_BATCHES],
     pub rhs_fold_challenge_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
     pub lhs_scalar_consistency_evaluation_field:
-        ElephantCell<BasicEvaluationLinearSumcheck<QuadraticExtension>>,
+        ElephantCell<BasicEvaluationLinearSumcheck<FieldExtension>>,
     pub lhs_scalar_consistency_evaluation: ElephantCell<RingToFieldWrapperEvaluation>,
 }
 

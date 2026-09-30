@@ -3,7 +3,7 @@ use crate::{
         arithmetic::precompute_structured_values_fast,
         config::{DEGREE, HALF_DEGREE, NOF_BATCHES},
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
@@ -30,7 +30,7 @@ pub fn load_verifier_sumcheck_data(
     projection_matrix_flatter_structured: &Option<StructuredRow>, // Only needed for coarse projection
     challenges_3_1: &Option<[BatchedProjectionChallengesSuccinct; NOF_BATCHES]>,
     combination: &[RingElement],
-    qe: &[QuadraticExtension; HALF_DEGREE],
+    fe: &[FieldExtension; HALF_DEGREE],
 ) {
     verifier_sumcheck_context
         .combined_witness_evaluation
@@ -134,7 +134,7 @@ pub fn load_verifier_sumcheck_data(
                 tensor_layers: challenges
                     .c_0_layers
                     .iter()
-                    .map(|e| QuadraticExtension { coeffs: [*e, 0] })
+                    .map(|e| FieldExtension { coeffs: [*e, 0] })
                     .collect::<Vec<_>>(),
             };
             fine_proj_eval.sumchecks[batch_idx]
@@ -169,22 +169,22 @@ pub fn load_verifier_sumcheck_data(
                 tensor_layers: challenges
                     .c_2_layers
                     .iter()
-                    .map(|&x| QuadraticExtension { coeffs: [x, 0] })
-                    .collect::<Vec<QuadraticExtension>>(),
+                    .map(|&x| FieldExtension { coeffs: [x, 0] })
+                    .collect::<Vec<FieldExtension>>(),
             };
 
             let rhs_layers_field = {
                 let mut layers = Vec::new();
                 for c_2 in &challenges.c_2_layers {
-                    layers.push(QuadraticExtension { coeffs: [*c_2, 0] });
+                    layers.push(FieldExtension { coeffs: [*c_2, 0] });
                 }
 
                 for c_0 in &challenges.c_0_layers {
-                    layers.push(QuadraticExtension { coeffs: [*c_0, 0] });
+                    layers.push(FieldExtension { coeffs: [*c_0, 0] });
                 }
 
                 for layer in &e_0_layers {
-                    layers.push(QuadraticExtension {
+                    layers.push(FieldExtension {
                         coeffs: [*layer, 0],
                     });
                 }
@@ -218,5 +218,5 @@ pub fn load_verifier_sumcheck_data(
     verifier_sumcheck_context
         .field_combiner_evaluation
         .borrow_mut()
-        .load_challenges_from(qe.clone());
+        .load_challenges_from(fe.clone());
 }

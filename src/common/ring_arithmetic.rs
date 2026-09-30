@@ -311,13 +311,13 @@ impl RingElement {
     }
 
     // Probably should never be used
-    pub fn split_into_quadratic_extensions(&self) -> [QuadraticExtension; HALF_DEGREE] {
+    pub fn split_into_field_extensions(&self) -> [FieldExtension; HALF_DEGREE] {
         debug_assert!(
             self.representation == Representation::HomogenizedFieldExtensions,
             "RingElement not in Homogenized Field Extensions representation"
         );
 
-        let mut result = [QuadraticExtension { coeffs: [0u64; 2] }; HALF_DEGREE];
+        let mut result = [FieldExtension { coeffs: [0u64; 2] }; HALF_DEGREE];
 
         for i in 0..HALF_DEGREE {
             result[i].coeffs[0] = self.v[i];
@@ -327,10 +327,7 @@ impl RingElement {
         result
     }
 
-    pub fn combine_from_quadratic_extensions(
-        &mut self,
-        extensions: &[QuadraticExtension; HALF_DEGREE],
-    ) {
+    pub fn combine_from_field_extensions(&mut self, extensions: &[FieldExtension; HALF_DEGREE]) {
         debug_assert!(
             self.representation == Representation::HomogenizedFieldExtensions,
             "RingElement not in Homogenized Field Extensions representation"
@@ -1180,11 +1177,11 @@ impl MulAssign<(&RingElement, &RingElement)> for RingElement {
 
 // They are small so we can store them on stack.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct QuadraticExtension {
+pub struct FieldExtension {
     pub coeffs: [u64; 2],
 }
 
-impl Add for QuadraticExtension {
+impl Add for FieldExtension {
     type Output = Self;
 
     fn add(self, other: Self) -> Self {
@@ -1198,7 +1195,7 @@ impl Add for QuadraticExtension {
     }
 }
 
-impl Mul for QuadraticExtension {
+impl Mul for FieldExtension {
     type Output = Self;
 
     fn mul(self, other: Self) -> Self {
@@ -1229,8 +1226,8 @@ impl Mul for QuadraticExtension {
     }
 }
 
-impl<'a> AddAssign<&'a QuadraticExtension> for QuadraticExtension {
-    fn add_assign(&mut self, other: &'a QuadraticExtension) {
+impl<'a> AddAssign<&'a FieldExtension> for FieldExtension {
+    fn add_assign(&mut self, other: &'a FieldExtension) {
         unsafe {
             self.coeffs[0] = add_mod(self.coeffs[0], other.coeffs[0], MOD_Q);
             self.coeffs[1] = add_mod(self.coeffs[1], other.coeffs[1], MOD_Q);
@@ -1238,15 +1235,15 @@ impl<'a> AddAssign<&'a QuadraticExtension> for QuadraticExtension {
     }
 }
 
-impl<'a> AddAssign<(&'a QuadraticExtension, &'a QuadraticExtension)> for QuadraticExtension {
-    fn add_assign(&mut self, other: (&'a QuadraticExtension, &'a QuadraticExtension)) {
+impl<'a> AddAssign<(&'a FieldExtension, &'a FieldExtension)> for FieldExtension {
+    fn add_assign(&mut self, other: (&'a FieldExtension, &'a FieldExtension)) {
         let (op1, op2) = other;
         self.coeffs[0] = unsafe { add_mod(op1.coeffs[0], op2.coeffs[0], MOD_Q) };
         self.coeffs[1] = unsafe { add_mod(op1.coeffs[1], op2.coeffs[1], MOD_Q) };
     }
 }
-impl<'a> SubAssign<&'a QuadraticExtension> for QuadraticExtension {
-    fn sub_assign(&mut self, other: &'a QuadraticExtension) {
+impl<'a> SubAssign<&'a FieldExtension> for FieldExtension {
+    fn sub_assign(&mut self, other: &'a FieldExtension) {
         unsafe {
             self.coeffs[0] = sub_mod(self.coeffs[0], other.coeffs[0], MOD_Q);
             self.coeffs[1] = sub_mod(self.coeffs[1], other.coeffs[1], MOD_Q);
@@ -1254,8 +1251,8 @@ impl<'a> SubAssign<&'a QuadraticExtension> for QuadraticExtension {
     }
 }
 
-impl<'a> MulAssign<&'a QuadraticExtension> for QuadraticExtension {
-    fn mul_assign(&mut self, other: &'a QuadraticExtension) {
+impl<'a> MulAssign<&'a FieldExtension> for FieldExtension {
+    fn mul_assign(&mut self, other: &'a FieldExtension) {
         let a = self.coeffs[0];
         let b = self.coeffs[1];
         let c = other.coeffs[0];
@@ -1271,8 +1268,8 @@ impl<'a> MulAssign<&'a QuadraticExtension> for QuadraticExtension {
     }
 }
 
-impl<'a> MulAssign<(&'a QuadraticExtension, &'a QuadraticExtension)> for QuadraticExtension {
-    fn mul_assign(&mut self, other: (&'a QuadraticExtension, &'a QuadraticExtension)) {
+impl<'a> MulAssign<(&'a FieldExtension, &'a FieldExtension)> for FieldExtension {
+    fn mul_assign(&mut self, other: (&'a FieldExtension, &'a FieldExtension)) {
         let (lhs, rhs) = other;
         *self = *lhs * *rhs;
     }
@@ -1316,7 +1313,7 @@ impl SizeableProof for RingElement {
     }
 }
 
-impl SizeableProof for QuadraticExtension {
+impl SizeableProof for FieldExtension {
     fn size_in_bits(&self) -> usize {
         let mut size = 0;
         for v in &self.coeffs {
@@ -1374,22 +1371,22 @@ mod tests {
     }
 
     #[test]
-    fn test_quadratic_extension_split_combine_roundtrip() {
+    fn test_field_extension_split_combine_roundtrip() {
         init_common();
         let mut b = RingElement::random(Representation::Coefficients);
         b.from_coefficients_to_even_odd_coefficients();
         b.from_even_odd_coefficients_to_incomplete_ntt_representation();
         b.from_incomplete_ntt_to_homogenized_field_extensions();
 
-        let ext_b: [QuadraticExtension; HALF_DEGREE] = b.split_into_quadratic_extensions();
+        let ext_b: [FieldExtension; HALF_DEGREE] = b.split_into_field_extensions();
         let mut b_reconstructed = RingElement::new(Representation::HomogenizedFieldExtensions);
-        b_reconstructed.combine_from_quadratic_extensions(&ext_b);
+        b_reconstructed.combine_from_field_extensions(&ext_b);
 
         debug_assert_eq!(b.v, b_reconstructed.v);
     }
 
     #[test]
-    fn test_hadamard_multiplication_in_quadratic_extensions() {
+    fn test_hadamard_multiplication_in_field_extensions() {
         init_common();
         let mut a = RingElement::random(Representation::Coefficients);
         let mut b = RingElement::random(Representation::Coefficients);
@@ -1404,19 +1401,19 @@ mod tests {
         a.from_incomplete_ntt_to_homogenized_field_extensions();
         b.from_incomplete_ntt_to_homogenized_field_extensions();
 
-        let ext_a: [QuadraticExtension; HALF_DEGREE] = a.split_into_quadratic_extensions();
-        let ext_b: [QuadraticExtension; HALF_DEGREE] = b.split_into_quadratic_extensions();
+        let ext_a: [FieldExtension; HALF_DEGREE] = a.split_into_field_extensions();
+        let ext_b: [FieldExtension; HALF_DEGREE] = b.split_into_field_extensions();
 
-        let quadratic_fields_hadamard: [QuadraticExtension; HALF_DEGREE] = ext_a
+        let field_extensions_hadamard: [FieldExtension; HALF_DEGREE] = ext_a
             .iter()
             .zip(ext_b.iter())
             .map(|(x, y)| *x * *y)
-            .collect::<Vec<QuadraticExtension>>()
+            .collect::<Vec<FieldExtension>>()
             .try_into()
             .unwrap();
 
         let mut c_c = RingElement::new(Representation::HomogenizedFieldExtensions);
-        c_c.combine_from_quadratic_extensions(&quadratic_fields_hadamard);
+        c_c.combine_from_field_extensions(&field_extensions_hadamard);
         c_c.from_homogenized_field_extensions_to_incomplete_ntt();
         c_c.from_incomplete_ntt_to_even_odd_coefficients();
         c_c.from_even_odd_coefficients_to_coefficients();
@@ -1462,10 +1459,10 @@ mod tests {
     }
 
     #[test]
-    fn test_quadratic_extension_multiplication() {
-        let qe1 = QuadraticExtension { coeffs: [2, 3] };
-        let qe2 = QuadraticExtension { coeffs: [4, 5] };
-        let result = qe1 * qe2;
+    fn test_field_extension_multiplication() {
+        let fe1 = FieldExtension { coeffs: [2, 3] };
+        let fe2 = FieldExtension { coeffs: [4, 5] };
+        let result = fe1 * fe2;
 
         // (2 + 3X)(4 + 5X) = 8 + 10X + 12X + 15X^2 = 8 + 22X + 15*shift
         let expected_c0 = unsafe {
@@ -1715,10 +1712,10 @@ mod tests {
         let a = RingElement::random(Representation::HomogenizedFieldExtensions);
         let a_inv = a.inverse();
 
-        let slots = a.split_into_quadratic_extensions();
-        let inv_slots = a_inv.split_into_quadratic_extensions();
+        let slots = a.split_into_field_extensions();
+        let inv_slots = a_inv.split_into_field_extensions();
 
-        let one = QuadraticExtension { coeffs: [1, 0] };
+        let one = FieldExtension { coeffs: [1, 0] };
         for i in 0..HALF_DEGREE {
             let product = slots[i] * inv_slots[i];
             assert_eq!(

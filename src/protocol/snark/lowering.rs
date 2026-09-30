@@ -2,7 +2,7 @@ use crate::{
     common::{
         hash::HashWrapper,
         matrix::VerticallyAlignedMatrix,
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
         sumcheck_element::SumcheckElement,
     },
@@ -41,7 +41,7 @@ pub struct PublicFactor {
 #[derive(Clone)]
 pub enum Coeffs {
     Ring(Arc<Vec<RingElement>>),
-    Field(Arc<Vec<QuadraticExtension>>),
+    Field(Arc<Vec<FieldExtension>>),
 }
 
 #[derive(Clone)]
@@ -61,19 +61,19 @@ pub enum Weights {
     Combination(Arc<Vec<(RingElement, Vec<PublicFactor>)>>),
 }
 
-pub fn qe_one_minus(a: &QuadraticExtension) -> QuadraticExtension {
-    let mut r = QuadraticExtension::one();
+pub fn fe_one_minus(a: &FieldExtension) -> FieldExtension {
+    let mut r = FieldExtension::one();
     r -= a;
     r
 }
 
-pub fn expand_field_tensor(layers: &[QuadraticExtension]) -> Vec<RingElement> {
+pub fn expand_field_tensor(layers: &[FieldExtension]) -> Vec<RingElement> {
     use crate::common::arithmetic::field_to_ring_element_into;
-    let mut vals = vec![QuadraticExtension::one()];
+    let mut vals = vec![FieldExtension::one()];
     for a in layers.iter().rev() {
-        let one_minus = qe_one_minus(a);
+        let one_minus = fe_one_minus(a);
         let mut next = Vec::with_capacity(vals.len() * 2);
-        let mut t = QuadraticExtension::zero();
+        let mut t = FieldExtension::zero();
         for v in &vals {
             t *= (v, &one_minus);
             next.push(t);
@@ -97,8 +97,8 @@ pub fn expand_field_tensor(layers: &[QuadraticExtension]) -> Vec<RingElement> {
 /// A combination sub-factor expanded for indexed lookup over its own window.
 enum SubTable<'a> {
     Scalar(Vec<u64>),
-    Field(&'a [QuadraticExtension]),
-    FieldOwned(Vec<QuadraticExtension>),
+    Field(&'a [FieldExtension]),
+    FieldOwned(Vec<FieldExtension>),
     Ring(&'a [RingElement]),
     RingOwned(Vec<RingElement>),
 }
@@ -119,28 +119,28 @@ impl SubTable<'_> {
             SubTable::Scalar(v) => {
                 *out = RingElement::constant(v[i], Representation::IncompleteNTT)
             }
-            SubTable::Field(v) => *out = embed_qe(&v[i]),
-            SubTable::FieldOwned(v) => *out = embed_qe(&v[i]),
+            SubTable::Field(v) => *out = embed_fe(&v[i]),
+            SubTable::FieldOwned(v) => *out = embed_fe(&v[i]),
             SubTable::Ring(v) => out.set_from(&v[i]),
             SubTable::RingOwned(v) => out.set_from(&v[i]),
         }
     }
 }
 
-fn scalar_dense(v: &[QuadraticExtension]) -> Option<Vec<u64>> {
-    if v.iter().any(|qe| qe.coeffs[1] != 0) {
+fn scalar_dense(v: &[FieldExtension]) -> Option<Vec<u64>> {
+    if v.iter().any(|fe| fe.coeffs[1] != 0) {
         return None;
     }
-    Some(v.iter().map(|qe| qe.coeffs[0]).collect())
+    Some(v.iter().map(|fe| fe.coeffs[0]).collect())
 }
 
 /// Mirror of [`expand_field_tensor`] staying in the field.
-fn expand_field_tensor_qe(layers: &[QuadraticExtension]) -> Vec<QuadraticExtension> {
-    let mut vals = vec![QuadraticExtension::one()];
+fn expand_field_tensor_fe(layers: &[FieldExtension]) -> Vec<FieldExtension> {
+    let mut vals = vec![FieldExtension::one()];
     for a in layers.iter().rev() {
-        let one_minus = qe_one_minus(a);
+        let one_minus = fe_one_minus(a);
         let mut next = Vec::with_capacity(vals.len() * 2);
-        let mut t = QuadraticExtension::zero();
+        let mut t = FieldExtension::zero();
         for v in &vals {
             t *= (v, &one_minus);
             next.push(t);
@@ -154,7 +154,7 @@ fn expand_field_tensor_qe(layers: &[QuadraticExtension]) -> Vec<QuadraticExtensi
     vals
 }
 
-fn scalar_tensor_expansion(layers: &[QuadraticExtension]) -> Option<Vec<u64>> {
+fn scalar_tensor_expansion(layers: &[FieldExtension]) -> Option<Vec<u64>> {
     use crate::common::config::MOD_Q;
     if layers.iter().any(|a| a.coeffs[1] != 0) {
         return None;
@@ -184,7 +184,7 @@ fn sub_table(pf: &PublicFactor) -> SubTable<'_> {
         Weights::Dense(Coeffs::Ring(v)) => SubTable::Ring(&v[..]),
         Weights::Tensor(Coeffs::Field(layers)) => match scalar_tensor_expansion(layers) {
             Some(s) => SubTable::Scalar(s),
-            None => SubTable::FieldOwned(expand_field_tensor_qe(layers)),
+            None => SubTable::FieldOwned(expand_field_tensor_fe(layers)),
         },
         Weights::Tensor(Coeffs::Ring(layers)) => {
             SubTable::RingOwned(PreprocessedRow::from_layers(&layers[..]).preprocessed_row)
@@ -287,10 +287,10 @@ fn expand_combination(
 }
 
 /// Transcript challenges for tensor layers, MSB-first.
-pub fn sample_qe_layers(hw: &mut HashWrapper, n: usize) -> Vec<QuadraticExtension> {
+pub fn sample_fe_layers(hw: &mut HashWrapper, n: usize) -> Vec<FieldExtension> {
     (0..n)
         .map(|_| {
-            let mut f = QuadraticExtension::zero();
+            let mut f = FieldExtension::zero();
             hw.sample_field_element_into(&mut f);
             f
         })
@@ -299,7 +299,7 @@ pub fn sample_qe_layers(hw: &mut HashWrapper, n: usize) -> Vec<QuadraticExtensio
 
 /// The field scalar as a ring element, for use in term coefficients and
 /// public weights.
-pub fn embed_qe(v: &QuadraticExtension) -> RingElement {
+pub fn embed_fe(v: &FieldExtension) -> RingElement {
     use crate::common::arithmetic::field_to_ring_element_into;
     let mut r = RingElement::zero(Representation::IncompleteNTT);
     field_to_ring_element_into(&mut r, v);
@@ -307,44 +307,44 @@ pub fn embed_qe(v: &QuadraticExtension) -> RingElement {
     r
 }
 
-pub fn qe_mul(a: &QuadraticExtension, b: &QuadraticExtension) -> QuadraticExtension {
-    let mut r = QuadraticExtension::zero();
+pub fn fe_mul(a: &FieldExtension, b: &FieldExtension) -> FieldExtension {
+    let mut r = FieldExtension::zero();
     r *= (a, b);
     r
 }
 
 /// Entry `index` of the eq-tensor with the given layers (equivalently,
 /// `eq(layers, bits(index))`).
-pub fn tensor_at(layers_msb: &[QuadraticExtension], index: usize) -> QuadraticExtension {
-    let mut r = QuadraticExtension::one();
+pub fn tensor_at(layers_msb: &[FieldExtension], index: usize) -> FieldExtension {
+    let mut r = FieldExtension::one();
     for (j, a) in layers_msb.iter().enumerate() {
         let bit = (index >> (layers_msb.len() - 1 - j)) & 1;
-        let f = if bit == 1 { a.clone() } else { qe_one_minus(a) };
-        r = qe_mul(&r, &f);
+        let f = if bit == 1 { a.clone() } else { fe_one_minus(a) };
+        r = fe_mul(&r, &f);
     }
     r
 }
 
 /// `eq(a, z)` over matching layer/point slices, MSB-first.
 #[allow(dead_code)]
-pub fn eq_layers_qe(a: &[QuadraticExtension], z: &[QuadraticExtension]) -> QuadraticExtension {
-    let mut r = QuadraticExtension::one();
+pub fn eq_layers_fe(a: &[FieldExtension], z: &[FieldExtension]) -> FieldExtension {
+    let mut r = FieldExtension::one();
     for (x, y) in a.iter().zip(z.iter()) {
-        let mut t = qe_mul(x, y);
-        t += &qe_mul(&qe_one_minus(x), &qe_one_minus(y));
-        r = qe_mul(&r, &t);
+        let mut t = fe_mul(x, y);
+        t += &fe_mul(&fe_one_minus(x), &fe_one_minus(y));
+        r = fe_mul(&r, &t);
     }
     r
 }
 
 /// The weight pair `(1, w)` as an eq layer: `(1 + w) * (1 - a, a)`. Returns
 /// the layer value and the scale to fold into the term coefficient.
-pub fn weighted_layer(w: u64) -> (QuadraticExtension, u64) {
+pub fn weighted_layer(w: u64) -> (FieldExtension, u64) {
     use crate::common::arithmetic::inv_mod;
     use crate::common::config::MOD_Q;
     let scale = (1 + w as u128 % MOD_Q as u128) as u64 % MOD_Q;
     assert_ne!(scale, 0, "weighted_layer is undefined for w = -1 mod q");
-    let mut a = QuadraticExtension::zero();
+    let mut a = FieldExtension::zero();
     a.coeffs[0] = (w as u128 * inv_mod(scale) as u128 % MOD_Q as u128) as u64;
     (a, scale)
 }
@@ -469,7 +469,7 @@ impl SnarkClaim {
 }
 
 pub struct InitialSumcheckProof {
-    pub polys: Vec<Polynomial<QuadraticExtension>>,
+    pub polys: Vec<Polynomial<FieldExtension>>,
     /// `z_0 = MLE[vec(W)](c)`
     pub witness_eval: RingElement,
     /// `z_1 = MLE[conj(vec(W))](c)`; present only when some claim conjugates.
@@ -740,7 +740,7 @@ impl<'a> ProverAssembler<'a> {
                             Arc::as_ptr(v) as *const () as usize,
                             prefix_len,
                             suffix_len,
-                            v.iter().map(embed_qe).collect::<Vec<_>>(),
+                            v.iter().map(embed_fe).collect::<Vec<_>>(),
                         )
                     }
                     Weights::Combination(parts) => self.pooled_leaf(
@@ -847,7 +847,7 @@ impl VerifierAssembler {
                 ElephantCell::new(ev) as _
             }
             Weights::Tensor(Coeffs::Field(layers)) => {
-                let mut ev = StructuredRowEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
+                let mut ev = StructuredRowEvaluationLinearSumcheck::<FieldExtension>::new_with_prefixed_sufixed_data(
                     1usize << layers.len(),
                     prefix_len,
                     suffix_len,
@@ -868,11 +868,12 @@ impl VerifierAssembler {
                 ElephantCell::new(ev) as _
             }
             Weights::Dense(Coeffs::Field(v)) => {
-                let mut ev = BasicEvaluationLinearSumcheck::<QuadraticExtension>::new_with_prefixed_sufixed_data(
-                    v.len(),
-                    prefix_len,
-                    suffix_len,
-                );
+                let mut ev =
+                    BasicEvaluationLinearSumcheck::<FieldExtension>::new_with_prefixed_sufixed_data(
+                        v.len(),
+                        prefix_len,
+                        suffix_len,
+                    );
                 ev.load_from(&v[..]);
                 ElephantCell::new(RingToFieldWrapperEvaluation::new(ElephantCell::new(ev) as _))
                     as _
@@ -1213,27 +1214,27 @@ pub fn prove_claims(
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
-    let qe = combination_to_field.split_into_quadratic_extensions();
+    let fe = combination_to_field.split_into_field_extensions();
 
     let mut combiner = Combiner::new(outputs);
     combiner.load_challenges_from(&combination);
     let combiner_cell = ElephantCell::new(combiner);
     let mut field_combiner = RingToFieldCombiner::new(combiner_cell as _);
-    field_combiner.load_challenges_from(qe.clone());
+    field_combiner.load_challenges_from(fe.clone());
 
     let mut num_vars = total_vars;
-    let mut polys: Vec<Polynomial<QuadraticExtension>> = vec![];
+    let mut polys: Vec<Polynomial<FieldExtension>> = vec![];
     let mut evaluation_points: Vec<RingElement> = vec![];
 
     use crate::common::arithmetic::field_to_ring_element_into;
     while num_vars > 0 {
         num_vars -= 1;
 
-        let mut poly_over_field = Polynomial::<QuadraticExtension>::new(0);
+        let mut poly_over_field = Polynomial::<FieldExtension>::new(0);
         field_combiner.univariate_polynomial_into(&mut poly_over_field);
-        hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
+        hash_wrapper.update_with_field_extension_slice(&poly_over_field.coefficients);
 
-        let mut f = QuadraticExtension::zero();
+        let mut f = FieldExtension::zero();
         hash_wrapper.sample_field_element_into(&mut f);
         let mut r = RingElement::zero(Representation::IncompleteNTT);
         field_to_ring_element_into(&mut r, &f);
@@ -1389,7 +1390,7 @@ pub fn verify_claims(
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
-    let qe = combination_to_field.split_into_quadratic_extensions();
+    let fe = combination_to_field.split_into_field_extensions();
 
     // batched claim = sum_i gamma_i * value_i, mapped through Phi
     let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
@@ -1402,10 +1403,10 @@ pub fn verify_claims(
     let mut batched_claim_over_field = {
         let mut t = batched_claim.clone();
         t.from_incomplete_ntt_to_homogenized_field_extensions();
-        let mut split = t.split_into_quadratic_extensions();
-        let mut result = QuadraticExtension::zero();
+        let mut split = t.split_into_field_extensions();
+        let mut result = FieldExtension::zero();
         for i in 0..crate::common::config::HALF_DEGREE {
-            split[i] *= &qe[i];
+            split[i] *= &fe[i];
             result += &split[i];
         }
         result
@@ -1415,18 +1416,18 @@ pub fn verify_claims(
     combiner_evaluation.load_challenges_from(&combination);
     let mut field_combiner_evaluation =
         RingToFieldCombinerEvaluation::new(ElephantCell::new(combiner_evaluation) as _);
-    field_combiner_evaluation.load_challenges_from(qe.clone());
+    field_combiner_evaluation.load_challenges_from(fe.clone());
 
     let mut evaluation_points: Vec<RingElement> = vec![];
     for (round, poly_over_field) in proof.polys.iter().enumerate() {
-        hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
+        hash_wrapper.update_with_field_extension_slice(&poly_over_field.coefficients);
 
         // The transcript absorbs the full coefficient array; the unused tail
         // must be zero so the prover cannot vary it under one absorption.
         for c in &poly_over_field.coefficients[poly_over_field.num_coefficients..] {
             assert_eq!(
                 c,
-                &QuadraticExtension::zero(),
+                &FieldExtension::zero(),
                 "round polynomial tail nonzero in round {round}"
             );
         }
@@ -1437,7 +1438,7 @@ pub fn verify_claims(
             "round claim mismatch in sumcheck round {round}"
         );
 
-        let mut f = QuadraticExtension::zero();
+        let mut f = FieldExtension::zero();
         hash_wrapper.sample_field_element_into(&mut f);
         batched_claim_over_field = poly_over_field.at(&f);
 
@@ -1595,8 +1596,8 @@ mod tests {
         };
         let quarter = n / 4;
 
-        let layers: Vec<QuadraticExtension> = (0..6)
-            .map(|i| QuadraticExtension {
+        let layers: Vec<FieldExtension> = (0..6)
+            .map(|i| FieldExtension {
                 coeffs: [7 + 3 * i as u64, 11 + 5 * i as u64],
             })
             .collect();
@@ -1660,8 +1661,8 @@ mod tests {
         let (mb, in_bits) = (2usize, 4usize); // mb + in_bits = 6 = free variables
         let start = prefix.prefix << (n.ilog2() as usize - prefix.length);
 
-        let alpha: Vec<QuadraticExtension> = (0..mb)
-            .map(|i| QuadraticExtension {
+        let alpha: Vec<FieldExtension> = (0..mb)
+            .map(|i| FieldExtension {
                 coeffs: [7 + 3 * i as u64, 11 + 5 * i as u64],
             })
             .collect();
@@ -1671,7 +1672,7 @@ mod tests {
         let mut value = RingElement::zero(Representation::IncompleteNTT);
         let mut prod = RingElement::zero(Representation::IncompleteNTT);
         for m in 0..(1usize << mb) {
-            let em = embed_qe(&tensor_at(&alpha, m));
+            let em = embed_fe(&tensor_at(&alpha, m));
             for i in 0..(1usize << in_bits) {
                 prod *= (&k[i], &witness.data[start + (m << in_bits) + i]);
                 let mut weighted = em.clone();
@@ -1728,12 +1729,12 @@ mod tests {
         let quarter = n / 4;
 
         // field dense table over block 1
-        let tab: Vec<QuadraticExtension> = (0..quarter)
-            .map(|i| QuadraticExtension {
+        let tab: Vec<FieldExtension> = (0..quarter)
+            .map(|i| FieldExtension {
                 coeffs: [3 + i as u64, 5 + 2 * i as u64],
             })
             .collect();
-        let table_ring: Vec<RingElement> = tab.iter().map(embed_qe).collect();
+        let table_ring: Vec<RingElement> = tab.iter().map(embed_fe).collect();
         let value_a = inner_product_direct(&table_ring, &witness.data[quarter..2 * quarter]);
 
         // ring eq-tensor over block 2

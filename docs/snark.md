@@ -102,7 +102,7 @@ coefficients, and `ct(u * conj(v)) = sum_c u_c * v_c` in general.
 | `combination(parts)` | `sum_a c_a * prod_f w_af(i)` | sum of the components' costs |
 
 Pass weight entries as whatever you have - `Vec<u64>`, transcript challenges
-(`Vec<QuadraticExtension>`), or `Vec<RingElement>`. Scalar and challenge
+(`Vec<FieldExtension>`), or `Vec<RingElement>`. Scalar and challenge
 weights automatically take a fast verifier path; ring-element weights are for
 genuinely ring-valued tables.
 

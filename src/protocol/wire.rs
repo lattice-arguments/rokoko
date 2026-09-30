@@ -12,7 +12,7 @@
 
 use crate::common::config::{DEGREE, MOD_Q};
 use crate::common::matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix};
-use crate::common::ring_arithmetic::{QuadraticExtension, Representation, RingElement};
+use crate::common::ring_arithmetic::{FieldExtension, Representation, RingElement};
 use crate::protocol::config::{
     IntermediateRoundProof, NextRoundCommitment, RoundProof, SimpleRoundProof, SumcheckRoundProof,
 };
@@ -562,7 +562,7 @@ impl Encoder {
         self.ring_slice(role, &m.data);
     }
 
-    fn polys(&mut self, polys: &[Polynomial<QuadraticExtension>]) {
+    fn polys(&mut self, polys: &[Polynomial<FieldExtension>]) {
         self.shape.put_varint(polys.len() as u64);
         for poly in polys {
             self.shape.put(poly.num_coefficients as u64, 3);
@@ -902,7 +902,7 @@ impl<'a> Decoder<'a> {
         })
     }
 
-    fn polys(&mut self) -> Result<Vec<Polynomial<QuadraticExtension>>, WireError> {
+    fn polys(&mut self) -> Result<Vec<Polynomial<FieldExtension>>, WireError> {
         let len = self.shape.get_len()?;
         let mut polys = Vec::with_capacity(len.min(4096));
         for _ in 0..len {
@@ -910,7 +910,7 @@ impl<'a> Decoder<'a> {
             if num_coefficients > 4 {
                 return Err(WireError::Malformed);
             }
-            let mut poly = Polynomial::<QuadraticExtension>::new(0);
+            let mut poly = Polynomial::<FieldExtension>::new(0);
             poly.num_coefficients = num_coefficients;
             for i in 0..num_coefficients {
                 let mut coeffs = [0u64; 2];
@@ -1088,11 +1088,11 @@ mod tests {
         m
     }
 
-    fn poly(num_coefficients: usize) -> Polynomial<QuadraticExtension> {
-        let mut poly = Polynomial::<QuadraticExtension>::new(0);
+    fn poly(num_coefficients: usize) -> Polynomial<FieldExtension> {
+        let mut poly = Polynomial::<FieldExtension>::new(0);
         poly.num_coefficients = num_coefficients;
         for i in 0..num_coefficients {
-            poly.coefficients[i] = QuadraticExtension {
+            poly.coefficients[i] = FieldExtension {
                 coeffs: [uniform().v[0], uniform().v[1]],
             };
         }

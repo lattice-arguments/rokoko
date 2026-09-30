@@ -5,7 +5,7 @@ use crate::{
         hash::HashWrapper,
         norms::assert_norm_bounded,
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{QuadraticExtension, Representation, RingElement},
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::StructuredRow,
         sumcheck_element::SumcheckElement,
     },
@@ -250,7 +250,7 @@ pub fn sumcheck_verifier(
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
-    let qe = combination_to_field.split_into_quadratic_extensions();
+    let fe = combination_to_field.split_into_field_extensions();
 
     // Batched claim must match the combiner's output order; see batch_claims.
 
@@ -309,10 +309,10 @@ pub fn sumcheck_verifier(
             temp.from_incomplete_ntt_to_homogenized_field_extensions();
             temp
         };
-        let mut temp = batched_claim.split_into_quadratic_extensions();
-        let mut result = QuadraticExtension { coeffs: [0, 0] };
+        let mut temp = batched_claim.split_into_field_extensions();
+        let mut result = FieldExtension { coeffs: [0, 0] };
         for i in 0..HALF_DEGREE {
-            temp[i] *= &qe[i];
+            temp[i] *= &fe[i];
             result += &temp[i];
         }
         result
@@ -320,7 +320,7 @@ pub fn sumcheck_verifier(
 
     let mut num_vars = round_proof.polys.len();
 
-    let mut evaluation_points: Vec<QuadraticExtension> = vec![];
+    let mut evaluation_points: Vec<FieldExtension> = vec![];
     while num_vars > 0 {
         num_vars -= 1;
 
@@ -329,7 +329,7 @@ pub fn sumcheck_verifier(
             .get(round_proof.polys.len() - num_vars - 1)
             .unwrap();
 
-        hash_wrapper.update_with_quadratic_extension_slice(&poly_over_field.coefficients);
+        hash_wrapper.update_with_field_extension_slice(&poly_over_field.coefficients);
 
         assert_eq!(
             poly_over_field.at_zero() + poly_over_field.at_one(),
@@ -339,7 +339,7 @@ pub fn sumcheck_verifier(
             num_vars
         );
 
-        let mut f = QuadraticExtension::zero();
+        let mut f = FieldExtension::zero();
 
         hash_wrapper.sample_field_element_into(&mut f);
 
@@ -358,7 +358,7 @@ pub fn sumcheck_verifier(
         &projection_matrix_flatter_structured,
         &challenges_3_1, // for 1 projection type only
         &combination,
-        &qe,
+        &fe,
     );
 
     assert_eq!(

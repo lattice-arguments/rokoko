@@ -14,9 +14,7 @@ pub mod short_challenge;
 pub mod structured_row;
 pub mod sumcheck_element;
 use crate::common::{
-    arithmetic::{
-        HALF_WAY_MOD_Q, HALF_WAY_MOD_Q_RING_CF, ONE, ONE_QUAD, TWO, TWO_QUAD, ZERO, ZERO_QUAD,
-    },
+    arithmetic::{HALF_WAY_MOD_Q, HALF_WAY_MOD_Q_RING_CF, ONE, ONE_FE, TWO, TWO_FE, ZERO, ZERO_FE},
     ring_arithmetic::*,
 };
 
@@ -31,11 +29,11 @@ pub fn init_common() {
     LazyLock::force(&NORMALIZE_INCOMPLETE_NTT_FACTORS);
     LazyLock::force(&NORMALIZE_INCOMPLETE_NTT_FACTORS_INVERSE);
     LazyLock::force(&ONE);
-    LazyLock::force(&ONE_QUAD);
+    LazyLock::force(&ONE_FE);
     LazyLock::force(&ZERO);
-    LazyLock::force(&ZERO_QUAD);
+    LazyLock::force(&ZERO_FE);
     LazyLock::force(&TWO);
-    LazyLock::force(&TWO_QUAD);
+    LazyLock::force(&TWO_FE);
     LazyLock::force(&HALF_WAY_MOD_Q);
     LazyLock::force(&HALF_WAY_MOD_Q_RING_CF);
     LazyLock::force(&CONSTANT_TERM_FACTORS);

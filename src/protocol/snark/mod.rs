@@ -6,13 +6,13 @@ pub use crate::common::hash::HashWrapper as Transcript;
 pub use lowering::InitialSumcheckProof as ClaimsProof;
 pub use lowering::SnarkClaim as Claim;
 pub use lowering::{prove_claims, verify_claims, ChainInputs, ClaimExpr, WitnessShape};
-pub use lowering::{embed_qe, eq_layers_qe, qe_one_minus, tensor_at};
+pub use lowering::{embed_fe, eq_layers_fe, fe_one_minus, tensor_at};
 
 use lowering::{ClaimFactor, Coeffs, PublicFactor, SnarkClaim, Weights};
 
 use crate::common::config::MOD_Q;
 use crate::common::matrix::VerticallyAlignedMatrix;
-use crate::common::ring_arithmetic::{QuadraticExtension, Representation, RingElement};
+use crate::common::ring_arithmetic::{FieldExtension, Representation, RingElement};
 use crate::protocol::commitment::Prefix;
 use std::sync::Arc;
 
@@ -196,7 +196,7 @@ impl WitnessBuilder {
 #[derive(Clone)]
 pub enum Scalars {
     Ring(Arc<Vec<RingElement>>),
-    Field(Arc<Vec<QuadraticExtension>>),
+    Field(Arc<Vec<FieldExtension>>),
 }
 
 impl Scalars {
@@ -232,26 +232,26 @@ impl From<&Vec<RingElement>> for Scalars {
     }
 }
 
-impl From<Vec<QuadraticExtension>> for Scalars {
-    fn from(v: Vec<QuadraticExtension>) -> Scalars {
+impl From<Vec<FieldExtension>> for Scalars {
+    fn from(v: Vec<FieldExtension>) -> Scalars {
         Scalars::Field(Arc::new(v))
     }
 }
 
-impl From<Arc<Vec<QuadraticExtension>>> for Scalars {
-    fn from(v: Arc<Vec<QuadraticExtension>>) -> Scalars {
+impl From<Arc<Vec<FieldExtension>>> for Scalars {
+    fn from(v: Arc<Vec<FieldExtension>>) -> Scalars {
         Scalars::Field(v)
     }
 }
 
-impl From<&[QuadraticExtension]> for Scalars {
-    fn from(v: &[QuadraticExtension]) -> Scalars {
+impl From<&[FieldExtension]> for Scalars {
+    fn from(v: &[FieldExtension]) -> Scalars {
         Scalars::Field(Arc::new(v.to_vec()))
     }
 }
 
-impl From<&Vec<QuadraticExtension>> for Scalars {
-    fn from(v: &Vec<QuadraticExtension>) -> Scalars {
+impl From<&Vec<FieldExtension>> for Scalars {
+    fn from(v: &Vec<FieldExtension>) -> Scalars {
         Scalars::Field(Arc::new(v.clone()))
     }
 }
@@ -260,7 +260,7 @@ impl From<Vec<u64>> for Scalars {
     fn from(v: Vec<u64>) -> Scalars {
         Scalars::Field(Arc::new(
             v.into_iter()
-                .map(|x| QuadraticExtension {
+                .map(|x| FieldExtension {
                     coeffs: [x % MOD_Q, 0],
                 })
                 .collect(),
@@ -584,9 +584,9 @@ fn eval_public_at(pf: &PublicFactor, index: usize, total_vars: usize) -> RingEle
     match &pf.weights {
         Weights::Selector { .. } => unreachable!(),
         Weights::Dense(Coeffs::Ring(v)) => v[middle].clone(),
-        Weights::Dense(Coeffs::Field(v)) => lowering::embed_qe(&v[middle]),
+        Weights::Dense(Coeffs::Field(v)) => lowering::embed_fe(&v[middle]),
         Weights::Tensor(Coeffs::Field(layers)) => {
-            lowering::embed_qe(&lowering::tensor_at(layers, middle))
+            lowering::embed_fe(&lowering::tensor_at(layers, middle))
         }
         Weights::Tensor(Coeffs::Ring(layers)) => {
             let mut acc = one();
@@ -633,13 +633,13 @@ impl SnarkClaim {
 
 /// Transcript-drawn point, one coordinate per variable; both sides must draw
 /// at the same transcript state.
-pub fn challenge_point(transcript: &mut Transcript, num_vars: usize) -> Vec<QuadraticExtension> {
-    lowering::sample_qe_layers(transcript, num_vars)
+pub fn challenge_point(transcript: &mut Transcript, num_vars: usize) -> Vec<FieldExtension> {
+    lowering::sample_fe_layers(transcript, num_vars)
 }
 
 /// `sum_i eq(point, i) * values[i]`: the claim value both sides compute from
 /// public boundary data matching `eq(point) * witness_in(region)`.
-pub fn eq_weighted_sum(point: &[QuadraticExtension], values: &[RingElement]) -> RingElement {
+pub fn eq_weighted_sum(point: &[FieldExtension], values: &[RingElement]) -> RingElement {
     let expanded = lowering::expand_field_tensor(point);
     assert_eq!(
         expanded.len(),
