@@ -638,6 +638,56 @@ mod tests {
         round_trip(config);
     }
 
+    /// A coarse-projection round whose image leaves both i16 and the window of its two base-2^8
+    /// digits, as the height-8192 level of a two-opening chain does in a few proofs out of a
+    /// hundred: the round verifies only if the projection and the decomposition of the image both
+    /// stay exact.
+    #[test]
+    fn coarse_projection_past_i16_round_trip() {
+        use crate::protocol::config_generator::{
+            AuxProjection, AuxRecursionConfig, AuxSumcheckConfig,
+        };
+
+        init_common();
+
+        // The height-8192 level's recursions: base-2^7 commitments and base-2^8 projection
+        // digits, each ending in one base-2^5 tail.
+        let recursion = |decomposition_base_log, decomposition_chunks| AuxRecursionConfig {
+            decomposition_base_log,
+            decomposition_chunks,
+            rank: 2,
+            next: Some(Box::new(AuxRecursionConfig {
+                decomposition_base_log: 5,
+                decomposition_chunks: 11,
+                rank: 1,
+                next: None,
+            })),
+        };
+        let aux = AuxSumcheckConfig {
+            exact_projection_norm: false,
+            witness_height: 1024,
+            witness_width: 16,
+            projection_ratio: 4,
+            projection_height: 256,
+            basic_commitment_rank: 2,
+            nof_openings: 2,
+            commitment_recursion: recursion(7, 8),
+            opening_recursion: recursion(7, 8),
+            projection_recursion: AuxProjection::Coarse(recursion(8, 2)),
+            witness_decomposition_chunks: 2,
+            witness_decomposition_base_log: 15,
+            next: None,
+        };
+
+        let generated = aux.generate_config();
+        let config = match &generated {
+            crate::protocol::config::Config::Sumcheck(config) => config,
+            _ => panic!("expected a sumcheck config"),
+        };
+
+        round_trip(config);
+    }
+
     /// A component whose size is not a power of two occupies the blocks of its binary
     /// decomposition rather than one block of the next size up: three openings cost three
     /// opening rows, not four.

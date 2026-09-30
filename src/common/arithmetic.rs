@@ -21,10 +21,11 @@ pub static HALF_WAY_MOD_Q_RING_CF: LazyLock<RingElement> =
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 use std::arch::x86_64::{
-    __m128i, __m512i, _mm512_add_epi16, _mm512_cmpgt_epu64_mask, _mm512_cvtepi16_epi64,
-    _mm512_cvtepi64_epi16, _mm512_extracti32x4_epi32, _mm512_load_si512, _mm512_mask_add_epi64,
-    _mm512_mask_sub_epi64, _mm512_movepi64_mask, _mm512_set1_epi64, _mm512_setzero_si512,
-    _mm512_store_si512, _mm512_sub_epi16, _mm_store_si128,
+    __m128i, __m512i, _mm512_abs_epi16, _mm512_add_epi16, _mm512_add_epi32, _mm512_castsi512_si256,
+    _mm512_cmpgt_epu64_mask, _mm512_cvtepi16_epi32, _mm512_cvtepi32_epi64, _mm512_cvtepi64_epi16,
+    _mm512_extracti64x4_epi64, _mm512_load_si512, _mm512_mask_add_epi64, _mm512_mask_sub_epi64,
+    _mm512_max_epu16, _mm512_movepi64_mask, _mm512_set1_epi64, _mm512_setzero_si512,
+    _mm512_store_si512, _mm512_storeu_si512, _mm512_sub_epi16, _mm_store_si128,
 };
 
 #[inline(always)]
@@ -109,41 +110,29 @@ pub fn project_one_row_i16_to_u64<const DEGREE: usize>(
     }
 }
 
-// Centered i16 lanes -> canonical residues in [0, Q): sign-extend, add Q to negatives.
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-#[inline(always)]
-unsafe fn convert_i16x32_to_u64_mod_q(dst_u64: *mut u64, v16x32: __m512i) {
-    let q = _mm512_set1_epi64(MOD_Q as i64);
-    macro_rules! part {
-        ($p:literal) => {
-            let x = _mm512_extracti32x4_epi32::<$p>(v16x32);
-            let w = _mm512_cvtepi16_epi64(x);
-            let neg = _mm512_movepi64_mask(w);
-            let r = _mm512_mask_add_epi64(w, neg, w, q);
-            _mm512_store_si512(dst_u64.add($p * 8) as *mut __m512i, r);
-        };
-    }
-    part!(0);
-    part!(1);
-    part!(2);
-    part!(3);
-}
-
 // Computes out[row] = sum of witness elements listed in pos[row] minus those
-// in neg[row], coefficient-wise in i16, for one witness block.
+// in neg[row], coefficient-wise and exactly, for one witness block.
 //
 // The loop nest exists to keep the loads cache-hot (L1, spill L2, never L3):
 //   k    - one 32-lane (64 B) slice of the coefficients at a time. Each
 //          witness element is DEGREE / 32 such lines; a k-pass touches exactly one
 //          line per element.
-//   tile - the witness is walked in 256-element windows: 256 x 64 B = 16 KB,
-//          which stays L1-resident while...
+//   tile - the witness is walked in windows of at most 256 elements:
+//          256 x 64 B = 16 KB, which stays L1-resident while...
 //   row  - ...ALL output rows consume their entries falling inside the
 //          window. So a witness line is fetched from memory once per k and
 //          then reused ~H/2 times from L1.
 //
-// Because rows are revisited per tile, their partial sums cannot live in
-// registers; they live in `scratch` (H x 64 B = 16 KB, also L1-resident).
+// A row adds in i16. The adds wrap, but a partial sum over `run` tiles takes
+// at most `run * tile` entries, each at most `bound` in magnitude, and the two
+// are chosen so that this stays within i16: the partial is exact. Every `run`
+// tiles it is widened into the row's i32 sum and restarted. Nothing bounds the
+// row's whole sum by i16: a block of base-2^9 digits projects with a standard
+// deviation near 2^13, so coefficients past 2^15 do occur.
+//
+// Because rows are revisited per tile, their sums cannot live in registers;
+// the partials live in `scratch` (H x 64 B = 16 KB, also L1-resident) and the
+// widened sums in `wide` (H x 128 B), touched once per run.
 // The offset lists are sorted, so `pos_cur`/`neg_cur` remember per row how
 // far its list has been consumed; the next tile continues from there, and
 // "entry belongs to this tile" is a single compare against the tile's end.
@@ -162,6 +151,10 @@ pub fn project_rows_sparse_tiled<const DEGREE: usize>(
     #[derive(Clone, Copy)]
     struct Acc([i16; 32]);
 
+    #[repr(align(64))]
+    #[derive(Clone, Copy)]
+    struct Wide([i32; 32]);
+
     debug_assert!(DEGREE % 32 == 0);
     let h = out.len();
     debug_assert_eq!(pos_bounds.len(), h + 1);
@@ -169,7 +162,23 @@ pub fn project_rows_sparse_tiled<const DEGREE: usize>(
     let row_len = subwitness_i16.len();
     let elem_bytes = core::mem::size_of::<Signed16RingElement>();
 
+    let bound = max_abs_i16(subwitness_i16);
+    if bound > i16::MAX as usize {
+        // An i16::MIN digit negates out of i16 on its own; no partial is exact.
+        project_rows_scalar(subwitness_i16, pos, pos_bounds, neg, neg_bounds, out);
+        return;
+    }
+    assert!(
+        row_len * bound <= i32::MAX as usize,
+        "a {row_len}-element block of digits up to {bound} overflows the i32 row sums"
+    );
+    // Entries a partial may take, split into `run` tiles of `tile` elements.
+    let limit = i16::MAX as usize / bound.max(1);
+    let tile = limit.min(TILE);
+    let run = limit / tile;
+
     let mut scratch = vec![Acc([0i16; 32]); h];
+    let mut wide = vec![Wide([0i32; 32]); h];
     let mut pos_cur = vec![0usize; h];
     let mut neg_cur = vec![0usize; h];
 
@@ -181,24 +190,29 @@ pub fn project_rows_sparse_tiled<const DEGREE: usize>(
             // `chunk` (base shifted to this k-slice) addresses the element's
             // k-th line directly.
             let chunk = base.add(k * 64);
-            // Fresh coefficient slice: clear the partial sums, rewind every
-            // row's cursor to the start of its list.
-            scratch.fill(Acc([0i16; 32]));
+            // Fresh coefficient slice: clear the sums, rewind every row's
+            // cursor to the start of its list.
+            wide.fill(Wide([0i32; 32]));
             pos_cur.copy_from_slice(&pos_bounds[..h]);
             neg_cur.copy_from_slice(&neg_bounds[..h]);
 
             let mut tile_start = 0usize;
+            let mut tile_index = 0usize;
             while tile_start < row_len {
                 // Tile boundary in the same units as the list entries (bytes).
-                let tile_end = ((tile_start + TILE).min(row_len) * elem_bytes) as u32;
+                let tile_end = ((tile_start + tile).min(row_len) * elem_bytes) as u32;
+                let opens = tile_index % run == 0;
+                let closes = tile_index % run == run - 1 || tile_start + tile >= row_len;
                 for row in 0..h {
                     // Two independent accumulators so the adds and the
                     // subtracts form separate dependency chains: a0 continues
-                    // this row's running sum, a1 collects the negatives, and
-                    // a0 - a1 is stored back. i16 adds wrap mod 2^16, which
-                    // is exact as long as the true sum fits i16 (the norm
-                    // bounds guarantee that; debug-decomp checks it).
-                    let mut a0 = _mm512_load_si512(scratch[row].0.as_ptr() as *const __m512i);
+                    // this row's partial, a1 collects the negatives, and
+                    // a0 - a1 is the partial after this tile.
+                    let mut a0 = if opens {
+                        _mm512_setzero_si512()
+                    } else {
+                        _mm512_load_si512(scratch[row].0.as_ptr() as *const __m512i)
+                    };
                     let mut a1 = _mm512_setzero_si512();
 
                     // Consume this row's +1 entries that fall inside the
@@ -233,22 +247,106 @@ pub fn project_rows_sparse_tiled<const DEGREE: usize>(
                     }
                     *neg_cur.get_unchecked_mut(row) = i;
 
-                    _mm512_store_si512(
-                        scratch[row].0.as_mut_ptr() as *mut __m512i,
-                        _mm512_sub_epi16(a0, a1),
-                    );
+                    let partial = _mm512_sub_epi16(a0, a1);
+                    if closes {
+                        widen_into(wide[row].0.as_mut_ptr(), partial);
+                    } else {
+                        _mm512_store_si512(scratch[row].0.as_mut_ptr() as *mut __m512i, partial);
+                    }
                 }
-                tile_start += TILE;
+                tile_start += tile;
+                tile_index += 1;
             }
 
-            // All tiles done: scratch holds the finished centered i16 sums
-            // for this coefficient slice; lift them to residues in [0, Q)
-            // and write them into the output elements.
+            // All tiles done: `wide` holds the finished sums for this
+            // coefficient slice. Lift them to residues in [0, Q) and write
+            // them into the output elements.
             for row in 0..h {
-                let acc = _mm512_load_si512(scratch[row].0.as_ptr() as *const __m512i);
-                convert_i16x32_to_u64_mod_q(out[row].v.as_mut_ptr().add(k * 32), acc);
+                let acc = wide[row].0.as_ptr() as *const __m512i;
+                let dst = out[row].v.as_mut_ptr().add(k * 32);
+                convert_i32x16_to_u64_mod_q(dst, _mm512_load_si512(acc));
+                convert_i32x16_to_u64_mod_q(dst.add(16), _mm512_load_si512(acc.add(1)));
             }
         }
+    }
+}
+
+/// `acc[lane] += partial[lane]` over 32 lanes, `acc` as i32.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[inline(always)]
+unsafe fn widen_into(acc: *mut i32, partial: __m512i) {
+    let acc = acc as *mut __m512i;
+    let lo = _mm512_cvtepi16_epi32(_mm512_castsi512_si256(partial));
+    let hi = _mm512_cvtepi16_epi32(_mm512_extracti64x4_epi64::<1>(partial));
+    _mm512_store_si512(acc, _mm512_add_epi32(_mm512_load_si512(acc), lo));
+    _mm512_store_si512(
+        acc.add(1),
+        _mm512_add_epi32(_mm512_load_si512(acc.add(1)), hi),
+    );
+}
+
+/// The largest `|x|` over every coefficient of `block`, as the unsigned magnitude (so `i16::MIN`
+/// reads as `2^15`).
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+fn max_abs_i16(block: &[Signed16RingElement]) -> usize {
+    unsafe {
+        let mut m = _mm512_setzero_si512();
+        for element in block {
+            for k in 0..DEGREE / 32 {
+                let line = _mm512_load_si512(element.0.as_ptr().add(k * 32) as *const __m512i);
+                m = _mm512_max_epu16(m, _mm512_abs_epi16(line));
+            }
+        }
+        let mut lanes = [0u16; 32];
+        _mm512_storeu_si512(lanes.as_mut_ptr() as *mut __m512i, m);
+        lanes.into_iter().max().unwrap_or(0) as usize
+    }
+}
+
+/// `project_rows_sparse_tiled` one coefficient at a time in i64, for blocks the tiled kernel
+/// cannot sum exactly.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+fn project_rows_scalar(
+    subwitness_i16: &[Signed16RingElement],
+    pos: &[u32],
+    pos_bounds: &[usize],
+    neg: &[u32],
+    neg_bounds: &[usize],
+    out: &mut [RingElement],
+) {
+    let elem_bytes = core::mem::size_of::<Signed16RingElement>();
+    for (row, out) in out.iter_mut().enumerate() {
+        let mut acc = [0i64; DEGREE];
+        for (list, bounds, sign) in [(pos, pos_bounds, 1i64), (neg, neg_bounds, -1i64)] {
+            for &offset in &list[bounds[row]..bounds[row + 1]] {
+                let element = &subwitness_i16[offset as usize / elem_bytes].0;
+                for (a, &x) in acc.iter_mut().zip(element.iter()) {
+                    *a += sign * x as i64;
+                }
+            }
+        }
+        for (dst, &a) in out.v.iter_mut().zip(acc.iter()) {
+            *dst = a.rem_euclid(MOD_Q as i64) as u64;
+        }
+    }
+}
+
+// Centered i32 lanes -> canonical residues in [0, Q): sign-extend, add Q to negatives.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[inline(always)]
+unsafe fn convert_i32x16_to_u64_mod_q(dst_u64: *mut u64, v32x16: __m512i) {
+    let q = _mm512_set1_epi64(MOD_Q as i64);
+    for (half, x) in [
+        _mm512_castsi512_si256(v32x16),
+        _mm512_extracti64x4_epi64::<1>(v32x16),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let w = _mm512_cvtepi32_epi64(x);
+        let neg = _mm512_movepi64_mask(w);
+        let r = _mm512_mask_add_epi64(w, neg, w, q);
+        _mm512_store_si512(dst_u64.add(half * 8) as *mut __m512i, r);
     }
 }
 

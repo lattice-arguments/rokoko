@@ -325,6 +325,75 @@ mod tests {
         assert_eq!(reference.data, image.data);
     }
 
+    /// A column of base-2^9 digits, like the one that carries the previous level's projection at
+    /// the height-8192 level of a two-opening chain, projects past i16 in some coefficient.
+    #[test]
+    fn projection_is_exact_past_i16() {
+        crate::common::init_common();
+        let mut projection_matrix = ProjectionMatrix::new(32, 256);
+        projection_matrix.sample(&mut HashWrapper::new());
+
+        let height = 8192;
+        let witness = VerticallyAlignedMatrix {
+            data: (0..height)
+                .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 257))
+                .collect(),
+            width: 1,
+            height,
+            used_cols: 1,
+        };
+
+        let reference = project_ring(&witness, &projection_matrix);
+        let past_i16 = reference.data.iter().any(|element| {
+            let mut element = element.clone();
+            element.from_incomplete_ntt_to_strided_coefficients();
+            element
+                .v
+                .iter()
+                .any(|&c| c.min(MOD_Q - c) > i16::MAX as u64)
+        });
+        assert!(past_i16, "no coefficient of the image leaves i16");
+
+        let image = project(&prepare_i16_witness(&witness), &projection_matrix);
+        assert_eq!(image.data, reference.data);
+    }
+
+    /// A digit at `i16::MIN` leaves i16 as soon as a row subtracts it.
+    #[test]
+    fn projection_is_exact_with_an_i16_min_digit() {
+        crate::common::init_common();
+        let mut rows = vec![vec![0i8; 512]; 256];
+        rows[0][0] = -1;
+        rows[1][0] = 1;
+        rows[1][1] = 1;
+        rows[2][0] = -1;
+        rows[2][1] = 1;
+        let projection_matrix = ProjectionMatrix::from_i8(rows);
+
+        let all = |x: i64| {
+            let mut element = RingElement::all(
+                x.rem_euclid(MOD_Q as i64) as u64,
+                Representation::Coefficients,
+            );
+            element.to_representation(Representation::IncompleteNTT);
+            element
+        };
+        let mut data = vec![RingElement::zero(Representation::IncompleteNTT); 512];
+        data[0] = all(i16::MIN as i64);
+        data[1] = all(i16::MAX as i64);
+        let witness = VerticallyAlignedMatrix {
+            data,
+            width: 1,
+            height: 512,
+            used_cols: 1,
+        };
+
+        let image = project(&prepare_i16_witness(&witness), &projection_matrix);
+        assert_eq!(image.data, project_ring(&witness, &projection_matrix).data);
+        assert_eq!(image.data[0], all(1 << 15));
+        assert_eq!(image.data[2], all((1 << 16) - 1));
+    }
+
     #[test]
     fn test_projection() {
         let projection_height = 256;
