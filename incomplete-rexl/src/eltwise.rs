@@ -1,4 +1,5 @@
 use crate::cpu_features::{HAS_AVX512DQ, HAS_AVX512IFMA};
+use crate::ntt::{Ifma52, Ntt};
 use crate::util::{log2, maximum_value, multiply_u64_full};
 use crate::number_theory::{
     add_uint_mod, barrett_reduce64, multiply_mod_precon, reduce_mod, MultiplyFactor,
@@ -1490,11 +1491,12 @@ pub(crate) fn fused_slot4_mult_inner(
     result: &mut [u64],
     operand1: &[u64],
     operand2: &[u64],
-    zetas: &[u64],
-    zetas_f64: &[f64],
+    ntt: &Ntt,
     n: usize,
     modulus: u64,
 ) {
+    let zetas = ntt.shift_factors();
+    let zetas_f64 = ntt.shift_factors_f64();
     debug_assert!(n % 8 == 0);
     debug_assert!(result.len() >= 4 * n);
     debug_assert!(operand1.len() >= 4 * n);
@@ -1504,6 +1506,20 @@ pub(crate) fn fused_slot4_mult_inner(
 
     #[cfg(target_arch = "x86_64")]
     {
+        if let (true, Some(ifma)) = (*HAS_AVX512IFMA, ntt.ifma52()) {
+            unsafe {
+                fused_slot4_mult_avx512_ifma(
+                    result,
+                    operand1,
+                    operand2,
+                    zetas,
+                    ntt.shift_factors_precon52(),
+                    n,
+                    ifma,
+                );
+                return;
+            }
+        }
         if *HAS_AVX512DQ && modulus < (1u64 << 50) {
             unsafe {
                 fused_slot4_mult_avx512_float(result, operand1, operand2, zetas_f64, n, modulus);
@@ -1686,6 +1702,108 @@ pub(crate) unsafe fn fused_slot4_mult_avx512_float(
         store!(n + i, reduce!(c1));
         store!(2 * n + i, reduce!(c2));
         store!(3 * n + i, reduce!(c3));
+
+        i += 8;
+    }
+}
+
+// With `B_{-m} = zeta b_{4-m}` reduced to [0, 2p), `c_k = sum_j a_j B_{k-j}` is below 2^103 and
+// accumulates exactly in 52-bit halves `L + 2^52 H`. A Montgomery step leaves `c_k 2^-52` in
+// (-p, 2^51), and a Shoup multiplication by `2^52 mod p` restores `c_k` in [0, 2p).
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512ifma")]
+#[inline]
+pub(crate) unsafe fn fused_slot4_mult_avx512_ifma(
+    result: &mut [u64],
+    operand1: &[u64],
+    operand2: &[u64],
+    zetas: &[u64],
+    zetas_precon: &[u64],
+    n: usize,
+    ifma: &Ifma52,
+) {
+    let v_p = _mm512_set1_epi64(ifma.p as i64);
+    let v_p_inv = _mm512_set1_epi64(ifma.p_inv as i64);
+    let v_r = _mm512_set1_epi64(ifma.r as i64);
+    let v_r_precon = _mm512_set1_epi64(ifma.r_precon as i64);
+    let v_mask = _mm512_set1_epi64((1i64 << 52) - 1);
+    let zero = _mm512_setzero_si512();
+
+    let op1 = operand1.as_ptr();
+    let op2 = operand2.as_ptr();
+    let res = result.as_mut_ptr();
+
+    macro_rules! load {
+        ($ptr:expr, $offset:expr) => {
+            _mm512_loadu_si512($ptr.add($offset) as *const __m512i)
+        };
+    }
+
+    // `x w mod p` in [0, 2p) for x < 2^52.
+    macro_rules! shoup {
+        ($x:expr, $w:expr, $w_precon:expr) => {{
+            let x = $x;
+            let q = _mm512_madd52hi_epu64(zero, x, $w_precon);
+            let d = _mm512_sub_epi64(
+                _mm512_madd52lo_epu64(zero, x, $w),
+                _mm512_madd52lo_epu64(zero, q, v_p),
+            );
+            _mm512_and_si512(d, v_mask)
+        }};
+    }
+
+    macro_rules! dot {
+        ($(($x:expr, $y:expr)),+) => {{
+            let (mut lo, mut hi) = (zero, zero);
+            $(
+                lo = _mm512_madd52lo_epu64(lo, $x, $y);
+                hi = _mm512_madd52hi_epu64(hi, $x, $y);
+            )+
+            (lo, hi)
+        }};
+    }
+
+    macro_rules! reduce {
+        ($lo_hi:expr) => {{
+            let (lo, hi) = $lo_hi;
+            let m = _mm512_madd52lo_epu64(zero, lo, v_p_inv);
+            let t = _mm512_sub_epi64(
+                _mm512_add_epi64(hi, _mm512_srli_epi64(lo, 52)),
+                _mm512_madd52hi_epu64(zero, m, v_p),
+            );
+            let s = shoup!(_mm512_add_epi64(t, v_p), v_r, v_r_precon);
+            _mm512_min_epu64(s, _mm512_sub_epi64(s, v_p))
+        }};
+    }
+
+    let mut i = 0usize;
+    while i < n {
+        let (a0, a1, a2, a3) = (
+            load!(op1, i),
+            load!(op1, n + i),
+            load!(op1, 2 * n + i),
+            load!(op1, 3 * n + i),
+        );
+        let (b0, b1, b2, b3) = (
+            load!(op2, i),
+            load!(op2, n + i),
+            load!(op2, 2 * n + i),
+            load!(op2, 3 * n + i),
+        );
+        let z = load!(zetas.as_ptr(), i);
+        let z_precon = load!(zetas_precon.as_ptr(), i);
+        let t1 = shoup!(b1, z, z_precon);
+        let t2 = shoup!(b2, z, z_precon);
+        let t3 = shoup!(b3, z, z_precon);
+
+        let c0 = reduce!(dot!((a0, b0), (a1, t3), (a2, t2), (a3, t1)));
+        let c1 = reduce!(dot!((a0, b1), (a1, b0), (a2, t3), (a3, t2)));
+        let c2 = reduce!(dot!((a0, b2), (a1, b1), (a2, b0), (a3, t3)));
+        let c3 = reduce!(dot!((a0, b3), (a1, b2), (a2, b1), (a3, b0)));
+        _mm512_storeu_si512(res.add(i) as *mut __m512i, c0);
+        _mm512_storeu_si512(res.add(n + i) as *mut __m512i, c1);
+        _mm512_storeu_si512(res.add(2 * n + i) as *mut __m512i, c2);
+        _mm512_storeu_si512(res.add(3 * n + i) as *mut __m512i, c3);
 
         i += 8;
     }
@@ -2075,6 +2193,63 @@ mod slot_tests {
             }
         }
         c
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_slot4_ifma_matches_schoolbook() {
+        if !*HAS_AVX512IFMA {
+            return;
+        }
+        let n = 1 << 13;
+        let moduli = [
+            1125899906842177u64,
+            1125899906839937,
+            (1 << 50) - 1,
+            (1 << 50) - 3,
+            (1 << 49) + 1,
+            (1 << 49) + 3,
+        ];
+        for modulus in moduli {
+            let ifma = Ifma52::new(modulus).unwrap();
+            for seed in 0..6u64 {
+                let (op1, op2, zetas) = match seed % 3 {
+                    0 => (
+                        xorshift_vec(4 * n, modulus, 0x5000 + seed),
+                        xorshift_vec(4 * n, modulus, 0x6000 + seed),
+                        xorshift_vec(n, modulus, 0x7000 + seed),
+                    ),
+                    1 => (
+                        edge_vec(4 * n, modulus, 0x5000 + seed),
+                        edge_vec(4 * n, modulus, 0x6000 + seed),
+                        edge_vec(n, modulus, 0x7000 + seed),
+                    ),
+                    _ => (
+                        vec![modulus - 1; 4 * n],
+                        edge_vec(4 * n, modulus, 0x6000 + seed),
+                        vec![modulus - 1; n],
+                    ),
+                };
+                let precon: Vec<u64> = zetas
+                    .iter()
+                    .map(|&z| MultiplyFactor::new(z, 52, modulus).barrett_factor())
+                    .collect();
+                let expected = slot4_schoolbook(&op1, &op2, &zetas, n, modulus);
+                let mut ifma_result = vec![0u64; 4 * n];
+                unsafe {
+                    fused_slot4_mult_avx512_ifma(
+                        &mut ifma_result,
+                        &op1,
+                        &op2,
+                        &zetas,
+                        &precon,
+                        n,
+                        &ifma,
+                    );
+                }
+                assert!(ifma_result == expected, "ifma m={modulus} seed={seed}");
+            }
+        }
     }
 
     #[test]

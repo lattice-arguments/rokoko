@@ -316,15 +316,7 @@ pub fn fused_slot_mult(
         _ => {
             let n = ring_degree / 4;
             with_ntt(n, modulus, |ntt| {
-                eltwise::fused_slot4_mult_inner(
-                    result,
-                    operand1,
-                    operand2,
-                    ntt.shift_factors(),
-                    ntt.shift_factors_f64(),
-                    n,
-                    modulus,
-                );
+                eltwise::fused_slot4_mult_inner(result, operand1, operand2, ntt, n, modulus);
             });
         }
     }

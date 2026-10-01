@@ -42,6 +42,39 @@ pub struct Ntt {
     shift_factors: Vec<u64>,
     /// Same as `shift_factors` but pre-cast to f64 and 64-byte aligned for AVX-512.
     shift_factors_f64: AlignedVecF64,
+    /// `floor(shift_factors[i] * 2^52 / modulus)`, for the IFMA slot product.
+    shift_factors_precon52: AlignedVecU64,
+    ifma52: Option<Ifma52>,
+}
+
+/// Constants of the 52-bit IFMA reductions modulo `p`, `2^49 < p < 2^50`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Ifma52 {
+    pub p: u64,
+    /// `p^-1 mod 2^52`.
+    pub p_inv: u64,
+    /// `2^52 mod p` and `floor((2^52 mod p) 2^52 / p)`.
+    pub r: u64,
+    pub r_precon: u64,
+}
+
+impl Ifma52 {
+    pub fn new(p: u64) -> Option<Self> {
+        if !(p > 1 << 49 && p < 1 << 50) {
+            return None;
+        }
+        let mut p_inv = p;
+        for _ in 0..6 {
+            p_inv = p_inv.wrapping_mul(2u64.wrapping_sub(p.wrapping_mul(p_inv)));
+        }
+        let r = ((1u128 << 52) % p as u128) as u64;
+        Some(Self {
+            p,
+            p_inv: p_inv & ((1 << 52) - 1),
+            r,
+            r_precon: MultiplyFactor::new(r, 52, p).barrett_factor(),
+        })
+    }
 }
 
 impl Ntt {
@@ -84,6 +117,8 @@ impl Ntt {
             inv_root_of_unity_powers: Vec::new(),
             shift_factors: Vec::new(),
             shift_factors_f64: AlignedVecF64::default(),
+            shift_factors_precon52: AlignedVecU64::default(),
+            ifma52: Ifma52::new(modulus),
         };
         ntt.compute_root_of_unity_powers();
         ntt
@@ -141,6 +176,14 @@ impl Ntt {
     /// Shift factors as 64-byte-aligned f64 slice for the AVX-512 float kernel.
     pub fn shift_factors_f64(&self) -> &[f64] {
         self.shift_factors_f64.as_slice()
+    }
+
+    pub fn shift_factors_precon52(&self) -> &[u64] {
+        self.shift_factors_precon52.as_slice()
+    }
+
+    pub(crate) fn ifma52(&self) -> Option<&Ifma52> {
+        self.ifma52.as_ref()
     }
 
     pub fn compute_forward(
@@ -444,6 +487,9 @@ impl Ntt {
         // Pre-cast to aligned f64 for the AVX-512 float path.
         let sf_f64: Vec<f64> = sf.iter().map(|&v| v as f64).collect();
         self.shift_factors_f64 = AlignedVecF64::from_vec(sf_f64);
+        if self.ifma52.is_some() {
+            self.shift_factors_precon52 = AlignedVecU64::from_vec(compute_barrett_vector(&sf, 52));
+        }
         self.shift_factors = sf;
     }
 }
