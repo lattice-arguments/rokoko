@@ -875,6 +875,8 @@ pub fn incomplete_ntt_multiplication_in_place(result: &mut RingElement, operand:
     }
 }
 
+static SLOT_RING: LazyLock<SlotRing> = LazyLock::new(|| SlotRing::new(DEGREE, MOD_Q));
+
 /// Slot-wise product modulo `X^D - zeta_i` of two IncompleteNTT elements.
 #[inline(always)]
 unsafe fn slot_mult(result: *mut u64, operand1: *const u64, operand2: *const u64) {
@@ -888,7 +890,42 @@ unsafe fn slot_mult(result: *mut u64, operand1: *const u64, operand2: *const u64
             MOD_Q,
         );
     } else {
-        fused_slot_mult(result, operand1, operand2, DEGREE, MOD_Q);
+        SLOT_RING.mult(result, operand1, operand2);
+    }
+}
+
+/// `acc += sum_{k < count} a[k a_step] b[k b_step]` over IncompleteNTT elements.
+pub fn incomplete_ntt_dot_into(
+    acc: &mut RingElement,
+    a: &[RingElement],
+    a_step: usize,
+    b: &[RingElement],
+    b_step: usize,
+    count: usize,
+) {
+    if count == 0 {
+        return;
+    }
+    assert!((count - 1) * a_step < a.len() && (count - 1) * b_step < b.len());
+    if SLOT_DEGREE == 2 {
+        let mut temp = RingElement::zero(Representation::IncompleteNTT);
+        for k in 0..count {
+            incomplete_ntt_multiplication(&mut temp, &a[k * a_step], &b[k * b_step]);
+            *acc += &temp;
+        }
+        return;
+    }
+    let stride = std::mem::size_of::<RingElement>() / std::mem::size_of::<u64>();
+    unsafe {
+        SLOT_RING.dot(
+            acc.v.as_mut_ptr(),
+            a.as_ptr() as *const u64,
+            a_step * stride,
+            b.as_ptr() as *const u64,
+            b_step * stride,
+            count,
+            true,
+        );
     }
 }
 

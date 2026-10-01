@@ -7,7 +7,7 @@ use crate::{
     common::{
         decomposition::decompose_chunks_into,
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
-        ring_arithmetic::{Representation, RingElement},
+        ring_arithmetic::{incomplete_ntt_dot_into, Representation, RingElement},
     },
     protocol::{
         crs::{CK, CRS},
@@ -132,11 +132,8 @@ fn accumulate_rows(
 }
 
 fn inner_product_into(acc: &mut RingElement, ck_row: &[RingElement], operand: &[RingElement]) {
-    let mut temp = RingElement::zero(Representation::IncompleteNTT);
-    for (elem, op_elem) in ck_row.iter().zip(operand.iter()) {
-        temp *= (elem, op_elem);
-        *acc += &temp;
-    }
+    let count = ck_row.len().min(operand.len());
+    incomplete_ntt_dot_into(acc, ck_row, 1, operand, 1, count);
 }
 
 

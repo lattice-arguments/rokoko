@@ -514,6 +514,63 @@ fn test_fused_slot_mult_edge_values() {
 }
 
 #[test]
+fn test_slot_ring_matches_fused_slot_mult() {
+    for (ring_degree, modulus, _, _) in SLOT_CASES {
+        let ring = SlotRing::new(ring_degree, modulus);
+        let stride = ring_degree + 8;
+        for count in [1usize, 5, 1100] {
+            let a: Vec<u64> = (0..count * stride)
+                .map(|i| {
+                    if count == 5 {
+                        modulus - 1
+                    } else {
+                        (i as u64 * 0x9e37_79b9_7f4a_7c15) % modulus
+                    }
+                })
+                .collect();
+            let b: Vec<u64> = (0..count * stride)
+                .map(|i| {
+                    if count == 5 {
+                        modulus - 1
+                    } else {
+                        (i as u64 * 0xc2b2_ae3d_27d4_eb4f) % modulus
+                    }
+                })
+                .collect();
+            let initial = random_vec(ring_degree, modulus);
+            let mut expected = initial.clone();
+            let mut product = vec![0u64; ring_degree];
+            for k in 0..count {
+                let (x, y) = (&a[k * stride..], &b[k * stride..]);
+                fused_slot_mult(&mut product, x, y, ring_degree, modulus);
+                let mut via_ring = vec![0u64; ring_degree];
+                unsafe { ring.mult(via_ring.as_mut_ptr(), x.as_ptr(), y.as_ptr()) };
+                assert!(via_ring == product, "mult N={ring_degree} q={modulus}");
+                for (e, p) in expected.iter_mut().zip(&product) {
+                    *e = add_mod(*e, *p, modulus);
+                }
+            }
+            let mut dot = initial.clone();
+            unsafe {
+                ring.dot(
+                    dot.as_mut_ptr(),
+                    a.as_ptr(),
+                    stride,
+                    b.as_ptr(),
+                    stride,
+                    count,
+                    true,
+                )
+            };
+            assert!(
+                dot == expected,
+                "dot N={ring_degree} q={modulus} count={count}"
+            );
+        }
+    }
+}
+
+#[test]
 fn test_fused_slot_mult_degree2_matches_even_odd() {
     for (ring_degree, modulus, _, d) in SLOT_CASES {
         if d != 2 {

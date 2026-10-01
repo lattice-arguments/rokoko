@@ -1,6 +1,7 @@
 use crate::common::{
+    config::SLOT_DEGREE,
     matrix::VerticallyAlignedMatrix,
-    ring_arithmetic::{Representation, RingElement},
+    ring_arithmetic::{incomplete_ntt_dot_into, Representation, RingElement},
 };
 
 pub fn fold(
@@ -15,6 +16,20 @@ pub fn fold(
     };
 
     debug_assert_eq!(witness.width, fold_challenge.len());
+
+    if SLOT_DEGREE == 4 {
+        for row in 0..folded_witness.height {
+            incomplete_ntt_dot_into(
+                &mut folded_witness[(row, 0)],
+                fold_challenge,
+                1,
+                &witness.data[row..],
+                witness.height,
+                witness.used_cols,
+            );
+        }
+        return folded_witness;
+    }
 
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
     for col in 0..witness.used_cols {

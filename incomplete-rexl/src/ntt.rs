@@ -53,9 +53,11 @@ pub(crate) struct Ifma52 {
     pub p: u64,
     /// `p^-1 mod 2^52`.
     pub p_inv: u64,
-    /// `2^52 mod p` and `floor((2^52 mod p) 2^52 / p)`.
+    /// `2^52 mod p`, `2^104 mod p` and their `floor(r 2^52 / p)`.
     pub r: u64,
     pub r_precon: u64,
+    pub r2: u64,
+    pub r2_precon: u64,
 }
 
 impl Ifma52 {
@@ -68,11 +70,14 @@ impl Ifma52 {
             p_inv = p_inv.wrapping_mul(2u64.wrapping_sub(p.wrapping_mul(p_inv)));
         }
         let r = ((1u128 << 52) % p as u128) as u64;
+        let r2 = ((r as u128 * r as u128) % p as u128) as u64;
         Some(Self {
             p,
             p_inv: p_inv & ((1 << 52) - 1),
             r,
             r_precon: MultiplyFactor::new(r, 52, p).barrett_factor(),
+            r2,
+            r2_precon: MultiplyFactor::new(r2, 52, p).barrett_factor(),
         })
     }
 }

@@ -321,3 +321,112 @@ pub fn fused_slot_mult(
         }
     }
 }
+
+/// [`fused_slot_mult`] for one `(N, q)`, with the tables and kernel looked up once.
+pub struct SlotRing {
+    ntt: Arc<ntt::Ntt>,
+    ring_degree: usize,
+    slot_degree: usize,
+    modulus: u64,
+    ifma: bool,
+}
+
+impl SlotRing {
+    pub fn new(ring_degree: usize, modulus: u64) -> Self {
+        let slot_degree = supported_slot_degree(ring_degree, modulus);
+        let n = ring_degree / slot_degree;
+        assert!(n % 8 == 0, "N/d = {n} is not divisible by 8");
+        let ntt = get_ntt(n, modulus);
+        #[cfg(target_arch = "x86_64")]
+        let ifma = slot_degree == 4 && *cpu_features::HAS_AVX512IFMA && ntt.ifma52().is_some();
+        #[cfg(not(target_arch = "x86_64"))]
+        let ifma = false;
+        Self {
+            ntt,
+            ring_degree,
+            slot_degree,
+            modulus,
+            ifma,
+        }
+    }
+
+    /// `result` may alias `op1`.
+    #[inline]
+    pub unsafe fn mult(&self, result: *mut u64, op1: *const u64, op2: *const u64) {
+        let n = self.ring_degree / self.slot_degree;
+        let result = std::slice::from_raw_parts_mut(result, self.ring_degree);
+        let op1 = std::slice::from_raw_parts(op1, self.ring_degree);
+        let op2 = std::slice::from_raw_parts(op2, self.ring_degree);
+        #[cfg(target_arch = "x86_64")]
+        if self.ifma {
+            eltwise::fused_slot4_mult_avx512_ifma(
+                result,
+                op1,
+                op2,
+                self.ntt.shift_factors(),
+                self.ntt.shift_factors_precon52(),
+                n,
+                self.ntt.ifma52().unwrap_unchecked(),
+            );
+            return;
+        }
+        match self.slot_degree {
+            2 => fused_incomplete_ntt_mult_inner(
+                result,
+                op1,
+                op2,
+                self.ntt.shift_factors(),
+                self.ntt.shift_factors_f64(),
+                n,
+                self.modulus,
+            ),
+            _ => eltwise::fused_slot4_mult_inner(result, op1, op2, &self.ntt, n, self.modulus),
+        }
+    }
+
+    /// `result (+)= sum_k (op1 + k stride1) (op2 + k stride2)`, strides in u64s; `result` must
+    /// not overlap the operands.
+    pub unsafe fn dot(
+        &self,
+        result: *mut u64,
+        op1: *const u64,
+        stride1: usize,
+        op2: *const u64,
+        stride2: usize,
+        count: usize,
+        accumulate: bool,
+    ) {
+        #[cfg(target_arch = "x86_64")]
+        if self.ifma {
+            eltwise::slot4_dot_avx512_ifma(
+                result,
+                op1,
+                stride1,
+                op2,
+                stride2,
+                count,
+                accumulate,
+                self.ntt.shift_factors(),
+                self.ntt.shift_factors_precon52(),
+                self.ring_degree / 4,
+                self.ntt.ifma52().unwrap_unchecked(),
+            );
+            return;
+        }
+        let result = std::slice::from_raw_parts_mut(result, self.ring_degree);
+        if !accumulate {
+            result.fill(0);
+        }
+        let mut product = vec![0u64; self.ring_degree];
+        for k in 0..count {
+            self.mult(
+                product.as_mut_ptr(),
+                op1.add(k * stride1),
+                op2.add(k * stride2),
+            );
+            for (r, &x) in result.iter_mut().zip(&product) {
+                *r = add_uint_mod(*r, x, self.modulus);
+            }
+        }
+    }
+}
