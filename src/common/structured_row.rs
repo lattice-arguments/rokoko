@@ -68,11 +68,9 @@ impl<E: SumcheckElement> PreprocessedRow<E> {
             for r in &mut result {
                 let mut product = E::zero();
                 product *= (&*r, layer);
+                // r (1 - layer)
+                *r -= &product;
                 new_entries.push(product);
-
-                let mut one_minus_layer = E::one();
-                one_minus_layer -= layer;
-                *r *= &one_minus_layer;
             }
             for e in new_entries {
                 result.push(e);
