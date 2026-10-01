@@ -166,9 +166,17 @@ impl RingElement {
             "Already in Incomplete NTT representation"
         );
 
-        for part in 0..SLOT_DEGREE {
-            unsafe {
-                ntt_forward_in_place(self.v.as_mut_ptr().add(part * NUM_SLOTS), NUM_SLOTS, MOD_Q);
+        if SLOT_DEGREE == 4 {
+            SLOT_RING.ntt_forward(&mut self.v);
+        } else {
+            for part in 0..SLOT_DEGREE {
+                unsafe {
+                    ntt_forward_in_place(
+                        self.v.as_mut_ptr().add(part * NUM_SLOTS),
+                        NUM_SLOTS,
+                        MOD_Q,
+                    );
+                }
             }
         }
 
@@ -181,9 +189,17 @@ impl RingElement {
             "Not in Incomplete NTT representation"
         );
 
-        for part in 0..SLOT_DEGREE {
-            unsafe {
-                ntt_inverse_in_place(self.v.as_mut_ptr().add(part * NUM_SLOTS), NUM_SLOTS, MOD_Q);
+        if SLOT_DEGREE == 4 {
+            SLOT_RING.ntt_inverse(&mut self.v);
+        } else {
+            for part in 0..SLOT_DEGREE {
+                unsafe {
+                    ntt_inverse_in_place(
+                        self.v.as_mut_ptr().add(part * NUM_SLOTS),
+                        NUM_SLOTS,
+                        MOD_Q,
+                    );
+                }
             }
         }
 

@@ -45,6 +45,8 @@ pub struct Ntt {
     /// `floor(shift_factors[i] * 2^52 / modulus)`, for the IFMA slot product.
     shift_factors_precon52: AlignedVecU64,
     ifma52: Option<Ifma52>,
+    /// `n^-1` and `n^-1 w` of the last inverse stage with their 52-bit Barrett factors.
+    inv_scale52: [u64; 4],
 }
 
 /// Constants of the 52-bit IFMA reductions modulo `p`, `2^49 < p < 2^50`.
@@ -124,6 +126,7 @@ impl Ntt {
             shift_factors_f64: AlignedVecF64::default(),
             shift_factors_precon52: AlignedVecU64::default(),
             ifma52: Ifma52::new(modulus),
+            inv_scale52: [0; 4],
         };
         ntt.compute_root_of_unity_powers();
         ntt
@@ -339,6 +342,63 @@ impl Ntt {
         );
     }
 
+    /// [`Self::compute_forward`] in place on `blocks` consecutive length-`n` blocks, inputs and
+    /// outputs in [0, q); the blocks run stage by stage, so their butterflies overlap.
+    pub fn compute_forward_blocks(&self, data: &mut [u64], blocks: usize) {
+        let n = self.degree as usize;
+        assert!(data.len() >= blocks * n);
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            if *HAS_AVX512IFMA
+                && self.modulus < Self::MAX_FWD_IFMA_MODULUS
+                && (16..=1024).contains(&n)
+            {
+                forward_blocks_avx512::<{ Self::IFMA_SHIFT_BITS as i32 }>(
+                    data.as_mut_ptr(),
+                    blocks,
+                    self.degree,
+                    self.modulus,
+                    self.avx512_root_of_unity_powers.as_ptr(),
+                    self.avx512_precon52_root_of_unity_powers.as_ptr(),
+                );
+                return;
+            }
+        }
+        for block in data[..blocks * n].chunks_exact_mut(n) {
+            let operand = unsafe { std::slice::from_raw_parts(block.as_ptr(), n) };
+            self.compute_forward(block, operand, 1, 1);
+        }
+    }
+
+    /// [`Self::compute_inverse`] in place on `blocks` consecutive length-`n` blocks, as
+    /// [`Self::compute_forward_blocks`].
+    pub fn compute_inverse_blocks(&self, data: &mut [u64], blocks: usize) {
+        let n = self.degree as usize;
+        assert!(data.len() >= blocks * n);
+        #[cfg(target_arch = "x86_64")]
+        unsafe {
+            if *HAS_AVX512IFMA
+                && self.modulus < Self::MAX_INV_IFMA_MODULUS
+                && (16..=1024).contains(&n)
+            {
+                inverse_blocks_avx512::<{ Self::IFMA_SHIFT_BITS as i32 }>(
+                    data.as_mut_ptr(),
+                    blocks,
+                    self.degree,
+                    self.modulus,
+                    self.inv_root_of_unity_powers.as_ptr(),
+                    self.precon52_inv_root_of_unity_powers.as_ptr(),
+                    &self.inv_scale52,
+                );
+                return;
+            }
+        }
+        for block in data[..blocks * n].chunks_exact_mut(n) {
+            let operand = unsafe { std::slice::from_raw_parts(block.as_ptr(), n) };
+            self.compute_inverse(block, operand, 1, 1);
+        }
+    }
+
     pub fn check_arguments(degree: u64, modulus: u64) -> bool {
         debug_assert!(is_power_of_two(degree), "degree is not power of two");
         debug_assert!(
@@ -480,6 +540,12 @@ impl Ntt {
         }
         self.precon64_inv_root_of_unity_powers =
             compute_barrett_vector(&self.inv_root_of_unity_powers, 64);
+        if *HAS_AVX512IFMA && self.modulus < Self::MAX_INV_IFMA_MODULUS {
+            let inv_n = inverse_mod(self.degree, self.modulus);
+            let inv_n_w = multiply_mod(inv_n, self.inv_root_of_unity_powers[n - 1], self.modulus);
+            let precon = |x| MultiplyFactor::new(x, 52, self.modulus).barrett_factor();
+            self.inv_scale52 = [inv_n, precon(inv_n), inv_n_w, precon(inv_n_w)];
+        }
 
         // Compute shift factors for incomplete-NTT multiplication.
         // shift_factors = NTT_forward([0, 1, 0, 0, …]) at degree n.
@@ -1954,6 +2020,231 @@ unsafe fn inverse_transform_from_bit_reverse_avx512<const BITSHIFT: i32>(
             v_x_pt = v_x_pt.add(1);
             v_y_pt = v_y_pt.add(1);
             j -= 1;
+        }
+    }
+}
+
+/// The `n <= 1024` case of [`forward_transform_to_bit_reverse_avx512`] in place on `blocks`
+/// consecutive blocks with inputs below `q`, one stage of every block at a time.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+unsafe fn forward_blocks_avx512<const BITSHIFT: i32>(
+    data: *mut u64,
+    blocks: usize,
+    n: u64,
+    modulus: u64,
+    root_of_unity_powers: *const u64,
+    precon_root_of_unity_powers: *const u64,
+) {
+    debug_assert!((16..=1024).contains(&n));
+    let v_modulus = _mm512_set1_epi64(modulus as i64);
+    let v_neg_modulus = _mm512_set1_epi64(-(modulus as i64));
+    let v_twice_mod = _mm512_set1_epi64((modulus << 1) as i64);
+    let block = |b: usize| data.add(b * n as usize);
+
+    let mut t = n >> 1;
+    let mut m = 1u64;
+    let mut w_idx = 1u64;
+    while m < (n >> 3) {
+        let w = root_of_unity_powers.add(w_idx as usize);
+        let w_precon = precon_root_of_unity_powers.add(w_idx as usize);
+        for b in 0..blocks {
+            let x = block(b);
+            if m == 1 {
+                fwd_t8::<BITSHIFT, true>(x, x, v_neg_modulus, v_twice_mod, t, m, w, w_precon);
+            } else {
+                fwd_t8::<BITSHIFT, false>(x, x, v_neg_modulus, v_twice_mod, t, m, w, w_precon);
+            }
+        }
+        t >>= 1;
+        m <<= 1;
+        w_idx <<= 1;
+    }
+
+    let new_w_idx = |idx: u64| -> usize {
+        (if idx <= n / 8 {
+            idx
+        } else if idx <= n / 4 {
+            (idx - n / 8) * 4 + n / 8
+        } else if idx <= n / 2 {
+            (idx - n / 4) * 2 + 5 * n / 8
+        } else {
+            idx + 5 * n / 8
+        }) as usize
+    };
+    let w = root_of_unity_powers.add(new_w_idx(w_idx));
+    let w_precon = precon_root_of_unity_powers.add(new_w_idx(w_idx));
+    for b in 0..blocks {
+        fwd_t4::<BITSHIFT>(block(b), v_neg_modulus, v_twice_mod, m, w, w_precon);
+    }
+    m <<= 1;
+    w_idx <<= 1;
+    let w = root_of_unity_powers.add(new_w_idx(w_idx));
+    let w_precon = precon_root_of_unity_powers.add(new_w_idx(w_idx));
+    for b in 0..blocks {
+        fwd_t2::<BITSHIFT>(block(b), v_neg_modulus, v_twice_mod, m, w, w_precon);
+    }
+    m <<= 1;
+    w_idx <<= 1;
+    let w = root_of_unity_powers.add(new_w_idx(w_idx));
+    let w_precon = precon_root_of_unity_powers.add(new_w_idx(w_idx));
+    for b in 0..blocks {
+        fwd_t1::<BITSHIFT>(block(b), v_neg_modulus, v_twice_mod, m, w, w_precon);
+    }
+
+    let mut v_x_pt = data as *mut __m512i;
+    for _ in 0..blocks * (n / 8) as usize {
+        let mut v_x = _mm512_loadu_si512(v_x_pt);
+        v_x = mm512_hexl_small_mod_epu64::<2>(v_x, v_twice_mod, None, None);
+        v_x = mm512_hexl_small_mod_epu64::<2>(v_x, v_modulus, None, None);
+        _mm512_storeu_si512(v_x_pt, v_x);
+        v_x_pt = v_x_pt.add(1);
+    }
+}
+
+/// [`forward_blocks_avx512`] for [`inverse_transform_from_bit_reverse_avx512`].
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+unsafe fn inverse_blocks_avx512<const BITSHIFT: i32>(
+    data: *mut u64,
+    blocks: usize,
+    n: u64,
+    modulus: u64,
+    inv_root_of_unity_powers: *const u64,
+    precon_inv_root_of_unity_powers: *const u64,
+    inv_scale: &[u64; 4],
+) {
+    debug_assert!((16..=1024).contains(&n));
+    let v_modulus = _mm512_set1_epi64(modulus as i64);
+    let v_neg_modulus = _mm512_set1_epi64(-(modulus as i64));
+    let v_twice_mod = _mm512_set1_epi64((modulus << 1) as i64);
+    let block = |b: usize| data.add(b * n as usize);
+
+    let mut t = 1u64;
+    let mut m = n >> 1;
+    let mut w_idx = 1u64;
+    let w = inv_root_of_unity_powers.add(w_idx as usize);
+    let w_precon = precon_inv_root_of_unity_powers.add(w_idx as usize);
+    for b in 0..blocks {
+        inv_t1::<BITSHIFT, true>(block(b), v_neg_modulus, v_twice_mod, m, w, w_precon);
+    }
+    t <<= 1;
+    m >>= 1;
+    let mut w_idx_delta = m * 2;
+    w_idx += w_idx_delta;
+
+    let w = inv_root_of_unity_powers.add(w_idx as usize);
+    let w_precon = precon_inv_root_of_unity_powers.add(w_idx as usize);
+    for b in 0..blocks {
+        inv_t2::<BITSHIFT>(block(b), v_neg_modulus, v_twice_mod, m, w, w_precon);
+    }
+    t <<= 1;
+    m >>= 1;
+    w_idx_delta >>= 1;
+    w_idx += w_idx_delta;
+
+    let w = inv_root_of_unity_powers.add(w_idx as usize);
+    let w_precon = precon_inv_root_of_unity_powers.add(w_idx as usize);
+    for b in 0..blocks {
+        inv_t4::<BITSHIFT>(block(b), v_neg_modulus, v_twice_mod, m, w, w_precon);
+    }
+    t <<= 1;
+    m >>= 1;
+    w_idx_delta >>= 1;
+    w_idx += w_idx_delta;
+
+    while m > 1 {
+        let w = inv_root_of_unity_powers.add(w_idx as usize);
+        let w_precon = precon_inv_root_of_unity_powers.add(w_idx as usize);
+        for b in 0..blocks {
+            inv_t8::<BITSHIFT>(block(b), v_neg_modulus, v_twice_mod, t, m, w, w_precon);
+        }
+        t <<= 1;
+        m >>= 1;
+        w_idx_delta >>= 1;
+        w_idx += w_idx_delta;
+    }
+
+    let [inv_n, inv_n_prime, inv_n_w, inv_n_w_prime] = *inv_scale;
+    let v_inv_n = _mm512_set1_epi64(inv_n as i64);
+    let v_inv_n_prime = _mm512_set1_epi64(inv_n_prime as i64);
+    let v_inv_n_w = _mm512_set1_epi64(inv_n_w as i64);
+    let v_inv_n_w_prime = _mm512_set1_epi64(inv_n_w_prime as i64);
+    for b in 0..blocks {
+        let mut v_x_pt = block(b) as *mut __m512i;
+        let mut v_y_pt = block(b).add((n >> 1) as usize) as *mut __m512i;
+        for _ in 0..n / 16 {
+            let v_x = _mm512_loadu_si512(v_x_pt);
+            let v_y = _mm512_loadu_si512(v_y_pt);
+            let y_minus_2q = _mm512_sub_epi64(v_y, v_twice_mod);
+            let x_plus_y_mod2q = mm512_hexl_small_add_mod_epi64(v_x, v_y, v_twice_mod);
+            let t_val = _mm512_sub_epi64(v_x, y_minus_2q);
+
+            let q1 = mm512_hexl_mulhi_epi::<BITSHIFT>(v_inv_n_prime, x_plus_y_mod2q);
+            let inv_n_tx = mm512_hexl_mullo_epi::<BITSHIFT>(v_inv_n, x_plus_y_mod2q);
+            let v_x_out = mm512_hexl_mullo_add_lo_epi::<BITSHIFT>(inv_n_tx, q1, v_neg_modulus);
+            let q2 = mm512_hexl_mulhi_epi::<BITSHIFT>(v_inv_n_w_prime, t_val);
+            let inv_n_w_t = mm512_hexl_mullo_epi::<BITSHIFT>(v_inv_n_w, t_val);
+            let v_y_out = mm512_hexl_mullo_add_lo_epi::<BITSHIFT>(inv_n_w_t, q2, v_neg_modulus);
+
+            let v_x_out = mm512_hexl_small_mod_epu64::<2>(v_x_out, v_modulus, None, None);
+            let v_y_out = mm512_hexl_small_mod_epu64::<2>(v_y_out, v_modulus, None, None);
+            _mm512_storeu_si512(v_x_pt, v_x_out);
+            _mm512_storeu_si512(v_y_pt, v_y_out);
+            v_x_pt = v_x_pt.add(1);
+            v_y_pt = v_y_pt.add(1);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_blocks_match_single_transforms() {
+        let moduli = [1125899906842177u64, 1125899906839937, 1125899906840833];
+        for modulus in moduli {
+            for n in [16u64, 32, 64, 128, 1024] {
+                if (modulus - 1) % (2 * n) != 0 {
+                    continue;
+                }
+                let ntt = Ntt::new(n, modulus);
+                for blocks in [1usize, 2, 3, 4] {
+                    let len = blocks * n as usize;
+                    let mut state = 0x5eed ^ (n << 8) ^ blocks as u64;
+                    let random: Vec<u64> = (0..len)
+                        .map(|_| {
+                            state ^= state << 13;
+                            state ^= state >> 7;
+                            state ^= state << 17;
+                            state % modulus
+                        })
+                        .collect();
+                    let edges = [0, 1, modulus / 2, modulus - 2, modulus - 1];
+                    let mixed: Vec<u64> = random.iter().map(|&x| edges[(x % 5) as usize]).collect();
+                    for input in [random, mixed, vec![modulus - 1; len]] {
+                        let mut forward = input.clone();
+                        ntt.compute_forward_blocks(&mut forward, blocks);
+                        let mut inverse = input.clone();
+                        ntt.compute_inverse_blocks(&mut inverse, blocks);
+                        for b in 0..blocks {
+                            let x = &input[b * n as usize..(b + 1) * n as usize];
+                            let mut expected = vec![0u64; n as usize];
+                            ntt.compute_forward(&mut expected, x, 1, 1);
+                            assert!(
+                                forward[b * n as usize..(b + 1) * n as usize] == expected[..],
+                                "forward q={modulus} n={n} blocks={blocks}"
+                            );
+                            ntt.compute_inverse(&mut expected, x, 1, 1);
+                            assert!(
+                                inverse[b * n as usize..(b + 1) * n as usize] == expected[..],
+                                "inverse q={modulus} n={n} blocks={blocks}"
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 }

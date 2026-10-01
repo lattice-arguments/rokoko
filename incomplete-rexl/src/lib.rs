@@ -278,17 +278,17 @@ pub fn strided_to_coefficients(
 /// Length-`N/d` negacyclic NTT of each block of a strided element. Slot `i` is then
 /// `(block_0[i], …, block_{d-1}[i]) = a mod (X^d - zeta_i)`, `zeta_i = NTT_{N/d}(X)[i]`.
 pub fn strided_ntt_forward_in_place(data: &mut [u64], ring_degree: usize, modulus: u64) {
-    let n = ring_degree / supported_slot_degree(ring_degree, modulus);
-    for block in data[..ring_degree].chunks_exact_mut(n) {
-        ntt_forward_in_place(block, n, modulus);
-    }
+    let d = supported_slot_degree(ring_degree, modulus);
+    with_ntt(ring_degree / d, modulus, |ntt| {
+        ntt.compute_forward_blocks(data, d)
+    });
 }
 
 pub fn strided_ntt_inverse_in_place(data: &mut [u64], ring_degree: usize, modulus: u64) {
-    let n = ring_degree / supported_slot_degree(ring_degree, modulus);
-    for block in data[..ring_degree].chunks_exact_mut(n) {
-        ntt_inverse_in_place(block, n, modulus);
-    }
+    let d = supported_slot_degree(ring_degree, modulus);
+    with_ntt(ring_degree / d, modulus, |ntt| {
+        ntt.compute_inverse_blocks(data, d)
+    });
 }
 
 /// Ring multiplication of two outputs of [`strided_ntt_forward_in_place`], slot by slot
@@ -382,6 +382,17 @@ impl SlotRing {
             ),
             _ => eltwise::fused_slot4_mult_inner(result, op1, op2, &self.ntt, n, self.modulus),
         }
+    }
+
+    /// [`strided_ntt_forward_in_place`] of the `N` u64s at `data`.
+    pub fn ntt_forward(&self, data: &mut [u64]) {
+        self.ntt
+            .compute_forward_blocks(&mut data[..self.ring_degree], self.slot_degree);
+    }
+
+    pub fn ntt_inverse(&self, data: &mut [u64]) {
+        self.ntt
+            .compute_inverse_blocks(&mut data[..self.ring_degree], self.slot_degree);
     }
 
     /// `result (+)= sum_k (op1 + k stride1) (op2 + k stride2)`, strides in u64s; `result` must
