@@ -334,6 +334,7 @@ fn ifma_tables(ntt: &ntt::Ntt) -> Option<&ntt::Ifma52> {
 }
 
 /// Slot product of `d n` u64s with inputs below `modulus`; `result` may alias `op1`.
+#[inline]
 unsafe fn slot_mult(
     ntt: &ntt::Ntt,
     d: usize,
@@ -347,11 +348,14 @@ unsafe fn slot_mult(
     let (zetas, precon) = (ntt.shift_factors(), ntt.shift_factors_precon52());
     #[cfg(target_arch = "x86_64")]
     if let Some(ifma) = ifma {
-        let kernel = match d {
-            2 => eltwise::fused_slot_mult_avx512_ifma::<2>,
-            _ => eltwise::fused_slot_mult_avx512_ifma::<4>,
+        return match d {
+            2 => {
+                eltwise::fused_slot_mult_avx512_ifma::<2>(result, op1, op2, zetas, precon, n, ifma)
+            }
+            _ => {
+                eltwise::fused_slot_mult_avx512_ifma::<4>(result, op1, op2, zetas, precon, n, ifma)
+            }
         };
-        return kernel(result, op1, op2, zetas, precon, n, ifma);
     }
     let result = std::slice::from_raw_parts_mut(result, d * n);
     let op1 = std::slice::from_raw_parts(op1, d * n);
