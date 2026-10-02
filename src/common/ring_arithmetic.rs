@@ -881,6 +881,12 @@ unsafe fn slot_mult(result: *mut u64, operand1: *const u64, operand2: *const u64
     SLOT_RING.mult(result, operand1, operand2);
 }
 
+fn last_term(count: usize, step: usize) -> usize {
+    (count - 1)
+        .checked_mul(step)
+        .expect("count * step overflows")
+}
+
 /// `results[o] += sum_{k < count} a[k a_step] b[k b_step + o]` over IncompleteNTT elements.
 pub fn incomplete_ntt_dot_many_into(
     results: &mut [RingElement],
@@ -893,7 +899,9 @@ pub fn incomplete_ntt_dot_many_into(
     if count == 0 || results.is_empty() {
         return;
     }
-    assert!((count - 1) * a_step < a.len() && (count - 1) * b_step + results.len() <= b.len());
+    let b_end = last_term(count, b_step).checked_add(results.len());
+    let in_range = last_term(count, a_step) < a.len() && b_end.is_some_and(|end| end <= b.len());
+    assert!(in_range, "terms past the end of the operands");
     let stride = std::mem::size_of::<RingElement>() / std::mem::size_of::<u64>();
     unsafe {
         SLOT_RING.dot_many(
@@ -923,7 +931,8 @@ pub fn incomplete_ntt_dot_into(
     if count == 0 {
         return;
     }
-    assert!((count - 1) * a_step < a.len() && (count - 1) * b_step < b.len());
+    let in_range = last_term(count, a_step) < a.len() && last_term(count, b_step) < b.len();
+    assert!(in_range, "terms past the end of the operands");
     let stride = std::mem::size_of::<RingElement>() / std::mem::size_of::<u64>();
     unsafe {
         SLOT_RING.dot(
@@ -1466,6 +1475,22 @@ mod tests {
     use rand::SeedableRng;
 
     use super::*;
+
+    #[test]
+    #[should_panic(expected = "past the end")]
+    fn test_dot_many_rejects_wrapping_steps() {
+        let mut results = vec![RingElement::new(Representation::IncompleteNTT)];
+        let elements = vec![RingElement::new(Representation::IncompleteNTT); 2];
+        incomplete_ntt_dot_many_into(&mut results, &elements, 1, &elements, usize::MAX, 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "overflows")]
+    fn test_dot_rejects_wrapping_steps() {
+        let mut acc = RingElement::new(Representation::IncompleteNTT);
+        let elements = vec![RingElement::new(Representation::IncompleteNTT); 2];
+        incomplete_ntt_dot_into(&mut acc, &elements, usize::MAX, &elements, 1, 3);
+    }
 
     #[test]
     fn test_ntt_multiplication_matches_naive() {
