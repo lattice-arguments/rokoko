@@ -1899,17 +1899,19 @@ pub(crate) unsafe fn fused_slot_mult_avx512_ifma<const D: usize>(
     }
 }
 
-/// Terms per register pass of [`slot_dot_avx512_ifma`], after which the carries of the low halves
-/// move into the high halves; the halves are reduced every `SLOT_DOT_BLOCK` terms.
+/// Terms between moving the carries of the low halves into the high halves, and between
+/// reductions of the halves, in [`slot_dot_avx512_ifma`].
 const SLOT_DOT_CHUNK: usize = 256;
 const SLOT_DOT_BLOCK: usize = 1024;
+const SLOT_DOT_OUTPUTS: usize = 4;
 
 // `results + o result_stride (+)= sum_k a_k b_{k,o}` over degree-`D` slots, `a_k = a + k a_stride`,
 // `b_{k,o} = b + k b_stride + o b_output_stride` in u64s, inputs below `p`. The [`slot_cells`]
 // accumulate unreduced in 52-bit halves: a term adds under 2^54 to a low half and 2^50 to a high
 // half, so a 256-term chunk keeps the low halves below 2^63 and a 1024-term block the high halves
 // below 2^61; each block ends reduced to [0, 2p), and the slot coefficients are formed once, at the
-// end. Each group of eight slots runs a chunk in registers, so chunks stay cached across groups.
+// end. The terms run in order, a whole term at a time, over passes of `SLOT_DOT_OUTPUTS` adjacent
+// outputs whose cells stay in L1, so the operands stream contiguously.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512ifma")]
 pub(crate) unsafe fn slot_dot_avx512_ifma<const D: usize>(
@@ -1928,61 +1930,82 @@ pub(crate) unsafe fn slot_dot_avx512_ifma<const D: usize>(
     n: usize,
     ifma: &Ifma52,
 ) {
-    const { assert!(SLOT_DOT_BLOCK % SLOT_DOT_CHUNK == 0) };
     let c = Ifma52x8::new(ifma);
     let zero = _mm512_setzero_si512();
-    let cells = slot_cells(D);
-    let chunks = count.div_ceil(SLOT_DOT_CHUNK).max(1);
-    let mut spill = vec![[zero; 14]; if chunks > 1 { n / 8 } else { 0 }];
+    let (groups, cells) = (n / 8, slot_cells(D));
+    // Output `o`, group `g` at `2 cells (o groups + g)`: the low halves, then the high halves.
+    let width = 2 * cells;
+    let mut acc = vec![zero; width * groups * outputs.min(SLOT_DOT_OUTPUTS)];
+    let cell =
+        |acc: &mut Vec<__m512i>, o: usize, g: usize| acc.as_mut_ptr().add(width * (o * groups + g));
 
-    for o in 0..outputs {
-        let b = b.add(o * b_output_stride);
-        let result = results.add(o * result_stride);
-        for chunk in 0..chunks {
-            let start = chunk * SLOT_DOT_CHUNK;
+    for first in (0..outputs).step_by(SLOT_DOT_OUTPUTS) {
+        let taken = (outputs - first).min(SLOT_DOT_OUTPUTS);
+        acc[..width * groups * taken].fill(zero);
+        let mut start = 0;
+        loop {
             let end = count.min(start + SLOT_DOT_CHUNK);
-            let last = end == count;
-            for g in (0..n).step_by(8) {
-                let (mut lo, mut hi) = ([zero; 7], [zero; 7]);
-                if chunk > 0 {
-                    let s = &spill[g / 8];
-                    lo.copy_from_slice(&s[..7]);
-                    hi.copy_from_slice(&s[7..]);
-                }
-                for k in start..end {
-                    let av = load_slot_factors::<D>(a.add(k * a_stride + g), n);
-                    let bv = load_slot_factors::<D>(b.add(k * b_stride + g), n);
-                    add_slot_cells::<D>(&mut lo, &mut hi, &av, &bv);
-                }
-                for d in 0..cells {
-                    hi[d] = _mm512_add_epi64(hi[d], _mm512_srli_epi64(lo[d], 52));
-                    lo[d] = _mm512_and_si512(lo[d], c.mask);
-                }
-                if last || (chunk + 1) * SLOT_DOT_CHUNK % SLOT_DOT_BLOCK == 0 {
-                    for d in 0..cells {
-                        lo[d] = c.reduce_wide(lo[d], hi[d]);
-                        hi[d] = zero;
+            for k in start..end {
+                for g in 0..groups {
+                    let av = load_slot_factors::<D>(a.add(k * a_stride + 8 * g), n);
+                    for o in 0..taken {
+                        let bp = b.add(k * b_stride + (first + o) * b_output_stride + 8 * g);
+                        let bv = load_slot_factors::<D>(bp, n);
+                        let p = cell(&mut acc, o, g);
+                        let (mut lo, mut hi) = ([zero; 7], [zero; 7]);
+                        for d in 0..cells {
+                            lo[d] = *p.add(d);
+                            hi[d] = *p.add(cells + d);
+                        }
+                        add_slot_cells::<D>(&mut lo, &mut hi, &av, &bv);
+                        for d in 0..cells {
+                            *p.add(d) = lo[d];
+                            *p.add(cells + d) = hi[d];
+                        }
                     }
-                }
-                if !last {
-                    let s = &mut spill[g / 8];
-                    s[..7].copy_from_slice(&lo);
-                    s[7..].copy_from_slice(&hi);
-                    continue;
-                }
-                let z = load!(zetas.as_ptr().add(g));
-                let z_precon = load!(zetas_precon.as_ptr().add(g));
-                let coefficients = c.combine_slot_cells::<D>(&lo, z, z_precon);
-                for d in 0..D {
-                    let out = result.add(d * n + g);
-                    let mut x = coefficients[d];
-                    if accumulate {
-                        x = _mm512_add_epi64(x, load!(out));
-                    }
-                    let reduced = c.reduce_wide(x, zero);
-                    _mm512_storeu_si512(out as *mut __m512i, c.canonical(reduced));
                 }
             }
+            let last = end == count;
+            let reduce = last || end % SLOT_DOT_BLOCK == 0;
+            for o in 0..taken {
+                for g in 0..groups {
+                    let p = cell(&mut acc, o, g);
+                    let (mut lo, mut hi) = ([zero; 7], [zero; 7]);
+                    for d in 0..cells {
+                        lo[d] = *p.add(d);
+                        hi[d] = *p.add(cells + d);
+                    }
+                    for d in 0..cells {
+                        hi[d] = _mm512_add_epi64(hi[d], _mm512_srli_epi64(lo[d], 52));
+                        lo[d] = _mm512_and_si512(lo[d], c.mask);
+                        if reduce {
+                            lo[d] = c.reduce_wide(lo[d], hi[d]);
+                            hi[d] = zero;
+                        }
+                        *p.add(d) = lo[d];
+                        *p.add(cells + d) = hi[d];
+                    }
+                    if !last {
+                        continue;
+                    }
+                    let z = load!(zetas.as_ptr().add(8 * g));
+                    let z_precon = load!(zetas_precon.as_ptr().add(8 * g));
+                    let coefficients = c.combine_slot_cells::<D>(&lo, z, z_precon);
+                    for d in 0..D {
+                        let out = results.add((first + o) * result_stride + d * n + 8 * g);
+                        let mut x = coefficients[d];
+                        if accumulate {
+                            x = _mm512_add_epi64(x, load!(out));
+                        }
+                        let reduced = c.reduce_wide(x, zero);
+                        _mm512_storeu_si512(out as *mut __m512i, c.canonical(reduced));
+                    }
+                }
+            }
+            if last {
+                break;
+            }
+            start = end;
         }
     }
 }
@@ -2438,9 +2461,9 @@ mod slot_tests {
         let cases = [
             (1usize, 0usize),
             (2, 1),
-            (3, 7),
+            (9, 7),
             (1, 255),
-            (2, 256),
+            (5, 256),
             (1, 257),
             (1, 1024),
             (2, 1025),
