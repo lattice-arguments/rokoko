@@ -1506,20 +1506,6 @@ pub(crate) fn fused_slot4_mult_inner(
 
     #[cfg(target_arch = "x86_64")]
     {
-        if let (true, Some(ifma)) = (*HAS_AVX512IFMA, ntt.ifma52()) {
-            unsafe {
-                fused_slot4_mult_avx512_ifma(
-                    result,
-                    operand1,
-                    operand2,
-                    zetas,
-                    ntt.shift_factors_precon52(),
-                    n,
-                    ifma,
-                );
-                return;
-            }
-        }
         if *HAS_AVX512DQ && modulus < (1u64 << 50) {
             unsafe {
                 fused_slot4_mult_avx512_float(result, operand1, operand2, zetas_f64, n, modulus);
@@ -1707,6 +1693,60 @@ pub(crate) unsafe fn fused_slot4_mult_avx512_float(
     }
 }
 
+#[cfg(target_arch = "x86_64")]
+macro_rules! load {
+    ($ptr:expr) => {
+        _mm512_loadu_si512($ptr as *const __m512i)
+    };
+}
+
+/// `d_0..d_6` for `D = 4`; `a_0 b_0, (a_0 + a_1)(b_0 + b_1), a_1 b_1` for `D = 2`.
+const fn slot_cells(d: usize) -> usize {
+    2 * d - 1
+}
+
+/// Eight slots at `p`, ordered `(x_0, x_0 + x_1, x_1)` for `D = 2`.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f")]
+#[inline]
+unsafe fn load_slot_factors<const D: usize>(p: *const u64, n: usize) -> [__m512i; 4] {
+    let mut x = [_mm512_setzero_si512(); 4];
+    if D == 2 {
+        x[0] = load!(p);
+        x[2] = load!(p.add(n));
+        x[1] = _mm512_add_epi64(x[0], x[2]);
+    } else {
+        for j in 0..D {
+            x[j] = load!(p.add(j * n));
+        }
+    }
+    x
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512ifma")]
+#[inline]
+unsafe fn add_slot_cells<const D: usize>(
+    lo: &mut [__m512i; 7],
+    hi: &mut [__m512i; 7],
+    a: &[__m512i; 4],
+    b: &[__m512i; 4],
+) {
+    if D == 2 {
+        for k in 0..3 {
+            lo[k] = _mm512_madd52lo_epu64(lo[k], a[k], b[k]);
+            hi[k] = _mm512_madd52hi_epu64(hi[k], a[k], b[k]);
+        }
+    } else {
+        for j in 0..D {
+            for l in 0..D {
+                lo[j + l] = _mm512_madd52lo_epu64(lo[j + l], a[j], b[l]);
+                hi[j + l] = _mm512_madd52hi_epu64(hi[j + l], a[j], b[l]);
+            }
+        }
+    }
+}
+
 /// Broadcast [`Ifma52`] constants and the reductions built on them.
 #[cfg(target_arch = "x86_64")]
 #[derive(Clone, Copy)]
@@ -1782,18 +1822,48 @@ impl Ifma52x8 {
     unsafe fn canonical(&self, x: __m512i) -> __m512i {
         _mm512_min_epu64(x, _mm512_sub_epi64(x, self.p))
     }
+
+    /// Slot coefficients below `6p` from [`slot_cells`] in [0, 2p).
+    #[target_feature(enable = "avx512f,avx512ifma")]
+    #[inline]
+    unsafe fn combine_slot_cells<const D: usize>(
+        &self,
+        cell: &[__m512i; 7],
+        z: __m512i,
+        z_precon: __m512i,
+    ) -> [__m512i; 4] {
+        let mut c = [_mm512_setzero_si512(); 4];
+        if D == 2 {
+            let four_p = _mm512_slli_epi64(self.p, 2);
+            c[0] = _mm512_add_epi64(cell[0], self.shoup(cell[2], z, z_precon));
+            c[1] = _mm512_sub_epi64(
+                _mm512_add_epi64(cell[1], four_p),
+                _mm512_add_epi64(cell[0], cell[2]),
+            );
+        } else {
+            for k in 0..D {
+                c[k] = if k + 1 < D {
+                    _mm512_add_epi64(cell[k], self.shoup(cell[k + D], z, z_precon))
+                } else {
+                    cell[k]
+                };
+            }
+        }
+        c
+    }
 }
 
-// With `B_{-m} = zeta b_{4-m}` reduced to [0, 2p), `c_k = sum_j a_j B_{k-j}` is below 2^103 and
+// With `B_{-m} = zeta b_{D-m}` reduced to [0, 2p), `c_k = sum_j a_j B_{k-j}` is below 2^103 and
 // accumulates exactly in 52-bit halves `L + 2^52 H`. A Montgomery step leaves `c_k 2^-52` in
-// (-p, 2^51), and a Shoup multiplication by `2^52 mod p` restores `c_k` in [0, 2p).
+// (-p, 2^51), and a Shoup multiplication by `2^52 mod p` restores `c_k` in [0, 2p). Inputs below
+// `p`; `result` may alias `operand1`.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512ifma")]
 #[inline]
-pub(crate) unsafe fn fused_slot4_mult_avx512_ifma(
-    result: &mut [u64],
-    operand1: &[u64],
-    operand2: &[u64],
+pub(crate) unsafe fn fused_slot_mult_avx512_ifma<const D: usize>(
+    result: *mut u64,
+    operand1: *const u64,
+    operand2: *const u64,
     zetas: &[u64],
     zetas_precon: &[u64],
     n: usize,
@@ -1801,170 +1871,48 @@ pub(crate) unsafe fn fused_slot4_mult_avx512_ifma(
 ) {
     let c = Ifma52x8::new(ifma);
     let zero = _mm512_setzero_si512();
-
-    let op1 = operand1.as_ptr();
-    let op2 = operand2.as_ptr();
-    let res = result.as_mut_ptr();
-
-    macro_rules! load {
-        ($ptr:expr, $offset:expr) => {
-            _mm512_loadu_si512($ptr.add($offset) as *const __m512i)
-        };
-    }
-
-    macro_rules! dot {
-        ($(($x:expr, $y:expr)),+) => {{
-            let (mut lo, mut hi) = (zero, zero);
-            $(
-                lo = _mm512_madd52lo_epu64(lo, $x, $y);
-                hi = _mm512_madd52hi_epu64(hi, $x, $y);
-            )+
-            (lo, hi)
-        }};
-    }
-
-    macro_rules! reduce {
-        ($lo_hi:expr) => {{
-            let (lo, hi) = $lo_hi;
-            let t = _mm512_add_epi64(c.montgomery(lo, hi), c.p);
-            c.canonical(c.shoup(t, c.r, c.r_precon))
-        }};
-    }
-
     let mut i = 0usize;
     while i < n {
-        let (a0, a1, a2, a3) = (
-            load!(op1, i),
-            load!(op1, n + i),
-            load!(op1, 2 * n + i),
-            load!(op1, 3 * n + i),
-        );
-        let (b0, b1, b2, b3) = (
-            load!(op2, i),
-            load!(op2, n + i),
-            load!(op2, 2 * n + i),
-            load!(op2, 3 * n + i),
-        );
-        let z = load!(zetas.as_ptr(), i);
-        let z_precon = load!(zetas_precon.as_ptr(), i);
-        let t1 = c.shoup(b1, z, z_precon);
-        let t2 = c.shoup(b2, z, z_precon);
-        let t3 = c.shoup(b3, z, z_precon);
-
-        let c0 = reduce!(dot!((a0, b0), (a1, t3), (a2, t2), (a3, t1)));
-        let c1 = reduce!(dot!((a0, b1), (a1, b0), (a2, t3), (a3, t2)));
-        let c2 = reduce!(dot!((a0, b2), (a1, b1), (a2, b0), (a3, t3)));
-        let c3 = reduce!(dot!((a0, b3), (a1, b2), (a2, b1), (a3, b0)));
-        _mm512_storeu_si512(res.add(i) as *mut __m512i, c0);
-        _mm512_storeu_si512(res.add(n + i) as *mut __m512i, c1);
-        _mm512_storeu_si512(res.add(2 * n + i) as *mut __m512i, c2);
-        _mm512_storeu_si512(res.add(3 * n + i) as *mut __m512i, c3);
-
+        let (mut a, mut b, mut t) = ([zero; D], [zero; D], [zero; D]);
+        let z = load!(zetas.as_ptr().add(i));
+        let z_precon = load!(zetas_precon.as_ptr().add(i));
+        for j in 0..D {
+            a[j] = load!(operand1.add(j * n + i));
+            b[j] = load!(operand2.add(j * n + i));
+            t[j] = c.shoup(b[j], z, z_precon);
+        }
+        let mut out = [zero; D];
+        for k in 0..D {
+            let (mut lo, mut hi) = (zero, zero);
+            for j in 0..D {
+                let y = if j <= k { b[k - j] } else { t[D + k - j] };
+                lo = _mm512_madd52lo_epu64(lo, a[j], y);
+                hi = _mm512_madd52hi_epu64(hi, a[j], y);
+            }
+            let s = _mm512_add_epi64(c.montgomery(lo, hi), c.p);
+            out[k] = c.canonical(c.shoup(s, c.r, c.r_precon));
+        }
+        for k in 0..D {
+            _mm512_storeu_si512(result.add(k * n + i) as *mut __m512i, out[k]);
+        }
         i += 8;
     }
 }
 
-/// Terms per block of [`slot4_dot_avx512_ifma`]; the carries of the low halves move into the high
-/// halves every `SLOT4_DOT_CARRY` terms.
-const SLOT4_DOT_BLOCK: usize = 1024;
-const SLOT4_DOT_CARRY: usize = 256;
+/// Terms per register pass of [`slot_dot_avx512_ifma`], after which the carries of the low halves
+/// move into the high halves; the halves are reduced every `SLOT_DOT_BLOCK` terms.
+const SLOT_DOT_CHUNK: usize = 256;
+const SLOT_DOT_BLOCK: usize = 1024;
 
-// `result (+)= sum_k a_k b_k` over degree-4 slots, `a_k = op1 + k stride1`, `b_k = op2 + k stride2`
-// in u64s. The seven coefficients `d_0..d_6` of the slot products accumulate unreduced in 52-bit
-// halves: inputs below p < 2^50 add under 2^54 to a low half and 2^50 to a high half per term, so
-// moving the low carries every 256 terms keeps the low halves below 2^63 and the high halves of a
-// 1024-term block below 2^61; each block ends reduced to [0, 2p). `c_k = d_k + zeta d_{k+4}` is
-// formed once, at the end.
+// `results + o result_stride (+)= sum_k a_k b_{k,o}` over degree-`D` slots, `a_k = a + k a_stride`,
+// `b_{k,o} = b + k b_stride + o b_output_stride` in u64s, inputs below `p`. The [`slot_cells`]
+// accumulate unreduced in 52-bit halves: a term adds under 2^54 to a low half and 2^50 to a high
+// half, so a 256-term chunk keeps the low halves below 2^63 and a 1024-term block the high halves
+// below 2^61; each block ends reduced to [0, 2p), and the slot coefficients are formed once, at the
+// end. Each group of eight slots runs a chunk in registers, so chunks stay cached across groups.
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512ifma")]
-pub(crate) unsafe fn slot4_dot_avx512_ifma(
-    result: *mut u64,
-    op1: *const u64,
-    stride1: usize,
-    op2: *const u64,
-    stride2: usize,
-    count: usize,
-    accumulate: bool,
-    zetas: &[u64],
-    zetas_precon: &[u64],
-    n: usize,
-    ifma: &Ifma52,
-) {
-    let c = Ifma52x8::new(ifma);
-    let zero = _mm512_setzero_si512();
-
-    macro_rules! load {
-        ($ptr:expr) => {
-            _mm512_loadu_si512($ptr as *const __m512i)
-        };
-    }
-
-    let mut g = 0usize;
-    while g < n {
-        let mut lo = [zero; 7];
-        let mut hi = [zero; 7];
-        let mut k = 0usize;
-        while k < count {
-            let block_end = count.min(k + SLOT4_DOT_BLOCK);
-            while k < block_end {
-                let carry_end = block_end.min(k + SLOT4_DOT_CARRY);
-                while k < carry_end {
-                    let a = op1.add(k * stride1 + g);
-                    let b = op2.add(k * stride2 + g);
-                    let a = [
-                        load!(a),
-                        load!(a.add(n)),
-                        load!(a.add(2 * n)),
-                        load!(a.add(3 * n)),
-                    ];
-                    let b = [
-                        load!(b),
-                        load!(b.add(n)),
-                        load!(b.add(2 * n)),
-                        load!(b.add(3 * n)),
-                    ];
-                    for j in 0..4 {
-                        for l in 0..4 {
-                            lo[j + l] = _mm512_madd52lo_epu64(lo[j + l], a[j], b[l]);
-                            hi[j + l] = _mm512_madd52hi_epu64(hi[j + l], a[j], b[l]);
-                        }
-                    }
-                    k += 1;
-                }
-                for d in 0..7 {
-                    hi[d] = _mm512_add_epi64(hi[d], _mm512_srli_epi64(lo[d], 52));
-                    lo[d] = _mm512_and_si512(lo[d], c.mask);
-                }
-            }
-            for d in 0..7 {
-                lo[d] = c.reduce_wide(lo[d], hi[d]);
-                hi[d] = zero;
-            }
-        }
-        let z = load!(zetas.as_ptr().add(g));
-        let z_precon = load!(zetas_precon.as_ptr().add(g));
-        for d in 0..4 {
-            let out = result.add(d * n + g);
-            if d < 3 {
-                lo[d] = _mm512_add_epi64(lo[d], c.shoup(lo[d + 4], z, z_precon));
-            }
-            if accumulate {
-                lo[d] = _mm512_add_epi64(lo[d], load!(out));
-            }
-            let reduced = c.reduce_wide(lo[d], zero);
-            _mm512_storeu_si512(out as *mut __m512i, c.canonical(reduced));
-        }
-        g += 8;
-    }
-}
-
-const SLOT4_DOT_OUTPUTS: usize = 8;
-
-// [`slot4_dot_avx512_ifma`] for `outputs` results, `o` against `b + o b_output_stride`. Passes
-// over eight outputs keep their accumulators in L1, so adjacent outputs stream `b` once.
-#[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512ifma")]
-pub(crate) unsafe fn slot4_dot_many_avx512_ifma(
+pub(crate) unsafe fn slot_dot_avx512_ifma<const D: usize>(
     results: *mut u64,
     result_stride: usize,
     outputs: usize,
@@ -1980,97 +1928,62 @@ pub(crate) unsafe fn slot4_dot_many_avx512_ifma(
     n: usize,
     ifma: &Ifma52,
 ) {
+    const { assert!(SLOT_DOT_BLOCK % SLOT_DOT_CHUNK == 0) };
     let c = Ifma52x8::new(ifma);
     let zero = _mm512_setzero_si512();
-    let groups = n / 8;
-    // Output `o`, group `g` at `14 (o groups + g)`: seven low halves, then seven high halves.
-    let mut acc = vec![zero; 14 * groups * SLOT4_DOT_OUTPUTS];
+    let cells = slot_cells(D);
+    let chunks = count.div_ceil(SLOT_DOT_CHUNK).max(1);
+    let mut spill = vec![[zero; 14]; if chunks > 1 { n / 8 } else { 0 }];
 
-    macro_rules! load {
-        ($ptr:expr) => {
-            _mm512_loadu_si512($ptr as *const __m512i)
-        };
-    }
-
-    let mut first = 0usize;
-    while first < outputs {
-        let taken = (outputs - first).min(SLOT4_DOT_OUTPUTS);
-        let live = 14 * groups * taken;
-        acc[..live].fill(zero);
-        let mut k = 0usize;
-        while k < count {
-            let block_end = count.min(k + SLOT4_DOT_BLOCK);
-            while k < block_end {
-                let carry_end = block_end.min(k + SLOT4_DOT_CARRY);
-                while k < carry_end {
-                    for g in 0..groups {
-                        let ap = a.add(k * a_stride + 8 * g);
-                        let av = [
-                            load!(ap),
-                            load!(ap.add(n)),
-                            load!(ap.add(2 * n)),
-                            load!(ap.add(3 * n)),
-                        ];
-                        for o in 0..taken {
-                            let bp = b.add(k * b_stride + (first + o) * b_output_stride + 8 * g);
-                            let bv = [
-                                load!(bp),
-                                load!(bp.add(n)),
-                                load!(bp.add(2 * n)),
-                                load!(bp.add(3 * n)),
-                            ];
-                            let cell = acc.as_mut_ptr().add(14 * (o * groups + g));
-                            let mut lo: [__m512i; 7] = std::array::from_fn(|d| *cell.add(d));
-                            let mut hi: [__m512i; 7] = std::array::from_fn(|d| *cell.add(7 + d));
-                            for j in 0..4 {
-                                for l in 0..4 {
-                                    lo[j + l] = _mm512_madd52lo_epu64(lo[j + l], av[j], bv[l]);
-                                    hi[j + l] = _mm512_madd52hi_epu64(hi[j + l], av[j], bv[l]);
-                                }
-                            }
-                            for d in 0..7 {
-                                *cell.add(d) = lo[d];
-                                *cell.add(7 + d) = hi[d];
-                            }
-                        }
-                    }
-                    k += 1;
+    for o in 0..outputs {
+        let b = b.add(o * b_output_stride);
+        let result = results.add(o * result_stride);
+        for chunk in 0..chunks {
+            let start = chunk * SLOT_DOT_CHUNK;
+            let end = count.min(start + SLOT_DOT_CHUNK);
+            let last = end == count;
+            for g in (0..n).step_by(8) {
+                let (mut lo, mut hi) = ([zero; 7], [zero; 7]);
+                if chunk > 0 {
+                    let s = &spill[g / 8];
+                    lo.copy_from_slice(&s[..7]);
+                    hi.copy_from_slice(&s[7..]);
                 }
-                for cell in acc[..live].chunks_exact_mut(14) {
-                    for d in 0..7 {
-                        cell[7 + d] = _mm512_add_epi64(cell[7 + d], _mm512_srli_epi64(cell[d], 52));
-                        cell[d] = _mm512_and_si512(cell[d], c.mask);
+                for k in start..end {
+                    let av = load_slot_factors::<D>(a.add(k * a_stride + g), n);
+                    let bv = load_slot_factors::<D>(b.add(k * b_stride + g), n);
+                    add_slot_cells::<D>(&mut lo, &mut hi, &av, &bv);
+                }
+                for d in 0..cells {
+                    hi[d] = _mm512_add_epi64(hi[d], _mm512_srli_epi64(lo[d], 52));
+                    lo[d] = _mm512_and_si512(lo[d], c.mask);
+                }
+                if last || (chunk + 1) * SLOT_DOT_CHUNK % SLOT_DOT_BLOCK == 0 {
+                    for d in 0..cells {
+                        lo[d] = c.reduce_wide(lo[d], hi[d]);
+                        hi[d] = zero;
                     }
                 }
-            }
-            for cell in acc[..live].chunks_exact_mut(14) {
-                for d in 0..7 {
-                    cell[d] = c.reduce_wide(cell[d], cell[7 + d]);
-                    cell[7 + d] = zero;
+                if !last {
+                    let s = &mut spill[g / 8];
+                    s[..7].copy_from_slice(&lo);
+                    s[7..].copy_from_slice(&hi);
+                    continue;
                 }
-            }
-        }
-        for o in 0..taken {
-            let result = results.add((first + o) * result_stride);
-            for g in 0..groups {
-                let cell = &acc[14 * (o * groups + g)..];
-                let z = load!(zetas.as_ptr().add(8 * g));
-                let z_precon = load!(zetas_precon.as_ptr().add(8 * g));
-                for d in 0..4 {
-                    let out = result.add(d * n + 8 * g);
-                    let mut lo = cell[d];
-                    if d < 3 {
-                        lo = _mm512_add_epi64(lo, c.shoup(cell[d + 4], z, z_precon));
-                    }
+                let z = load!(zetas.as_ptr().add(g));
+                let z_precon = load!(zetas_precon.as_ptr().add(g));
+                let coefficients = c.combine_slot_cells::<D>(&lo, z, z_precon);
+                for d in 0..D {
+                    let out = result.add(d * n + g);
+                    let mut x = coefficients[d];
                     if accumulate {
-                        lo = _mm512_add_epi64(lo, load!(out));
+                        x = _mm512_add_epi64(x, load!(out));
                     }
-                    let reduced = c.reduce_wide(lo, zero);
+                    let reduced = c.reduce_wide(x, zero);
                     _mm512_storeu_si512(out as *mut __m512i, c.canonical(reduced));
                 }
             }
         }
-        first += taken;
     }
 }
 
@@ -2408,255 +2321,166 @@ mod slot_tests {
         }
     }
 
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn test_slot4_avx512_matches_native() {
-        if !*HAS_AVX512DQ {
-            return;
-        }
-        let n = 1 << 14;
-        for modulus in [1125899906842177u64, 1125899906839937, 1125899906826241] {
-            for seed in 0..8u64 {
-                let (op1, op2, zetas) = if seed % 2 == 0 {
-                    (
-                        xorshift_vec(4 * n, modulus, 0x1000 + seed),
-                        xorshift_vec(4 * n, modulus, 0x2000 + seed),
-                        xorshift_vec(n, modulus, 0x3000 + seed),
-                    )
-                } else {
-                    (
-                        edge_vec(4 * n, modulus, 0x1000 + seed),
-                        edge_vec(4 * n, modulus, 0x2000 + seed),
-                        edge_vec(n, modulus, 0x3000 + seed),
-                    )
-                };
-                let zetas_f64: Vec<f64> = zetas.iter().map(|&z| z as f64).collect();
-                let mut native = vec![0u64; 4 * n];
-                fused_slot4_mult_native(&mut native, &op1, &op2, &zetas, n, modulus);
-                let mut avx = vec![0u64; 4 * n];
-                unsafe {
-                    fused_slot4_mult_avx512_float(&mut avx, &op1, &op2, &zetas_f64, n, modulus);
-                }
-                assert_eq!(native, avx, "m={modulus} seed={seed}");
-            }
+    /// Random, edge-valued, and `q - 1`-heavy operands of length `len` with `n` zetas.
+    fn slot_operands(
+        case: u64,
+        len: usize,
+        n: usize,
+        modulus: u64,
+    ) -> (Vec<u64>, Vec<u64>, Vec<u64>) {
+        let seed = 0x5000 + case;
+        match case % 3 {
+            0 => (
+                xorshift_vec(len, modulus, seed),
+                xorshift_vec(len, modulus, seed + 0x1000),
+                xorshift_vec(n, modulus, seed + 0x2000),
+            ),
+            1 => (
+                edge_vec(len, modulus, seed),
+                edge_vec(len, modulus, seed + 0x1000),
+                edge_vec(n, modulus, seed + 0x2000),
+            ),
+            _ => (
+                vec![modulus - 1; len],
+                edge_vec(len, modulus, seed + 0x1000),
+                vec![modulus - 1; n],
+            ),
         }
     }
 
-    fn slot4_schoolbook(a: &[u64], b: &[u64], zetas: &[u64], n: usize, modulus: u64) -> Vec<u64> {
-        let q = modulus as u128;
-        let mut c = vec![0u64; 4 * n];
+    fn slot_schoolbook(a: &[u64], b: &[u64], zetas: &[u64], d: usize, modulus: u64) -> Vec<u64> {
+        let (q, n) = (modulus as u128, zetas.len());
+        let mut c = vec![0u64; d * n];
         for i in 0..n {
             let mut acc = [0u128; 7];
-            for j in 0..4 {
-                for l in 0..4 {
+            for j in 0..d {
+                for l in 0..d {
                     acc[j + l] += (a[j * n + i] as u128 * b[l * n + i] as u128) % q;
                 }
             }
-            for k in 0..4 {
-                let high = if k < 3 { acc[k + 4] % q } else { 0 };
+            for k in 0..d {
+                let high = if k + 1 < d { acc[k + d] % q } else { 0 };
                 c[k * n + i] = ((acc[k] + zetas[i] as u128 * high) % q) as u64;
             }
         }
         c
     }
 
+    const IFMA_MODULI: [u64; 7] = [
+        1125899906842177,
+        1125899906839937,
+        1125899906840833,
+        (1 << 50) - 1,
+        (1 << 50) - 3,
+        (1 << 49) + 1,
+        (1 << 49) + 3,
+    ];
+
+    /// Ignores `HEXL_DISABLE_*`, as the kernels are called directly; the skip note bypasses the
+    /// test harness capture.
+    #[cfg(target_arch = "x86_64")]
+    fn ifma_cpu(test: &str) -> bool {
+        let present = std::is_x86_feature_detected!("avx512ifma");
+        if !present {
+            use std::io::Write;
+            let _ = writeln!(
+                std::io::stderr(),
+                "{test}: SKIPPED, the CPU has no AVX-512 IFMA"
+            );
+        }
+        present
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn precon52(zetas: &[u64], modulus: u64) -> Vec<u64> {
+        zetas
+            .iter()
+            .map(|&z| MultiplyFactor::new(z, 52, modulus).barrett_factor())
+            .collect()
+    }
+
     #[cfg(target_arch = "x86_64")]
     #[test]
-    fn test_slot4_ifma_matches_schoolbook() {
-        if !*HAS_AVX512IFMA {
+    fn test_slot_mult_ifma_matches_schoolbook() {
+        if !ifma_cpu("test_slot_mult_ifma_matches_schoolbook") {
             return;
         }
-        let n = 1 << 13;
-        let moduli = [
-            1125899906842177u64,
-            1125899906839937,
-            (1 << 50) - 1,
-            (1 << 50) - 3,
-            (1 << 49) + 1,
-            (1 << 49) + 3,
+        let n = 1 << 12;
+        for d in [2usize, 4] {
+            for modulus in IFMA_MODULI {
+                let ifma = Ifma52::new(modulus).unwrap();
+                for case in 0..6u64 {
+                    let (op1, op2, zetas) = slot_operands(case, d * n, n, modulus);
+                    let precon = precon52(&zetas, modulus);
+                    let expected = slot_schoolbook(&op1, &op2, &zetas, d, modulus);
+                    let mut in_place = op1.clone();
+                    let kernel = match d {
+                        2 => fused_slot_mult_avx512_ifma::<2>,
+                        _ => fused_slot_mult_avx512_ifma::<4>,
+                    };
+                    unsafe {
+                        let r = in_place.as_mut_ptr();
+                        kernel(r, r, op2.as_ptr(), &zetas, &precon, n, &ifma);
+                    }
+                    assert!(in_place == expected, "d={d} m={modulus} case={case}");
+                }
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_slot_dot_ifma_matches_schoolbook() {
+        if !ifma_cpu("test_slot_dot_ifma_matches_schoolbook") {
+            return;
+        }
+        let n = 32;
+        let cases = [
+            (1usize, 0usize),
+            (2, 1),
+            (3, 7),
+            (1, 255),
+            (2, 256),
+            (1, 257),
+            (1, 1024),
+            (2, 1025),
+            (1, 2100),
         ];
-        for modulus in moduli {
-            let ifma = Ifma52::new(modulus).unwrap();
-            for seed in 0..6u64 {
-                let (op1, op2, zetas) = match seed % 3 {
-                    0 => (
-                        xorshift_vec(4 * n, modulus, 0x5000 + seed),
-                        xorshift_vec(4 * n, modulus, 0x6000 + seed),
-                        xorshift_vec(n, modulus, 0x7000 + seed),
-                    ),
-                    1 => (
-                        edge_vec(4 * n, modulus, 0x5000 + seed),
-                        edge_vec(4 * n, modulus, 0x6000 + seed),
-                        edge_vec(n, modulus, 0x7000 + seed),
-                    ),
-                    _ => (
-                        vec![modulus - 1; 4 * n],
-                        edge_vec(4 * n, modulus, 0x6000 + seed),
-                        vec![modulus - 1; n],
-                    ),
-                };
-                let precon: Vec<u64> = zetas
-                    .iter()
-                    .map(|&z| MultiplyFactor::new(z, 52, modulus).barrett_factor())
-                    .collect();
-                let expected = slot4_schoolbook(&op1, &op2, &zetas, n, modulus);
-                let mut ifma_result = vec![0u64; 4 * n];
-                unsafe {
-                    fused_slot4_mult_avx512_ifma(
-                        &mut ifma_result,
-                        &op1,
-                        &op2,
-                        &zetas,
-                        &precon,
-                        n,
-                        &ifma,
-                    );
-                }
-                assert!(ifma_result == expected, "ifma m={modulus} seed={seed}");
-            }
-        }
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn test_slot4_dot_ifma_matches_schoolbook() {
-        if !*HAS_AVX512IFMA {
-            return;
-        }
-        let n = 32;
-        let stride = 4 * n + 8;
-        for modulus in [
-            1125899906842177u64,
-            1125899906839937,
-            (1 << 50) - 1,
-            (1 << 49) + 1,
-        ] {
-            let ifma = Ifma52::new(modulus).unwrap();
-            for (case, count) in [1usize, 7, 300, 2100].into_iter().enumerate() {
-                for edge in [false, true] {
-                    let seed = 0x9000 + 16 * case as u64 + edge as u64;
-                    let (op1, op2, zetas, initial) = if edge {
-                        (
-                            vec![modulus - 1; count * stride],
-                            vec![modulus - 1; count * stride],
-                            vec![modulus - 1; n],
-                            vec![modulus - 1; 4 * n],
-                        )
-                    } else {
-                        (
-                            xorshift_vec(count * stride, modulus, seed),
-                            xorshift_vec(count * stride, modulus, seed + 1),
-                            xorshift_vec(n, modulus, seed + 2),
-                            xorshift_vec(4 * n, modulus, seed + 3),
-                        )
-                    };
-                    let precon: Vec<u64> = zetas
-                        .iter()
-                        .map(|&z| MultiplyFactor::new(z, 52, modulus).barrett_factor())
-                        .collect();
-                    let mut expected = initial.clone();
-                    for k in 0..count {
-                        let a = &op1[k * stride..k * stride + 4 * n];
-                        let b = &op2[k * stride..k * stride + 4 * n];
-                        let product = slot4_schoolbook(a, b, &zetas, n, modulus);
-                        for (e, x) in expected.iter_mut().zip(product) {
-                            *e = add_uint_mod(*e, x, modulus);
+        for d in [2usize, 4] {
+            let stride = d * n + 8;
+            for modulus in [
+                IFMA_MODULI[0],
+                IFMA_MODULI[1],
+                IFMA_MODULI[3],
+                IFMA_MODULI[5],
+            ] {
+                let ifma = Ifma52::new(modulus).unwrap();
+                for (outputs, count) in cases {
+                    for case in 0..3u64 {
+                        let len = count * outputs * stride;
+                        let (a, mut b, zetas) = slot_operands(case, len, n, modulus);
+                        if case == 2 {
+                            b.fill(modulus - 1);
                         }
-                    }
-                    for accumulate in [false, true] {
-                        let mut result = initial.clone();
-                        unsafe {
-                            slot4_dot_avx512_ifma(
-                                result.as_mut_ptr(),
-                                op1.as_ptr(),
-                                stride,
-                                op2.as_ptr(),
-                                stride,
-                                count,
-                                accumulate,
-                                &zetas,
-                                &precon,
-                                n,
-                                &ifma,
-                            );
-                        }
-                        let mut want = expected.clone();
-                        if !accumulate {
-                            for (w, i) in want.iter_mut().zip(&initial) {
-                                *w = sub_uint_mod(*w, *i, modulus);
-                            }
-                        }
-                        assert!(
-                            result == want,
-                            "m={modulus} count={count} edge={edge} accumulate={accumulate}"
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn test_slot4_dot_many_matches_dot() {
-        if !*HAS_AVX512IFMA {
-            return;
-        }
-        let n = 32;
-        let stride = 4 * n + 8;
-        for modulus in [1125899906842177u64, 1125899906839937, (1 << 50) - 1] {
-            let ifma = Ifma52::new(modulus).unwrap();
-            let zetas = xorshift_vec(n, modulus, 0xa000);
-            let precon: Vec<u64> = zetas
-                .iter()
-                .map(|&z| MultiplyFactor::new(z, 52, modulus).barrett_factor())
-                .collect();
-            for (outputs, count) in [(1usize, 3usize), (8, 300), (13, 1100), (3, 1)] {
-                for edge in [false, true] {
-                    let seed = 0xb000 + 64 * outputs as u64 + count as u64 + edge as u64;
-                    let rows = outputs;
-                    let (a, b) = if edge {
-                        (
-                            vec![modulus - 1; count * stride],
-                            vec![modulus - 1; rows * count * stride],
-                        )
-                    } else {
-                        (
-                            xorshift_vec(count * stride, modulus, seed),
-                            xorshift_vec(rows * count * stride, modulus, seed + 1),
-                        )
-                    };
-                    let initial = xorshift_vec(outputs * stride, modulus, seed + 2);
-                    let (b_stride, b_output_stride) = (rows * stride, stride);
-                    for accumulate in [false, true] {
-                        let mut many = initial.clone();
-                        unsafe {
-                            slot4_dot_many_avx512_ifma(
-                                many.as_mut_ptr(),
-                                stride,
-                                outputs,
-                                a.as_ptr(),
-                                stride,
-                                b.as_ptr(),
-                                b_stride,
-                                b_output_stride,
-                                count,
-                                accumulate,
-                                &zetas,
-                                &precon,
-                                n,
-                                &ifma,
-                            );
-                        }
-                        for o in 0..outputs {
-                            let mut single = initial[o * stride..o * stride + 4 * n].to_vec();
+                        let precon = precon52(&zetas, modulus);
+                        let initial = xorshift_vec(outputs * stride, modulus, 0xc000 + case);
+                        let (b_stride, b_output_stride) = (outputs * stride, stride);
+                        let kernel = match d {
+                            2 => slot_dot_avx512_ifma::<2>,
+                            _ => slot_dot_avx512_ifma::<4>,
+                        };
+                        for accumulate in [false, true] {
+                            let mut result = initial.clone();
                             unsafe {
-                                slot4_dot_avx512_ifma(
-                                    single.as_mut_ptr(),
+                                kernel(
+                                    result.as_mut_ptr(),
+                                    stride,
+                                    outputs,
                                     a.as_ptr(),
                                     stride,
-                                    b.as_ptr().add(o * b_output_stride),
+                                    b.as_ptr(),
                                     b_stride,
+                                    b_output_stride,
                                     count,
                                     accumulate,
                                     &zetas,
@@ -2665,10 +2489,27 @@ mod slot_tests {
                                     &ifma,
                                 );
                             }
-                            assert!(
-                                many[o * stride..o * stride + 4 * n] == single[..],
-                                "m={modulus} outputs={outputs} count={count} edge={edge} o={o}"
-                            );
+                            for o in 0..outputs {
+                                let at = o * stride..o * stride + d * n;
+                                let mut want = if accumulate {
+                                    initial[at.clone()].to_vec()
+                                } else {
+                                    vec![0; d * n]
+                                };
+                                for k in 0..count {
+                                    let ak = &a[k * stride..][..d * n];
+                                    let bk = &b[k * b_stride + o * b_output_stride..][..d * n];
+                                    let product = slot_schoolbook(ak, bk, &zetas, d, modulus);
+                                    for (w, x) in want.iter_mut().zip(product) {
+                                        *w = add_uint_mod(*w, x, modulus);
+                                    }
+                                }
+                                assert!(
+                                    result[at] == want[..],
+                                    "d={d} m={modulus} outputs={outputs} count={count} \
+                                     case={case} accumulate={accumulate} o={o}"
+                                );
+                            }
                         }
                     }
                 }
@@ -2677,48 +2518,52 @@ mod slot_tests {
     }
 
     #[test]
-    fn test_slot4_karatsuba_matches_schoolbook() {
+    fn test_slot_native_and_float_match_schoolbook() {
         let n = 1 << 13;
         let moduli = [
             1125899906842177u64,
             1125899906839937,
+            1125899906826241,
             (1 << 50) - 1,
             (1 << 50) - 3,
             (1 << 49) + 1,
             1 << 40 | 1,
             (1 << 20) + 7,
         ];
-        for modulus in moduli {
-            for seed in 0..6u64 {
-                let (op1, op2, zetas) = match seed % 3 {
-                    0 => (
-                        xorshift_vec(4 * n, modulus, 0x5000 + seed),
-                        xorshift_vec(4 * n, modulus, 0x6000 + seed),
-                        xorshift_vec(n, modulus, 0x7000 + seed),
-                    ),
-                    1 => (
-                        edge_vec(4 * n, modulus, 0x5000 + seed),
-                        edge_vec(4 * n, modulus, 0x6000 + seed),
-                        edge_vec(n, modulus, 0x7000 + seed),
-                    ),
-                    _ => (
-                        vec![modulus - 1; 4 * n],
-                        edge_vec(4 * n, modulus, 0x6000 + seed),
-                        vec![modulus - 1; n],
-                    ),
-                };
-                let expected = slot4_schoolbook(&op1, &op2, &zetas, n, modulus);
-                let mut native = vec![0u64; 4 * n];
-                fused_slot4_mult_native(&mut native, &op1, &op2, &zetas, n, modulus);
-                assert_eq!(native, expected, "native m={modulus} seed={seed}");
-                #[cfg(target_arch = "x86_64")]
-                if *HAS_AVX512DQ {
-                    let zetas_f64: Vec<f64> = zetas.iter().map(|&z| z as f64).collect();
-                    let mut avx = vec![0u64; 4 * n];
-                    unsafe {
-                        fused_slot4_mult_avx512_float(&mut avx, &op1, &op2, &zetas_f64, n, modulus);
+        for d in [2usize, 4] {
+            for modulus in moduli {
+                for case in 0..6u64 {
+                    let (op1, op2, zetas) = slot_operands(case, d * n, n, modulus);
+                    let expected = slot_schoolbook(&op1, &op2, &zetas, d, modulus);
+                    let mut native = vec![0u64; d * n];
+                    match d {
+                        2 => fused_incomplete_ntt_mult_native(
+                            &mut native,
+                            &op1,
+                            &op2,
+                            &zetas,
+                            n,
+                            modulus,
+                        ),
+                        _ => fused_slot4_mult_native(&mut native, &op1, &op2, &zetas, n, modulus),
                     }
-                    assert_eq!(avx, expected, "avx m={modulus} seed={seed}");
+                    assert!(native == expected, "native d={d} m={modulus} case={case}");
+                    #[cfg(target_arch = "x86_64")]
+                    if *HAS_AVX512DQ && modulus < 1 << 50 {
+                        let zetas_f64: Vec<f64> = zetas.iter().map(|&z| z as f64).collect();
+                        let mut avx = vec![0u64; d * n];
+                        unsafe {
+                            match d {
+                                2 => fused_incomplete_ntt_mult_avx512_float(
+                                    &mut avx, &op1, &op2, &zetas_f64, n, modulus,
+                                ),
+                                _ => fused_slot4_mult_avx512_float(
+                                    &mut avx, &op1, &op2, &zetas_f64, n, modulus,
+                                ),
+                            }
+                        }
+                        assert!(avx == expected, "float d={d} m={modulus} case={case}");
+                    }
                 }
             }
         }

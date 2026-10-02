@@ -209,16 +209,17 @@ pub fn fused_incomplete_ntt_mult(
     n: usize,
     modulus: u64,
 ) {
-    with_ntt(n, modulus, |ntt| {
-        fused_incomplete_ntt_mult_inner(
-            result,
-            operand1,
-            operand2,
-            ntt.shift_factors(),
-            ntt.shift_factors_f64(),
-            n,
+    assert!(result.len() >= 2 * n && operand1.len() >= 2 * n && operand2.len() >= 2 * n);
+    with_ntt(n, modulus, |ntt| unsafe {
+        slot_mult(
+            ntt,
+            2,
             modulus,
-        );
+            ifma_tables(ntt),
+            result.as_mut_ptr(),
+            operand1.as_ptr(),
+            operand2.as_ptr(),
+        )
     });
 }
 
@@ -311,14 +312,61 @@ pub fn fused_slot_mult(
             && operand1.len() >= ring_degree
             && operand2.len() >= ring_degree
     );
+    with_ntt(ring_degree / d, modulus, |ntt| unsafe {
+        slot_mult(
+            ntt,
+            d,
+            modulus,
+            ifma_tables(ntt),
+            result.as_mut_ptr(),
+            operand1.as_ptr(),
+            operand2.as_ptr(),
+        )
+    });
+}
+
+fn ifma_tables(ntt: &ntt::Ntt) -> Option<&ntt::Ifma52> {
+    #[cfg(target_arch = "x86_64")]
+    if *cpu_features::HAS_AVX512IFMA {
+        return ntt.ifma52();
+    }
+    None
+}
+
+/// Slot product of `d n` u64s with inputs below `modulus`; `result` may alias `op1`.
+unsafe fn slot_mult(
+    ntt: &ntt::Ntt,
+    d: usize,
+    modulus: u64,
+    ifma: Option<&ntt::Ifma52>,
+    result: *mut u64,
+    op1: *const u64,
+    op2: *const u64,
+) {
+    let n = ntt.degree();
+    let (zetas, precon) = (ntt.shift_factors(), ntt.shift_factors_precon52());
+    #[cfg(target_arch = "x86_64")]
+    if let Some(ifma) = ifma {
+        let kernel = match d {
+            2 => eltwise::fused_slot_mult_avx512_ifma::<2>,
+            _ => eltwise::fused_slot_mult_avx512_ifma::<4>,
+        };
+        return kernel(result, op1, op2, zetas, precon, n, ifma);
+    }
+    let result = std::slice::from_raw_parts_mut(result, d * n);
+    let op1 = std::slice::from_raw_parts(op1, d * n);
+    let op2 = std::slice::from_raw_parts(op2, d * n);
     match d {
-        2 => fused_incomplete_ntt_mult(result, operand1, operand2, ring_degree / 2, modulus),
-        _ => {
-            let n = ring_degree / 4;
-            with_ntt(n, modulus, |ntt| {
-                eltwise::fused_slot4_mult_inner(result, operand1, operand2, ntt, n, modulus);
-            });
-        }
+        2 => fused_incomplete_ntt_mult_inner(
+            result,
+            op1,
+            op2,
+            zetas,
+            ntt.shift_factors_f64(),
+            n,
+            modulus,
+        ),
+        _ => eltwise::fused_slot4_mult_inner(result, op1, op2, ntt, n, modulus),
     }
 }
 
@@ -328,7 +376,7 @@ pub struct SlotRing {
     ring_degree: usize,
     slot_degree: usize,
     modulus: u64,
-    ifma: bool,
+    ifma: Option<ntt::Ifma52>,
 }
 
 impl SlotRing {
@@ -337,10 +385,7 @@ impl SlotRing {
         let n = ring_degree / slot_degree;
         assert!(n % 8 == 0, "N/d = {n} is not divisible by 8");
         let ntt = get_ntt(n, modulus);
-        #[cfg(target_arch = "x86_64")]
-        let ifma = slot_degree == 4 && *cpu_features::HAS_AVX512IFMA && ntt.ifma52().is_some();
-        #[cfg(not(target_arch = "x86_64"))]
-        let ifma = false;
+        let ifma = ifma_tables(&ntt).copied();
         Self {
             ntt,
             ring_degree,
@@ -353,35 +398,15 @@ impl SlotRing {
     /// `result` may alias `op1`.
     #[inline]
     pub unsafe fn mult(&self, result: *mut u64, op1: *const u64, op2: *const u64) {
-        let n = self.ring_degree / self.slot_degree;
-        let result = std::slice::from_raw_parts_mut(result, self.ring_degree);
-        let op1 = std::slice::from_raw_parts(op1, self.ring_degree);
-        let op2 = std::slice::from_raw_parts(op2, self.ring_degree);
-        #[cfg(target_arch = "x86_64")]
-        if self.ifma {
-            eltwise::fused_slot4_mult_avx512_ifma(
-                result,
-                op1,
-                op2,
-                self.ntt.shift_factors(),
-                self.ntt.shift_factors_precon52(),
-                n,
-                self.ntt.ifma52().unwrap_unchecked(),
-            );
-            return;
-        }
-        match self.slot_degree {
-            2 => fused_incomplete_ntt_mult_inner(
-                result,
-                op1,
-                op2,
-                self.ntt.shift_factors(),
-                self.ntt.shift_factors_f64(),
-                n,
-                self.modulus,
-            ),
-            _ => eltwise::fused_slot4_mult_inner(result, op1, op2, &self.ntt, n, self.modulus),
-        }
+        slot_mult(
+            &self.ntt,
+            self.slot_degree,
+            self.modulus,
+            self.ifma.as_ref(),
+            result,
+            op1,
+            op2,
+        );
     }
 
     /// [`strided_ntt_forward_in_place`] of the `N` u64s at `data`.
@@ -411,8 +436,12 @@ impl SlotRing {
         accumulate: bool,
     ) {
         #[cfg(target_arch = "x86_64")]
-        if self.ifma {
-            eltwise::slot4_dot_many_avx512_ifma(
+        if let Some(ifma) = &self.ifma {
+            let kernel = match self.slot_degree {
+                2 => eltwise::slot_dot_avx512_ifma::<2>,
+                _ => eltwise::slot_dot_avx512_ifma::<4>,
+            };
+            kernel(
                 results,
                 result_stride,
                 outputs,
@@ -425,21 +454,36 @@ impl SlotRing {
                 accumulate,
                 self.ntt.shift_factors(),
                 self.ntt.shift_factors_precon52(),
-                self.ring_degree / 4,
-                self.ntt.ifma52().unwrap_unchecked(),
+                self.ntt.degree(),
+                ifma,
             );
             return;
         }
+        let mut stack = [std::mem::MaybeUninit::<u64>::uninit(); 512];
+        let mut heap = Vec::new();
+        let product: *mut u64 = if self.ring_degree <= stack.len() {
+            stack.as_mut_ptr().cast()
+        } else {
+            heap.resize(self.ring_degree, 0);
+            heap.as_mut_ptr()
+        };
         for o in 0..outputs {
-            self.dot(
-                results.add(o * result_stride),
-                op1,
-                stride1,
-                op2.add(o * output_stride),
-                stride2,
-                count,
-                accumulate,
-            );
+            let result =
+                std::slice::from_raw_parts_mut(results.add(o * result_stride), self.ring_degree);
+            if !accumulate {
+                result.fill(0);
+            }
+            for k in 0..count {
+                self.mult(
+                    product,
+                    op1.add(k * stride1),
+                    op2.add(k * stride2 + o * output_stride),
+                );
+                let product = std::slice::from_raw_parts(product, self.ring_degree);
+                for (r, &x) in result.iter_mut().zip(product) {
+                    *r = add_uint_mod(*r, x, self.modulus);
+                }
+            }
         }
     }
 
@@ -455,37 +499,8 @@ impl SlotRing {
         count: usize,
         accumulate: bool,
     ) {
-        #[cfg(target_arch = "x86_64")]
-        if self.ifma {
-            eltwise::slot4_dot_avx512_ifma(
-                result,
-                op1,
-                stride1,
-                op2,
-                stride2,
-                count,
-                accumulate,
-                self.ntt.shift_factors(),
-                self.ntt.shift_factors_precon52(),
-                self.ring_degree / 4,
-                self.ntt.ifma52().unwrap_unchecked(),
-            );
-            return;
-        }
-        let result = std::slice::from_raw_parts_mut(result, self.ring_degree);
-        if !accumulate {
-            result.fill(0);
-        }
-        let mut product = vec![0u64; self.ring_degree];
-        for k in 0..count {
-            self.mult(
-                product.as_mut_ptr(),
-                op1.add(k * stride1),
-                op2.add(k * stride2),
-            );
-            for (r, &x) in result.iter_mut().zip(&product) {
-                *r = add_uint_mod(*r, x, self.modulus);
-            }
-        }
+        self.dot_many(
+            result, 0, 1, op1, stride1, op2, stride2, 0, count, accumulate,
+        );
     }
 }

@@ -896,18 +896,7 @@ static SLOT_RING: LazyLock<SlotRing> = LazyLock::new(|| SlotRing::new(DEGREE, MO
 /// Slot-wise product modulo `X^D - zeta_i` of two IncompleteNTT elements.
 #[inline(always)]
 unsafe fn slot_mult(result: *mut u64, operand1: *const u64, operand2: *const u64) {
-    if SLOT_DEGREE == 2 {
-        fused_incomplete_ntt_mult(
-            result,
-            operand1,
-            operand2,
-            SHIFT_FACTORS.as_ptr(),
-            HALF_DEGREE,
-            MOD_Q,
-        );
-    } else {
-        SLOT_RING.mult(result, operand1, operand2);
-    }
+    SLOT_RING.mult(result, operand1, operand2);
 }
 
 /// `results[o] += sum_{k < count} a[k a_step] b[k b_step + o]` over IncompleteNTT elements, for

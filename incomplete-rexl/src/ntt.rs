@@ -132,6 +132,10 @@ impl Ntt {
         ntt
     }
 
+    pub fn degree(&self) -> usize {
+        self.degree as usize
+    }
+
     pub fn root_of_unity_powers(&self) -> &Vec<u64> {
         &self.root_of_unity_powers
     }
