@@ -14,7 +14,6 @@ use crate::common::{
     matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
     ring_arithmetic::{Representation, RingElement},
 };
-use crate::hexl::bindings::ntt_inverse;
 use crate::protocol::{
     commitment::BasicCommitment,
     crs::{CK, CRS},
@@ -623,17 +622,7 @@ fn narrow(source: &[RingElement], out: &mut [Signed16RingElement]) {
     struct Buffer([u64; DEGREE]);
     let mut coefficients = Buffer([0u64; DEGREE]);
     for (element, slot) in source.iter().zip(out.iter_mut()) {
-        debug_assert_eq!(element.representation, Representation::IncompleteNTT);
-        for part in 0..SLOT_DEGREE {
-            unsafe {
-                ntt_inverse(
-                    coefficients.0.as_mut_ptr().add(part * NUM_SLOTS),
-                    element.v.as_ptr().add(part * NUM_SLOTS),
-                    NUM_SLOTS,
-                    MOD_Q,
-                );
-            }
-        }
+        element.strided_coefficients_into(&mut coefficients.0);
         centered_i16_from_u64_mod_q(&mut slot.0, &coefficients.0);
     }
 }

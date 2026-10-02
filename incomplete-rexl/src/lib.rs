@@ -420,6 +420,13 @@ impl SlotRing {
             .compute_inverse_blocks(&mut data[..self.ring_degree], self.slot_degree);
     }
 
+    /// [`Self::ntt_inverse`] of `operand` into `result`.
+    pub fn ntt_inverse_into(&self, result: &mut [u64], operand: &[u64]) {
+        assert!(result.len() >= self.ring_degree && operand.len() >= self.ring_degree);
+        let (result, operand) = (result.as_mut_ptr(), operand.as_ptr());
+        unsafe { self.ntt.inverse(result, operand, self.slot_degree, 1, 1) };
+    }
+
     /// [`Self::dot`] for `outputs` results at once: `results + o result_stride` (+)=
     /// `sum_k (op1 + k stride1) (op2 + k stride2 + o output_stride)`.
     pub unsafe fn dot_many(

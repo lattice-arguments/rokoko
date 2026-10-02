@@ -166,19 +166,7 @@ impl RingElement {
             "Already in Incomplete NTT representation"
         );
 
-        if SLOT_DEGREE == 4 {
-            SLOT_RING.ntt_forward(&mut self.v);
-        } else {
-            for part in 0..SLOT_DEGREE {
-                unsafe {
-                    ntt_forward_in_place(
-                        self.v.as_mut_ptr().add(part * NUM_SLOTS),
-                        NUM_SLOTS,
-                        MOD_Q,
-                    );
-                }
-            }
-        }
+        SLOT_RING.ntt_forward(&mut self.v);
 
         self.representation = Representation::IncompleteNTT;
     }
@@ -189,21 +177,15 @@ impl RingElement {
             "Not in Incomplete NTT representation"
         );
 
-        if SLOT_DEGREE == 4 {
-            SLOT_RING.ntt_inverse(&mut self.v);
-        } else {
-            for part in 0..SLOT_DEGREE {
-                unsafe {
-                    ntt_inverse_in_place(
-                        self.v.as_mut_ptr().add(part * NUM_SLOTS),
-                        NUM_SLOTS,
-                        MOD_Q,
-                    );
-                }
-            }
-        }
+        SLOT_RING.ntt_inverse(&mut self.v);
 
         self.representation = Representation::StridedCoefficients;
+    }
+
+    /// The StridedCoefficients of this IncompleteNTT element.
+    pub fn strided_coefficients_into(&self, result: &mut [u64; DEGREE]) {
+        debug_assert!(self.representation == Representation::IncompleteNTT);
+        SLOT_RING.ntt_inverse_into(result, &self.v);
     }
 
     pub fn from_coefficients_to_strided_coefficients(&mut self) {
