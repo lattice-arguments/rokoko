@@ -114,6 +114,8 @@ pub fn op_norm(c: &[i8; N]) -> f64 {
 
 #[inline(always)]
 pub fn op_norm_sq_sparse<const W: usize>(positions: &[u8; W], signs: &[i8; W]) -> f64 {
+    let in_range = positions.iter().all(|&p| (p as usize) < N);
+    assert!(in_range, "position out of range");
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     unsafe {
         return op_norm_sq_sparse_avx512(positions, signs);
@@ -153,6 +155,21 @@ pub fn op_norm_sq_sparse_scalar<const W: usize>(positions: &[u8; W], signs: &[i8
     max_sq
 }
 
+/// Row `p` holds `T[p (2j + 1) mod 2N]` for `j < N/2`, real parts then imaginary parts: the
+/// phases [`op_norm_sq_sparse_scalar`] steps through for a nonzero at position `p`.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+static PHASE_ROWS: LazyLock<Vec<f64>> = LazyLock::new(|| {
+    let mut rows = vec![0.0f64; N * N];
+    for (p, row) in rows.chunks_exact_mut(N).enumerate() {
+        for j in 0..N / 2 {
+            let idx = (p * (2 * j + 1)) & PHASE_MASK;
+            row[j] = PHASE_RE[idx];
+            row[N / 2 + j] = PHASE_IM[idx];
+        }
+    }
+    rows
+});
+
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 #[inline(always)]
 unsafe fn op_norm_sq_sparse_avx512<const W: usize>(positions: &[u8; W], signs: &[i8; W]) -> f64 {
@@ -161,33 +178,19 @@ unsafe fn op_norm_sq_sparse_avx512<const W: usize>(positions: &[u8; W], signs: &
     const NUM_BATCHES: usize = N / 16;
     const _: () = assert!(N % 16 == 0 && NUM_BATCHES * 2 <= 32);
 
-    let phase_re_ptr = PHASE_RE.as_ptr();
-    let phase_im_ptr = PHASE_IM.as_ptr();
+    let rows = PHASE_ROWS.as_ptr();
 
     let mut vr = [_mm512_setzero_pd(); NUM_BATCHES];
     let mut vi = [_mm512_setzero_pd(); NUM_BATCHES];
 
-    let mask_v = _mm256_set1_epi32(PHASE_MASK as i32);
-    let lane_index = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
-
     for k in 0..W {
-        let p = positions[k] as i32;
-        let s = signs[k] as f64;
-        let s_v = _mm512_set1_pd(s);
-        let step = (2 * p) & (PHASE_MASK as i32);
-
-        let step_v = _mm256_set1_epi32(step);
-        let lane_offsets = _mm256_mullo_epi32(lane_index, step_v);
-        let big_step = _mm256_set1_epi32(8 * step);
-
-        let mut base = _mm256_add_epi32(_mm256_set1_epi32(p), lane_offsets);
+        let s_v = _mm512_set1_pd(signs[k] as f64);
+        let row = rows.add(N * positions[k] as usize);
         for b in 0..NUM_BATCHES {
-            let idx_v = _mm256_and_si256(base, mask_v);
-            let pre = _mm512_i32gather_pd::<8>(idx_v, phase_re_ptr);
-            let pim = _mm512_i32gather_pd::<8>(idx_v, phase_im_ptr);
+            let pre = _mm512_loadu_pd(row.add(8 * b));
+            let pim = _mm512_loadu_pd(row.add(N / 2 + 8 * b));
             vr[b] = _mm512_fmadd_pd(s_v, pre, vr[b]);
             vi[b] = _mm512_fmadd_pd(s_v, pim, vi[b]);
-            base = _mm256_add_epi32(base, big_step);
         }
     }
 
@@ -337,6 +340,17 @@ pub fn repetition_rate() -> f64 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn sparse_op_norm_rejects_positions_past_the_degree() {
+        if N > u8::MAX as usize {
+            return;
+        }
+        let mut positions = [0u8; TAU];
+        positions[TAU - 1] = N as u8;
+        let run = || op_norm_sq_sparse(&positions, &[1i8; TAU]);
+        assert!(std::panic::catch_unwind(run).is_err());
+    }
+
     fn weight(c: &[i8; N]) -> usize {
         c.iter().filter(|&&x| x != 0).count()
     }
@@ -370,19 +384,26 @@ mod tests {
 
     #[test]
     fn sparse_op_norm_matches_dense_fft() {
-        let (positions, signs) = fixed_test_vector();
-        let mut c = [0i8; N];
-        for i in 0..TAU {
-            c[positions[i] as usize] = signs[i];
+        let mut hasher = HashWrapper::new();
+        let top: [u8; TAU] = std::array::from_fn(|i| (N - 1 - i) as u8);
+        for attempt in 0..2_000 {
+            let (positions, signs) = match attempt {
+                0 => fixed_test_vector(),
+                1 => (top, [1i8; TAU]),
+                2 => (top, [-1i8; TAU]),
+                _ => sample_attempt::<TAU>(&mut hasher, b"sparse-vs-dense"),
+            };
+            let mut c = [0i8; N];
+            for i in 0..TAU {
+                c[positions[i] as usize] += signs[i];
+            }
+            let dense = op_norm(&c);
+            let sparse = op_norm_sq_sparse(&positions, &signs).sqrt();
+            assert!(
+                (dense - sparse).abs() < 1e-10,
+                "dense={dense} sparse={sparse}"
+            );
         }
-        let dense = op_norm(&c);
-        let sparse = op_norm_sq_sparse(&positions, &signs).sqrt();
-        assert!(
-            (dense - sparse).abs() < 1e-10,
-            "dense={} sparse={}",
-            dense,
-            sparse
-        );
     }
 
     #[test]
