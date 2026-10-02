@@ -899,8 +899,7 @@ unsafe fn slot_mult(result: *mut u64, operand1: *const u64, operand2: *const u64
     SLOT_RING.mult(result, operand1, operand2);
 }
 
-/// `results[o] += sum_{k < count} a[k a_step] b[k b_step + o]` over IncompleteNTT elements, for
-/// degree-4 slots.
+/// `results[o] += sum_{k < count} a[k a_step] b[k b_step + o]` over IncompleteNTT elements.
 pub fn incomplete_ntt_dot_many_into(
     results: &mut [RingElement],
     a: &[RingElement],
@@ -909,7 +908,6 @@ pub fn incomplete_ntt_dot_many_into(
     b_step: usize,
     count: usize,
 ) {
-    assert!(SLOT_DEGREE == 4);
     if count == 0 || results.is_empty() {
         return;
     }
@@ -944,14 +942,6 @@ pub fn incomplete_ntt_dot_into(
         return;
     }
     assert!((count - 1) * a_step < a.len() && (count - 1) * b_step < b.len());
-    if SLOT_DEGREE == 2 {
-        let mut temp = RingElement::zero(Representation::IncompleteNTT);
-        for k in 0..count {
-            incomplete_ntt_multiplication(&mut temp, &a[k * a_step], &b[k * b_step]);
-            *acc += &temp;
-        }
-        return;
-    }
     let stride = std::mem::size_of::<RingElement>() / std::mem::size_of::<u64>();
     unsafe {
         SLOT_RING.dot(
