@@ -478,22 +478,20 @@ impl SlotRing {
             heap.resize(self.ring_degree, 0);
             heap.as_mut_ptr()
         };
-        for o in 0..outputs {
-            let result =
-                std::slice::from_raw_parts_mut(results.add(o * result_stride), self.ring_degree);
-            if !accumulate {
-                result.fill(0);
-            }
-            for k in 0..count {
-                self.mult(
-                    product,
-                    op1.add(k * stride1),
-                    op2.add(k * stride2 + o * output_stride),
-                );
+        let result = |o: usize| {
+            std::slice::from_raw_parts_mut(results.add(o * result_stride), self.ring_degree)
+        };
+        if !accumulate {
+            (0..outputs).for_each(|o| result(o).fill(0));
+        }
+        for k in 0..count {
+            for o in 0..outputs {
+                let b = op2.add(k * stride2 + o * output_stride);
+                self.mult(product, op1.add(k * stride1), b);
+                let sum = result(o);
+                let acc = std::slice::from_raw_parts(sum.as_ptr(), self.ring_degree);
                 let product = std::slice::from_raw_parts(product, self.ring_degree);
-                for (r, &x) in result.iter_mut().zip(product) {
-                    *r = add_uint_mod(*r, x, self.modulus);
-                }
+                eltwise_add_mod(sum, acc, product, self.modulus);
             }
         }
     }
