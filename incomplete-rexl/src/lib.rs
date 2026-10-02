@@ -105,17 +105,11 @@ pub fn get_inv_roots(n: usize, modulus: u64) -> *const u64 {
 }
 
 pub fn ntt_forward_in_place(data: &mut [u64], n: usize, modulus: u64) {
-    let operand = unsafe { std::slice::from_raw_parts(data.as_ptr(), data.len()) };
-    with_ntt(n, modulus, |ntt| {
-        ntt.compute_forward(data, operand, 1, 1);
-    });
+    with_ntt(n, modulus, |ntt| ntt.compute_forward_blocks(data, 1));
 }
 
 pub fn ntt_inverse_in_place(data: &mut [u64], n: usize, modulus: u64) {
-    let operand = unsafe { std::slice::from_raw_parts(data.as_ptr(), data.len()) };
-    with_ntt(n, modulus, |ntt| {
-        ntt.compute_inverse(data, operand, 1, 1);
-    });
+    with_ntt(n, modulus, |ntt| ntt.compute_inverse_blocks(data, 1));
 }
 
 pub fn ntt_inverse(result: &mut [u64], operand: &[u64], n: usize, modulus: u64) {
@@ -210,15 +204,29 @@ pub fn fused_incomplete_ntt_mult(
     modulus: u64,
 ) {
     assert!(result.len() >= 2 * n && operand1.len() >= 2 * n && operand2.len() >= 2 * n);
-    with_ntt(n, modulus, |ntt| unsafe {
+    let (result, operand1, operand2) = (result.as_mut_ptr(), operand1.as_ptr(), operand2.as_ptr());
+    unsafe { fused_incomplete_ntt_mult_ptr(result, operand1, operand2, n, modulus) };
+}
+
+/// [`fused_incomplete_ntt_mult`] on `2n` u64s at each pointer; `result` may alias `operand1`.
+#[inline]
+pub unsafe fn fused_incomplete_ntt_mult_ptr(
+    result: *mut u64,
+    operand1: *const u64,
+    operand2: *const u64,
+    n: usize,
+    modulus: u64,
+) {
+    assert!(n >= 8 && n % 8 == 0, "n = {n} is not a multiple of 8");
+    with_ntt(n, modulus, |ntt| {
         slot_mult(
             ntt,
             2,
             modulus,
             ifma_tables(ntt),
-            result.as_mut_ptr(),
-            operand1.as_ptr(),
-            operand2.as_ptr(),
+            result,
+            operand1,
+            operand2,
         )
     });
 }
@@ -301,26 +309,39 @@ pub fn fused_slot_mult(
     ring_degree: usize,
     modulus: u64,
 ) {
+    assert!(
+        result.len() >= ring_degree
+            && operand1.len() >= ring_degree
+            && operand2.len() >= ring_degree
+    );
+    let (result, operand1, operand2) = (result.as_mut_ptr(), operand1.as_ptr(), operand2.as_ptr());
+    unsafe { fused_slot_mult_ptr(result, operand1, operand2, ring_degree, modulus) };
+}
+
+/// [`fused_slot_mult`] on `N` u64s at each pointer; `result` may alias `operand1`.
+#[inline]
+pub unsafe fn fused_slot_mult_ptr(
+    result: *mut u64,
+    operand1: *const u64,
+    operand2: *const u64,
+    ring_degree: usize,
+    modulus: u64,
+) {
     let d = supported_slot_degree(ring_degree, modulus);
     assert!(
         (ring_degree / d) % 8 == 0,
         "N/d = {} is not divisible by 8",
         ring_degree / d
     );
-    assert!(
-        result.len() >= ring_degree
-            && operand1.len() >= ring_degree
-            && operand2.len() >= ring_degree
-    );
-    with_ntt(ring_degree / d, modulus, |ntt| unsafe {
+    with_ntt(ring_degree / d, modulus, |ntt| {
         slot_mult(
             ntt,
             d,
             modulus,
             ifma_tables(ntt),
-            result.as_mut_ptr(),
-            operand1.as_ptr(),
-            operand2.as_ptr(),
+            result,
+            operand1,
+            operand2,
         )
     });
 }
@@ -357,19 +378,11 @@ unsafe fn slot_mult(
             }
         };
     }
-    let result = std::slice::from_raw_parts_mut(result, d * n);
-    let op1 = std::slice::from_raw_parts(op1, d * n);
-    let op2 = std::slice::from_raw_parts(op2, d * n);
     match d {
-        2 => fused_incomplete_ntt_mult_inner(
-            result,
-            op1,
-            op2,
-            zetas,
-            ntt.shift_factors_f64(),
-            n,
-            modulus,
-        ),
+        2 => {
+            let zetas_f64 = ntt.shift_factors_f64();
+            eltwise::fused_incomplete_ntt_mult_ptr(result, op1, op2, zetas, zetas_f64, n, modulus)
+        }
         _ => eltwise::fused_slot4_mult_inner(result, op1, op2, ntt, n, modulus),
     }
 }
@@ -488,10 +501,8 @@ impl SlotRing {
             for o in 0..outputs {
                 let b = op2.add(k * stride2 + o * output_stride);
                 self.mult(product, op1.add(k * stride1), b);
-                let sum = result(o);
-                let acc = std::slice::from_raw_parts(sum.as_ptr(), self.ring_degree);
                 let product = std::slice::from_raw_parts(product, self.ring_degree);
-                eltwise_add_mod(sum, acc, product, self.modulus);
+                eltwise::eltwise_add_mod_assign(result(o), product, self.modulus);
             }
         }
     }

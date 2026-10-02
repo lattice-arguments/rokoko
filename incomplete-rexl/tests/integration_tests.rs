@@ -305,8 +305,8 @@ fn test_fused_incomplete_ntt_mult_in_place() {
 
         // In-place: result aliases operand1
         let mut in_place = op1.clone();
-        let in_place_copy = in_place.clone();
-        fused_incomplete_ntt_mult(&mut in_place, &in_place_copy, &op2, n, modulus);
+        let p = in_place.as_mut_ptr();
+        unsafe { fused_incomplete_ntt_mult_ptr(p, p, op2.as_ptr(), n, modulus) };
 
         assert_eq!(ref_result, in_place, "In-place aliasing broke at n={n}");
     }
@@ -524,7 +524,7 @@ fn test_slot_ring_matches_fused_slot_mult() {
                     if count == 5 {
                         modulus - 1
                     } else {
-                        (i as u64 * 0x9e37_79b9_7f4a_7c15) % modulus
+                        (i as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) % modulus
                     }
                 })
                 .collect();
@@ -533,7 +533,7 @@ fn test_slot_ring_matches_fused_slot_mult() {
                     if count == 5 {
                         modulus - 1
                     } else {
-                        (i as u64 * 0xc2b2_ae3d_27d4_eb4f) % modulus
+                        (i as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f) % modulus
                     }
                 })
                 .collect();
@@ -568,6 +568,35 @@ fn test_slot_ring_matches_fused_slot_mult() {
             );
         }
     }
+}
+
+#[test]
+fn test_slot_mult_in_place() {
+    for (ring_degree, modulus, _, _) in SLOT_CASES {
+        let ring = SlotRing::new(ring_degree, modulus);
+        let op1 = random_vec(ring_degree, modulus);
+        let op2 = random_vec(ring_degree, modulus);
+        let mut expected = vec![0u64; ring_degree];
+        fused_slot_mult(&mut expected, &op1, &op2, ring_degree, modulus);
+        for via_ring in [false, true] {
+            let mut in_place = op1.clone();
+            let p = in_place.as_mut_ptr();
+            unsafe {
+                match via_ring {
+                    false => fused_slot_mult_ptr(p, p, op2.as_ptr(), ring_degree, modulus),
+                    true => ring.mult(p, p, op2.as_ptr()),
+                }
+            }
+            assert!(in_place == expected, "N={ring_degree} ring={via_ring}");
+        }
+    }
+}
+
+#[test]
+#[should_panic(expected = "not a multiple of 8")]
+fn test_fused_incomplete_ntt_mult_rejects_partial_vectors() {
+    let (mut c, a) = (vec![0u64; 8], vec![0u64; 8]);
+    fused_incomplete_ntt_mult(&mut c, &a, &a, 4, MOD_SMALL);
 }
 
 #[test]

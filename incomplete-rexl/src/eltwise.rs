@@ -94,7 +94,7 @@ fn eltwise_add_mod_native(result: &mut [u64], operand1: &[u64], operand2: &[u64]
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+#[target_feature(enable = "avx512f,avx512dq")]
 #[inline]
 unsafe fn eltwise_add_mod_avx512(
     result: &mut [u64],
@@ -132,6 +132,33 @@ unsafe fn eltwise_add_mod_avx512(
     }
 }
 
+/// `result = result + operand mod modulus` for inputs below `modulus`.
+pub(crate) fn eltwise_add_mod_assign(result: &mut [u64], operand: &[u64], modulus: u64) {
+    assert!(operand.len() >= result.len());
+    #[cfg(target_arch = "x86_64")]
+    if *HAS_AVX512DQ && result.len() % 8 == 0 {
+        unsafe { eltwise_add_mod_assign_avx512(result, operand, modulus) };
+        return;
+    }
+    for (x, &y) in result.iter_mut().zip(operand) {
+        let sum = *x + y;
+        *x = if sum >= modulus { sum - modulus } else { sum };
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512dq")]
+#[inline]
+unsafe fn eltwise_add_mod_assign_avx512(result: &mut [u64], operand: &[u64], modulus: u64) {
+    let v_modulus = _mm512_set1_epi64(modulus as i64);
+    for (x, y) in result.chunks_exact_mut(8).zip(operand.chunks_exact(8)) {
+        let v_x = _mm512_loadu_si512(x.as_ptr() as *const __m512i);
+        let v_y = _mm512_loadu_si512(y.as_ptr() as *const __m512i);
+        let v_sum = mm512_hexl_small_add_mod_epi64(v_x, v_y, v_modulus);
+        _mm512_storeu_si512(x.as_mut_ptr() as *mut __m512i, v_sum);
+    }
+}
+
 pub fn eltwise_sub_mod(result: &mut [u64], operand1: &[u64], operand2: &[u64], modulus: u64) {
     let n = result.len();
     if n == 0 {
@@ -162,7 +189,7 @@ fn eltwise_sub_mod_native(result: &mut [u64], operand1: &[u64], operand2: &[u64]
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+#[target_feature(enable = "avx512f,avx512dq")]
 #[inline]
 unsafe fn eltwise_sub_mod_avx512(
     result: &mut [u64],
@@ -220,7 +247,7 @@ pub fn eltwise_reduce_mod(result: &mut [u64], operand: &[u64], modulus: u64) {
             && ((modulus < (1u64 << 51)) || (modulus < (1u64 << 52) && input_mod_factor <= 4))
         {
             unsafe {
-                eltwise_reduce_mod_avx512::<52>(
+                eltwise_reduce_mod_avx512_ifma(
                     result,
                     operand,
                     modulus,
@@ -233,7 +260,7 @@ pub fn eltwise_reduce_mod(result: &mut [u64], operand: &[u64], modulus: u64) {
 
         if *HAS_AVX512DQ {
             unsafe {
-                eltwise_reduce_mod_avx512::<64>(
+                eltwise_reduce_mod_avx512_dq(
                     result,
                     operand,
                     modulus,
@@ -310,8 +337,35 @@ fn eltwise_reduce_mod_native(
 }
 
 #[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512dq")]
+#[inline]
+unsafe fn eltwise_reduce_mod_avx512_dq(
+    result: &mut [u64],
+    operand: &[u64],
+    modulus: u64,
+    input_mod_factor: u64,
+    output_mod_factor: u64,
+) {
+    let (input, output) = (input_mod_factor, output_mod_factor);
+    eltwise_reduce_mod_avx512::<64>(result, operand, modulus, input, output)
+}
+
+#[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 #[inline]
+unsafe fn eltwise_reduce_mod_avx512_ifma(
+    result: &mut [u64],
+    operand: &[u64],
+    modulus: u64,
+    input_mod_factor: u64,
+    output_mod_factor: u64,
+) {
+    let (input, output) = (input_mod_factor, output_mod_factor);
+    eltwise_reduce_mod_avx512::<52>(result, operand, modulus, input, output)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
 unsafe fn eltwise_reduce_mod_avx512<const BITSHIFT: i32>(
     result: &mut [u64],
     operand: &[u64],
@@ -517,7 +571,7 @@ fn eltwise_mult_mod_native<const INPUT_MOD_FACTOR: u64>(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+#[target_feature(enable = "avx512f,avx512dq")]
 #[inline]
 unsafe fn eltwise_mult_mod_avx512_dq_int_loop_const<
     const PROD_RIGHT_SHIFT: i32,
@@ -568,7 +622,7 @@ unsafe fn eltwise_mult_mod_avx512_dq_int_loop_const<
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+#[target_feature(enable = "avx512f,avx512dq")]
 #[inline]
 unsafe fn eltwise_mult_mod_avx512_dq_int_loop_runtime<const INPUT_MOD_FACTOR: i32>(
     vp_result: *mut __m512i,
@@ -617,7 +671,7 @@ unsafe fn eltwise_mult_mod_avx512_dq_int_loop_runtime<const INPUT_MOD_FACTOR: i3
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+#[target_feature(enable = "avx512f,avx512dq")]
 #[inline]
 unsafe fn eltwise_mult_mod_avx512_dq_int<const INPUT_MOD_FACTOR: i32>(
     result: &mut [u64],
@@ -850,7 +904,7 @@ unsafe fn eltwise_mult_mod_avx512_dq_int<const INPUT_MOD_FACTOR: i32>(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+#[target_feature(enable = "avx512f,avx512dq")]
 #[inline]
 unsafe fn eltwise_mult_mod_avx512_float_loop<const INPUT_MOD_FACTOR: i32>(
     vp_result: *mut __m512i,
@@ -988,7 +1042,7 @@ unsafe fn eltwise_mult_mod_avx512_float_loop<const INPUT_MOD_FACTOR: i32>(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+#[target_feature(enable = "avx512f,avx512dq")]
 #[inline]
 unsafe fn eltwise_mult_mod_avx512_float<const INPUT_MOD_FACTOR: i32>(
     result: &mut [u64],
@@ -1081,10 +1135,10 @@ fn eltwise_fma_mod_internal(
         if *HAS_AVX512IFMA && input_mod_factor * modulus < (1u64 << 51) {
             unsafe {
                 match input_mod_factor {
-                    1 => eltwise_fma_mod_avx512::<52, 1>(result, arg1, arg2, arg3, modulus),
-                    2 => eltwise_fma_mod_avx512::<52, 2>(result, arg1, arg2, arg3, modulus),
-                    4 => eltwise_fma_mod_avx512::<52, 4>(result, arg1, arg2, arg3, modulus),
-                    8 => eltwise_fma_mod_avx512::<52, 8>(result, arg1, arg2, arg3, modulus),
+                    1 => eltwise_fma_mod_avx512_ifma::<1>(result, arg1, arg2, arg3, modulus),
+                    2 => eltwise_fma_mod_avx512_ifma::<2>(result, arg1, arg2, arg3, modulus),
+                    4 => eltwise_fma_mod_avx512_ifma::<4>(result, arg1, arg2, arg3, modulus),
+                    8 => eltwise_fma_mod_avx512_ifma::<8>(result, arg1, arg2, arg3, modulus),
                     _ => {}
                 }
                 return;
@@ -1094,10 +1148,10 @@ fn eltwise_fma_mod_internal(
         if *HAS_AVX512DQ {
             unsafe {
                 match input_mod_factor {
-                    1 => eltwise_fma_mod_avx512::<64, 1>(result, arg1, arg2, arg3, modulus),
-                    2 => eltwise_fma_mod_avx512::<64, 2>(result, arg1, arg2, arg3, modulus),
-                    4 => eltwise_fma_mod_avx512::<64, 4>(result, arg1, arg2, arg3, modulus),
-                    8 => eltwise_fma_mod_avx512::<64, 8>(result, arg1, arg2, arg3, modulus),
+                    1 => eltwise_fma_mod_avx512_dq::<1>(result, arg1, arg2, arg3, modulus),
+                    2 => eltwise_fma_mod_avx512_dq::<2>(result, arg1, arg2, arg3, modulus),
+                    4 => eltwise_fma_mod_avx512_dq::<4>(result, arg1, arg2, arg3, modulus),
+                    8 => eltwise_fma_mod_avx512_dq::<8>(result, arg1, arg2, arg3, modulus),
                     _ => {}
                 }
                 return;
@@ -1164,8 +1218,33 @@ fn eltwise_fma_mod_native<const INPUT_MOD_FACTOR: u64>(
 }
 
 #[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512dq")]
+#[inline]
+unsafe fn eltwise_fma_mod_avx512_dq<const INPUT_MOD_FACTOR: i32>(
+    result: &mut [u64],
+    arg1: &[u64],
+    arg2: u64,
+    arg3: Option<&[u64]>,
+    modulus: u64,
+) {
+    eltwise_fma_mod_avx512::<64, INPUT_MOD_FACTOR>(result, arg1, arg2, arg3, modulus)
+}
+
+#[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 #[inline]
+unsafe fn eltwise_fma_mod_avx512_ifma<const INPUT_MOD_FACTOR: i32>(
+    result: &mut [u64],
+    arg1: &[u64],
+    arg2: u64,
+    arg3: Option<&[u64]>,
+    modulus: u64,
+) {
+    eltwise_fma_mod_avx512::<52, INPUT_MOD_FACTOR>(result, arg1, arg2, arg3, modulus)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
 unsafe fn eltwise_fma_mod_avx512<const BITSHIFT: i32, const INPUT_MOD_FACTOR: i32>(
     result: &mut [u64],
     arg1: &[u64],
@@ -1297,48 +1376,96 @@ pub fn fused_incomplete_ntt_mult_inner(
     n: usize,
     modulus: u64,
 ) {
-    debug_assert!(n % 8 == 0);
-    debug_assert!(result.len() >= 2 * n);
-    debug_assert!(operand1.len() >= 2 * n);
-    debug_assert!(operand2.len() >= 2 * n);
-    debug_assert!(shift_factors.len() >= n);
-    debug_assert!(shift_factors_f64.len() >= n);
+    assert!(n % 8 == 0, "n = {n} is not divisible by 8");
+    assert!(result.len() >= 2 * n && operand1.len() >= 2 * n && operand2.len() >= 2 * n);
+    assert!(shift_factors.len() >= n && shift_factors_f64.len() >= n);
+    unsafe {
+        fused_incomplete_ntt_mult_ptr(
+            result.as_mut_ptr(),
+            operand1.as_ptr(),
+            operand2.as_ptr(),
+            shift_factors,
+            shift_factors_f64,
+            n,
+            modulus,
+        )
+    }
+}
 
+/// [`fused_incomplete_ntt_mult_inner`] on `2n` u64s at each pointer; `result` may alias
+/// `operand1`.
+#[inline]
+pub(crate) unsafe fn fused_incomplete_ntt_mult_ptr(
+    result: *mut u64,
+    operand1: *const u64,
+    operand2: *const u64,
+    shift_factors: &[u64],
+    shift_factors_f64: &[f64],
+    n: usize,
+    modulus: u64,
+) {
     #[cfg(target_arch = "x86_64")]
     {
         if *HAS_AVX512DQ && modulus < (1u64 << 50) {
-            unsafe {
-                fused_incomplete_ntt_mult_avx512_float(
-                    result,
-                    operand1,
-                    operand2,
-                    shift_factors_f64,
-                    n,
-                    modulus,
-                );
-                return;
-            }
+            fused_incomplete_ntt_mult_avx512_float(
+                result,
+                operand1,
+                operand2,
+                shift_factors_f64,
+                n,
+                modulus,
+            );
+            return;
         }
     }
 
     #[cfg(target_arch = "aarch64")]
     {
         if HAS_NEON && modulus < (1u64 << 50) {
-            unsafe {
-                fused_incomplete_ntt_mult_neon(
-                    result,
-                    operand1,
-                    operand2,
-                    shift_factors_f64,
-                    n,
-                    modulus,
-                );
-                return;
-            }
+            fused_incomplete_ntt_mult_neon(
+                result,
+                operand1,
+                operand2,
+                shift_factors_f64,
+                n,
+                modulus,
+            );
+            return;
         }
     }
 
-    fused_incomplete_ntt_mult_native(result, operand1, operand2, shift_factors, n, modulus);
+    with_slices(result, operand1, operand2, 2 * n, |r, a, b| {
+        fused_incomplete_ntt_mult_native(r, a, b, shift_factors, n, modulus)
+    });
+}
+
+/// `kernel` on `len` u64s at each pointer, through a copy of `operand1` when `result` is
+/// `operand1`.
+unsafe fn with_slices(
+    result: *mut u64,
+    operand1: *const u64,
+    operand2: *const u64,
+    len: usize,
+    kernel: impl FnOnce(&mut [u64], &[u64], &[u64]),
+) {
+    let mut stack = [std::mem::MaybeUninit::<u64>::uninit(); 512];
+    let mut heap = Vec::new();
+    let operand1 = if result as *const u64 == operand1 {
+        let copy: *mut u64 = match len <= stack.len() {
+            true => stack.as_mut_ptr().cast(),
+            false => {
+                heap.reserve_exact(len);
+                heap.as_mut_ptr()
+            }
+        };
+        std::ptr::copy_nonoverlapping(operand1, copy, len);
+        copy as *const u64
+    } else {
+        operand1
+    };
+    let result = std::slice::from_raw_parts_mut(result, len);
+    let operand1 = std::slice::from_raw_parts(operand1, len);
+    kernel(result, operand1, std::slice::from_raw_parts(operand2, len))
 }
 
 fn fused_incomplete_ntt_mult_native(
@@ -1375,12 +1502,12 @@ fn fused_incomplete_ntt_mult_native(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+#[target_feature(enable = "avx512f,avx512dq")]
 #[inline]
 unsafe fn fused_incomplete_ntt_mult_avx512_float(
-    result: &mut [u64],
-    operand1: &[u64],
-    operand2: &[u64],
+    result: *mut u64,
+    operand1: *const u64,
+    operand2: *const u64,
     shift_factors_f64: &[f64],
     n: usize,
     modulus: u64,
@@ -1393,13 +1520,13 @@ unsafe fn fused_incomplete_ntt_mult_avx512_float(
     const ROUND_MODE: i32 = _MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC;
     const FLOOR: i32 = _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC;
 
-    let op1_e = operand1.as_ptr();
-    let op1_o = operand1.as_ptr().add(n);
-    let op2_e = operand2.as_ptr();
-    let op2_o = operand2.as_ptr().add(n);
+    let op1_e = operand1;
+    let op1_o = operand1.add(n);
+    let op2_e = operand2;
+    let op2_o = operand2.add(n);
     let shift_f = shift_factors_f64.as_ptr();
-    let res_e = result.as_mut_ptr();
-    let res_o = result.as_mut_ptr().add(n);
+    let res_e = result;
+    let res_o = result.add(n);
 
     // Float modular multiply: (x * y) mod p  via Dekker error-free product.
     // Both x, y must be exact float representations of integers in [0, p).
@@ -1486,11 +1613,12 @@ unsafe fn fused_incomplete_ntt_mult_avx512_float(
 }
 
 /// Product over degree-4 slots: slot `i` is `(op[i], op[n+i], op[2n+i], op[3n+i])` modulo
-/// `Y^4 - zeta[i]`, so `c_k = sum_{j+l=k} a_j b_l + zeta * sum_{j+l=k+4} a_j b_l`.
-pub(crate) fn fused_slot4_mult_inner(
-    result: &mut [u64],
-    operand1: &[u64],
-    operand2: &[u64],
+/// `Y^4 - zeta[i]`, so `c_k = sum_{j+l=k} a_j b_l + zeta * sum_{j+l=k+4} a_j b_l`; `4n` u64s at
+/// each pointer, `result` may alias `operand1`.
+pub(crate) unsafe fn fused_slot4_mult_inner(
+    result: *mut u64,
+    operand1: *const u64,
+    operand2: *const u64,
     ntt: &Ntt,
     n: usize,
     modulus: u64,
@@ -1498,23 +1626,20 @@ pub(crate) fn fused_slot4_mult_inner(
     let zetas = ntt.shift_factors();
     let zetas_f64 = ntt.shift_factors_f64();
     debug_assert!(n % 8 == 0);
-    debug_assert!(result.len() >= 4 * n);
-    debug_assert!(operand1.len() >= 4 * n);
-    debug_assert!(operand2.len() >= 4 * n);
     debug_assert!(zetas.len() >= n);
     debug_assert!(zetas_f64.len() >= n);
 
     #[cfg(target_arch = "x86_64")]
     {
         if *HAS_AVX512DQ && modulus < (1u64 << 50) {
-            unsafe {
-                fused_slot4_mult_avx512_float(result, operand1, operand2, zetas_f64, n, modulus);
-                return;
-            }
+            fused_slot4_mult_avx512_float(result, operand1, operand2, zetas_f64, n, modulus);
+            return;
         }
     }
 
-    fused_slot4_mult_native(result, operand1, operand2, zetas, n, modulus);
+    with_slices(result, operand1, operand2, 4 * n, |r, a, b| {
+        fused_slot4_mult_native(r, a, b, zetas, n, modulus)
+    });
 }
 
 // Karatsuba over `a = (a0 + a1 Y) + Y^2 (a2 + a3 Y)`: products `l*`, `h*`, `s*` of the low
@@ -1574,12 +1699,12 @@ pub(crate) fn fused_slot4_mult_native(
 // (`sm` below 2.01 p) and, with `p5` reduced, every later sum below 7.4 p < 2^53, so all
 // float sums are exact; `reduce!` maps |t| < 8p to [0, p).
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+#[target_feature(enable = "avx512f,avx512dq")]
 #[inline]
 pub(crate) unsafe fn fused_slot4_mult_avx512_float(
-    result: &mut [u64],
-    operand1: &[u64],
-    operand2: &[u64],
+    result: *mut u64,
+    operand1: *const u64,
+    operand2: *const u64,
     zetas_f64: &[f64],
     n: usize,
     modulus: u64,
@@ -1591,10 +1716,8 @@ pub(crate) unsafe fn fused_slot4_mult_avx512_float(
     const ROUND_MODE: i32 = _MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC;
     const NEAREST: i32 = _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC;
 
-    let op1 = operand1.as_ptr();
-    let op2 = operand2.as_ptr();
+    let (op1, op2, res) = (operand1, operand2, result);
     let zeta = zetas_f64.as_ptr();
-    let res = result.as_mut_ptr();
 
     macro_rules! fmul {
         ($x:expr, $y:expr) => {{
@@ -2070,9 +2193,9 @@ unsafe fn fsub_mod(
 #[cfg(target_arch = "aarch64")]
 #[inline]
 unsafe fn fused_incomplete_ntt_mult_neon(
-    result: &mut [u64],
-    operand1: &[u64],
-    operand2: &[u64],
+    result: *mut u64,
+    operand1: *const u64,
+    operand2: *const u64,
     shift_factors_f64: &[f64],
     n: usize,
     modulus: u64,
@@ -2081,13 +2204,13 @@ unsafe fn fused_incomplete_ntt_mult_neon(
     let v_u = vdupq_n_f64((1.0 + f64::EPSILON) / modulus as f64);
     let v_zero = vdupq_n_f64(0.0);
 
-    let op1_e = operand1.as_ptr();
-    let op1_o = operand1.as_ptr().add(n);
-    let op2_e = operand2.as_ptr();
-    let op2_o = operand2.as_ptr().add(n);
+    let op1_e = operand1;
+    let op1_o = operand1.add(n);
+    let op2_e = operand2;
+    let op2_o = operand2.add(n);
     let shift = shift_factors_f64.as_ptr();
-    let res_e = result.as_mut_ptr();
-    let res_o = result.as_mut_ptr().add(n);
+    let res_e = result;
+    let res_o = result.add(n);
 
     let mut i = 0usize;
     while i < n {
@@ -2166,7 +2289,8 @@ mod neon_tests {
 
         let mut neon_result = vec![0u64; 2 * n];
         unsafe {
-            fused_incomplete_ntt_mult_neon(&mut neon_result, op1, op2, &shift_f64, n, modulus);
+            let (a, b) = (op1.as_ptr(), op2.as_ptr());
+            fused_incomplete_ntt_mult_neon(neon_result.as_mut_ptr(), a, b, &shift_f64, n, modulus);
         }
 
         assert_eq!(scalar_result, neon_result, "NEON diverged from scalar ({ctx})");
@@ -2575,14 +2699,13 @@ mod slot_tests {
                     if *HAS_AVX512DQ && modulus < 1 << 50 {
                         let zetas_f64: Vec<f64> = zetas.iter().map(|&z| z as f64).collect();
                         let mut avx = vec![0u64; d * n];
+                        let (r, a, b) = (avx.as_mut_ptr(), op1.as_ptr(), op2.as_ptr());
                         unsafe {
                             match d {
                                 2 => fused_incomplete_ntt_mult_avx512_float(
-                                    &mut avx, &op1, &op2, &zetas_f64, n, modulus,
+                                    r, a, b, &zetas_f64, n, modulus,
                                 ),
-                                _ => fused_slot4_mult_avx512_float(
-                                    &mut avx, &op1, &op2, &zetas_f64, n, modulus,
-                                ),
+                                _ => fused_slot4_mult_avx512_float(r, a, b, &zetas_f64, n, modulus),
                             }
                         }
                         assert!(avx == expected, "float d={d} m={modulus} case={case}");
