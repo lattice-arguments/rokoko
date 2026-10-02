@@ -384,105 +384,109 @@ pub fn projection_flatter_1_times_matrix(
     {
         return projection_flatter_1_times_matrix_ref(projection_matrix, projection_flatter_1);
     }
-    let height = projection_matrix.projection_height;
-    let projection_ratio = projection_matrix.projection_ratio;
-    let inner_width = projection_ratio * height;
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    {
+        let height = projection_matrix.projection_height;
+        let inner_width = projection_matrix.projection_ratio * height;
+        let chunks = inner_width / 8;
 
-    let mut result_field = vec![FieldExtension::zero(); inner_width];
-    for i in 0..inner_width {
-        result_field[i].coeffs.fill(*HALF_WAY_MOD_Q);
-    }
+        // Per row: the slot-zero weight, then its negation.
+        let mut weights = vec![0u64; 2 * SLOT_DEGREE * height];
+        for (row, w) in weights.chunks_exact_mut(2 * SLOT_DEGREE).enumerate() {
+            let weight = projection_flatter_1.preprocessed_row[row].slot_zero();
+            for k in 0..SLOT_DEGREE {
+                w[k] = weight.coeffs[k];
+                w[SLOT_DEGREE + k] = weight.coeffs[k].wrapping_neg();
+            }
+        }
 
-    for inner_row in 0..height {
-        let weight = &projection_flatter_1.preprocessed_row[inner_row];
-        let weight_field = weight.slot_zero();
-
-        #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-        {
-            use std::arch::x86_64::*;
-
-            /// Bit 0 of each group of `SLOT_DEGREE` bits, spreading a column mask over the
-            /// coefficients of its field elements.
-            const LANE_REPEAT: u32 = {
-                let mut mask = 0u32;
-                let mut i = 0;
-                while i < 8 {
-                    mask |= 1 << (i * SLOT_DEGREE);
-                    i += 1;
-                }
-                mask
-            };
-
+        let mut result_field = vec![FieldExtension::zero(); inner_width];
+        let mut chunk = 0;
+        while chunk + COARSE_GROUP <= chunks {
             unsafe {
-                // Weight coefficients repeated across the register: lane l holds coeffs[l % D].
-                let w = |lane: usize| weight_field.coeffs[lane % SLOT_DEGREE] as i64;
-                let weight_vec = _mm512_set_epi64(w(7), w(6), w(5), w(4), w(3), w(2), w(1), w(0));
-
-                // Process 8 FieldExtension elements at a time: SLOT_DEGREE registers of
-                // consecutive u64s, the coefficients of each element adjacent.
-                for i in (0..inner_width).step_by(8) {
-                    if i + 8 > inner_width {
-                        break; // Handle remainder with scalar code
-                    }
-
-                    let (k_pos, k_inc) = projection_matrix.get_row_masks_u8(inner_row, i);
-
-                    // Repeat each bit of the mask once per coefficient with BMI2 PDEP:
-                    // abcdefgh -> aabbccddeeffgghh for degree 2.
-                    let expand = |k: u8| {
-                        (0..SLOT_DEGREE)
-                            .fold(0u32, |acc, r| acc | _pdep_u32(k as u32, LANE_REPEAT << r))
-                    };
-                    let k_pos_wide = expand(k_pos);
-                    let k_inc_wide = expand(k_inc);
-                    let k_add = k_inc_wide & k_pos_wide;
-                    let k_sub = k_inc_wide & !k_pos_wide;
-
-                    let base_ptr = (result_field.as_mut_ptr() as *mut u64).add(SLOT_DEGREE * i);
-                    for register in 0..SLOT_DEGREE {
-                        let ptr = base_ptr.add(8 * register);
-                        let current = _mm512_loadu_epi64(ptr as *const i64);
-                        let result = _mm512_mask_add_epi64(
-                            current,
-                            (k_add >> (8 * register)) as u8,
-                            current,
-                            weight_vec,
-                        );
-                        let result = _mm512_mask_sub_epi64(
-                            result,
-                            (k_sub >> (8 * register)) as u8,
-                            result,
-                            weight_vec,
-                        );
-                        _mm512_storeu_epi64(ptr as *mut i64, result);
-                    }
+                columns_times_matrix::<COARSE_GROUP>(
+                    projection_matrix,
+                    &weights,
+                    chunk,
+                    &mut result_field,
+                )
+            };
+            chunk += COARSE_GROUP;
+        }
+        while chunk < chunks {
+            unsafe {
+                columns_times_matrix::<1>(projection_matrix, &weights, chunk, &mut result_field)
+            };
+            chunk += 1;
+        }
+        for i in 8 * chunks..inner_width {
+            result_field[i].coeffs.fill(*HALF_WAY_MOD_Q);
+            for row in 0..height {
+                let (is_positive, is_non_zero) = projection_matrix[(row, i)];
+                if !is_non_zero {
+                    continue;
                 }
-
-                // Handle remainder with scalar code
-                for i in (inner_width / 8 * 8)..inner_width {
-                    let (is_positive, is_non_zero) = projection_matrix[(inner_row, i)];
-                    if !is_non_zero {
-                        continue;
-                    }
-                    for k in 0..SLOT_DEGREE {
-                        if is_positive {
-                            result_field[i].coeffs[k] += weight_field.coeffs[k];
-                        } else {
-                            result_field[i].coeffs[k] -= weight_field.coeffs[k];
-                        }
-                    }
+                let w = &weights[2 * SLOT_DEGREE * row..];
+                for k in 0..SLOT_DEGREE {
+                    let sign = if is_positive { 0 } else { SLOT_DEGREE };
+                    result_field[i].coeffs[k] = result_field[i].coeffs[k].wrapping_add(w[sign + k]);
                 }
             }
         }
-    }
 
-    unsafe {
-        // this is a bit ugly but we want to avoid calling eltwise_reduce_mod separately
-        let flat = result_field.as_mut_ptr() as *mut u64;
-        eltwise_reduce_mod(flat, flat, (SLOT_DEGREE * inner_width) as u64, MOD_Q);
-    }
+        unsafe {
+            // this is a bit ugly but we want to avoid calling eltwise_reduce_mod separately
+            let flat = result_field.as_mut_ptr() as *mut u64;
+            eltwise_reduce_mod(flat, flat, (SLOT_DEGREE * inner_width) as u64, MOD_Q);
+        }
 
-    result_field
+        result_field
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+const COARSE_GROUP: usize = 16 / SLOT_DEGREE;
+
+/// Columns `8 chunk .. 8 (chunk + G)`, unreduced, accumulated in registers over all rows.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[inline(always)]
+unsafe fn columns_times_matrix<const G: usize>(
+    projection_matrix: &ProjectionMatrix,
+    weights: &[u64],
+    chunk: usize,
+    result_field: &mut [FieldExtension],
+) {
+    use std::arch::x86_64::*;
+
+    let pos = projection_matrix.pos_masks.data.as_ptr();
+    let inc = projection_matrix.non_zero_masks.data.as_ptr();
+    let mask_width = projection_matrix.width;
+    let mut acc = [_mm512_set1_epi64(*HALF_WAY_MOD_Q as i64); 16];
+    for row in 0..projection_matrix.projection_height {
+        let w = weights.as_ptr().add(2 * SLOT_DEGREE * row);
+        let positive: [__m512i; SLOT_DEGREE] =
+            std::array::from_fn(|k| _mm512_set1_epi64(*w.add(k) as i64));
+        let negative: [__m512i; SLOT_DEGREE] =
+            std::array::from_fn(|k| _mm512_set1_epi64(*w.add(SLOT_DEGREE + k) as i64));
+        for g in 0..G {
+            let at = row * mask_width + chunk + g;
+            let (k_pos, k_inc) = (*pos.add(at), *inc.add(at));
+            for k in 0..SLOT_DEGREE {
+                let signed = _mm512_mask_blend_epi64(k_pos, negative[k], positive[k]);
+                let a = &mut acc[SLOT_DEGREE * g + k];
+                *a = _mm512_mask_add_epi64(*a, k_inc, *a, signed);
+            }
+        }
+    }
+    for g in 0..G {
+        let mut lanes = [[0u64; 8]; SLOT_DEGREE];
+        for k in 0..SLOT_DEGREE {
+            _mm512_storeu_epi64(lanes[k].as_mut_ptr() as *mut i64, acc[SLOT_DEGREE * g + k]);
+        }
+        for l in 0..8 {
+            result_field[8 * (chunk + g) + l].coeffs = std::array::from_fn(|k| lanes[k][l]);
+        }
+    }
 }
 
 pub fn projection_flatter_1_times_matrix_ref(
@@ -534,19 +538,24 @@ mod tests {
     #[test]
     fn projection_flatter_1_times_matrix_matches_the_reference() {
         init_common();
-        for (ratio, height) in [(2, 16), (4, 64), (8, 3)] {
+        for (ratio, height) in [(2, 16), (4, 64), (8, 3), (5, 8), (32, 256)] {
             let mut projection_matrix = ProjectionMatrix::new(ratio, height);
             projection_matrix.sample(&mut HashWrapper::new());
-            let flatter_1 = PreprocessedRow {
-                preprocessed_row: (0..height)
-                    .map(|_| RingElement::random(Representation::IncompleteNTT))
-                    .collect(),
-            };
-            assert_eq!(
-                projection_flatter_1_times_matrix(&projection_matrix, &flatter_1),
-                projection_flatter_1_times_matrix_ref(&projection_matrix, &flatter_1),
-                "ratio {ratio}, height {height}"
-            );
+            for top in [false, true] {
+                let flatter_1 = PreprocessedRow {
+                    preprocessed_row: (0..height)
+                        .map(|_| match top {
+                            false => RingElement::random(Representation::IncompleteNTT),
+                            true => RingElement::all(MOD_Q - 1, Representation::IncompleteNTT),
+                        })
+                        .collect(),
+                };
+                assert_eq!(
+                    projection_flatter_1_times_matrix(&projection_matrix, &flatter_1),
+                    projection_flatter_1_times_matrix_ref(&projection_matrix, &flatter_1),
+                    "ratio {ratio}, height {height}, top {top}"
+                );
+            }
         }
     }
 }
