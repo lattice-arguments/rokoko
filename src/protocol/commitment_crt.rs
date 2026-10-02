@@ -14,7 +14,6 @@ use crate::common::{
     matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
     ring_arithmetic::{Representation, RingElement},
 };
-use crate::hexl::bindings::ntt_inverse;
 use crate::protocol::{
     commitment::BasicCommitment,
     crs::{CK, CRS},
@@ -623,17 +622,7 @@ fn narrow(source: &[RingElement], out: &mut [Signed16RingElement]) {
     struct Buffer([u64; DEGREE]);
     let mut coefficients = Buffer([0u64; DEGREE]);
     for (element, slot) in source.iter().zip(out.iter_mut()) {
-        debug_assert_eq!(element.representation, Representation::IncompleteNTT);
-        for part in 0..SLOT_DEGREE {
-            unsafe {
-                ntt_inverse(
-                    coefficients.0.as_mut_ptr().add(part * NUM_SLOTS),
-                    element.v.as_ptr().add(part * NUM_SLOTS),
-                    NUM_SLOTS,
-                    MOD_Q,
-                );
-            }
-        }
+        element.strided_coefficients_into(&mut coefficients.0);
         centered_i16_from_u64_mod_q(&mut slot.0, &coefficients.0);
     }
 }
@@ -1142,6 +1131,31 @@ unsafe fn interleave(source: *const i16, register: usize) -> __m512i {
     )
 }
 
+/// [`interleave`] of every register of an element. With four parts, register `r` gathers lane
+/// `r` (eight coefficients) of each part, a 4x4 transpose of 128-bit lanes.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[inline(always)]
+unsafe fn natural_registers(source: *const i16) -> [__m512i; REGISTERS] {
+    if SLOT_DEGREE == 2 {
+        return std::array::from_fn(|r| interleave(source, r));
+    }
+    let mut gathered = [_mm512_setzero_si512(); REGISTERS];
+    for h in 0..NUM_SLOTS / 32 {
+        let part = |p: usize| _mm512_loadu_si512(source.add(p * NUM_SLOTS + 32 * h) as *const _);
+        let (p0, p1, p2, p3) = (part(0), part(1), part(2), part(3));
+        let low01 = _mm512_shuffle_i64x2(p0, p1, 0x44);
+        let low23 = _mm512_shuffle_i64x2(p2, p3, 0x44);
+        let high01 = _mm512_shuffle_i64x2(p0, p1, 0xee);
+        let high23 = _mm512_shuffle_i64x2(p2, p3, 0xee);
+        gathered[4 * h] = _mm512_shuffle_i64x2(low01, low23, 0x88);
+        gathered[4 * h + 1] = _mm512_shuffle_i64x2(low01, low23, 0xdd);
+        gathered[4 * h + 2] = _mm512_shuffle_i64x2(high01, high23, 0x88);
+        gathered[4 * h + 3] = _mm512_shuffle_i64x2(high01, high23, 0xdd);
+    }
+    let destride = _mm512_loadu_si512(DESTRIDE_4.as_ptr() as *const _);
+    gathered.map(|x| _mm512_permutexvar_epi16(destride, x))
+}
+
 /// The butterfly partner of every lane at in-register level `LEVEL`, where pairs are
 /// `16 >> LEVEL` lanes apart.
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
@@ -1212,8 +1226,9 @@ unsafe fn transform<const BATCH: usize, const MODE: usize>(
 
     let mut z = [_mm512_setzero_si512(); 16];
     for e in 0..BATCH {
+        let natural = natural_registers(source.add(DEGREE * e));
         for r in 0..REGISTERS {
-            z[REGISTERS * e + r] = centre(interleave(source.add(DEGREE * e), r), p, barrett);
+            z[REGISTERS * e + r] = centre(natural[r], p, barrett);
         }
     }
 
@@ -1382,6 +1397,30 @@ mod tests {
             *slot = limb.centre(((state >> 33) as i32 % limb.p) as i16);
         }
         out
+    }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    #[test]
+    fn crt_natural_registers_match_interleave() {
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        for _ in 0..64 {
+            let element: [i16; DEGREE] = std::array::from_fn(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as i16
+            });
+            let lanes = |x: __m512i| {
+                let mut out = [0i16; 32];
+                unsafe { _mm512_storeu_si512(out.as_mut_ptr() as *mut _, x) };
+                out
+            };
+            let natural = unsafe { natural_registers(element.as_ptr()) };
+            for r in 0..REGISTERS {
+                let expected = unsafe { interleave(element.as_ptr(), r) };
+                assert!(lanes(natural[r]) == lanes(expected), "register {r}");
+            }
+        }
     }
 
     #[test]

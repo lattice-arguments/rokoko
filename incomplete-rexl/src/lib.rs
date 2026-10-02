@@ -105,17 +105,11 @@ pub fn get_inv_roots(n: usize, modulus: u64) -> *const u64 {
 }
 
 pub fn ntt_forward_in_place(data: &mut [u64], n: usize, modulus: u64) {
-    let operand = unsafe { std::slice::from_raw_parts(data.as_ptr(), data.len()) };
-    with_ntt(n, modulus, |ntt| {
-        ntt.compute_forward(data, operand, 1, 1);
-    });
+    with_ntt(n, modulus, |ntt| ntt.compute_forward_blocks(data, 1));
 }
 
 pub fn ntt_inverse_in_place(data: &mut [u64], n: usize, modulus: u64) {
-    let operand = unsafe { std::slice::from_raw_parts(data.as_ptr(), data.len()) };
-    with_ntt(n, modulus, |ntt| {
-        ntt.compute_inverse(data, operand, 1, 1);
-    });
+    with_ntt(n, modulus, |ntt| ntt.compute_inverse_blocks(data, 1));
 }
 
 pub fn ntt_inverse(result: &mut [u64], operand: &[u64], n: usize, modulus: u64) {
@@ -209,16 +203,31 @@ pub fn fused_incomplete_ntt_mult(
     n: usize,
     modulus: u64,
 ) {
+    assert!(result.len() >= 2 * n && operand1.len() >= 2 * n && operand2.len() >= 2 * n);
+    let (result, operand1, operand2) = (result.as_mut_ptr(), operand1.as_ptr(), operand2.as_ptr());
+    unsafe { fused_incomplete_ntt_mult_ptr(result, operand1, operand2, n, modulus) };
+}
+
+/// [`fused_incomplete_ntt_mult`] on `2n` u64s at each pointer; `result` may alias `operand1`.
+#[inline]
+pub unsafe fn fused_incomplete_ntt_mult_ptr(
+    result: *mut u64,
+    operand1: *const u64,
+    operand2: *const u64,
+    n: usize,
+    modulus: u64,
+) {
+    assert!(n >= 8 && n % 8 == 0, "n = {n} is not a multiple of 8");
     with_ntt(n, modulus, |ntt| {
-        fused_incomplete_ntt_mult_inner(
+        slot_mult(
+            ntt,
+            2,
+            modulus,
+            ifma_tables(ntt),
             result,
             operand1,
             operand2,
-            ntt.shift_factors(),
-            ntt.shift_factors_f64(),
-            n,
-            modulus,
-        );
+        )
     });
 }
 
@@ -278,17 +287,17 @@ pub fn strided_to_coefficients(
 /// Length-`N/d` negacyclic NTT of each block of a strided element. Slot `i` is then
 /// `(block_0[i], …, block_{d-1}[i]) = a mod (X^d - zeta_i)`, `zeta_i = NTT_{N/d}(X)[i]`.
 pub fn strided_ntt_forward_in_place(data: &mut [u64], ring_degree: usize, modulus: u64) {
-    let n = ring_degree / supported_slot_degree(ring_degree, modulus);
-    for block in data[..ring_degree].chunks_exact_mut(n) {
-        ntt_forward_in_place(block, n, modulus);
-    }
+    let d = supported_slot_degree(ring_degree, modulus);
+    with_ntt(ring_degree / d, modulus, |ntt| {
+        ntt.compute_forward_blocks(data, d)
+    });
 }
 
 pub fn strided_ntt_inverse_in_place(data: &mut [u64], ring_degree: usize, modulus: u64) {
-    let n = ring_degree / supported_slot_degree(ring_degree, modulus);
-    for block in data[..ring_degree].chunks_exact_mut(n) {
-        ntt_inverse_in_place(block, n, modulus);
-    }
+    let d = supported_slot_degree(ring_degree, modulus);
+    with_ntt(ring_degree / d, modulus, |ntt| {
+        ntt.compute_inverse_blocks(data, d)
+    });
 }
 
 /// Ring multiplication of two outputs of [`strided_ntt_forward_in_place`], slot by slot
@@ -300,32 +309,218 @@ pub fn fused_slot_mult(
     ring_degree: usize,
     modulus: u64,
 ) {
+    assert!(
+        result.len() >= ring_degree
+            && operand1.len() >= ring_degree
+            && operand2.len() >= ring_degree
+    );
+    let (result, operand1, operand2) = (result.as_mut_ptr(), operand1.as_ptr(), operand2.as_ptr());
+    unsafe { fused_slot_mult_ptr(result, operand1, operand2, ring_degree, modulus) };
+}
+
+/// [`fused_slot_mult`] on `N` u64s at each pointer; `result` may alias `operand1`.
+#[inline]
+pub unsafe fn fused_slot_mult_ptr(
+    result: *mut u64,
+    operand1: *const u64,
+    operand2: *const u64,
+    ring_degree: usize,
+    modulus: u64,
+) {
     let d = supported_slot_degree(ring_degree, modulus);
     assert!(
         (ring_degree / d) % 8 == 0,
         "N/d = {} is not divisible by 8",
         ring_degree / d
     );
-    assert!(
-        result.len() >= ring_degree
-            && operand1.len() >= ring_degree
-            && operand2.len() >= ring_degree
-    );
+    with_ntt(ring_degree / d, modulus, |ntt| {
+        slot_mult(
+            ntt,
+            d,
+            modulus,
+            ifma_tables(ntt),
+            result,
+            operand1,
+            operand2,
+        )
+    });
+}
+
+fn ifma_tables(ntt: &ntt::Ntt) -> Option<&ntt::Ifma52> {
+    #[cfg(target_arch = "x86_64")]
+    if *cpu_features::HAS_AVX512IFMA {
+        return ntt.ifma52();
+    }
+    None
+}
+
+/// Slot product of `d n` u64s with inputs below `modulus`; `result` may alias `op1`.
+#[inline]
+unsafe fn slot_mult(
+    ntt: &ntt::Ntt,
+    d: usize,
+    modulus: u64,
+    ifma: Option<&ntt::Ifma52>,
+    result: *mut u64,
+    op1: *const u64,
+    op2: *const u64,
+) {
+    let n = ntt.degree();
+    let (zetas, precon) = (ntt.shift_factors(), ntt.shift_factors_precon52());
+    #[cfg(target_arch = "x86_64")]
+    if let Some(ifma) = ifma {
+        return match d {
+            2 => {
+                eltwise::fused_slot_mult_avx512_ifma::<2>(result, op1, op2, zetas, precon, n, ifma)
+            }
+            _ => {
+                eltwise::fused_slot_mult_avx512_ifma::<4>(result, op1, op2, zetas, precon, n, ifma)
+            }
+        };
+    }
     match d {
-        2 => fused_incomplete_ntt_mult(result, operand1, operand2, ring_degree / 2, modulus),
-        _ => {
-            let n = ring_degree / 4;
-            with_ntt(n, modulus, |ntt| {
-                eltwise::fused_slot4_mult_inner(
-                    result,
-                    operand1,
-                    operand2,
-                    ntt.shift_factors(),
-                    ntt.shift_factors_f64(),
-                    n,
-                    modulus,
-                );
-            });
+        2 => {
+            let zetas_f64 = ntt.shift_factors_f64();
+            eltwise::fused_incomplete_ntt_mult_ptr(result, op1, op2, zetas, zetas_f64, n, modulus)
         }
+        _ => eltwise::fused_slot4_mult_inner(result, op1, op2, ntt, n, modulus),
+    }
+}
+
+/// [`fused_slot_mult`] for one `(N, q)`, with the tables and kernel looked up once.
+pub struct SlotRing {
+    ntt: Arc<ntt::Ntt>,
+    ring_degree: usize,
+    slot_degree: usize,
+    modulus: u64,
+    ifma: Option<ntt::Ifma52>,
+}
+
+impl SlotRing {
+    pub fn new(ring_degree: usize, modulus: u64) -> Self {
+        let slot_degree = supported_slot_degree(ring_degree, modulus);
+        let n = ring_degree / slot_degree;
+        assert!(n % 8 == 0, "N/d = {n} is not divisible by 8");
+        let ntt = get_ntt(n, modulus);
+        let ifma = ifma_tables(&ntt).copied();
+        Self {
+            ntt,
+            ring_degree,
+            slot_degree,
+            modulus,
+            ifma,
+        }
+    }
+
+    /// `result` may alias `op1`.
+    #[inline]
+    pub unsafe fn mult(&self, result: *mut u64, op1: *const u64, op2: *const u64) {
+        slot_mult(
+            &self.ntt,
+            self.slot_degree,
+            self.modulus,
+            self.ifma.as_ref(),
+            result,
+            op1,
+            op2,
+        );
+    }
+
+    /// [`strided_ntt_forward_in_place`] of the `N` u64s at `data`.
+    pub fn ntt_forward(&self, data: &mut [u64]) {
+        self.ntt
+            .compute_forward_blocks(&mut data[..self.ring_degree], self.slot_degree);
+    }
+
+    pub fn ntt_inverse(&self, data: &mut [u64]) {
+        self.ntt
+            .compute_inverse_blocks(&mut data[..self.ring_degree], self.slot_degree);
+    }
+
+    /// [`Self::ntt_inverse`] of `operand` into `result`.
+    pub fn ntt_inverse_into(&self, result: &mut [u64], operand: &[u64]) {
+        assert!(result.len() >= self.ring_degree && operand.len() >= self.ring_degree);
+        let (result, operand) = (result.as_mut_ptr(), operand.as_ptr());
+        unsafe { self.ntt.inverse(result, operand, self.slot_degree, 1, 1) };
+    }
+
+    /// [`Self::dot`] for `outputs` results at once: `results + o result_stride` (+)=
+    /// `sum_k (op1 + k stride1) (op2 + k stride2 + o output_stride)`.
+    pub unsafe fn dot_many(
+        &self,
+        results: *mut u64,
+        result_stride: usize,
+        outputs: usize,
+        op1: *const u64,
+        stride1: usize,
+        op2: *const u64,
+        stride2: usize,
+        output_stride: usize,
+        count: usize,
+        accumulate: bool,
+    ) {
+        #[cfg(target_arch = "x86_64")]
+        if let Some(ifma) = &self.ifma {
+            let kernel = match self.slot_degree {
+                2 => eltwise::slot_dot_avx512_ifma::<2>,
+                _ => eltwise::slot_dot_avx512_ifma::<4>,
+            };
+            kernel(
+                results,
+                result_stride,
+                outputs,
+                op1,
+                stride1,
+                op2,
+                stride2,
+                output_stride,
+                count,
+                accumulate,
+                self.ntt.shift_factors(),
+                self.ntt.shift_factors_precon52(),
+                self.ntt.degree(),
+                ifma,
+            );
+            return;
+        }
+        let mut stack = [0u64; 512];
+        let mut heap = Vec::new();
+        let product: *mut u64 = if self.ring_degree <= stack.len() {
+            stack.as_mut_ptr()
+        } else {
+            heap.resize(self.ring_degree, 0);
+            heap.as_mut_ptr()
+        };
+        let result = |o: usize| {
+            std::slice::from_raw_parts_mut(results.add(o * result_stride), self.ring_degree)
+        };
+        if !accumulate {
+            (0..outputs).for_each(|o| result(o).fill(0));
+        }
+        for k in 0..count {
+            for o in 0..outputs {
+                let b = op2.add(k * stride2 + o * output_stride);
+                self.mult(product, op1.add(k * stride1), b);
+                let product = std::slice::from_raw_parts(product, self.ring_degree);
+                eltwise::eltwise_add_mod_assign(result(o), product, self.modulus);
+            }
+        }
+    }
+
+    /// `result (+)= sum_k (op1 + k stride1) (op2 + k stride2)`, strides in u64s; `result` must
+    /// not overlap the operands.
+    pub unsafe fn dot(
+        &self,
+        result: *mut u64,
+        op1: *const u64,
+        stride1: usize,
+        op2: *const u64,
+        stride2: usize,
+        count: usize,
+        accumulate: bool,
+    ) {
+        self.dot_many(
+            result, 0, 1, op1, stride1, op2, stride2, 0, count, accumulate,
+        );
     }
 }

@@ -305,8 +305,8 @@ fn test_fused_incomplete_ntt_mult_in_place() {
 
         // In-place: result aliases operand1
         let mut in_place = op1.clone();
-        let in_place_copy = in_place.clone();
-        fused_incomplete_ntt_mult(&mut in_place, &in_place_copy, &op2, n, modulus);
+        let p = in_place.as_mut_ptr();
+        unsafe { fused_incomplete_ntt_mult_ptr(p, p, op2.as_ptr(), n, modulus) };
 
         assert_eq!(ref_result, in_place, "In-place aliasing broke at n={n}");
     }
@@ -508,6 +508,137 @@ fn test_fused_slot_mult_edge_values() {
             assert!(
                 c.iter().all(|&v| v < modulus),
                 "unreduced output N={ring_degree}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_slot_ring_matches_fused_slot_mult() {
+    for (ring_degree, modulus, _, _) in SLOT_CASES {
+        let ring = SlotRing::new(ring_degree, modulus);
+        let stride = ring_degree + 8;
+        for count in [1usize, 5, 1100] {
+            let a: Vec<u64> = (0..count * stride)
+                .map(|i| {
+                    if count == 5 {
+                        modulus - 1
+                    } else {
+                        (i as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15) % modulus
+                    }
+                })
+                .collect();
+            let b: Vec<u64> = (0..count * stride)
+                .map(|i| {
+                    if count == 5 {
+                        modulus - 1
+                    } else {
+                        (i as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f) % modulus
+                    }
+                })
+                .collect();
+            let initial = random_vec(ring_degree, modulus);
+            let mut expected = initial.clone();
+            let mut product = vec![0u64; ring_degree];
+            for k in 0..count {
+                let (x, y) = (&a[k * stride..], &b[k * stride..]);
+                fused_slot_mult(&mut product, x, y, ring_degree, modulus);
+                let mut via_ring = vec![0u64; ring_degree];
+                unsafe { ring.mult(via_ring.as_mut_ptr(), x.as_ptr(), y.as_ptr()) };
+                assert!(via_ring == product, "mult N={ring_degree} q={modulus}");
+                for (e, p) in expected.iter_mut().zip(&product) {
+                    *e = add_mod(*e, *p, modulus);
+                }
+            }
+            let mut dot = initial.clone();
+            unsafe {
+                ring.dot(
+                    dot.as_mut_ptr(),
+                    a.as_ptr(),
+                    stride,
+                    b.as_ptr(),
+                    stride,
+                    count,
+                    true,
+                )
+            };
+            assert!(
+                dot == expected,
+                "dot N={ring_degree} q={modulus} count={count}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_slot_mult_in_place() {
+    for (ring_degree, modulus, _, _) in SLOT_CASES {
+        let ring = SlotRing::new(ring_degree, modulus);
+        let op1 = random_vec(ring_degree, modulus);
+        let op2 = random_vec(ring_degree, modulus);
+        let mut expected = vec![0u64; ring_degree];
+        fused_slot_mult(&mut expected, &op1, &op2, ring_degree, modulus);
+        for via_ring in [false, true] {
+            let mut in_place = op1.clone();
+            let p = in_place.as_mut_ptr();
+            unsafe {
+                match via_ring {
+                    false => fused_slot_mult_ptr(p, p, op2.as_ptr(), ring_degree, modulus),
+                    true => ring.mult(p, p, op2.as_ptr()),
+                }
+            }
+            assert!(in_place == expected, "N={ring_degree} ring={via_ring}");
+        }
+    }
+}
+
+#[test]
+#[should_panic(expected = "not a multiple of 8")]
+fn test_fused_incomplete_ntt_mult_rejects_partial_vectors() {
+    let (mut c, a) = (vec![0u64; 8], vec![0u64; 8]);
+    fused_incomplete_ntt_mult(&mut c, &a, &a, 4, MOD_SMALL);
+}
+
+#[test]
+fn test_slot_ring_dot_many_matches_dot() {
+    for (ring_degree, modulus, _, _) in SLOT_CASES {
+        let ring = SlotRing::new(ring_degree, modulus);
+        let stride = ring_degree + 8;
+        let (outputs, count) = (11, 40);
+        let a = random_vec(count * stride, modulus);
+        let b = random_vec(count * outputs * stride, modulus);
+        let initial = random_vec(outputs * stride, modulus);
+        let mut many = initial.clone();
+        unsafe {
+            ring.dot_many(
+                many.as_mut_ptr(),
+                stride,
+                outputs,
+                a.as_ptr(),
+                stride,
+                b.as_ptr(),
+                outputs * stride,
+                stride,
+                count,
+                true,
+            )
+        };
+        for o in 0..outputs {
+            let mut single = initial[o * stride..(o + 1) * stride].to_vec();
+            unsafe {
+                ring.dot(
+                    single.as_mut_ptr(),
+                    a.as_ptr(),
+                    stride,
+                    b.as_ptr().add(o * stride),
+                    outputs * stride,
+                    count,
+                    true,
+                )
+            };
+            assert!(
+                many[o * stride..o * stride + ring_degree] == single[..ring_degree],
+                "N={ring_degree} q={modulus} o={o}"
             );
         }
     }

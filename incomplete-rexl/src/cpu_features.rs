@@ -22,9 +22,7 @@ pub static HAS_AVX512DQ: LazyLock<bool> = LazyLock::new(|| {
 });
 
 pub static HAS_AVX512IFMA: LazyLock<bool> = LazyLock::new(|| {
-    let disable_avx512dq = env_disabled("HEXL_DISABLE_AVX512DQ");
-    let disable_avx512ifma = env_disabled("HEXL_DISABLE_AVX512IFMA");
-    if disable_avx512dq || disable_avx512ifma {
+    if !*HAS_AVX512DQ || env_disabled("HEXL_DISABLE_AVX512IFMA") {
         return false;
     }
     #[cfg(target_arch = "x86_64")]
@@ -38,9 +36,7 @@ pub static HAS_AVX512IFMA: LazyLock<bool> = LazyLock::new(|| {
 });
 
 pub static HAS_AVX512VBMI2: LazyLock<bool> = LazyLock::new(|| {
-    let disable_avx512dq = env_disabled("HEXL_DISABLE_AVX512DQ");
-    let disable_avx512vbmi2 = env_disabled("HEXL_DISABLE_AVX512VBMI2");
-    if disable_avx512dq || disable_avx512vbmi2 {
+    if !*HAS_AVX512DQ || env_disabled("HEXL_DISABLE_AVX512VBMI2") {
         return false;
     }
     #[cfg(target_arch = "x86_64")]

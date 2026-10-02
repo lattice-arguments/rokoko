@@ -5,12 +5,11 @@
 
 use crate::common::{
     arithmetic::centered_i16_from_u64_mod_q,
-    config::{DEGREE, MOD_Q, NUM_SLOTS, SLOT_DEGREE},
+    config::DEGREE,
     matrix::VerticallyAlignedMatrix,
     projection_matrix::ProjectionMatrix,
     ring_arithmetic::{Representation, RingElement},
 };
-use crate::hexl::bindings::ntt_inverse;
 
 #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
 use crate::common::arithmetic::project_one_row_i16_to_u64;
@@ -35,17 +34,7 @@ pub fn prepare_i16_witness(
         let src = witness.col_slice(col, 0, witness.height);
         let dst = &mut witness_i16[col * witness.height..][..witness.height];
         for (out, cr) in dst.iter_mut().zip(src) {
-            debug_assert!(cr.representation == Representation::IncompleteNTT);
-            for part in 0..SLOT_DEGREE {
-                unsafe {
-                    ntt_inverse(
-                        temp.0.as_mut_ptr().add(part * NUM_SLOTS),
-                        cr.v.as_ptr().add(part * NUM_SLOTS),
-                        NUM_SLOTS,
-                        MOD_Q,
-                    );
-                }
-            }
+            cr.strided_coefficients_into(&mut temp.0);
             centered_i16_from_u64_mod_q(&mut out.0, &temp.0);
         }
     }
@@ -290,7 +279,7 @@ pub fn signed_offset_lists(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::hash::HashWrapper;
+    use crate::common::{config::MOD_Q, hash::HashWrapper};
 
     #[test]
     fn test_projection_matches_ring_reference() {

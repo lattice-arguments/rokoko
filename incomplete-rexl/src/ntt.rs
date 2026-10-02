@@ -42,6 +42,47 @@ pub struct Ntt {
     shift_factors: Vec<u64>,
     /// Same as `shift_factors` but pre-cast to f64 and 64-byte aligned for AVX-512.
     shift_factors_f64: AlignedVecF64,
+    /// `floor(shift_factors[i] * 2^52 / modulus)`, for the IFMA slot product.
+    shift_factors_precon52: AlignedVecU64,
+    ifma52: Option<Ifma52>,
+    /// `n^-1` and `n^-1 w` of the last inverse stage with their 32-, 52- and 64-bit Barrett
+    /// factors.
+    inv_scale: [[u64; 4]; 3],
+}
+
+/// Constants of the 52-bit IFMA reductions modulo `p`, `2^49 < p < 2^50`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Ifma52 {
+    pub p: u64,
+    /// `p^-1 mod 2^52`.
+    pub p_inv: u64,
+    /// `2^52 mod p`, `2^104 mod p` and their `floor(r 2^52 / p)`.
+    pub r: u64,
+    pub r_precon: u64,
+    pub r2: u64,
+    pub r2_precon: u64,
+}
+
+impl Ifma52 {
+    pub fn new(p: u64) -> Option<Self> {
+        if !(p > 1 << 49 && p < 1 << 50) {
+            return None;
+        }
+        let mut p_inv = p;
+        for _ in 0..6 {
+            p_inv = p_inv.wrapping_mul(2u64.wrapping_sub(p.wrapping_mul(p_inv)));
+        }
+        let r = ((1u128 << 52) % p as u128) as u64;
+        let r2 = ((r as u128 * r as u128) % p as u128) as u64;
+        Some(Self {
+            p,
+            p_inv: p_inv & ((1 << 52) - 1),
+            r,
+            r_precon: MultiplyFactor::new(r, 52, p).barrett_factor(),
+            r2,
+            r2_precon: MultiplyFactor::new(r2, 52, p).barrett_factor(),
+        })
+    }
 }
 
 impl Ntt {
@@ -84,9 +125,16 @@ impl Ntt {
             inv_root_of_unity_powers: Vec::new(),
             shift_factors: Vec::new(),
             shift_factors_f64: AlignedVecF64::default(),
+            shift_factors_precon52: AlignedVecU64::default(),
+            ifma52: Ifma52::new(modulus),
+            inv_scale: [[0; 4]; 3],
         };
         ntt.compute_root_of_unity_powers();
         ntt
+    }
+
+    pub fn degree(&self) -> usize {
+        self.degree as usize
     }
 
     pub fn root_of_unity_powers(&self) -> &Vec<u64> {
@@ -143,6 +191,14 @@ impl Ntt {
         self.shift_factors_f64.as_slice()
     }
 
+    pub fn shift_factors_precon52(&self) -> &[u64] {
+        self.shift_factors_precon52.as_slice()
+    }
+
+    pub(crate) fn ifma52(&self) -> Option<&Ifma52> {
+        self.ifma52.as_ref()
+    }
+
     pub fn compute_forward(
         &self,
         result: &mut [u64],
@@ -150,71 +206,11 @@ impl Ntt {
         input_mod_factor: u64,
         output_mod_factor: u64,
     ) {
-        debug_assert!(result.len() >= self.degree as usize);
-        debug_assert!(operand.len() >= self.degree as usize);
+        assert!(result.len() >= self.degree as usize && operand.len() >= self.degree as usize);
         debug_assert!(input_mod_factor == 1 || input_mod_factor == 2 || input_mod_factor == 4);
         debug_assert!(output_mod_factor == 1 || output_mod_factor == 4);
-
-        #[cfg(target_arch = "x86_64")]
-        unsafe {
-            if *HAS_AVX512IFMA && self.modulus < Self::MAX_FWD_IFMA_MODULUS && self.degree >= 16 {
-                forward_transform_to_bit_reverse_avx512::<{ Self::IFMA_SHIFT_BITS as i32 }>(
-                    result.as_mut_ptr(),
-                    operand.as_ptr(),
-                    self.degree,
-                    self.modulus,
-                    self.avx512_root_of_unity_powers.as_ptr(),
-                    self.avx512_precon52_root_of_unity_powers.as_ptr(),
-                    input_mod_factor,
-                    output_mod_factor,
-                    0,
-                    0,
-                );
-                return;
-            }
-
-            if *HAS_AVX512DQ && self.degree >= 16 {
-                if self.modulus < Self::MAX_FWD_32_MODULUS {
-                    forward_transform_to_bit_reverse_avx512::<32>(
-                        result.as_mut_ptr(),
-                        operand.as_ptr(),
-                        self.degree,
-                        self.modulus,
-                        self.avx512_root_of_unity_powers.as_ptr(),
-                        self.avx512_precon32_root_of_unity_powers.as_ptr(),
-                        input_mod_factor,
-                        output_mod_factor,
-                        0,
-                        0,
-                    );
-                } else {
-                    forward_transform_to_bit_reverse_avx512::<{ Self::DEFAULT_SHIFT_BITS as i32 }>(
-                        result.as_mut_ptr(),
-                        operand.as_ptr(),
-                        self.degree,
-                        self.modulus,
-                        self.avx512_root_of_unity_powers.as_ptr(),
-                        self.avx512_precon64_root_of_unity_powers.as_ptr(),
-                        input_mod_factor,
-                        output_mod_factor,
-                        0,
-                        0,
-                    );
-                }
-                return;
-            }
-        }
-
-        forward_transform_to_bit_reverse_radix2(
-            result,
-            operand,
-            self.degree,
-            self.modulus,
-            &self.root_of_unity_powers,
-            &self.precon64_root_of_unity_powers,
-            input_mod_factor,
-            output_mod_factor,
-        );
+        let (result, operand) = (result.as_mut_ptr(), operand.as_ptr());
+        unsafe { self.forward(result, operand, 1, input_mod_factor, output_mod_factor) };
     }
 
     pub fn compute_inverse(
@@ -224,71 +220,140 @@ impl Ntt {
         input_mod_factor: u64,
         output_mod_factor: u64,
     ) {
-        debug_assert!(result.len() >= self.degree as usize);
-        debug_assert!(operand.len() >= self.degree as usize);
+        assert!(result.len() >= self.degree as usize && operand.len() >= self.degree as usize);
         debug_assert!(input_mod_factor == 1 || input_mod_factor == 2);
         debug_assert!(output_mod_factor == 1 || output_mod_factor == 2);
+        let (result, operand) = (result.as_mut_ptr(), operand.as_ptr());
+        unsafe { self.inverse(result, operand, 1, input_mod_factor, output_mod_factor) };
+    }
 
+    /// [`Self::compute_forward`] in place on `blocks` consecutive length-`n` blocks, inputs and
+    /// outputs in [0, q); the blocks run stage by stage, so their butterflies overlap.
+    pub fn compute_forward_blocks(&self, data: &mut [u64], blocks: usize) {
+        let len = blocks.checked_mul(self.degree as usize);
+        assert!(len.is_some_and(|len| data.len() >= len));
+        let data = data.as_mut_ptr();
+        unsafe { self.forward(data, data, blocks, 1, 1) };
+    }
+
+    /// [`Self::compute_inverse`] in place on `blocks` consecutive length-`n` blocks, as
+    /// [`Self::compute_forward_blocks`].
+    pub fn compute_inverse_blocks(&self, data: &mut [u64], blocks: usize) {
+        let len = blocks.checked_mul(self.degree as usize);
+        assert!(len.is_some_and(|len| data.len() >= len));
+        let data = data.as_mut_ptr();
+        unsafe { self.inverse(data, data, blocks, 1, 1) };
+    }
+
+    /// `blocks n` u64s at `result` and at `operand`, which are equal or disjoint.
+    unsafe fn forward(
+        &self,
+        result: *mut u64,
+        operand: *const u64,
+        blocks: usize,
+        input_mod_factor: u64,
+        output_mod_factor: u64,
+    ) {
         #[cfg(target_arch = "x86_64")]
-        unsafe {
-            if *HAS_AVX512IFMA && self.modulus < Self::MAX_INV_IFMA_MODULUS && self.degree >= 16 {
-                inverse_transform_from_bit_reverse_avx512::<{ Self::IFMA_SHIFT_BITS as i32 }>(
-                    result.as_mut_ptr(),
-                    operand.as_ptr(),
-                    self.degree,
-                    self.modulus,
-                    self.inv_root_of_unity_powers.as_ptr(),
-                    self.precon52_inv_root_of_unity_powers.as_ptr(),
-                    input_mod_factor,
-                    output_mod_factor,
-                    0,
-                    0,
-                );
-                return;
+        if self.degree >= 16 {
+            macro_rules! run {
+                ($bits:literal, $precon:expr) => {
+                    return forward_avx512::<$bits>(
+                        result,
+                        operand,
+                        blocks,
+                        self.degree,
+                        self.modulus,
+                        self.avx512_root_of_unity_powers.as_ptr(),
+                        $precon.as_ptr(),
+                        input_mod_factor,
+                        output_mod_factor,
+                        0,
+                        0,
+                    )
+                };
             }
-
-            if *HAS_AVX512DQ && self.degree >= 16 {
-                if self.modulus < Self::MAX_INV_32_MODULUS {
-                    inverse_transform_from_bit_reverse_avx512::<32>(
-                        result.as_mut_ptr(),
-                        operand.as_ptr(),
-                        self.degree,
-                        self.modulus,
-                        self.inv_root_of_unity_powers.as_ptr(),
-                        self.precon32_inv_root_of_unity_powers.as_ptr(),
-                        input_mod_factor,
-                        output_mod_factor,
-                        0,
-                        0,
-                    );
-                } else {
-                    inverse_transform_from_bit_reverse_avx512::<{ Self::DEFAULT_SHIFT_BITS as i32 }>(
-                        result.as_mut_ptr(),
-                        operand.as_ptr(),
-                        self.degree,
-                        self.modulus,
-                        self.inv_root_of_unity_powers.as_ptr(),
-                        self.precon64_inv_root_of_unity_powers.as_ptr(),
-                        input_mod_factor,
-                        output_mod_factor,
-                        0,
-                        0,
-                    );
-                }
-                return;
+            if *HAS_AVX512IFMA && self.modulus < Self::MAX_FWD_IFMA_MODULUS {
+                run!(52, self.avx512_precon52_root_of_unity_powers);
+            }
+            if *HAS_AVX512DQ && self.modulus < Self::MAX_FWD_32_MODULUS {
+                run!(32, self.avx512_precon32_root_of_unity_powers);
+            }
+            if *HAS_AVX512DQ {
+                run!(64, self.avx512_precon64_root_of_unity_powers);
             }
         }
+        let n = self.degree as usize;
+        if result as *const u64 != operand {
+            std::ptr::copy_nonoverlapping(operand, result, blocks * n);
+        }
+        for b in 0..blocks {
+            forward_transform_to_bit_reverse_radix2(
+                std::slice::from_raw_parts_mut(result.add(b * n), n),
+                self.degree,
+                self.modulus,
+                &self.root_of_unity_powers,
+                &self.precon64_root_of_unity_powers,
+                input_mod_factor,
+                output_mod_factor,
+            );
+        }
+    }
 
-        inverse_transform_from_bit_reverse_radix2(
-            result,
-            operand,
-            self.degree,
-            self.modulus,
-            &self.inv_root_of_unity_powers,
-            &self.precon64_inv_root_of_unity_powers,
-            input_mod_factor,
-            output_mod_factor,
-        );
+    /// As [`Self::forward`].
+    pub(crate) unsafe fn inverse(
+        &self,
+        result: *mut u64,
+        operand: *const u64,
+        blocks: usize,
+        input_mod_factor: u64,
+        output_mod_factor: u64,
+    ) {
+        #[cfg(target_arch = "x86_64")]
+        if self.degree >= 16 {
+            macro_rules! run {
+                ($bits:literal, $precon:expr, $scale:expr) => {
+                    return inverse_avx512::<$bits>(
+                        result,
+                        operand,
+                        blocks,
+                        self.degree,
+                        self.modulus,
+                        self.inv_root_of_unity_powers.as_ptr(),
+                        $precon.as_ptr(),
+                        &self.inv_scale[$scale],
+                        input_mod_factor,
+                        output_mod_factor,
+                        0,
+                        0,
+                    )
+                };
+            }
+            if *HAS_AVX512IFMA && self.modulus < Self::MAX_INV_IFMA_MODULUS {
+                run!(52, self.precon52_inv_root_of_unity_powers, 1);
+            }
+            if *HAS_AVX512DQ && self.modulus < Self::MAX_INV_32_MODULUS {
+                run!(32, self.precon32_inv_root_of_unity_powers, 0);
+            }
+            if *HAS_AVX512DQ {
+                run!(64, self.precon64_inv_root_of_unity_powers, 2);
+            }
+        }
+        let n = self.degree as usize;
+        if result as *const u64 != operand {
+            std::ptr::copy_nonoverlapping(operand, result, blocks * n);
+        }
+        for b in 0..blocks {
+            inverse_transform_from_bit_reverse_radix2(
+                std::slice::from_raw_parts_mut(result.add(b * n), n),
+                self.degree,
+                self.modulus,
+                &self.inv_root_of_unity_powers,
+                &self.precon64_inv_root_of_unity_powers,
+                input_mod_factor,
+                output_mod_factor,
+            );
+        }
     }
 
     pub fn check_arguments(degree: u64, modulus: u64) -> bool {
@@ -432,6 +497,12 @@ impl Ntt {
         }
         self.precon64_inv_root_of_unity_powers =
             compute_barrett_vector(&self.inv_root_of_unity_powers, 64);
+        let inv_n = inverse_mod(self.degree, self.modulus);
+        let inv_n_w = multiply_mod(inv_n, self.inv_root_of_unity_powers[n - 1], self.modulus);
+        self.inv_scale = [32, 52, 64].map(|bits| {
+            let precon = |x| MultiplyFactor::new(x, bits, self.modulus).barrett_factor();
+            [inv_n, precon(inv_n), inv_n_w, precon(inv_n_w)]
+        });
 
         // Compute shift factors for incomplete-NTT multiplication.
         // shift_factors = NTT_forward([0, 1, 0, 0, …]) at degree n.
@@ -444,6 +515,9 @@ impl Ntt {
         // Pre-cast to aligned f64 for the AVX-512 float path.
         let sf_f64: Vec<f64> = sf.iter().map(|&v| v as f64).collect();
         self.shift_factors_f64 = AlignedVecF64::from_vec(sf_f64);
+        if self.ifma52.is_some() {
+            self.shift_factors_precon52 = AlignedVecU64::from_vec(compute_barrett_vector(&sf, 52));
+        }
         self.shift_factors = sf;
     }
 }
@@ -480,7 +554,6 @@ fn inv_butterfly_radix2(
 
 fn forward_transform_to_bit_reverse_radix2(
     result: &mut [u64],
-    operand: &[u64],
     n: u64,
     modulus: u64,
     root_of_unity_powers: &[u64],
@@ -507,8 +580,8 @@ fn forward_transform_to_bit_reverse_radix2(
             8 => {
                 for _ in 0..8 {
                     let (x_new, y_new) = fwd_butterfly_radix2(
-                        operand[x_op_idx],
-                        operand[y_op_idx],
+                        result[x_op_idx],
+                        result[y_op_idx],
                         w,
                         w_precon,
                         modulus,
@@ -525,8 +598,8 @@ fn forward_transform_to_bit_reverse_radix2(
             4 => {
                 for _ in 0..4 {
                     let (x_new, y_new) = fwd_butterfly_radix2(
-                        operand[x_op_idx],
-                        operand[y_op_idx],
+                        result[x_op_idx],
+                        result[y_op_idx],
                         w,
                         w_precon,
                         modulus,
@@ -543,8 +616,8 @@ fn forward_transform_to_bit_reverse_radix2(
             2 => {
                 for _ in 0..2 {
                     let (x_new, y_new) = fwd_butterfly_radix2(
-                        operand[x_op_idx],
-                        operand[y_op_idx],
+                        result[x_op_idx],
+                        result[y_op_idx],
                         w,
                         w_precon,
                         modulus,
@@ -560,8 +633,8 @@ fn forward_transform_to_bit_reverse_radix2(
             }
             1 => {
                 let (x_new, y_new) = fwd_butterfly_radix2(
-                    operand[x_op_idx],
-                    operand[y_op_idx],
+                    result[x_op_idx],
+                    result[y_op_idx],
                     w,
                     w_precon,
                     modulus,
@@ -575,8 +648,8 @@ fn forward_transform_to_bit_reverse_radix2(
                 while j < t as usize {
                     for _ in 0..8 {
                         let (x_new, y_new) = fwd_butterfly_radix2(
-                            operand[x_op_idx],
-                            operand[y_op_idx],
+                            result[x_op_idx],
+                            result[y_op_idx],
                             w,
                             w_precon,
                             modulus,
@@ -803,7 +876,6 @@ fn reference_inverse_transform_from_bit_reverse(
 
 fn inverse_transform_from_bit_reverse_radix2(
     result: &mut [u64],
-    operand: &[u64],
     n: u64,
     modulus: u64,
     inv_root_of_unity_powers: &[u64],
@@ -838,8 +910,8 @@ fn inverse_transform_from_bit_reverse_radix2(
                     let x_op_idx = offset;
                     let y_op_idx = offset + t as usize;
                     let (x_new, y_new) = inv_butterfly_radix2(
-                        operand[x_op_idx],
-                        operand[y_op_idx],
+                        result[x_op_idx],
+                        result[y_op_idx],
                         w,
                         w_precon,
                         modulus,
@@ -956,10 +1028,6 @@ fn inverse_transform_from_bit_reverse_radix2(
         m >>= 1;
     }
 
-    if !std::ptr::eq(result.as_ptr(), operand.as_ptr()) && n == 2 {
-        result[..n as usize].copy_from_slice(&operand[..n as usize]);
-    }
-
     let w = inv_root_of_unity_powers[(n - 1) as usize];
     let inv_n = inverse_mod(n, modulus);
     let inv_n_precon = MultiplyFactor::new(inv_n, 64, modulus).barrett_factor();
@@ -983,8 +1051,7 @@ fn inverse_transform_from_bit_reverse_radix2(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline]
+#[inline(always)]
 unsafe fn fwd_butterfly_avx512<const BITSHIFT: i32, const INPUT_LESS_THAN_MOD: bool>(
     x: &mut __m512i,
     y: &mut __m512i,
@@ -1022,8 +1089,7 @@ unsafe fn fwd_butterfly_avx512<const BITSHIFT: i32, const INPUT_LESS_THAN_MOD: b
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline]
+#[inline(always)]
 unsafe fn fwd_t1<const BITSHIFT: i32>(
     operand: *mut u64,
     v_neg_modulus: __m512i,
@@ -1081,8 +1147,7 @@ unsafe fn fwd_t1<const BITSHIFT: i32>(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline]
+#[inline(always)]
 unsafe fn fwd_t2<const BITSHIFT: i32>(
     operand: *mut u64,
     v_neg_modulus: __m512i,
@@ -1138,8 +1203,7 @@ unsafe fn fwd_t2<const BITSHIFT: i32>(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline]
+#[inline(always)]
 unsafe fn fwd_t4<const BITSHIFT: i32>(
     operand: *mut u64,
     v_neg_modulus: __m512i,
@@ -1196,8 +1260,7 @@ unsafe fn fwd_t4<const BITSHIFT: i32>(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline]
+#[inline(always)]
 unsafe fn fwd_t8<const BITSHIFT: i32, const INPUT_LESS_THAN_MOD: bool>(
     result: *mut u64,
     operand: *const u64,
@@ -1270,12 +1333,122 @@ unsafe fn fwd_t8<const BITSHIFT: i32, const INPUT_LESS_THAN_MOD: bool>(
     }
 }
 
+/// `blocks` consecutive length-`n` transforms, stage by stage across the blocks for `n <= 1024`.
+/// `BITSHIFT = 52` runs with AVX-512 IFMA, 32 and 64 with AVX-512DQ alone.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn forward_avx512<const BITSHIFT: i32>(
+    result: *mut u64,
+    operand: *const u64,
+    blocks: usize,
+    n: u64,
+    modulus: u64,
+    root_of_unity_powers: *const u64,
+    precon_root_of_unity_powers: *const u64,
+    input_mod_factor: u64,
+    output_mod_factor: u64,
+    recursion_depth: u64,
+    recursion_half: u64,
+) {
+    if BITSHIFT == 52 {
+        forward_avx512_ifma(
+            result,
+            operand,
+            blocks,
+            n,
+            modulus,
+            root_of_unity_powers,
+            precon_root_of_unity_powers,
+            input_mod_factor,
+            output_mod_factor,
+            recursion_depth,
+            recursion_half,
+        )
+    } else {
+        forward_avx512_dq::<BITSHIFT>(
+            result,
+            operand,
+            blocks,
+            n,
+            modulus,
+            root_of_unity_powers,
+            precon_root_of_unity_powers,
+            input_mod_factor,
+            output_mod_factor,
+            recursion_depth,
+            recursion_half,
+        )
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512dq")]
+#[inline]
+unsafe fn forward_avx512_dq<const BITSHIFT: i32>(
+    result: *mut u64,
+    operand: *const u64,
+    blocks: usize,
+    n: u64,
+    modulus: u64,
+    root_of_unity_powers: *const u64,
+    precon_root_of_unity_powers: *const u64,
+    input_mod_factor: u64,
+    output_mod_factor: u64,
+    recursion_depth: u64,
+    recursion_half: u64,
+) {
+    forward_transform_to_bit_reverse_avx512::<BITSHIFT>(
+        result,
+        operand,
+        blocks,
+        n,
+        modulus,
+        root_of_unity_powers,
+        precon_root_of_unity_powers,
+        input_mod_factor,
+        output_mod_factor,
+        recursion_depth,
+        recursion_half,
+    )
+}
+
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
 #[inline]
+unsafe fn forward_avx512_ifma(
+    result: *mut u64,
+    operand: *const u64,
+    blocks: usize,
+    n: u64,
+    modulus: u64,
+    root_of_unity_powers: *const u64,
+    precon_root_of_unity_powers: *const u64,
+    input_mod_factor: u64,
+    output_mod_factor: u64,
+    recursion_depth: u64,
+    recursion_half: u64,
+) {
+    forward_transform_to_bit_reverse_avx512::<52>(
+        result,
+        operand,
+        blocks,
+        n,
+        modulus,
+        root_of_unity_powers,
+        precon_root_of_unity_powers,
+        input_mod_factor,
+        output_mod_factor,
+        recursion_depth,
+        recursion_half,
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
 unsafe fn forward_transform_to_bit_reverse_avx512<const BITSHIFT: i32>(
     result: *mut u64,
     operand: *const u64,
+    blocks: usize,
     n: u64,
     modulus: u64,
     root_of_unity_powers: *const u64,
@@ -1295,6 +1468,7 @@ unsafe fn forward_transform_to_bit_reverse_avx512<const BITSHIFT: i32>(
     let v_modulus = _mm512_set1_epi64(modulus as i64);
     let v_neg_modulus = _mm512_set1_epi64(-(modulus as i64));
     let v_twice_mod = _mm512_set1_epi64(twice_mod as i64);
+    let block = |b: usize| result.add(b * n as usize);
 
     const BASE_NTT_SIZE: u64 = 1024;
 
@@ -1304,35 +1478,20 @@ unsafe fn forward_transform_to_bit_reverse_avx512<const BITSHIFT: i32>(
         let mut w_idx = (m << recursion_depth) + (recursion_half * m);
 
         if result as *const u64 != operand {
-            std::ptr::copy_nonoverlapping(operand, result, n as usize);
+            std::ptr::copy_nonoverlapping(operand, result, blocks * n as usize);
         }
 
         if m < (n >> 3) {
             let w = root_of_unity_powers.add(w_idx as usize);
             let w_precon = precon_root_of_unity_powers.add(w_idx as usize);
 
-            if input_mod_factor <= 2 && recursion_depth == 0 {
-                fwd_t8::<BITSHIFT, true>(
-                    result,
-                    result,
-                    v_neg_modulus,
-                    v_twice_mod,
-                    t,
-                    m,
-                    w,
-                    w_precon,
-                );
-            } else {
-                fwd_t8::<BITSHIFT, false>(
-                    result,
-                    result,
-                    v_neg_modulus,
-                    v_twice_mod,
-                    t,
-                    m,
-                    w,
-                    w_precon,
-                );
+            for b in 0..blocks {
+                let x = block(b);
+                if input_mod_factor <= 2 && recursion_depth == 0 {
+                    fwd_t8::<BITSHIFT, true>(x, x, v_neg_modulus, v_twice_mod, t, m, w, w_precon);
+                } else {
+                    fwd_t8::<BITSHIFT, false>(x, x, v_neg_modulus, v_twice_mod, t, m, w, w_precon);
+                }
             }
 
             t >>= 1;
@@ -1343,16 +1502,10 @@ unsafe fn forward_transform_to_bit_reverse_avx512<const BITSHIFT: i32>(
         while m < (n >> 3) {
             let w = root_of_unity_powers.add(w_idx as usize);
             let w_precon = precon_root_of_unity_powers.add(w_idx as usize);
-            fwd_t8::<BITSHIFT, false>(
-                result,
-                result,
-                v_neg_modulus,
-                v_twice_mod,
-                t,
-                m,
-                w,
-                w_precon,
-            );
+            for b in 0..blocks {
+                let x = block(b);
+                fwd_t8::<BITSHIFT, false>(x, x, v_neg_modulus, v_twice_mod, t, m, w, w_precon);
+            }
             t >>= 1;
             w_idx <<= 1;
             m <<= 1;
@@ -1374,25 +1527,31 @@ unsafe fn forward_transform_to_bit_reverse_avx512<const BITSHIFT: i32>(
         let mut new_w_idx = compute_new_w_idx(w_idx);
         let mut w = root_of_unity_powers.add(new_w_idx as usize);
         let mut w_precon = precon_root_of_unity_powers.add(new_w_idx as usize);
-        fwd_t4::<BITSHIFT>(result, v_neg_modulus, v_twice_mod, m, w, w_precon);
+        for b in 0..blocks {
+            fwd_t4::<BITSHIFT>(block(b), v_neg_modulus, v_twice_mod, m, w, w_precon);
+        }
 
         m <<= 1;
         w_idx <<= 1;
         new_w_idx = compute_new_w_idx(w_idx);
         w = root_of_unity_powers.add(new_w_idx as usize);
         w_precon = precon_root_of_unity_powers.add(new_w_idx as usize);
-        fwd_t2::<BITSHIFT>(result, v_neg_modulus, v_twice_mod, m, w, w_precon);
+        for b in 0..blocks {
+            fwd_t2::<BITSHIFT>(block(b), v_neg_modulus, v_twice_mod, m, w, w_precon);
+        }
 
         m <<= 1;
         w_idx <<= 1;
         new_w_idx = compute_new_w_idx(w_idx);
         w = root_of_unity_powers.add(new_w_idx as usize);
         w_precon = precon_root_of_unity_powers.add(new_w_idx as usize);
-        fwd_t1::<BITSHIFT>(result, v_neg_modulus, v_twice_mod, m, w, w_precon);
+        for b in 0..blocks {
+            fwd_t1::<BITSHIFT>(block(b), v_neg_modulus, v_twice_mod, m, w, w_precon);
+        }
 
         if output_mod_factor == 1 {
             let mut v_x_pt = result as *mut __m512i;
-            for _ in 0..(n / 8) {
+            for _ in 0..blocks * (n / 8) as usize {
                 let mut v_x = _mm512_loadu_si512(v_x_pt);
                 v_x = mm512_hexl_small_mod_epu64::<2>(v_x, v_twice_mod, None, None);
                 v_x = mm512_hexl_small_mod_epu64::<2>(v_x, v_modulus, None, None);
@@ -1401,53 +1560,46 @@ unsafe fn forward_transform_to_bit_reverse_avx512<const BITSHIFT: i32>(
             }
         }
     } else {
-        let t = n >> 1;
-        let w_idx = (1u64 << recursion_depth) + recursion_half;
-        let w = root_of_unity_powers.add(w_idx as usize);
-        let w_precon = precon_root_of_unity_powers.add(w_idx as usize);
+        for b in 0..blocks {
+            let result = block(b);
+            let operand = operand.add(b * n as usize);
+            let t = n >> 1;
+            let w_idx = (1u64 << recursion_depth) + recursion_half;
+            let w = root_of_unity_powers.add(w_idx as usize);
+            let w_precon = precon_root_of_unity_powers.add(w_idx as usize);
 
-        fwd_t8::<BITSHIFT, false>(
-            result,
-            operand,
-            v_neg_modulus,
-            v_twice_mod,
-            t,
-            1,
-            w,
-            w_precon,
-        );
+            fwd_t8::<BITSHIFT, false>(
+                result,
+                operand,
+                v_neg_modulus,
+                v_twice_mod,
+                t,
+                1,
+                w,
+                w_precon,
+            );
 
-        forward_transform_to_bit_reverse_avx512::<BITSHIFT>(
-            result,
-            result,
-            n / 2,
-            modulus,
-            root_of_unity_powers,
-            precon_root_of_unity_powers,
-            input_mod_factor,
-            output_mod_factor,
-            recursion_depth + 1,
-            recursion_half * 2,
-        );
-
-        forward_transform_to_bit_reverse_avx512::<BITSHIFT>(
-            result.add((n / 2) as usize),
-            result.add((n / 2) as usize),
-            n / 2,
-            modulus,
-            root_of_unity_powers,
-            precon_root_of_unity_powers,
-            input_mod_factor,
-            output_mod_factor,
-            recursion_depth + 1,
-            recursion_half * 2 + 1,
-        );
+            for half in 0..2 {
+                forward_avx512::<BITSHIFT>(
+                    result.add(half * (n / 2) as usize),
+                    result.add(half * (n / 2) as usize),
+                    1,
+                    n / 2,
+                    modulus,
+                    root_of_unity_powers,
+                    precon_root_of_unity_powers,
+                    input_mod_factor,
+                    output_mod_factor,
+                    recursion_depth + 1,
+                    recursion_half * 2 + half as u64,
+                );
+            }
+        }
     }
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline]
+#[inline(always)]
 unsafe fn inv_butterfly_avx512<const BITSHIFT: i32, const INPUT_LESS_THAN_MOD: bool>(
     x: &mut __m512i,
     y: &mut __m512i,
@@ -1487,8 +1639,7 @@ unsafe fn inv_butterfly_avx512<const BITSHIFT: i32, const INPUT_LESS_THAN_MOD: b
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline]
+#[inline(always)]
 unsafe fn inv_t1<const BITSHIFT: i32, const INPUT_LESS_THAN_MOD: bool>(
     operand: *mut u64,
     v_neg_modulus: __m512i,
@@ -1548,8 +1699,7 @@ unsafe fn inv_t1<const BITSHIFT: i32, const INPUT_LESS_THAN_MOD: bool>(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline]
+#[inline(always)]
 unsafe fn inv_t2<const BITSHIFT: i32>(
     mut x: *mut u64,
     v_neg_modulus: __m512i,
@@ -1600,8 +1750,7 @@ unsafe fn inv_t2<const BITSHIFT: i32>(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline]
+#[inline(always)]
 unsafe fn inv_t4<const BITSHIFT: i32>(
     operand: *mut u64,
     v_neg_modulus: __m512i,
@@ -1652,8 +1801,7 @@ unsafe fn inv_t4<const BITSHIFT: i32>(
 }
 
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline]
+#[inline(always)]
 unsafe fn inv_t8<const BITSHIFT: i32>(
     operand: *mut u64,
     v_neg_modulus: __m512i,
@@ -1717,16 +1865,134 @@ unsafe fn inv_t8<const BITSHIFT: i32>(
     }
 }
 
+/// [`forward_avx512`] for the inverse; `inv_scale` holds `n^-1` and
+/// `n^-1 w` of the last stage with their `BITSHIFT`-bit Barrett factors.
 #[cfg(target_arch = "x86_64")]
-#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
-#[inline]
-unsafe fn inverse_transform_from_bit_reverse_avx512<const BITSHIFT: i32>(
+#[inline(always)]
+unsafe fn inverse_avx512<const BITSHIFT: i32>(
     result: *mut u64,
     operand: *const u64,
+    blocks: usize,
     n: u64,
     modulus: u64,
     inv_root_of_unity_powers: *const u64,
     precon_inv_root_of_unity_powers: *const u64,
+    inv_scale: &[u64; 4],
+    input_mod_factor: u64,
+    output_mod_factor: u64,
+    recursion_depth: u64,
+    recursion_half: u64,
+) {
+    if BITSHIFT == 52 {
+        inverse_avx512_ifma(
+            result,
+            operand,
+            blocks,
+            n,
+            modulus,
+            inv_root_of_unity_powers,
+            precon_inv_root_of_unity_powers,
+            inv_scale,
+            input_mod_factor,
+            output_mod_factor,
+            recursion_depth,
+            recursion_half,
+        )
+    } else {
+        inverse_avx512_dq::<BITSHIFT>(
+            result,
+            operand,
+            blocks,
+            n,
+            modulus,
+            inv_root_of_unity_powers,
+            precon_inv_root_of_unity_powers,
+            inv_scale,
+            input_mod_factor,
+            output_mod_factor,
+            recursion_depth,
+            recursion_half,
+        )
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512dq")]
+#[inline]
+unsafe fn inverse_avx512_dq<const BITSHIFT: i32>(
+    result: *mut u64,
+    operand: *const u64,
+    blocks: usize,
+    n: u64,
+    modulus: u64,
+    inv_root_of_unity_powers: *const u64,
+    precon_inv_root_of_unity_powers: *const u64,
+    inv_scale: &[u64; 4],
+    input_mod_factor: u64,
+    output_mod_factor: u64,
+    recursion_depth: u64,
+    recursion_half: u64,
+) {
+    inverse_transform_from_bit_reverse_avx512::<BITSHIFT>(
+        result,
+        operand,
+        blocks,
+        n,
+        modulus,
+        inv_root_of_unity_powers,
+        precon_inv_root_of_unity_powers,
+        inv_scale,
+        input_mod_factor,
+        output_mod_factor,
+        recursion_depth,
+        recursion_half,
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512dq,avx512ifma")]
+#[inline]
+unsafe fn inverse_avx512_ifma(
+    result: *mut u64,
+    operand: *const u64,
+    blocks: usize,
+    n: u64,
+    modulus: u64,
+    inv_root_of_unity_powers: *const u64,
+    precon_inv_root_of_unity_powers: *const u64,
+    inv_scale: &[u64; 4],
+    input_mod_factor: u64,
+    output_mod_factor: u64,
+    recursion_depth: u64,
+    recursion_half: u64,
+) {
+    inverse_transform_from_bit_reverse_avx512::<52>(
+        result,
+        operand,
+        blocks,
+        n,
+        modulus,
+        inv_root_of_unity_powers,
+        precon_inv_root_of_unity_powers,
+        inv_scale,
+        input_mod_factor,
+        output_mod_factor,
+        recursion_depth,
+        recursion_half,
+    )
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+unsafe fn inverse_transform_from_bit_reverse_avx512<const BITSHIFT: i32>(
+    result: *mut u64,
+    operand: *const u64,
+    blocks: usize,
+    n: u64,
+    modulus: u64,
+    inv_root_of_unity_powers: *const u64,
+    precon_inv_root_of_unity_powers: *const u64,
+    inv_scale: &[u64; 4],
     input_mod_factor: u64,
     output_mod_factor: u64,
     recursion_depth: u64,
@@ -1742,6 +2008,7 @@ unsafe fn inverse_transform_from_bit_reverse_avx512<const BITSHIFT: i32>(
     let v_modulus = _mm512_set1_epi64(modulus as i64);
     let v_neg_modulus = _mm512_set1_epi64(-(modulus as i64));
     let v_twice_mod = _mm512_set1_epi64(twice_mod as i64);
+    let block = |b: usize| result.add(b * n as usize);
 
     let mut t = 1u64;
     let mut m = n >> 1;
@@ -1751,76 +2018,77 @@ unsafe fn inverse_transform_from_bit_reverse_avx512<const BITSHIFT: i32>(
 
     if n <= BASE_NTT_SIZE {
         if result as *const u64 != operand {
-            std::ptr::copy_nonoverlapping(operand, result, n as usize);
+            std::ptr::copy_nonoverlapping(operand, result, blocks * n as usize);
         }
 
-        {
-            let w = inv_root_of_unity_powers.add(w_idx as usize);
-            let w_precon = precon_inv_root_of_unity_powers.add(w_idx as usize);
+        let w = inv_root_of_unity_powers.add(w_idx as usize);
+        let w_precon = precon_inv_root_of_unity_powers.add(w_idx as usize);
+        for b in 0..blocks {
             if input_mod_factor == 1 && recursion_depth == 0 {
-                inv_t1::<BITSHIFT, true>(result, v_neg_modulus, v_twice_mod, m, w, w_precon);
+                inv_t1::<BITSHIFT, true>(block(b), v_neg_modulus, v_twice_mod, m, w, w_precon);
             } else {
-                inv_t1::<BITSHIFT, false>(result, v_neg_modulus, v_twice_mod, m, w, w_precon);
+                inv_t1::<BITSHIFT, false>(block(b), v_neg_modulus, v_twice_mod, m, w, w_precon);
             }
+        }
 
-            t <<= 1;
-            m >>= 1;
-            let mut w_idx_delta = m * ((1u64 << (recursion_depth + 1)) - recursion_half);
-            w_idx += w_idx_delta;
+        t <<= 1;
+        m >>= 1;
+        let mut w_idx_delta = m * ((1u64 << (recursion_depth + 1)) - recursion_half);
+        w_idx += w_idx_delta;
 
+        let w = inv_root_of_unity_powers.add(w_idx as usize);
+        let w_precon = precon_inv_root_of_unity_powers.add(w_idx as usize);
+        for b in 0..blocks {
+            inv_t2::<BITSHIFT>(block(b), v_neg_modulus, v_twice_mod, m, w, w_precon);
+        }
+
+        t <<= 1;
+        m >>= 1;
+        w_idx_delta >>= 1;
+        w_idx += w_idx_delta;
+
+        let w = inv_root_of_unity_powers.add(w_idx as usize);
+        let w_precon = precon_inv_root_of_unity_powers.add(w_idx as usize);
+        for b in 0..blocks {
+            inv_t4::<BITSHIFT>(block(b), v_neg_modulus, v_twice_mod, m, w, w_precon);
+        }
+
+        t <<= 1;
+        m >>= 1;
+        w_idx_delta >>= 1;
+        w_idx += w_idx_delta;
+
+        while m > 1 {
             let w = inv_root_of_unity_powers.add(w_idx as usize);
             let w_precon = precon_inv_root_of_unity_powers.add(w_idx as usize);
-            inv_t2::<BITSHIFT>(result, v_neg_modulus, v_twice_mod, m, w, w_precon);
-
+            for b in 0..blocks {
+                inv_t8::<BITSHIFT>(block(b), v_neg_modulus, v_twice_mod, t, m, w, w_precon);
+            }
             t <<= 1;
             m >>= 1;
             w_idx_delta >>= 1;
             w_idx += w_idx_delta;
-
-            let w = inv_root_of_unity_powers.add(w_idx as usize);
-            let w_precon = precon_inv_root_of_unity_powers.add(w_idx as usize);
-            inv_t4::<BITSHIFT>(result, v_neg_modulus, v_twice_mod, m, w, w_precon);
-
-            t <<= 1;
-            m >>= 1;
-            w_idx_delta >>= 1;
-            w_idx += w_idx_delta;
-
-            while m > 1 {
-                let w = inv_root_of_unity_powers.add(w_idx as usize);
-                let w_precon = precon_inv_root_of_unity_powers.add(w_idx as usize);
-                inv_t8::<BITSHIFT>(result, v_neg_modulus, v_twice_mod, t, m, w, w_precon);
-                t <<= 1;
-                m >>= 1;
-                w_idx_delta >>= 1;
-                w_idx += w_idx_delta;
-            }
         }
     } else {
-        inverse_transform_from_bit_reverse_avx512::<BITSHIFT>(
-            result,
-            operand,
-            n / 2,
-            modulus,
-            inv_root_of_unity_powers,
-            precon_inv_root_of_unity_powers,
-            input_mod_factor,
-            output_mod_factor,
-            recursion_depth + 1,
-            2 * recursion_half,
-        );
-        inverse_transform_from_bit_reverse_avx512::<BITSHIFT>(
-            result.add((n / 2) as usize),
-            operand.add((n / 2) as usize),
-            n / 2,
-            modulus,
-            inv_root_of_unity_powers,
-            precon_inv_root_of_unity_powers,
-            input_mod_factor,
-            output_mod_factor,
-            recursion_depth + 1,
-            2 * recursion_half + 1,
-        );
+        for b in 0..blocks {
+            for half in 0..2 {
+                let offset = b * n as usize + half * (n / 2) as usize;
+                inverse_avx512::<BITSHIFT>(
+                    result.add(offset),
+                    operand.add(offset),
+                    1,
+                    n / 2,
+                    modulus,
+                    inv_root_of_unity_powers,
+                    precon_inv_root_of_unity_powers,
+                    inv_scale,
+                    input_mod_factor,
+                    output_mod_factor,
+                    recursion_depth + 1,
+                    2 * recursion_half + half as u64,
+                );
+            }
+        }
 
         let mut w_idx_delta = m * ((1u64 << (recursion_depth + 1)) - recursion_half);
         while m > 2 {
@@ -1832,77 +2100,152 @@ unsafe fn inverse_transform_from_bit_reverse_avx512<const BITSHIFT: i32>(
         if m == 2 {
             let w = inv_root_of_unity_powers.add(w_idx as usize);
             let w_precon = precon_inv_root_of_unity_powers.add(w_idx as usize);
-            inv_t8::<BITSHIFT>(result, v_neg_modulus, v_twice_mod, t, m, w, w_precon);
-            w_idx_delta >>= 1;
-            w_idx += w_idx_delta;
+            for b in 0..blocks {
+                inv_t8::<BITSHIFT>(block(b), v_neg_modulus, v_twice_mod, t, m, w, w_precon);
+            }
         }
     }
 
     if recursion_depth == 0 {
-        let w = *inv_root_of_unity_powers.add(w_idx as usize);
-        let mf_inv_n = MultiplyFactor::new(inverse_mod(n, modulus), BITSHIFT as u64, modulus);
-        let inv_n = mf_inv_n.operand();
-        let inv_n_prime = mf_inv_n.barrett_factor();
-
-        let mf_inv_n_w =
-            MultiplyFactor::new(multiply_mod(inv_n, w, modulus), BITSHIFT as u64, modulus);
-        let inv_n_w = mf_inv_n_w.operand();
-        let inv_n_w_prime = mf_inv_n_w.barrett_factor();
-
-        let x = result;
-        let y = result.add((n >> 1) as usize);
-
+        let [inv_n, inv_n_prime, inv_n_w, inv_n_w_prime] = *inv_scale;
         let v_inv_n = _mm512_set1_epi64(inv_n as i64);
         let v_inv_n_prime = _mm512_set1_epi64(inv_n_prime as i64);
         let v_inv_n_w = _mm512_set1_epi64(inv_n_w as i64);
         let v_inv_n_w_prime = _mm512_set1_epi64(inv_n_w_prime as i64);
 
-        let mut v_x_pt = x as *mut __m512i;
-        let mut v_y_pt = y as *mut __m512i;
+        for b in 0..blocks {
+            let mut v_x_pt = block(b) as *mut __m512i;
+            let mut v_y_pt = block(b).add((n >> 1) as usize) as *mut __m512i;
+            for _ in 0..n / 16 {
+                let v_x = _mm512_loadu_si512(v_x_pt);
+                let v_y = _mm512_loadu_si512(v_y_pt);
 
-        let mut j = n / 16;
-        while j > 0 {
-            let v_x = _mm512_loadu_si512(v_x_pt);
-            let v_y = _mm512_loadu_si512(v_y_pt);
+                let y_minus_2q = _mm512_sub_epi64(v_y, v_twice_mod);
+                let x_plus_y_mod2q = mm512_hexl_small_add_mod_epi64(v_x, v_y, v_twice_mod);
+                let t_val = _mm512_sub_epi64(v_x, y_minus_2q);
 
-            let y_minus_2q = _mm512_sub_epi64(v_y, v_twice_mod);
-            let x_plus_y_mod2q = mm512_hexl_small_add_mod_epi64(v_x, v_y, v_twice_mod);
-            let t_val = _mm512_sub_epi64(v_x, y_minus_2q);
+                let mut v_x_out;
+                let mut v_y_out;
 
-            let mut v_x_out;
-            let mut v_y_out;
+                if BITSHIFT == 32 {
+                    let mut q1 = mm512_hexl_mullo_epi::<64>(v_inv_n_prime, x_plus_y_mod2q);
+                    q1 = _mm512_srli_epi64(q1, 32);
+                    let inv_n_tx = mm512_hexl_mullo_epi::<64>(v_inv_n, x_plus_y_mod2q);
+                    v_x_out = mm512_hexl_mullo_add_lo_epi::<64>(inv_n_tx, q1, v_neg_modulus);
 
-            if BITSHIFT == 32 {
-                let mut q1 = mm512_hexl_mullo_epi::<64>(v_inv_n_prime, x_plus_y_mod2q);
-                q1 = _mm512_srli_epi64(q1, 32);
-                let inv_n_tx = mm512_hexl_mullo_epi::<64>(v_inv_n, x_plus_y_mod2q);
-                v_x_out = mm512_hexl_mullo_add_lo_epi::<64>(inv_n_tx, q1, v_neg_modulus);
+                    let mut q2 = mm512_hexl_mullo_epi::<64>(v_inv_n_w_prime, t_val);
+                    q2 = _mm512_srli_epi64(q2, 32);
+                    let inv_n_w_t = mm512_hexl_mullo_epi::<64>(v_inv_n_w, t_val);
+                    v_y_out = mm512_hexl_mullo_add_lo_epi::<64>(inv_n_w_t, q2, v_neg_modulus);
+                } else {
+                    let q1 = mm512_hexl_mulhi_epi::<BITSHIFT>(v_inv_n_prime, x_plus_y_mod2q);
+                    let inv_n_tx = mm512_hexl_mullo_epi::<BITSHIFT>(v_inv_n, x_plus_y_mod2q);
+                    v_x_out = mm512_hexl_mullo_add_lo_epi::<BITSHIFT>(inv_n_tx, q1, v_neg_modulus);
 
-                let mut q2 = mm512_hexl_mullo_epi::<64>(v_inv_n_w_prime, t_val);
-                q2 = _mm512_srli_epi64(q2, 32);
-                let inv_n_w_t = mm512_hexl_mullo_epi::<64>(v_inv_n_w, t_val);
-                v_y_out = mm512_hexl_mullo_add_lo_epi::<64>(inv_n_w_t, q2, v_neg_modulus);
-            } else {
-                let q1 = mm512_hexl_mulhi_epi::<BITSHIFT>(v_inv_n_prime, x_plus_y_mod2q);
-                let inv_n_tx = mm512_hexl_mullo_epi::<BITSHIFT>(v_inv_n, x_plus_y_mod2q);
-                v_x_out = mm512_hexl_mullo_add_lo_epi::<BITSHIFT>(inv_n_tx, q1, v_neg_modulus);
+                    let q2 = mm512_hexl_mulhi_epi::<BITSHIFT>(v_inv_n_w_prime, t_val);
+                    let inv_n_w_t = mm512_hexl_mullo_epi::<BITSHIFT>(v_inv_n_w, t_val);
+                    v_y_out = mm512_hexl_mullo_add_lo_epi::<BITSHIFT>(inv_n_w_t, q2, v_neg_modulus);
+                }
 
-                let q2 = mm512_hexl_mulhi_epi::<BITSHIFT>(v_inv_n_w_prime, t_val);
-                let inv_n_w_t = mm512_hexl_mullo_epi::<BITSHIFT>(v_inv_n_w, t_val);
-                v_y_out = mm512_hexl_mullo_add_lo_epi::<BITSHIFT>(inv_n_w_t, q2, v_neg_modulus);
+                if output_mod_factor == 1 {
+                    v_x_out = mm512_hexl_small_mod_epu64::<2>(v_x_out, v_modulus, None, None);
+                    v_y_out = mm512_hexl_small_mod_epu64::<2>(v_y_out, v_modulus, None, None);
+                }
+
+                _mm512_storeu_si512(v_x_pt, v_x_out);
+                _mm512_storeu_si512(v_y_pt, v_y_out);
+
+                v_x_pt = v_x_pt.add(1);
+                v_y_pt = v_y_pt.add(1);
             }
+        }
+    }
+}
 
-            if output_mod_factor == 1 {
-                v_x_out = mm512_hexl_small_mod_epu64::<2>(v_x_out, v_modulus, None, None);
-                v_y_out = mm512_hexl_small_mod_epu64::<2>(v_y_out, v_modulus, None, None);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic]
+    fn test_block_count_overflow_panics() {
+        Ntt::new(16, 998244353).compute_forward_blocks(&mut [0; 16], usize::MAX / 8);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_short_operand_panics() {
+        Ntt::new(16, 998244353).compute_inverse(&mut [0; 16], &[0; 8], 1, 1);
+    }
+
+    #[test]
+    fn test_transforms_match_reference() {
+        let moduli = [
+            1125899906842177u64,
+            1125899906839937,
+            1125899906840833,
+            1125899906826241,
+            998244353,
+            1152921504606830593,
+        ];
+        for modulus in moduli {
+            for n in [16u64, 32, 64, 128, 1024, 2048, 4096] {
+                if (modulus - 1) % (2 * n) != 0 {
+                    continue;
+                }
+                let ntt = Ntt::new(n, modulus);
+                let len = n as usize;
+                for blocks in [1usize, 2, 3] {
+                    let mut state = 0x5eed ^ (n << 8) ^ blocks as u64;
+                    let random: Vec<u64> = (0..blocks * len)
+                        .map(|_| {
+                            state ^= state << 13;
+                            state ^= state >> 7;
+                            state ^= state << 17;
+                            state % modulus
+                        })
+                        .collect();
+                    let edges = [0, 1, modulus / 2, modulus - 2, modulus - 1];
+                    let mixed: Vec<u64> = random.iter().map(|&x| edges[(x % 5) as usize]).collect();
+                    for input in [random, mixed, vec![modulus - 1; blocks * len]] {
+                        let mut forward = input.clone();
+                        ntt.compute_forward_blocks(&mut forward, blocks);
+                        let mut inverse = input.clone();
+                        ntt.compute_inverse_blocks(&mut inverse, blocks);
+                        for b in 0..blocks {
+                            let at = b * len..(b + 1) * len;
+                            let x = &input[at.clone()];
+                            let mut single = vec![0u64; len];
+                            let mut expected = x.to_vec();
+                            let roots = ntt.root_of_unity_powers();
+                            reference_forward_transform_to_bit_reverse(
+                                &mut expected,
+                                n,
+                                modulus,
+                                roots,
+                            );
+                            ntt.compute_forward(&mut single, x, 1, 1);
+                            assert!(
+                                forward[at.clone()] == expected[..] && single == expected,
+                                "forward q={modulus} n={n} blocks={blocks}"
+                            );
+                            expected.copy_from_slice(x);
+                            let roots = ntt.inv_root_of_unity_powers();
+                            reference_inverse_transform_from_bit_reverse(
+                                &mut expected,
+                                n,
+                                modulus,
+                                roots,
+                            );
+                            ntt.compute_inverse(&mut single, x, 1, 1);
+                            assert!(
+                                inverse[at] == expected[..] && single == expected,
+                                "inverse q={modulus} n={n} blocks={blocks}"
+                            );
+                        }
+                    }
+                }
             }
-
-            _mm512_storeu_si512(v_x_pt, v_x_out);
-            _mm512_storeu_si512(v_y_pt, v_y_out);
-
-            v_x_pt = v_x_pt.add(1);
-            v_y_pt = v_y_pt.add(1);
-            j -= 1;
         }
     }
 }
