@@ -84,16 +84,25 @@ fn commit_basic_internal_with(
     }
     let _ = parallel;
 
-    for (i, row) in ck.iter().take(rank).enumerate() {
+    let chunk = cached_chunk(rank);
+    for start in (0..witness.height).step_by(chunk) {
         for col in 0..witness.used_cols {
-            inner_product_into(
-                commitment.index_mut((i, col)),
-                &row.preprocessed_row,
-                witness.col(col),
-            );
+            let column = &witness.col(col)[start..];
+            for (i, row) in ck.iter().take(rank).enumerate() {
+                let key = row.preprocessed_row.get(start..).unwrap_or(&[]);
+                let count = chunk.min(key.len()).min(column.len());
+                incomplete_ntt_dot_into(commitment.index_mut((i, col)), key, 1, column, 1, count);
+            }
         }
     }
     commitment
+}
+
+/// Terms per pass over the key rows, so that `rank` key chunks and one operand chunk stay in L2
+/// while the passes stream the rest.
+fn cached_chunk(rank: usize) -> usize {
+    const BUDGET: usize = 512 << 10;
+    (BUDGET / ((rank + 1) * std::mem::size_of::<RingElement>())).max(16)
 }
 
 #[cfg(feature = "parallel")]
@@ -126,11 +135,18 @@ fn accumulate_rows(
         return;
     }
     let _ = parallel;
-    for r in 0..rank {
-        inner_product_into(&mut commitment[r], &ck[r].preprocessed_row, operand);
+    let chunk = cached_chunk(rank);
+    for start in (0..operand.len()).step_by(chunk) {
+        let operand = &operand[start..];
+        for r in 0..rank {
+            let key = ck[r].preprocessed_row.get(start..).unwrap_or(&[]);
+            let count = chunk.min(key.len()).min(operand.len());
+            incomplete_ntt_dot_into(&mut commitment[r], key, 1, operand, 1, count);
+        }
     }
 }
 
+#[cfg(feature = "parallel")]
 fn inner_product_into(acc: &mut RingElement, ck_row: &[RingElement], operand: &[RingElement]) {
     let count = ck_row.len().min(operand.len());
     incomplete_ntt_dot_into(acc, ck_row, 1, operand, 1, count);
