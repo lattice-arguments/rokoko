@@ -15,8 +15,9 @@
 set -u
 
 MODES=${1:-"serial parallel"}
-SIZES=${2:-"p26 p28 p30"}
+SIZES=${2:-"p-26 p-28 p-30"}
 REPS=${3:-3}
+FEATURES=${4:-}
 TOOLCHAIN="+nightly"
 
 cd "$SLURM_SUBMIT_DIR" || exit 1
@@ -63,27 +64,29 @@ for m in $MODES
 do
   for s in $SIZES
   do
-    f=""
     case $s in
-      p26) f="${f:+$f,}p-26" ;;
-      p30) f="${f:+$f,}p-30" ;;
+      p26|p-26) param=p-26 ;;
+      p28|p-28) param=p-28 ;;
+      p30|p-30) param=p-30 ;;
+      *) echo "Unknown parameter set: $s" >&2; exit 2 ;;
     esac
+
+    f=$FEATURES
+    feature_args=()
     if [ "$m" = parallel ]
     then
       f="${f:+$f,}parallel"
     fi
-
-    args=""
     if [ -n "$f" ]
     then
-      args="--features=$f"
+      feature_args=(--features "$f")
     fi
 
-    tag="$m-$s"
+    tag="$m-${param/p-/p}"
     blog="$OUT/build-$tag.log"
     echo
-    echo "======== $tag   $args"
-    cargo $TOOLCHAIN build --release $args > "$blog" 2>&1
+    echo "======== $tag   features=${f:-default} param=$param"
+    cargo $TOOLCHAIN build --release "${feature_args[@]}" > "$blog" 2>&1
     if [ $? -ne 0 ]
     then
       echo "BUILD FAILED, see $blog"
@@ -99,7 +102,7 @@ do
       echo "-- $tag rep $r/$REPS  $(date +%H:%M:%S)  -> $log"
       fmt="==> $tag rep $r: %e s wall, %U s user, %M KB peak"
       /usr/bin/time -a -o "$TIMES" -f "$fmt" \
-        cargo $TOOLCHAIN run --release $args \
+        cargo $TOOLCHAIN run --release "${feature_args[@]}" -- "$param" \
         > "$log" 2>&1
       tail -n 1 "$TIMES"
       r=$((r + 1))
