@@ -571,6 +571,51 @@ fn test_slot_ring_matches_fused_slot_mult() {
 }
 
 #[test]
+fn test_slot_ring_dot_many_matches_dot() {
+    for (ring_degree, modulus, _, _) in SLOT_CASES {
+        let ring = SlotRing::new(ring_degree, modulus);
+        let stride = ring_degree + 8;
+        let (outputs, count) = (11, 40);
+        let a = random_vec(count * stride, modulus);
+        let b = random_vec(count * outputs * stride, modulus);
+        let initial = random_vec(outputs * stride, modulus);
+        let mut many = initial.clone();
+        unsafe {
+            ring.dot_many(
+                many.as_mut_ptr(),
+                stride,
+                outputs,
+                a.as_ptr(),
+                stride,
+                b.as_ptr(),
+                outputs * stride,
+                stride,
+                count,
+                true,
+            )
+        };
+        for o in 0..outputs {
+            let mut single = initial[o * stride..(o + 1) * stride].to_vec();
+            unsafe {
+                ring.dot(
+                    single.as_mut_ptr(),
+                    a.as_ptr(),
+                    stride,
+                    b.as_ptr().add(o * stride),
+                    outputs * stride,
+                    count,
+                    true,
+                )
+            };
+            assert!(
+                many[o * stride..o * stride + ring_degree] == single[..ring_degree],
+                "N={ring_degree} q={modulus} o={o}"
+            );
+        }
+    }
+}
+
+#[test]
 fn test_fused_slot_mult_degree2_matches_even_odd() {
     for (ring_degree, modulus, _, d) in SLOT_CASES {
         if d != 2 {

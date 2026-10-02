@@ -395,6 +395,54 @@ impl SlotRing {
             .compute_inverse_blocks(&mut data[..self.ring_degree], self.slot_degree);
     }
 
+    /// [`Self::dot`] for `outputs` results at once: `results + o result_stride` (+)=
+    /// `sum_k (op1 + k stride1) (op2 + k stride2 + o output_stride)`.
+    pub unsafe fn dot_many(
+        &self,
+        results: *mut u64,
+        result_stride: usize,
+        outputs: usize,
+        op1: *const u64,
+        stride1: usize,
+        op2: *const u64,
+        stride2: usize,
+        output_stride: usize,
+        count: usize,
+        accumulate: bool,
+    ) {
+        #[cfg(target_arch = "x86_64")]
+        if self.ifma {
+            eltwise::slot4_dot_many_avx512_ifma(
+                results,
+                result_stride,
+                outputs,
+                op1,
+                stride1,
+                op2,
+                stride2,
+                output_stride,
+                count,
+                accumulate,
+                self.ntt.shift_factors(),
+                self.ntt.shift_factors_precon52(),
+                self.ring_degree / 4,
+                self.ntt.ifma52().unwrap_unchecked(),
+            );
+            return;
+        }
+        for o in 0..outputs {
+            self.dot(
+                results.add(o * result_stride),
+                op1,
+                stride1,
+                op2.add(o * output_stride),
+                stride2,
+                count,
+                accumulate,
+            );
+        }
+    }
+
     /// `result (+)= sum_k (op1 + k stride1) (op2 + k stride2)`, strides in u64s; `result` must
     /// not overlap the operands.
     pub unsafe fn dot(

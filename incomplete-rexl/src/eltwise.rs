@@ -1958,6 +1958,122 @@ pub(crate) unsafe fn slot4_dot_avx512_ifma(
     }
 }
 
+const SLOT4_DOT_OUTPUTS: usize = 8;
+
+// [`slot4_dot_avx512_ifma`] for `outputs` results, `o` against `b + o b_output_stride`. Passes
+// over eight outputs keep their accumulators in L1, so adjacent outputs stream `b` once.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512ifma")]
+pub(crate) unsafe fn slot4_dot_many_avx512_ifma(
+    results: *mut u64,
+    result_stride: usize,
+    outputs: usize,
+    a: *const u64,
+    a_stride: usize,
+    b: *const u64,
+    b_stride: usize,
+    b_output_stride: usize,
+    count: usize,
+    accumulate: bool,
+    zetas: &[u64],
+    zetas_precon: &[u64],
+    n: usize,
+    ifma: &Ifma52,
+) {
+    let c = Ifma52x8::new(ifma);
+    let zero = _mm512_setzero_si512();
+    let groups = n / 8;
+    // Output `o`, group `g` at `14 (o groups + g)`: seven low halves, then seven high halves.
+    let mut acc = vec![zero; 14 * groups * SLOT4_DOT_OUTPUTS];
+
+    macro_rules! load {
+        ($ptr:expr) => {
+            _mm512_loadu_si512($ptr as *const __m512i)
+        };
+    }
+
+    let mut first = 0usize;
+    while first < outputs {
+        let taken = (outputs - first).min(SLOT4_DOT_OUTPUTS);
+        let live = 14 * groups * taken;
+        acc[..live].fill(zero);
+        let mut k = 0usize;
+        while k < count {
+            let block_end = count.min(k + SLOT4_DOT_BLOCK);
+            while k < block_end {
+                let carry_end = block_end.min(k + SLOT4_DOT_CARRY);
+                while k < carry_end {
+                    for g in 0..groups {
+                        let ap = a.add(k * a_stride + 8 * g);
+                        let av = [
+                            load!(ap),
+                            load!(ap.add(n)),
+                            load!(ap.add(2 * n)),
+                            load!(ap.add(3 * n)),
+                        ];
+                        for o in 0..taken {
+                            let bp = b.add(k * b_stride + (first + o) * b_output_stride + 8 * g);
+                            let bv = [
+                                load!(bp),
+                                load!(bp.add(n)),
+                                load!(bp.add(2 * n)),
+                                load!(bp.add(3 * n)),
+                            ];
+                            let cell = acc.as_mut_ptr().add(14 * (o * groups + g));
+                            let mut lo: [__m512i; 7] = std::array::from_fn(|d| *cell.add(d));
+                            let mut hi: [__m512i; 7] = std::array::from_fn(|d| *cell.add(7 + d));
+                            for j in 0..4 {
+                                for l in 0..4 {
+                                    lo[j + l] = _mm512_madd52lo_epu64(lo[j + l], av[j], bv[l]);
+                                    hi[j + l] = _mm512_madd52hi_epu64(hi[j + l], av[j], bv[l]);
+                                }
+                            }
+                            for d in 0..7 {
+                                *cell.add(d) = lo[d];
+                                *cell.add(7 + d) = hi[d];
+                            }
+                        }
+                    }
+                    k += 1;
+                }
+                for cell in acc[..live].chunks_exact_mut(14) {
+                    for d in 0..7 {
+                        cell[7 + d] = _mm512_add_epi64(cell[7 + d], _mm512_srli_epi64(cell[d], 52));
+                        cell[d] = _mm512_and_si512(cell[d], c.mask);
+                    }
+                }
+            }
+            for cell in acc[..live].chunks_exact_mut(14) {
+                for d in 0..7 {
+                    cell[d] = c.reduce_wide(cell[d], cell[7 + d]);
+                    cell[7 + d] = zero;
+                }
+            }
+        }
+        for o in 0..taken {
+            let result = results.add((first + o) * result_stride);
+            for g in 0..groups {
+                let cell = &acc[14 * (o * groups + g)..];
+                let z = load!(zetas.as_ptr().add(8 * g));
+                let z_precon = load!(zetas_precon.as_ptr().add(8 * g));
+                for d in 0..4 {
+                    let out = result.add(d * n + 8 * g);
+                    let mut lo = cell[d];
+                    if d < 3 {
+                        lo = _mm512_add_epi64(lo, c.shoup(cell[d + 4], z, z_precon));
+                    }
+                    if accumulate {
+                        lo = _mm512_add_epi64(lo, load!(out));
+                    }
+                    let reduced = c.reduce_wide(lo, zero);
+                    _mm512_storeu_si512(out as *mut __m512i, c.canonical(reduced));
+                }
+            }
+        }
+        first += taken;
+    }
+}
+
 // NEON 2-lane sibling of `fused_incomplete_ntt_mult_avx512_float`: same Karatsuba
 // structure and float-Barrett reduction. NEON has no high-half or widening 64-bit
 // integer multiply, so we reduce via the f64 53-bit mantissa with an FMA-based
@@ -2474,6 +2590,86 @@ mod slot_tests {
                             result == want,
                             "m={modulus} count={count} edge={edge} accumulate={accumulate}"
                         );
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_slot4_dot_many_matches_dot() {
+        if !*HAS_AVX512IFMA {
+            return;
+        }
+        let n = 32;
+        let stride = 4 * n + 8;
+        for modulus in [1125899906842177u64, 1125899906839937, (1 << 50) - 1] {
+            let ifma = Ifma52::new(modulus).unwrap();
+            let zetas = xorshift_vec(n, modulus, 0xa000);
+            let precon: Vec<u64> = zetas
+                .iter()
+                .map(|&z| MultiplyFactor::new(z, 52, modulus).barrett_factor())
+                .collect();
+            for (outputs, count) in [(1usize, 3usize), (8, 300), (13, 1100), (3, 1)] {
+                for edge in [false, true] {
+                    let seed = 0xb000 + 64 * outputs as u64 + count as u64 + edge as u64;
+                    let rows = outputs;
+                    let (a, b) = if edge {
+                        (
+                            vec![modulus - 1; count * stride],
+                            vec![modulus - 1; rows * count * stride],
+                        )
+                    } else {
+                        (
+                            xorshift_vec(count * stride, modulus, seed),
+                            xorshift_vec(rows * count * stride, modulus, seed + 1),
+                        )
+                    };
+                    let initial = xorshift_vec(outputs * stride, modulus, seed + 2);
+                    let (b_stride, b_output_stride) = (rows * stride, stride);
+                    for accumulate in [false, true] {
+                        let mut many = initial.clone();
+                        unsafe {
+                            slot4_dot_many_avx512_ifma(
+                                many.as_mut_ptr(),
+                                stride,
+                                outputs,
+                                a.as_ptr(),
+                                stride,
+                                b.as_ptr(),
+                                b_stride,
+                                b_output_stride,
+                                count,
+                                accumulate,
+                                &zetas,
+                                &precon,
+                                n,
+                                &ifma,
+                            );
+                        }
+                        for o in 0..outputs {
+                            let mut single = initial[o * stride..o * stride + 4 * n].to_vec();
+                            unsafe {
+                                slot4_dot_avx512_ifma(
+                                    single.as_mut_ptr(),
+                                    a.as_ptr(),
+                                    stride,
+                                    b.as_ptr().add(o * b_output_stride),
+                                    b_stride,
+                                    count,
+                                    accumulate,
+                                    &zetas,
+                                    &precon,
+                                    n,
+                                    &ifma,
+                                );
+                            }
+                            assert!(
+                                many[o * stride..o * stride + 4 * n] == single[..],
+                                "m={modulus} outputs={outputs} count={count} edge={edge} o={o}"
+                            );
+                        }
                     }
                 }
             }
