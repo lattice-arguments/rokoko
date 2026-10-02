@@ -470,10 +470,10 @@ impl SlotRing {
             );
             return;
         }
-        let mut stack = [std::mem::MaybeUninit::<u64>::uninit(); 512];
+        let mut stack = [0u64; 512];
         let mut heap = Vec::new();
         let product: *mut u64 = if self.ring_degree <= stack.len() {
-            stack.as_mut_ptr().cast()
+            stack.as_mut_ptr()
         } else {
             heap.resize(self.ring_degree, 0);
             heap.as_mut_ptr()
