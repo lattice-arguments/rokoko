@@ -734,7 +734,7 @@ mod tests {
     const TOL: f64 = 1e-6;
 
     fn legacy_raw_log2(params: &SISParameters) -> Option<f64> {
-        let script_path = std::env::current_dir()?
+        let script_path = std::env::current_dir().ok()?
             .join("scripts")
             .join("run_sage_estimator.sh");
         let output = Command::new("bash")

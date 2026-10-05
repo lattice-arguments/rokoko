@@ -399,7 +399,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod tests {
+mod transcript_tests {
     use super::*;
 
     #[test]
