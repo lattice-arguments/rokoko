@@ -6,7 +6,7 @@ A Rust implementation of a SNARK/PCS built from the argument system presented in
 
 ## Intro
 
-Our protocol is run over power-of-two cyclotomic rings, and parameters are selected such that the ring splits into factors of degree 2 ("almost splitting"), which allows us to leverage incomplete NTT for efficient multiplication.
+Our protocol is run over power-of-two cyclotomic rings, and parameters are selected such that the ring splits into factors of degree 2 or 4 ("almost splitting"), which allows us to leverage incomplete NTT for efficient multiplication.
 
 The sumcheck protocol efficiently enforces a collection of algebraic constraints over committed and folded witnesses. A general, highly modular interface for sumcheck protocols is provided, which supports different constraints and may be used for different relations.
 
@@ -239,7 +239,7 @@ tau = 22
 op_norm_bound = 9.8
 ```
 
-`rings/default.toml` holds these values and is used unless the environment variable `ROKOKO_RING` names another spec; a relative path is resolved against this crate's root, e.g. `ROKOKO_RING=rings/n256.toml cargo build --release`. The build fails with a message unless N is a power of two in [128, 256], q is a prime in (2^15, 2^50), q - 1 has 2-adic valuation exactly log2(N) (so X^N + 1 splits into irreducible quadratics), and 1 <= tau <= N; every prime of the CRT commitment must also be 1 mod N.
+`rings/default.toml` holds these values and is used unless the environment variable `ROKOKO_RING` names another spec; a relative path is resolved against this crate's root, e.g. `ROKOKO_RING=rings/n256.toml cargo build --release`. The build fails with a message unless N is a power of two in [128, 256], q is a prime in (2^15, 2^50), q - 1 has 2-adic valuation log2(N) or log2(N) - 1 (so X^N + 1 splits into irreducible quadratics or quartics), and 1 <= tau <= N; every prime of the CRT commitment must also be 1 mod N.
 
 A crate depending on `rokoko` sets the ring in its own `.cargo/config.toml`; cargo passes `[env]` to the build scripts of dependencies as well, and `relative = true` resolves the path against the directory holding `.cargo`:
 

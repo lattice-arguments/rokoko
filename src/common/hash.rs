@@ -8,7 +8,10 @@ use blake3::Hasher;
 
 /// Incremental transcript hash suitable for Fiat–Shamir style challenges.
 /// The transcript absorbs ring elements and can deterministically derive
-/// pseudorandom bytes for challenges.
+/// pseudorandom bytes for challenges. Every squeezed challenge is absorbed
+/// back into the transcript, so a later challenge is a hash of the full
+/// transcript including the earlier challenges, which is what the
+/// knowledge-soundness analysis of the Fiat-Shamir transform assumes.
 #[derive(Clone, Debug)]
 pub struct HashWrapper {
     transcript: Hasher,
@@ -101,11 +104,16 @@ impl HashWrapper {
         u64::from_le_bytes(buf)
     }
 
+    /// A scalar mod q from 128 bits, so the bias of the reduction is below 2^-78.
     pub fn sample_u64_mod_q(&mut self) -> u64 {
         self.dbg_fs("sample_u64_mod_q", 1);
-        self.sample_u64() % MOD_Q
+        let mut buf = [0u8; 16];
+        self.fill_from_xof(b"u64-mod-q", &mut buf);
+        (u128::from_le_bytes(buf) % MOD_Q as u128) as u64
     }
 
+    /// Squeeze `out` from the transcript, then absorb it, so that every later
+    /// challenge depends on this one.
     pub fn fill_from_xof(&mut self, label: &[u8], out: &mut [u8]) {
         let mut state = self.transcript.clone();
         state.update(&self.sample_counter.to_le_bytes());
@@ -114,6 +122,7 @@ impl HashWrapper {
 
         let mut xof = state.finalize_xof();
         xof.fill(out);
+        self.transcript.update(out);
     }
 
     #[allow(dead_code)]
@@ -386,5 +395,32 @@ mod tests {
             }
         }
         debug_assert!(found_nonzero);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn squeezed_challenges_are_absorbed() {
+        let mut a = HashWrapper::new();
+        let mut b = HashWrapper::new();
+        let mut c = HashWrapper::new();
+        let mut buf = [0u8; 8];
+        a.fill_from_xof(b"x", &mut buf);
+        b.fill_from_xof(b"x", &mut buf);
+        c.sample_counter += 1;
+        for h in [&mut a, &mut b, &mut c] {
+            h.update_with_u64(7);
+        }
+        assert_eq!(a.sample_u64(), b.sample_u64());
+        assert_ne!(a.sample_u64(), c.sample_u64());
+    }
+
+    #[test]
+    fn mod_q_samples_are_reduced() {
+        let mut h = HashWrapper::new();
+        assert!((0..1000).all(|_| h.sample_u64_mod_q() < MOD_Q));
     }
 }
