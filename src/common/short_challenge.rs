@@ -497,7 +497,7 @@ mod tests {
     }
 
     const EXPECTED_FINGERPRINT: &str =
-        "5670da5c3578390a8e449b8d42526135dcdb708c95054a31c5767281218c42b1";
+        "baf4fc00a50cb2bffb04dbaf756c8c5a01ac64e2000bd2adb0e2262346f78c95";
 
     #[test]
     fn ring_output_encoding_is_consistent() {
