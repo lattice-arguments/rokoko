@@ -43,8 +43,10 @@ type Selectors = Vec<ElephantCell<SelectorEq<RingElement>>>;
 /// A level's decomposed input is placed one component per row, each cut into `chunks` digit
 /// planes and each plane into dyadic blocks, so both sides of the constraint are sums:
 ///
-///     lhs_i = SUM_{row, piece}  ck_i[piece] . (selector_piece . W)
-///     rhs_i = SUM_{plane}       2^{base_log . plane} . (selector_{plane, element i} . W)
+/// ```text
+/// lhs_i = SUM_{row, piece}  ck_i[piece] . (selector_piece . W)
+/// rhs_i = SUM_{plane}       2^{base_log . plane} . (selector_{plane, element i} . W)
+/// ```
 ///
 /// A piece is one digit plane, or a whole row where its planes are one aligned run
 /// (`row_committed_pieces`).
