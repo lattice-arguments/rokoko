@@ -216,7 +216,48 @@ pub fn compute_j_batched_collectively(
         }
     }
 
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+    #[cfg(target_arch = "aarch64")]
+    {
+        use std::arch::aarch64::*;
+
+        for i in 0..inner_width_ring {
+            for block in 0..DEGREE / 8 {
+                let chunk = i * DEGREE / 8 + block;
+                unsafe {
+                    let mut acc: [[uint64x2_t; 4]; NOF_BATCHES] = std::array::from_fn(|b| {
+                        std::array::from_fn(|v| {
+                            vld1q_u64(j_batched[b][i].v.as_ptr().add(8 * block + 2 * v))
+                        })
+                    });
+                    for k in 0..projection_matrix.projection_height {
+                        let (add, sub) = projection_matrix.neon_masks(k, chunk);
+                        for b in 0..NOF_BATCHES {
+                            let c = vdupq_n_u64(*c_1_values[b].get_unchecked(k));
+                            for v in 0..4 {
+                                acc[b][v] = vsubq_u64(
+                                    vaddq_u64(acc[b][v], vandq_u64(c, add[v])),
+                                    vandq_u64(c, sub[v]),
+                                );
+                            }
+                        }
+                    }
+                    for b in 0..NOF_BATCHES {
+                        for v in 0..4 {
+                            vst1q_u64(
+                                j_batched[b][i].v.as_mut_ptr().add(8 * block + 2 * v),
+                                acc[b][v],
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(not(any(
+        all(target_arch = "x86_64", target_feature = "avx512f"),
+        target_arch = "aarch64"
+    )))]
     {
         for i in 0..inner_width_ring {
             let base_index = i * DEGREE;

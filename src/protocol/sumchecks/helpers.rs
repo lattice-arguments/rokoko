@@ -380,7 +380,57 @@ pub fn projection_flatter_1_times_matrix(
     projection_matrix: &ProjectionMatrix,
     projection_flatter_1: &PreprocessedRow,
 ) -> Vec<FieldExtension> {
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+    #[cfg(target_arch = "aarch64")]
+    {
+        use std::arch::aarch64::*;
+
+        let height = projection_matrix.projection_height;
+        let inner_width = projection_matrix.projection_ratio * height;
+        let weights: Vec<[u64; SLOT_DEGREE]> = (0..height)
+            .map(|row| {
+                projection_flatter_1.preprocessed_row[row]
+                    .slot_zero()
+                    .coeffs
+            })
+            .collect();
+
+        let mut result_field = vec![FieldExtension::zero(); inner_width];
+        for chunk in 0..inner_width / 8 {
+            unsafe {
+                let mut acc = [[vdupq_n_u64(*HALF_WAY_MOD_Q); 4]; SLOT_DEGREE];
+                for row in 0..height {
+                    let (add, sub) = projection_matrix.neon_masks(row, chunk);
+                    for k in 0..SLOT_DEGREE {
+                        let w = vdupq_n_u64(weights.get_unchecked(row)[k]);
+                        for v in 0..4 {
+                            acc[k][v] = vsubq_u64(
+                                vaddq_u64(acc[k][v], vandq_u64(w, add[v])),
+                                vandq_u64(w, sub[v]),
+                            );
+                        }
+                    }
+                }
+                for v in 0..4 {
+                    for k in 0..SLOT_DEGREE {
+                        result_field[8 * chunk + 2 * v].coeffs[k] = vgetq_lane_u64::<0>(acc[k][v]);
+                        result_field[8 * chunk + 2 * v + 1].coeffs[k] =
+                            vgetq_lane_u64::<1>(acc[k][v]);
+                    }
+                }
+            }
+        }
+
+        unsafe {
+            let flat = result_field.as_mut_ptr() as *mut u64;
+            eltwise_reduce_mod(flat, flat, (SLOT_DEGREE * inner_width) as u64, MOD_Q);
+        }
+
+        return result_field;
+    }
+    #[cfg(not(any(
+        all(target_arch = "x86_64", target_feature = "avx512f"),
+        target_arch = "aarch64"
+    )))]
     {
         return projection_flatter_1_times_matrix_ref(projection_matrix, projection_flatter_1);
     }
