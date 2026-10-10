@@ -192,6 +192,31 @@ impl ProjectionMatrix {
         pm
     }
 
+    /// NEON `(+1, −1)` lane masks of columns `8 chunk .. 8 chunk + 8` in `row`, two per vector.
+    #[cfg(target_arch = "aarch64")]
+    #[inline(always)]
+    pub(crate) unsafe fn neon_masks(
+        &self,
+        row: usize,
+        chunk: usize,
+    ) -> (
+        [std::arch::aarch64::uint64x2_t; 4],
+        [std::arch::aarch64::uint64x2_t; 4],
+    ) {
+        use std::arch::aarch64::*;
+        static LANE_BITS: [[u64; 2]; 4] = [[1, 2], [4, 8], [16, 32], [64, 128]];
+        let at = row * self.width + chunk;
+        let pos = *self.pos_masks.data.get_unchecked(at);
+        let nz = *self.non_zero_masks.data.get_unchecked(at);
+        let add = vdupq_n_u64((nz & pos) as u64);
+        let sub = vdupq_n_u64((nz & !pos) as u64);
+        let bits = |j: usize| vld1q_u64(LANE_BITS[j].as_ptr());
+        (
+            std::array::from_fn(|j| vtstq_u64(add, bits(j))),
+            std::array::from_fn(|j| vtstq_u64(sub, bits(j))),
+        )
+    }
+
     /// Returns the full row of bitmask byte slices `(pos_row, non_zero_row)`,
     /// each of length [`width`](Self::width).
     ///
