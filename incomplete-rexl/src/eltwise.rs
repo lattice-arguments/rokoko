@@ -1637,6 +1637,14 @@ pub(crate) unsafe fn fused_slot4_mult_inner(
         }
     }
 
+    #[cfg(target_arch = "aarch64")]
+    {
+        if HAS_NEON && modulus < (1u64 << 50) {
+            fused_slot4_mult_neon(result, operand1, operand2, zetas_f64, n, modulus);
+            return;
+        }
+    }
+
     with_slices(result, operand1, operand2, 4 * n, |r, a, b| {
         fused_slot4_mult_native(r, a, b, zetas, n, modulus)
     });
@@ -2241,6 +2249,112 @@ unsafe fn fused_incomplete_ntt_mult_neon(
 
         vst1q_u64(res_e.add(i), vcvtq_u64_f64(f_re));
         vst1q_u64(res_o.add(i), vcvtq_u64_f64(f_ro));
+
+        i += 2;
+    }
+}
+
+// [`fused_slot4_mult_avx512_float`] on two lanes, with the same lazy reduction bounds.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+unsafe fn fused_slot4_mult_neon(
+    result: *mut u64,
+    operand1: *const u64,
+    operand2: *const u64,
+    zetas_f64: &[f64],
+    n: usize,
+    modulus: u64,
+) {
+    let v_p = vdupq_n_f64(modulus as f64);
+    let v_u = vdupq_n_f64(1.0 / modulus as f64);
+    let v_zero = vdupq_n_f64(0.0);
+
+    let (op1, op2, res) = (operand1, operand2, result);
+    let zeta = zetas_f64.as_ptr();
+
+    macro_rules! fmul {
+        ($x:expr, $y:expr) => {{
+            let (x, y) = ($x, $y);
+            let h = vmulq_f64(x, y);
+            let l_neg = vfmsq_f64(h, x, y);
+            let c = vrndnq_f64(vmulq_f64(h, v_u));
+            vsubq_f64(vfmsq_f64(h, c, v_p), l_neg)
+        }};
+    }
+
+    macro_rules! reduce {
+        ($t:expr) => {{
+            let t = $t;
+            let c = vrndnq_f64(vmulq_f64(t, v_u));
+            let r = vfmsq_f64(t, c, v_p);
+            vbslq_f64(vcltq_f64(r, v_zero), vaddq_f64(r, v_p), r)
+        }};
+    }
+
+    macro_rules! load {
+        ($ptr:expr, $offset:expr) => {
+            vcvtq_f64_u64(vld1q_u64($ptr.add($offset)))
+        };
+    }
+
+    macro_rules! store {
+        ($offset:expr, $x:expr) => {
+            vst1q_u64(res.add($offset), vcvtq_u64_f64($x))
+        };
+    }
+
+    macro_rules! centred_sums {
+        ($x0:expr, $x1:expr, $x2:expr, $x3:expr) => {{
+            let x0 = vsubq_f64($x0, v_p);
+            let x3 = vsubq_f64($x3, v_p);
+            let x01 = vaddq_f64(x0, $x1);
+            let x23 = vaddq_f64($x2, x3);
+            (
+                x01,
+                x23,
+                vaddq_f64(x0, $x2),
+                vaddq_f64($x1, x3),
+                vaddq_f64(x01, x23),
+            )
+        }};
+    }
+
+    let mut i = 0usize;
+    while i < n {
+        let (a0, a1, a2, a3) = (
+            load!(op1, i),
+            load!(op1, n + i),
+            load!(op1, 2 * n + i),
+            load!(op1, 3 * n + i),
+        );
+        let (b0, b1, b2, b3) = (
+            load!(op2, i),
+            load!(op2, n + i),
+            load!(op2, 2 * n + i),
+            load!(op2, 3 * n + i),
+        );
+        let z = vld1q_f64(zeta.add(i));
+        let (a01, a23, a02, a13, a0123) = centred_sums!(a0, a1, a2, a3);
+        let (b01, b23, b02, b13, b0123) = centred_sums!(b0, b1, b2, b3);
+
+        let (l0, l2, lm) = (fmul!(a0, b0), fmul!(a1, b1), fmul!(a01, b01));
+        let (h0, h2, hm) = (fmul!(a2, b2), fmul!(a3, b3), fmul!(a23, b23));
+        let (s0, s2, sm) = (fmul!(a02, b02), fmul!(a13, b13), fmul!(a0123, b0123));
+
+        let p1 = vsubq_f64(vsubq_f64(lm, l0), l2);
+        let p4 = vsubq_f64(vsubq_f64(vaddq_f64(s2, h0), l2), h2);
+        let p5 = reduce!(vsubq_f64(vsubq_f64(hm, h0), h2));
+
+        let c0 = vaddq_f64(l0, fmul!(z, p4));
+        let c1 = vaddq_f64(p1, fmul!(z, p5));
+        let l2s0 = vaddq_f64(l2, s0);
+        let c2 = vaddq_f64(vsubq_f64(l2s0, vaddq_f64(l0, h0)), fmul!(z, h2));
+        let c3 = vsubq_f64(vsubq_f64(vsubq_f64(sm, s0), s2), vaddq_f64(p1, p5));
+
+        store!(i, reduce!(c0));
+        store!(n + i, reduce!(c1));
+        store!(2 * n + i, reduce!(c2));
+        store!(3 * n + i, reduce!(c3));
 
         i += 2;
     }
