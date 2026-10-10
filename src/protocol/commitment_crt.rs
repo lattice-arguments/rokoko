@@ -1439,6 +1439,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     fn crt_simd_transform_matches_the_reference() {
         for p in PRIMES {
             let limb = Limb::new(p);
