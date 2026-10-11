@@ -25,6 +25,7 @@ pub struct SelectorEq<E: SumcheckElement = RingElement> {
 
     // if we do partial evaluation, we have to store the current claim
     current_claim: E,
+    unit: bool,
     temp_product: RefCell<E>,
     scratch_poly: RefCell<Polynomial<E>>,
 }
@@ -51,6 +52,7 @@ impl<E: SumcheckElement> SelectorEq<E> {
             selector_variable_count,
             total_variable_count,
             current_claim: E::one(),
+            unit: true,
             temp_product: RefCell::new(E::zero()),
             scratch_poly: RefCell::new(Polynomial::new(2)),
         }
@@ -98,6 +100,12 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SelectorEq<E> {
             return None;
         }
         None
+    }
+
+    fn is_unit_constant(&self) -> bool {
+        self.unit
+            && (self.selector_variable_count == 0
+                || self.total_variable_count > self.selector_variable_count)
     }
 
     fn is_univariate_polynomial_zero_at_point(&self, point: HypercubePoint) -> bool {
@@ -218,6 +226,7 @@ impl<E: SumcheckElement> SumcheckBaseData for SelectorEq<E> {
             }
             self.selector >>= 1;
             self.selector_variable_count -= 1;
+            self.unit = false;
         }
         // Non-selector round (or selector_variable_count == 0): just decrement.
         self.total_variable_count -= 1;

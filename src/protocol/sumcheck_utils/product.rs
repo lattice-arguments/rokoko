@@ -9,7 +9,7 @@ use crate::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
-        polynomial::{add_poly_in_place, mul_poly_into, Polynomial},
+        polynomial::{add_poly_in_place, mul_coefficients_into, Polynomial},
     },
 };
 
@@ -149,6 +149,24 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
                 .is_univariate_polynomial_zero_at_point(point)
     }
 
+    fn is_unit_constant(&self) -> bool {
+        self.lhs_sumcheck.get_ref().is_unit_constant()
+            && self.rhs_sumcheck.get_ref().is_unit_constant()
+    }
+
+    #[cfg(feature = "unsafe-sumcheck")]
+    fn linear_pair_at_point(&self, point: HypercubePoint) -> Option<(&E, &E)> {
+        let lhs = self.lhs_sumcheck.get_ref();
+        let rhs = self.rhs_sumcheck.get_ref();
+        if lhs.is_unit_constant() {
+            return rhs.linear_pair_at_point(point);
+        }
+        if rhs.is_unit_constant() {
+            return lhs.linear_pair_at_point(point);
+        }
+        None
+    }
+
     fn non_zero_range(&self) -> Option<(usize, usize)> {
         let lr = self.lhs_sumcheck.get_ref().non_zero_range();
         let rr = self.rhs_sumcheck.get_ref().non_zero_range();
@@ -178,13 +196,16 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
         let rhs_ref = self.rhs_sumcheck.get_ref();
         let rhs_const = rhs_ref.constant_univariate_polynomial_at_point_available_by_ref(point);
         match (lhs_const, rhs_const) {
+            #[cfg(feature = "unsafe-sumcheck")]
+            (Some(_), Some(rc)) if lhs_ref.is_unit_constant() => Some(rc),
+            #[cfg(feature = "unsafe-sumcheck")]
+            (Some(lc), Some(_)) if rhs_ref.is_unit_constant() => Some(lc),
             (Some(lc), Some(rc)) => {
                 // Both children return constants – compute the product and cache it.
                 // SAFETY: single-threaded access; the returned reference is consumed
                 // before the next call to this method overwrites the cache.
                 let cache = unsafe { &mut *self.const_cache.as_ptr() };
-                cache.set_from(lc);
-                *cache *= rc;
+                *cache *= (lc, rc);
                 Some(cache)
             }
             _ => None,
@@ -419,50 +440,64 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
                 let rc = rhs_ref
                     .constant_univariate_polynomial_at_point_available_by_ref(point)
                     .unwrap();
-                polynomial.coefficients[0].set_from(lc);
-                polynomial.coefficients[0] *= rc;
+                if lhs_ref.is_unit_constant() {
+                    polynomial.coefficients[0].set_from(rc);
+                } else if rhs_ref.is_unit_constant() {
+                    polynomial.coefficients[0].set_from(lc);
+                } else {
+                    polynomial.coefficients[0] *= (lc, rc);
+                }
                 polynomial.num_coefficients = 1;
             }
             (true, false) => {
                 // LHS constant → scale RHS polynomial
                 let lhs_ref = self.lhs_sumcheck.get_ref();
-                let lc = lhs_ref
-                    .constant_univariate_polynomial_at_point_available_by_ref(point)
-                    .unwrap();
-                self.rhs_sumcheck
-                    .get_ref()
-                    .univariate_polynomial_at_point_into(point, polynomial);
-                for i in 0..polynomial.num_coefficients {
-                    polynomial.coefficients[i] *= lc;
+                if lhs_ref.is_unit_constant() {
+                    self.rhs_sumcheck
+                        .get_ref()
+                        .univariate_polynomial_at_point_into(point, polynomial);
+                } else {
+                    let lc = lhs_ref
+                        .constant_univariate_polynomial_at_point_available_by_ref(point)
+                        .unwrap();
+                    scaled_into(&*self.rhs_sumcheck.get_ref(), lc, point, polynomial);
                 }
             }
             (false, true) => {
                 // RHS constant → scale LHS polynomial
                 let rhs_ref = self.rhs_sumcheck.get_ref();
-                let rc = rhs_ref
-                    .constant_univariate_polynomial_at_point_available_by_ref(point)
-                    .unwrap();
-                self.lhs_sumcheck
-                    .get_ref()
-                    .univariate_polynomial_at_point_into(point, polynomial);
-                for i in 0..polynomial.num_coefficients {
-                    polynomial.coefficients[i] *= rc;
+                if rhs_ref.is_unit_constant() {
+                    self.lhs_sumcheck
+                        .get_ref()
+                        .univariate_polynomial_at_point_into(point, polynomial);
+                } else {
+                    let rc = rhs_ref
+                        .constant_univariate_polynomial_at_point_available_by_ref(point)
+                        .unwrap();
+                    scaled_into(&*self.lhs_sumcheck.get_ref(), rc, point, polynomial);
                 }
             }
             (false, false) => {
                 // General case: full polynomial multiplication
                 let mut lhs_eval_poly = self.lhs_eval_poly.borrow_mut();
                 let mut rhs_eval_poly = self.rhs_eval_poly.borrow_mut();
-
-                self.lhs_sumcheck
-                    .get_ref()
-                    .univariate_polynomial_at_point_into(point, &mut lhs_eval_poly);
-
-                self.rhs_sumcheck
-                    .get_ref()
-                    .univariate_polynomial_at_point_into(point, &mut rhs_eval_poly);
-
-                mul_poly_into(polynomial, &lhs_eval_poly, &rhs_eval_poly);
+                let lhs_ref = self.lhs_sumcheck.get_ref();
+                let rhs_ref = self.rhs_sumcheck.get_ref();
+                let lhs_head = factor_into(&*lhs_ref, point, &mut lhs_eval_poly);
+                let rhs_head = factor_into(&*rhs_ref, point, &mut rhs_eval_poly);
+                let lhs: [&E; 4] = std::array::from_fn(|i| match (i, lhs_head) {
+                    (0, Some(head)) => head,
+                    _ => &lhs_eval_poly.coefficients[i],
+                });
+                let rhs: [&E; 4] = std::array::from_fn(|i| match (i, rhs_head) {
+                    (0, Some(head)) => head,
+                    _ => &rhs_eval_poly.coefficients[i],
+                });
+                mul_coefficients_into(
+                    polynomial,
+                    &lhs[..lhs_eval_poly.num_coefficients],
+                    &rhs[..rhs_eval_poly.num_coefficients],
+                );
             }
         }
 
@@ -487,6 +522,47 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
             .clone();
         result *= &self.rhs_sumcheck.get_ref().final_evaluations_test_only();
         result
+    }
+}
+
+fn scaled_into<'a, E: SumcheckElement>(
+    factor: &'a (dyn HighOrderSumcheckData<Element = E> + 'a),
+    scale: &E,
+    point: HypercubePoint,
+    polynomial: &mut Polynomial<E>,
+) {
+    match factor.linear_pair_at_point(point) {
+        Some((at_zero, at_one)) => {
+            let (low, high) = polynomial.coefficients.split_at_mut(1);
+            low[0] *= (at_zero, scale);
+            high[0] -= (at_one, at_zero);
+            high[0] *= scale;
+            polynomial.num_coefficients = 2;
+        }
+        None => {
+            factor.univariate_polynomial_at_point_into(point, polynomial);
+            for i in 0..polynomial.num_coefficients {
+                polynomial.coefficients[i] *= scale;
+            }
+        }
+    }
+}
+
+fn factor_into<'a, E: SumcheckElement>(
+    factor: &'a (dyn HighOrderSumcheckData<Element = E> + 'a),
+    point: HypercubePoint,
+    polynomial: &mut Polynomial<E>,
+) -> Option<&'a E> {
+    match factor.linear_pair_at_point(point) {
+        Some((at_zero, at_one)) => {
+            polynomial.coefficients[1] -= (at_one, at_zero);
+            polynomial.num_coefficients = 2;
+            Some(at_zero)
+        }
+        None => {
+            factor.univariate_polynomial_at_point_into(point, polynomial);
+            None
+        }
     }
 }
 
