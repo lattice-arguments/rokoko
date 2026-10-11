@@ -18,10 +18,11 @@ chain as a `rokoko::protocol::params::Instantiation`. A build for `rings/n128_d4
 
 Features are defined in `Cargo.toml`; the defaults already include:
 - `unsafe-sumcheck` — turns on unsafe sumcheck optimizations
-- `crt-commitment` — the root commitment through the CRT kernel
 
 Other useful features: `snark` (exact-norm SNARK mode), `calibration` (prints the measured norms
-as a paste-ready `NB_*` table, e.g. `cargo run --release --features calibration -- p-26`), `profile`.
+as a paste-ready `NB_*` table, e.g. `cargo run --release --features calibration -- p-26`), `profile`,
+`crt-commitment` (the root commitment over a CRT basis of 16-bit primes instead of the IFMA slot
+kernel over q; no faster on Tiger Lake, kept for comparison).
 
 ## The ring
 
