@@ -81,7 +81,7 @@ fn points(degree: usize) -> usize {
 #[cfg(feature = "unsafe-sumcheck")]
 fn flatten(cell: &Cell) -> Option<Vec<Term<'_>>> {
     let mut terms = vec![];
-    cell.get_ref().flat_terms(&mut terms).then_some(terms)
+    cell.get_ref().flat_terms(&mut terms).map(|_| terms)
 }
 
 #[cfg(not(feature = "unsafe-sumcheck"))]
@@ -103,7 +103,11 @@ impl FlatRounds {
             }
         }
         FlatRounds {
-            rounds: if any && full { total_vars } else { 0 },
+            rounds: if any && full {
+                total_vars.saturating_sub(CHUNK.ilog2() as usize)
+            } else {
+                0
+            },
             previous: std::cell::RefCell::new(vec![]),
         }
     }
@@ -154,7 +158,11 @@ impl FlatRounds {
         bounds.dedup();
 
         let mut product = zero();
-        let mut scratch = vec![zero(); CHUNK];
+        let mut scratch = if plans.iter().any(|plan| plan.slots.len() == 3) {
+            vec![zero(); CHUNK]
+        } else {
+            vec![]
+        };
         let mut used = vec![false; slots.len()];
         let mut members: Vec<usize> = vec![];
         for window in bounds.windows(2) {
@@ -294,8 +302,8 @@ fn plan<'a>(output: usize, term: &Term<'a>, slots: &mut Vec<Slot<'a>>) -> Plan<'
             end = end.min(to);
         }
         match selector.round_bit() {
-            Some(bit) => rounds.push((bit, selector.claim())),
-            None if !selector.is_unit_constant() => claims.push(selector.claim()),
+            Some(bit) => rounds.push((bit, selector.current_claim())),
+            None if !selector.is_unit_constant() => claims.push(selector.current_claim()),
             None => {}
         }
     }
@@ -310,15 +318,16 @@ fn plan<'a>(output: usize, term: &Term<'a>, slots: &mut Vec<Slot<'a>>) -> Plan<'
             let slot = match slots.iter().position(|s| std::ptr::eq(s.table, table)) {
                 Some(slot) => slot,
                 None => {
+                    let width = CHUNK.min(table.len() / 2);
                     slots.push(Slot {
                         table,
                         pairs: table.len() / 2,
                         mapped: if table.values().is_none() {
-                            vec![zero(); 2 * CHUNK]
+                            vec![zero(); 2 * width]
                         } else {
                             vec![]
                         },
-                        slopes: vec![zero(); CHUNK],
+                        slopes: vec![zero(); width],
                         twos: vec![],
                         base: 0,
                         needs_two: false,
@@ -362,7 +371,7 @@ fn prepare(slot: &mut Slot, from: usize, to: usize) {
         }
     }
     if slot.needs_two && slot.twos.is_empty() {
-        slot.twos = vec![zero(); CHUNK];
+        slot.twos = vec![zero(); slot.slopes.len()];
     }
     let Slot {
         table,

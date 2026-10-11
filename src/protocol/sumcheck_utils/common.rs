@@ -99,8 +99,8 @@ pub trait HighOrderSumcheckData {
         false
     }
 
-    fn flat_terms<'a>(&'a self, _: &mut Vec<FlatTerm<'a, Self::Element>>) -> bool {
-        false
+    fn flat_terms<'a>(&'a self, _: &mut Vec<FlatTerm<'a, Self::Element>>) -> Option<usize> {
+        None
     }
 
     fn linear_pair_at_point(

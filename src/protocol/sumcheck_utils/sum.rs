@@ -65,17 +65,14 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SumSumcheck<E> {
     }
 
     #[cfg(feature = "unsafe-sumcheck")]
-    fn flat_terms<'a>(&'a self, out: &mut Vec<FlatTerm<'a, E>>) -> bool {
+    fn flat_terms<'a>(&'a self, out: &mut Vec<FlatTerm<'a, E>>) -> Option<usize> {
         let start = out.len();
-        if !self.lhs_sumcheck.get_ref().flat_terms(out)
-            || !self.rhs_sumcheck.get_ref().flat_terms(out)
-        {
-            return false;
-        }
+        let leaves = self.lhs_sumcheck.get_ref().flat_terms(out)?
+            + self.rhs_sumcheck.get_ref().flat_terms(out)?;
         for term in &mut out[start..] {
             term.leaf = false;
         }
-        true
+        Some(leaves)
     }
     fn max_num_polynomial_coefficients(&self) -> usize {
         max(

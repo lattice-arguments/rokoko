@@ -157,13 +157,11 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
     }
 
     #[cfg(feature = "unsafe-sumcheck")]
-    fn flat_terms<'a>(&'a self, out: &mut Vec<FlatTerm<'a, E>>) -> bool {
+    fn flat_terms<'a>(&'a self, out: &mut Vec<FlatTerm<'a, E>>) -> Option<usize> {
         let (mut lhs, mut rhs) = (vec![], vec![]);
-        if !self.lhs_sumcheck.get_ref().flat_terms(&mut lhs)
-            || !self.rhs_sumcheck.get_ref().flat_terms(&mut rhs)
-        {
-            return false;
-        }
+        let leaves = self.lhs_sumcheck.get_ref().flat_terms(&mut lhs)?
+            + self.rhs_sumcheck.get_ref().flat_terms(&mut rhs)?;
+        lhs.len().checked_mul(rhs.len()).filter(|&terms| terms <= leaves)?;
         for l in &lhs {
             for r in &rhs {
                 out.push(FlatTerm {
@@ -175,7 +173,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
                 });
             }
         }
-        true
+        Some(leaves)
     }
 
     #[cfg(feature = "unsafe-sumcheck")]
@@ -624,6 +622,28 @@ impl EvaluationSumcheckData for ProductSumcheckEvaluation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "unsafe-sumcheck")]
+    #[test]
+    fn test_flat_terms_never_outgrow_the_tree() {
+        use crate::protocol::sumcheck_utils::sum::SumSumcheck;
+        type Cell = ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>;
+        let leaf = || -> Cell { ElephantCell::new(LinearSumcheck::<RingElement>::new(2)) };
+        let sum = |n: usize| -> Cell {
+            (1..n).fold(leaf(), |acc, _| ElephantCell::new(SumSumcheck::new(acc, leaf())) as Cell)
+        };
+        let product = |l: Cell, r: Cell| -> Cell { ElephantCell::new(ProductSumcheck::new(l, r)) };
+        let count = |tree: Cell| {
+            let mut terms = vec![];
+            tree.get_ref().flat_terms(&mut terms).map(|leaves| (leaves, terms.len()))
+        };
+        assert_eq!(count(product(sum(2), leaf())), Some((3, 2)));
+        assert_eq!(count(product(sum(2), sum(2))), Some((4, 4)));
+        assert_eq!(count(product(product(sum(2), sum(2)), leaf())), Some((5, 4)));
+        assert_eq!(count(product(sum(3), sum(3))), None);
+        assert_eq!(count(product(product(sum(100), sum(100)), sum(100))), None);
+    }
+
     #[test]
     fn test_inner_product_sumcheck() {
         let lhs_data = vec![

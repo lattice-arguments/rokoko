@@ -61,22 +61,18 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
     }
 
     #[cfg(feature = "unsafe-sumcheck")]
-    fn flat_terms<'a>(&'a self, out: &mut Vec<FlatTerm<'a, E>>) -> bool {
+    fn flat_terms<'a>(&'a self, out: &mut Vec<FlatTerm<'a, E>>) -> Option<usize> {
         let start = out.len();
-        if !self.lhs_sumcheck.get_ref().flat_terms(out) {
-            return false;
-        }
+        let left = self.lhs_sumcheck.get_ref().flat_terms(out)?;
         let middle = out.len();
-        if !self.rhs_sumcheck.get_ref().flat_terms(out) {
-            return false;
-        }
+        let right = self.rhs_sumcheck.get_ref().flat_terms(out)?;
         for term in &mut out[middle..] {
             term.negative = !term.negative;
         }
         for term in &mut out[start..] {
             term.leaf = false;
         }
-        true
+        Some(left + right)
     }
     fn max_num_polynomial_coefficients(&self) -> usize {
         max(

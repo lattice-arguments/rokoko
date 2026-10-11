@@ -65,7 +65,7 @@ impl<E: SumcheckElement> SelectorEq<E> {
             .then_some(self.selector & 1 == 1)
     }
 
-    pub(crate) fn claim(&self) -> &E {
+    pub(crate) fn current_claim(&self) -> &E {
         &self.current_claim
     }
 }
@@ -113,7 +113,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SelectorEq<E> {
         None
     }
 
-    fn flat_terms<'a>(&'a self, out: &mut Vec<FlatTerm<'a, E>>) -> bool {
+    fn flat_terms<'a>(&'a self, out: &mut Vec<FlatTerm<'a, E>>) -> Option<usize> {
         out.push(FlatTerm {
             negative: false,
             leaf: false,
@@ -121,7 +121,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SelectorEq<E> {
             tables: vec![],
             selectors: vec![self],
         });
-        true
+        Some(1)
     }
 
     fn is_unit_constant(&self) -> bool {
