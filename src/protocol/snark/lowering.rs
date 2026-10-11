@@ -207,6 +207,7 @@ fn expand_combination(
     len: usize,
 ) -> Vec<RingElement> {
     use crate::common::config::{DEGREE, MOD_Q};
+    use crate::hexl::bindings::{eltwise_fma_mod, multiply_mod};
     let mut merged = vec![RingElement::zero(Representation::IncompleteNTT); len];
 
     struct Component<'a> {
@@ -257,16 +258,22 @@ fn expand_combination(
                     let SubTable::Scalar(v) = tab else {
                         unreachable!()
                     };
-                    c = (c as u128 * v[(i >> shift) & mask] as u128 % MOD_Q as u128) as u64;
+                    c = unsafe { multiply_mod(c, v[(i >> shift) & mask], MOD_Q) };
                 }
                 cs[a] = c;
             }
-            for j in 0..DEGREE {
-                let mut acc: u128 = 0;
-                for (a, comp) in scalar_components.iter().enumerate() {
-                    acc += cs[a] as u128 * comp.gamma.v[j] as u128;
-                }
-                m.v[j] = (acc % MOD_Q as u128) as u64;
+            for (c, comp) in cs.iter().zip(&scalar_components) {
+                let addend = m.v;
+                unsafe {
+                    eltwise_fma_mod(
+                        m.v.as_mut_ptr(),
+                        comp.gamma.v.as_ptr(),
+                        *c,
+                        addend.as_ptr(),
+                        DEGREE as u64,
+                        MOD_Q,
+                    )
+                };
             }
         }
     }
@@ -578,6 +585,7 @@ type EvalCell = ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>;
 /// occurrence gets its own cell.
 struct ProverAssembler<'a> {
     witness: &'a [RingElement],
+    used: usize,
     n: usize,
     total_vars: usize,
     witness_pool: OraclePool,
@@ -664,17 +672,17 @@ impl<'a> ProverAssembler<'a> {
     fn leaf(&mut self, factor: &ClaimFactor) -> HighOrderCell {
         match factor {
             ClaimFactor::Witness => {
-                let data = self.witness;
-                let cell = self.witness_pool.next(FULL_WITNESS_KEY, move || {
-                    LinearSumcheck::from_data(data.to_vec())
-                });
+                let (data, used) = (self.witness, self.used);
+                let cell = self
+                    .witness_pool
+                    .next(FULL_WITNESS_KEY, move || witness_oracle(data, used));
                 cell as _
             }
             ClaimFactor::ConjWitness => {
-                let data = self.witness;
+                let (data, used) = (self.witness, self.used);
                 let cell = self
                     .conj_pool
-                    .next(FULL_WITNESS_KEY, move || conjugated_oracle(data));
+                    .next(FULL_WITNESS_KEY, move || conjugated_oracle(data, used));
                 cell as _
             }
             ClaimFactor::WitnessSegment(_) | ClaimFactor::ConjWitnessSegment(_) => {
@@ -761,12 +769,37 @@ impl<'a> ProverAssembler<'a> {
     }
 }
 
-fn conjugated_oracle(witness: &[RingElement]) -> LinearSumcheck<RingElement> {
-    let mut data = Vec::with_capacity(witness.len());
-    for element in witness {
-        data.push(element.conjugate());
-    }
-    LinearSumcheck::from_data(data)
+#[cfg(feature = "unsafe-sumcheck")]
+fn conjugate_entry(x: &RingElement, out: &mut RingElement) {
+    x.conjugate_into(out)
+}
+
+#[cfg(feature = "unsafe-sumcheck")]
+fn witness_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck<RingElement> {
+    unsafe { LinearSumcheck::from_borrowed(witness, used, None) }
+}
+
+#[cfg(feature = "unsafe-sumcheck")]
+fn conjugated_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck<RingElement> {
+    unsafe { LinearSumcheck::from_borrowed(witness, used, Some(conjugate_entry)) }
+}
+
+#[cfg(not(feature = "unsafe-sumcheck"))]
+fn witness_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck<RingElement> {
+    LinearSumcheck::from_data_with_non_zero_end(witness.to_vec(), used)
+}
+
+#[cfg(not(feature = "unsafe-sumcheck"))]
+fn conjugated_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck<RingElement> {
+    let conjugated = witness.iter().map(RingElement::conjugate).collect();
+    LinearSumcheck::from_data_with_non_zero_end(conjugated, used)
+}
+
+fn used_length(witness: &[RingElement]) -> usize {
+    witness
+        .iter()
+        .rposition(|x| x.v.iter().any(|&c| c != 0))
+        .map_or(0, |last| last + 1)
 }
 
 /// Verifier-side mirror: lowers the same canonical [`ClaimExpr`] to evaluation
@@ -1173,6 +1206,7 @@ pub fn prove_claims(
 
     let mut asm = ProverAssembler {
         witness: &witness.data,
+        used: used_length(&witness.data),
         n,
         total_vars,
         witness_pool: OraclePool::new(),
@@ -1188,10 +1222,9 @@ pub fn prove_claims(
 
     // ensure the full-witness oracle exists: z_0 always seeds the chain
     if asm.witness_pool.first_cell(&FULL_WITNESS_KEY).is_none() {
-        let data = asm.witness;
-        asm.witness_pool.next(FULL_WITNESS_KEY, move || {
-            LinearSumcheck::from_data(data.to_vec())
-        });
+        let (data, used) = (asm.witness, asm.used);
+        asm.witness_pool
+            .next(FULL_WITNESS_KEY, move || witness_oracle(data, used));
     }
     let pooled: Vec<ElephantCell<LinearSumcheck<RingElement>>> = asm
         .witness_pool
@@ -1257,7 +1290,7 @@ pub fn prove_claims(
         None
     } else if asm.conj_pool.first_cell(&FULL_WITNESS_KEY).is_none() {
         // no conjugate oracle was used: evaluate one on demand at the final point
-        let mut ls = conjugated_oracle(asm.witness);
+        let mut ls = conjugated_oracle(asm.witness, asm.used);
         for r in &evaluation_points {
             ls.partial_evaluate(r);
         }
@@ -1839,6 +1872,28 @@ mod tests {
             value,
         }];
         (witness, claims)
+    }
+
+    #[test]
+    fn test_singleton_witness_roundtrip() {
+        init_common();
+        let witness = VerticallyAlignedMatrix {
+            height: 1,
+            width: 1,
+            used_cols: 1,
+            data: sample_random_short_vector(1, 100, Representation::IncompleteNTT),
+        };
+        let expr = || ClaimExpr::witness() * ClaimExpr::conj_witness();
+        let claims = vec![SnarkClaim {
+            value: expr().sum(&witness),
+            expr: expr(),
+        }];
+        let mut hw_p = HashWrapper::new();
+        let (proof, chain_p) = prove_claims(&witness, &claims, &mut hw_p);
+        let mut hw_v = HashWrapper::new();
+        let chain_v = verify_claims((1, 1), &claims, &proof, &mut hw_v);
+        assert_eq!(chain_p.claims, chain_v.claims);
+        assert_eq!(proof.witness_eval, witness.data[0]);
     }
 
     #[test]

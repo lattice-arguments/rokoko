@@ -85,6 +85,17 @@ pub trait HighOrderSumcheckData {
 
     fn is_univariate_polynomial_zero_at_point(&self, point: HypercubePoint) -> bool;
 
+    fn is_unit_constant(&self) -> bool {
+        false
+    }
+
+    fn linear_pair_at_point(
+        &self,
+        _: HypercubePoint,
+    ) -> Option<(&Self::Element, &Self::Element)> {
+        None
+    }
+
     fn constant_univariate_polynomial_at_point_available_by_ref(
         &self,
         _: HypercubePoint,

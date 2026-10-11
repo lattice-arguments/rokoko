@@ -11,11 +11,13 @@ use crate::common::{
 /// Implemented by `RingElement` and `FieldExtension`.
 pub trait SumcheckElement:
     Clone
+    + 'static
     + for<'a> AddAssign<&'a Self>
     + for<'a> SubAssign<&'a Self>
     + for<'a> MulAssign<&'a Self>
     + for<'a> MulAssign<(&'a Self, &'a Self)>
     + for<'a> AddAssign<(&'a Self, &'a Self)>
+    + for<'a> SubAssign<(&'a Self, &'a Self)>
 {
     fn zero() -> Self;
     fn zero_ref() -> &'static Self;

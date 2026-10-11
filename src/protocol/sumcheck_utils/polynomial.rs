@@ -76,34 +76,42 @@ pub fn mul_poly_into<E: SumcheckElement>(
     poly_0: &Polynomial<E>,
     poly_1: &Polynomial<E>,
 ) {
+    let lhs: [&E; 4] = std::array::from_fn(|i| &poly_0.coefficients[i]);
+    let rhs: [&E; 4] = std::array::from_fn(|i| &poly_1.coefficients[i]);
+    mul_coefficients_into(
+        result,
+        &lhs[..poly_0.num_coefficients],
+        &rhs[..poly_1.num_coefficients],
+    );
+}
+
+#[inline]
+pub fn mul_coefficients_into<E: SumcheckElement>(
+    result: &mut Polynomial<E>,
+    poly_0: &[&E],
+    poly_1: &[&E],
+) {
     debug_assert!(
-        poly_0.num_coefficients + poly_1.num_coefficients - 1 <= 4,
+        poly_0.len() + poly_1.len() - 1 <= 4,
         "Resulting polynomial degree exceeds supported maximum"
     );
 
-    // result.set_zero();
-
-    if poly_0.num_coefficients == 2 && poly_1.num_coefficients == 2 {
+    if poly_0.len() == 2 && poly_1.len() == 2 {
         // Both are linear. Use Karatsuba with 3 multiplications:
         // z0 = a0*b0, z2 = a1*b1, z1 = (a0+a1)(b0+b1) - z0 - z2.
 
         let (first, rest) = result.coefficients.split_at_mut(1);
         let (second, third) = rest.split_at_mut(1);
 
-        // first = a0 + a1
-        first[0].set_from(&poly_0.coefficients[0]);
-        first[0] += &poly_0.coefficients[1];
-
-        // third = b0 + b1
-        third[0].set_from(&poly_1.coefficients[0]);
-        third[0] += &poly_1.coefficients[1];
+        first[0] += (poly_0[0], poly_0[1]);
+        third[0] += (poly_1[0], poly_1[1]);
 
         // second = (a0 + a1) * (b0 + b1)
         second[0] *= (&first[0], &third[0]);
 
         // first = a0 * b0, third = a1 * b1
-        first[0] *= (&poly_0.coefficients[0], &poly_1.coefficients[0]);
-        third[0] *= (&poly_0.coefficients[1], &poly_1.coefficients[1]);
+        first[0] *= (poly_0[0], poly_1[0]);
+        third[0] *= (poly_0[1], poly_1[1]);
 
         // second = z1 = second - first - third
         second[0] -= &first[0];
@@ -114,7 +122,7 @@ pub fn mul_poly_into<E: SumcheckElement>(
     }
 
     // we handle the case of one linear and one quadratic polynomial separately for efficiency
-    if poly_1.num_coefficients == 3 && poly_0.num_coefficients == 2 {
+    if poly_1.len() == 3 && poly_0.len() == 2 {
         // First is linear, second is quadratic: (a0 + a1*x) * (b0 + b1*x + b2*x^2) = a0*b0 + (a0*b1 + a1*b0)*x + (a0*b2 + a1*b1)*x^2 + a1*b2*x^3
 
         let (first, rest) = result.coefficients.split_at_mut(1);
@@ -122,26 +130,26 @@ pub fn mul_poly_into<E: SumcheckElement>(
         let (third, fourth) = rest.split_at_mut(1);
 
         // // first, the second
-        first[0] *= (&poly_0.coefficients[0], &poly_1.coefficients[1]); // buffer
-        second[0] *= (&poly_0.coefficients[1], &poly_1.coefficients[0]);
+        first[0] *= (poly_0[0], poly_1[1]);
+        second[0] *= (poly_0[1], poly_1[0]);
         second[0] += &first[0];
 
         // third
-        first[0] *= (&poly_0.coefficients[0], &poly_1.coefficients[2]);
-        third[0] *= (&poly_0.coefficients[1], &poly_1.coefficients[1]);
+        first[0] *= (poly_0[0], poly_1[2]);
+        third[0] *= (poly_0[1], poly_1[1]);
         third[0] += &first[0];
 
         // fourth
-        fourth[0] *= (&poly_0.coefficients[1], &poly_1.coefficients[2]);
+        fourth[0] *= (poly_0[1], poly_1[2]);
 
         // first
-        first[0] *= (&poly_0.coefficients[0], &poly_1.coefficients[0]);
+        first[0] *= (poly_0[0], poly_1[0]);
 
         result.num_coefficients = 4;
         return;
     }
 
-    if poly_0.num_coefficients == 3 && poly_1.num_coefficients == 2 {
+    if poly_0.len() == 3 && poly_1.len() == 2 {
         // First is quadratic, second is linear: mirror of the case above with
         // the roles swapped (b = poly_0 quadratic, a = poly_1 linear).
         let (first, rest) = result.coefficients.split_at_mut(1);
@@ -149,32 +157,32 @@ pub fn mul_poly_into<E: SumcheckElement>(
         let (third, fourth) = rest.split_at_mut(1);
 
         // second: a0*b1 + a1*b0
-        first[0] *= (&poly_1.coefficients[0], &poly_0.coefficients[1]);
-        second[0] *= (&poly_1.coefficients[1], &poly_0.coefficients[0]);
+        first[0] *= (poly_1[0], poly_0[1]);
+        second[0] *= (poly_1[1], poly_0[0]);
         second[0] += &first[0];
 
         // third: a0*b2 + a1*b1
-        first[0] *= (&poly_1.coefficients[0], &poly_0.coefficients[2]);
-        third[0] *= (&poly_1.coefficients[1], &poly_0.coefficients[1]);
+        first[0] *= (poly_1[0], poly_0[2]);
+        third[0] *= (poly_1[1], poly_0[1]);
         third[0] += &first[0];
 
         // fourth: a1*b2
-        fourth[0] *= (&poly_1.coefficients[1], &poly_0.coefficients[2]);
+        fourth[0] *= (poly_1[1], poly_0[2]);
 
         // first: a0*b0
-        first[0] *= (&poly_1.coefficients[0], &poly_0.coefficients[0]);
+        first[0] *= (poly_1[0], poly_0[0]);
 
         result.num_coefficients = 4;
         return;
     }
 
     // This works only in one poly is constant
-    for i in 0..poly_0.num_coefficients {
-        for j in 0..poly_1.num_coefficients {
-            result.coefficients[i + j] *= (&poly_0.coefficients[i], &poly_1.coefficients[j])
+    for i in 0..poly_0.len() {
+        for j in 0..poly_1.len() {
+            result.coefficients[i + j] *= (poly_0[i], poly_1[j])
         }
     }
-    result.num_coefficients = poly_0.num_coefficients + poly_1.num_coefficients - 1;
+    result.num_coefficients = poly_0.len() + poly_1.len() - 1;
 }
 
 /// Add two polynomials and store the sum in `result`.

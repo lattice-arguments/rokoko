@@ -1389,6 +1389,15 @@ impl<'a> SubAssign<&'a FieldExtension> for FieldExtension {
     }
 }
 
+impl<'a> SubAssign<(&'a FieldExtension, &'a FieldExtension)> for FieldExtension {
+    fn sub_assign(&mut self, other: (&'a FieldExtension, &'a FieldExtension)) {
+        let (op1, op2) = other;
+        for k in 0..SLOT_DEGREE {
+            self.coeffs[k] = unsafe { sub_mod(op1.coeffs[k], op2.coeffs[k], MOD_Q) };
+        }
+    }
+}
+
 impl<'a> MulAssign<&'a FieldExtension> for FieldExtension {
     fn mul_assign(&mut self, other: &'a FieldExtension) {
         if SLOT_DEGREE == 4 {

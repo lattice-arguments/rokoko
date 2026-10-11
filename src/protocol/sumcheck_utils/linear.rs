@@ -18,9 +18,17 @@ use crate::{
 #[cfg(test)]
 use crate::common::{config::MOD_Q, structured_row::PreprocessedRow};
 
+struct Borrowed<E: 'static> {
+    data: &'static [E],
+    map: Option<fn(&E, &mut E)>,
+}
+
+const BORROW_MIN_LEN: usize = 1024;
+
 /// Standard linear sumcheck over a vector that represents a multilinear extension.
 pub struct LinearSumcheck<E: SumcheckElement = RingElement> {
     pub data: Vec<E>,
+    borrowed: Option<Borrowed<E>>,
     variable_count: usize,
     index_mask: usize,
     suffix: usize,
@@ -53,6 +61,7 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
     ) -> Self {
         LinearSumcheck {
             data: E::allocate_zero_vec(count),
+            borrowed: None,
             variable_count: count.ilog2() as usize + prefix_size + suffix_size,
             index_mask: count - 1, // this mask will be used to ignore prefixed variables
             poly_scratch: RefCell::new(Polynomial::new(2)),
@@ -72,11 +81,77 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
         let count = data.len();
         LinearSumcheck {
             data,
+            borrowed: None,
             variable_count: count.ilog2() as usize + prefix_size + suffix_size,
             index_mask: count - 1,
             poly_scratch: RefCell::new(Polynomial::new(2)),
             suffix: suffix_size,
             non_zero_end: count,
+        }
+    }
+
+    pub fn from_data_with_non_zero_end(data: Vec<E>, non_zero_end: usize) -> Self {
+        let mut table = Self::from_data(data);
+        table.non_zero_end = non_zero_end.min(table.data.len());
+        table
+    }
+
+    pub unsafe fn from_borrowed(
+        data: &[E],
+        non_zero_end: usize,
+        map: Option<fn(&E, &mut E)>,
+    ) -> Self {
+        let count = data.len();
+        if count < BORROW_MIN_LEN {
+            let owned = match map {
+                None => data.to_vec(),
+                Some(map) => data
+                    .iter()
+                    .map(|x| {
+                        let mut out = E::zero();
+                        map(x, &mut out);
+                        out
+                    })
+                    .collect(),
+            };
+            return Self::from_data_with_non_zero_end(owned, non_zero_end);
+        }
+        LinearSumcheck {
+            data: Vec::new(),
+            borrowed: Some(Borrowed {
+                data: unsafe { std::mem::transmute::<&[E], &'static [E]>(data) },
+                map,
+            }),
+            variable_count: count.ilog2() as usize,
+            index_mask: count - 1,
+            poly_scratch: RefCell::new(Polynomial::new(2)),
+            suffix: 0,
+            non_zero_end: non_zero_end.min(count),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match &self.borrowed {
+            Some(borrowed) => borrowed.data.len(),
+            None => self.data.len(),
+        }
+    }
+
+    fn values(&self) -> Option<&[E]> {
+        match &self.borrowed {
+            None => Some(self.data.as_slice()),
+            Some(Borrowed { data, map: None }) => Some(data),
+            Some(_) => None,
+        }
+    }
+
+    fn load(&self, index: usize, out: &mut E) {
+        match &self.borrowed {
+            Some(Borrowed {
+                data,
+                map: Some(map),
+            }) => map(&data[index], out),
+            _ => out.set_from(&self.values().unwrap()[index]),
         }
     }
 
@@ -137,11 +212,14 @@ impl<E: SumcheckElement> Index<HypercubePoint> for LinearSumcheck<E> {
         //
         // During data rounds the point selects which even/odd pair we look at.
         // self[p] returns data[2*p_masked] (the val-at-0 side of the pair).
-        if self.data.len() == 1 {
-            return &self.data[0];
+        let data = self
+            .values()
+            .expect("a mapped table has no stored entries to index");
+        if data.len() == 1 {
+            return &data[0];
         }
         if self.suffix > 0
-            || self.variable_count > self.data.len().trailing_zeros() as usize + self.suffix
+            || self.variable_count > data.len().trailing_zeros() as usize + self.suffix
         {
             // Prefix/suffix round — data isn't being split.
             // For suffix rounds under LS-first, the current round consumes
@@ -150,11 +228,11 @@ impl<E: SumcheckElement> Index<HypercubePoint> for LinearSumcheck<E> {
             let suffix_shift = if self.suffix > 0 { self.suffix - 1 } else { 0 };
             let index_shifted = index.shifted(suffix_shift);
             let index_masked = index_shifted.masked(self.index_mask);
-            return &self.data[index_masked.coordinates];
+            return &data[index_masked.coordinates];
         }
         // Data round, LS-first: point p → even slot 2p.
-        let p = index.masked(self.data.len() / 2 - 1).coordinates;
-        &self.data[2 * p]
+        let p = index.masked(data.len() / 2 - 1).coordinates;
+        &data[2 * p]
     }
 }
 
@@ -184,7 +262,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
             return Some(&self[point]);
         }
 
-        if self.data.len() == 1 {
+        if self.len() == 1 {
             // All data variables consumed; remaining are prefix dummies.
             return Some(&self[point]);
         }
@@ -209,32 +287,50 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
         }
 
         // Data is fully folded but prefix variables remain: constant.
-        if self.data.len() == 1 {
-            polynomial.coefficients[0].set_from(&self.data[0]);
+        if self.len() == 1 {
+            self.load(0, &mut polynomial.coefficients[0]);
             polynomial.num_coefficients = 1;
             return;
         }
 
         // Data round: pair at (2p, 2p+1).
-        let p = point.masked(self.data.len() / 2 - 1).coordinates;
+        let p = point.masked(self.len() / 2 - 1).coordinates;
         let idx0 = 2 * p;
         let idx1 = 2 * p + 1;
-        polynomial.coefficients[0].set_from(&self.data[idx0]);
-        polynomial.coefficients[1].set_from(&self.data[idx1]);
-        polynomial.coefficients[1] -= &self.data[idx0];
+        let (low, high) = polynomial.coefficients.split_at_mut(1);
+        match self.values() {
+            Some(data) => {
+                low[0].set_from(&data[idx0]);
+                high[0] -= (&data[idx1], &data[idx0]);
+            }
+            None => {
+                self.load(idx0, &mut low[0]);
+                self.load(idx1, &mut high[0]);
+                high[0] -= &low[0];
+            }
+        }
         polynomial.num_coefficients = 2;
+    }
+
+    fn linear_pair_at_point(&self, point: HypercubePoint) -> Option<(&E, &E)> {
+        if self.suffix > 0 || self.len() <= 1 {
+            return None;
+        }
+        let data = self.values()?;
+        let p = point.masked(data.len() / 2 - 1).coordinates;
+        Some((&data[2 * p], &data[2 * p + 1]))
     }
 
     fn is_univariate_polynomial_zero_at_point(&self, point: HypercubePoint) -> bool {
         // For suffix/prefix rounds we intentionally expose no sparse range.
-        if self.suffix > 0 || self.data.len() <= 1 {
+        if self.suffix > 0 || self.len() <= 1 {
             return false;
         }
         // Sparse tail tracking is only valid when data fills the full hypercube.
-        if self.data.len() != (1usize << self.variable_count) {
+        if self.len() != (1usize << self.variable_count) {
             return false;
         }
-        let half = self.data.len() / 2;
+        let half = self.len() / 2;
         let pair_nz = (self.non_zero_end + 1) / 2;
         if pair_nz >= half {
             return false;
@@ -249,12 +345,12 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
 
     fn dependence_window_vars(&self) -> usize {
         if self.suffix > 0 {
-            return self.suffix - 1 + self.data.len().ilog2() as usize;
+            return self.suffix - 1 + self.len().ilog2() as usize;
         }
-        if self.data.len() <= 1 {
+        if self.len() <= 1 {
             return 0;
         }
-        self.data.len().ilog2() as usize - 1
+        self.len().ilog2() as usize - 1
     }
 
     fn as_data_slices(&self) -> Option<(&[Self::Element], &[Self::Element])> {
@@ -272,15 +368,15 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
         if self.suffix > 0 {
             return None;
         }
-        if self.data.len() <= 1 {
+        if self.len() <= 1 {
             return None;
         }
         // data.len() must equal 2^variable_count (no pending prefix variables).
-        if self.data.len() != (1usize << self.variable_count) {
+        if self.len() != (1usize << self.variable_count) {
             return None;
         }
-        let nz_end = self.non_zero_end.min(self.data.len());
-        Some(&self.data[..nz_end])
+        let nz_end = self.non_zero_end.min(self.len());
+        self.values().map(|data| &data[..nz_end])
     }
 
     fn non_zero_range(&self) -> Option<(usize, usize)> {
@@ -288,14 +384,14 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
         if self.suffix > 0 {
             return None;
         }
-        if self.data.len() <= 1 {
+        if self.len() <= 1 {
             return None;
         }
         // Only valid when data fills the full hypercube (no prefix active).
-        if self.data.len() != (1usize << self.variable_count) {
+        if self.len() != (1usize << self.variable_count) {
             return None;
         }
-        let half = self.data.len() / 2;
+        let half = self.len() / 2;
         // non_zero_end tracks pairs: pair i covers data[2i] and data[2i+1].
         // Points run over [0, half), and pair i is non-zero if 2i < non_zero_end,
         // i.e. i < ceil(non_zero_end / 2).
@@ -308,10 +404,12 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
     }
 
     fn final_evaluations_test_only(&self) -> Self::Element {
-        if self.data.len() != 1 {
+        if self.len() != 1 {
             panic!("Sumcheck is not fully evaluated yet");
         }
-        self.data[0].clone()
+        let mut value = E::zero();
+        self.load(0, &mut value);
+        value
     }
 }
 
@@ -328,7 +426,7 @@ impl<E: SumcheckElement> SumcheckBaseData for LinearSumcheck<E> {
         }
 
         // Prefix round: MS dummy variable, data is constant across it.
-        if self.data.len() == 1 {
+        if self.len() == 1 {
             self.variable_count -= 1;
             return;
         }
@@ -336,7 +434,7 @@ impl<E: SumcheckElement> SumcheckBaseData for LinearSumcheck<E> {
         // Data round: fold even/odd pairs.
         // data[2i] = value at current_var=0, data[2i+1] = value at current_var=1.
         // folded[i] = data[2i] + (data[2i+1] - data[2i]) * r
-        let n = self.data.len();
+        let n = self.len();
         if n % 2 != 0 {
             panic!("Sumcheck data length must be a power of 2");
         }
@@ -348,33 +446,53 @@ impl<E: SumcheckElement> SumcheckBaseData for LinearSumcheck<E> {
         let pair_nz = (self.non_zero_end + 1) / 2; // ceil(non_zero_end / 2)
         let fold_end = pair_nz.min(half);
 
-        for i in 0..fold_end {
-            let idx0 = 2 * i;
-            let idx1 = 2 * i + 1;
-            // delta = data[2i+1] - data[2i]
-            // Use split_at_mut to get non-overlapping references.
-            let (left, right) = self.data.split_at_mut(idx1);
-            // left[idx0] = data[2i], right[0] = data[2i+1]
-            right[0] -= &left[idx0];
-            right[0] *= value;
-            left[idx0] += &right[0];
-            // Move folded result from idx0 → slot i.
-            if i != idx0 {
-                // idx0 = 2*i, which equals i only when i=0.
-                // For i>=1, copy to the compacted position without allocation.
-                // Split left at idx0 so source and destination are disjoint.
-                let (prefix, from_idx0) = left.split_at_mut(idx0);
-                prefix[i].set_from(&from_idx0[0]);
+        if let Some(borrowed) = self.borrowed.take() {
+            let mut folded = Vec::with_capacity(half);
+            match borrowed.map {
+                None => {
+                    for pair in borrowed.data.chunks_exact(2).take(fold_end) {
+                        folded.push(E::zero());
+                        let out = folded.last_mut().unwrap();
+                        *out -= (&pair[1], &pair[0]);
+                        *out *= value;
+                        *out += &pair[0];
+                    }
+                }
+                Some(map) => {
+                    let mut even = E::zero();
+                    for pair in borrowed.data.chunks_exact(2).take(fold_end) {
+                        folded.push(E::zero());
+                        let out = folded.last_mut().unwrap();
+                        map(&pair[0], &mut even);
+                        map(&pair[1], out);
+                        *out -= &even;
+                        *out *= value;
+                        *out += &even;
+                    }
+                }
             }
-        }
-        // Clear the compacted tail: indices [fold_end, half) are outside the
-        // guaranteed non-zero region after folding and may still contain stale
-        // values from the previous layout.
-        for i in fold_end..half {
-            self.data[i].set_zero();
-        }
+            folded.resize(half, E::zero());
+            self.data = folded;
+        } else {
+            if fold_end > 0 {
+                let (left, right) = self.data.split_at_mut(1);
+                right[0] -= &left[0];
+                right[0] *= value;
+                left[0] += &right[0];
+            }
+            for i in 1..fold_end {
+                let (head, tail) = self.data.split_at_mut(2 * i);
+                let out = &mut head[i];
+                *out -= (&tail[1], &tail[0]);
+                *out *= value;
+                *out += &tail[0];
+            }
+            for i in fold_end..half {
+                self.data[i].set_zero();
+            }
 
-        self.data.truncate(half);
+            self.data.truncate(half);
+        }
         self.non_zero_end = fold_end;
         self.variable_count -= 1;
     }
@@ -607,6 +725,13 @@ impl<E: SumcheckElement> EvaluationSumcheckData for FakeEvaluationLinearSumcheck
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tables_are_send() {
+        fn send<T: Send>() {}
+        send::<LinearSumcheck<RingElement>>();
+        send::<LinearSumcheck<FieldExtension>>();
+    }
 
     #[test]
     fn test_linear_sumcheck() {
