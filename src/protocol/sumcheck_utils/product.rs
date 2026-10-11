@@ -1,5 +1,4 @@
-#[cfg(feature = "unsafe-sumcheck")]
-use crate::protocol::sumcheck_utils::common::FlatTerm;
+use crate::protocol::sumcheck_utils::common::{flat_cell, FlatTerm};
 use std::cell::{Cell, RefCell};
 
 use crate::{
@@ -156,11 +155,9 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
             && self.rhs_sumcheck.get_ref().is_unit_constant()
     }
 
-    #[cfg(feature = "unsafe-sumcheck")]
-    fn flat_terms<'a>(&'a self, out: &mut Vec<FlatTerm<'a, E>>) -> Option<usize> {
+    fn flat_terms(&self, out: &mut Vec<FlatTerm<E>>) -> Option<usize> {
         let (mut lhs, mut rhs) = (vec![], vec![]);
-        let leaves = self.lhs_sumcheck.get_ref().flat_terms(&mut lhs)?
-            + self.rhs_sumcheck.get_ref().flat_terms(&mut rhs)?;
+        let leaves = flat_cell(&self.lhs_sumcheck, &mut lhs)? + flat_cell(&self.rhs_sumcheck, &mut rhs)?;
         lhs.len().checked_mul(rhs.len()).filter(|&terms| terms <= leaves)?;
         for l in &lhs {
             for r in &rhs {
@@ -168,8 +165,8 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
                     negative: l.negative ^ r.negative,
                     leaf: false,
                     pair: l.leaf && r.leaf,
-                    tables: l.tables.iter().chain(&r.tables).copied().collect(),
-                    selectors: l.selectors.iter().chain(&r.selectors).copied().collect(),
+                    tables: l.tables.iter().chain(&r.tables).cloned().collect(),
+                    selectors: l.selectors.iter().chain(&r.selectors).cloned().collect(),
                 });
             }
         }
@@ -623,7 +620,6 @@ impl EvaluationSumcheckData for ProductSumcheckEvaluation {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "unsafe-sumcheck")]
     #[test]
     fn test_flat_terms_never_outgrow_the_tree() {
         use crate::protocol::sumcheck_utils::sum::SumSumcheck;
@@ -635,7 +631,7 @@ mod tests {
         let product = |l: Cell, r: Cell| -> Cell { ElephantCell::new(ProductSumcheck::new(l, r)) };
         let count = |tree: Cell| {
             let mut terms = vec![];
-            tree.get_ref().flat_terms(&mut terms).map(|leaves| (leaves, terms.len()))
+            flat_cell(&tree, &mut terms).map(|leaves| (leaves, terms.len()))
         };
         assert_eq!(count(product(sum(2), leaf())), Some((3, 2)));
         assert_eq!(count(product(sum(2), sum(2))), Some((4, 4)));

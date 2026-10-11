@@ -479,6 +479,7 @@ impl SnarkClaim {
 }
 
 pub struct InitialSumcheckProof {
+    pub pair: Vec<Polynomial<FieldExtension>>,
     pub polys: Vec<Polynomial<FieldExtension>>,
     /// `z_0 = MLE[vec(W)](c)`
     pub witness_eval: RingElement,
@@ -492,7 +493,7 @@ impl crate::protocol::config::SizeableProof for InitialSumcheckProof {
         if let Some(conj_eval) = &self.conj_witness_eval {
             size += conj_eval.compact_size_in_bits();
         }
-        for p in &self.polys {
+        for p in self.pair.iter().chain(&self.polys) {
             for c in &p.coefficients[..p.num_coefficients] {
                 size += c.size_in_bits();
             }
@@ -519,10 +520,11 @@ enum LeafCell {
 }
 
 impl LeafCell {
-    fn partial_evaluate(&self, r: &RingElement) {
-        match self {
-            LeafCell::Linear(c) => c.borrow_mut().partial_evaluate(r),
-            LeafCell::Selector(c) => c.borrow_mut().partial_evaluate(r),
+    fn fold(&self, challenges: &[RingElement]) {
+        match (self, challenges) {
+            (LeafCell::Linear(c), [first, second]) => c.borrow_mut().partial_evaluate_two(first, second),
+            (LeafCell::Linear(c), _) => challenges.iter().for_each(|r| c.borrow_mut().partial_evaluate(r)),
+            (LeafCell::Selector(c), _) => challenges.iter().for_each(|r| c.borrow_mut().partial_evaluate(r)),
         }
     }
 }
@@ -598,6 +600,36 @@ struct ProverAssembler<'a> {
 }
 
 impl<'a> ProverAssembler<'a> {
+    fn fold_leaves(&self, challenges: &[RingElement]) {
+        let joint = match (
+            self.witness_pool.first_cell(&FULL_WITNESS_KEY),
+            self.conj_pool.first_cell(&FULL_WITNESS_KEY),
+        ) {
+            (Some(witness), Some(conjugate)) => {
+                let folded = match challenges {
+                    [r] => witness
+                        .borrow_mut()
+                        .partial_evaluate_with_mapped(&mut conjugate.borrow_mut(), r),
+                    [first, second] => witness.borrow_mut().partial_evaluate_two_with_mapped(
+                        &mut conjugate.borrow_mut(),
+                        first,
+                        second,
+                    ),
+                    _ => false,
+                };
+                folded.then(|| [witness.clone(), conjugate.clone()])
+            }
+            _ => None,
+        };
+        for leaf in &self.leaves {
+            match (leaf, &joint) {
+                (LeafCell::Linear(cell), Some(folded))
+                    if folded.iter().any(|f| std::ptr::eq(&*f.get_ref(), &*cell.get_ref())) => {}
+                _ => leaf.fold(challenges),
+            }
+        }
+    }
+
     fn reset(&mut self) {
         self.witness_pool.reset_term();
         self.conj_pool.reset_term();
@@ -1191,12 +1223,49 @@ fn public_support(pf: &PublicFactor, total_vars: usize) -> (usize, usize) {
     }
 }
 
+fn sample_challenge(hash_wrapper: &mut HashWrapper) -> RingElement {
+    let mut f = FieldExtension::zero();
+    hash_wrapper.sample_field_element_into(&mut f);
+    embed_fe(&f)
+}
+
+fn monomials(expr: &ClaimExpr) -> Option<(usize, usize, bool)> {
+    match expr {
+        ClaimExpr::Factor(ClaimFactor::Witness) | ClaimExpr::Factor(ClaimFactor::ConjWitness) => Some((1, 1, true)),
+        ClaimExpr::Factor(_) | ClaimExpr::Constant(_) => Some((1, 1, false)),
+        ClaimExpr::Scale(_, x) => monomials(x),
+        ClaimExpr::Sum(a, b) | ClaimExpr::Diff(a, b) => {
+            let (a, b) = (monomials(a)?, monomials(b)?);
+            Some((a.0 + b.0, a.1 + b.1, a.2 && b.2))
+        }
+        ClaimExpr::Product(a, b) => {
+            let (a, b) = (monomials(a)?, monomials(b)?);
+            let terms = a.0.checked_mul(b.0).filter(|&terms| terms <= a.1 + b.1)?;
+            Some((terms, a.1 + b.1, a.2 || b.2))
+        }
+    }
+}
+
+fn pairable(claims: &[SnarkClaim], total_vars: usize) -> bool {
+    total_vars >= 2
+        && claims
+            .iter()
+            .all(|claim| matches!(monomials(&claim.expr), Some((_, _, true))))
+}
+
+fn first_degrees(claims: &[SnarkClaim], total_vars: usize) -> (usize, usize) {
+    claims
+        .iter()
+        .map(|claim| expr_degree(&claim.expr, total_vars))
+        .fold((0, 0), |(d1, d2), d| (d1.max(d[total_vars - 1]), d2.max(d[total_vars - 2])))
+}
+
 pub fn prove_claims(
     witness: &VerticallyAlignedMatrix<RingElement>,
     claims: &[SnarkClaim],
     hash_wrapper: &mut HashWrapper,
 ) -> (InitialSumcheckProof, ChainInputs) {
-    prove_claims_with(witness, claims, hash_wrapper, true)
+    prove_claims_with(witness, claims, hash_wrapper, true, None)
 }
 
 fn prove_claims_with(
@@ -1204,6 +1273,7 @@ fn prove_claims_with(
     claims: &[SnarkClaim],
     hash_wrapper: &mut HashWrapper,
     flat: bool,
+    paired: Option<bool>,
 ) -> (InitialSumcheckProof, ChainInputs) {
     let n = witness.data.len();
     assert!(n.is_power_of_two());
@@ -1269,10 +1339,26 @@ fn prove_claims_with(
     field_combiner.load_challenges_from(fe.clone());
 
     let mut num_vars = total_vars;
+    let mut pair: Vec<Polynomial<FieldExtension>> = vec![];
     let mut polys: Vec<Polynomial<FieldExtension>> = vec![];
     let mut evaluation_points: Vec<RingElement> = vec![];
 
-    use crate::common::arithmetic::field_to_ring_element_into;
+    if paired.unwrap_or_else(|| pairable(claims, total_vars)) {
+        let rows = flat
+            .pair_polynomial(&outputs, &combination, first_degrees(claims, total_vars))
+            .expect("a pairable statement flattens into terms the first message covers");
+        for mut row in rows {
+            let mut row_over_field = Polynomial::<FieldExtension>::new(0);
+            ring_polynomial_to_field(&mut row, &fe, &mut row_over_field);
+            hash_wrapper.update_with_field_extension_slice(&row_over_field.coefficients);
+            pair.push(row_over_field);
+        }
+        let challenges = [sample_challenge(hash_wrapper), sample_challenge(hash_wrapper)];
+        flat.fix_first(&challenges[0]);
+        asm.fold_leaves(&challenges);
+        evaluation_points.extend(challenges);
+        num_vars -= 2;
+    }
     while num_vars > 0 {
         num_vars -= 1;
 
@@ -1286,29 +1372,8 @@ fn prove_claims_with(
         }
         hash_wrapper.update_with_field_extension_slice(&poly_over_field.coefficients);
 
-        let mut f = FieldExtension::zero();
-        hash_wrapper.sample_field_element_into(&mut f);
-        let mut r = RingElement::zero(Representation::IncompleteNTT);
-        field_to_ring_element_into(&mut r, &f);
-        r.from_homogenized_field_extensions_to_incomplete_ntt();
-
-        let joint = match (
-            asm.witness_pool.first_cell(&FULL_WITNESS_KEY),
-            asm.conj_pool.first_cell(&FULL_WITNESS_KEY),
-        ) {
-            (Some(witness), Some(conjugate)) => witness
-                .borrow_mut()
-                .partial_evaluate_with_mapped(&mut conjugate.borrow_mut(), &r)
-                .then(|| [witness.clone(), conjugate.clone()]),
-            _ => None,
-        };
-        for leaf in &asm.leaves {
-            match (leaf, &joint) {
-                (LeafCell::Linear(cell), Some(folded))
-                    if folded.iter().any(|f| std::ptr::eq(&*f.get_ref(), &*cell.get_ref())) => {}
-                _ => leaf.partial_evaluate(&r),
-            }
-        }
+        let r = sample_challenge(hash_wrapper);
+        asm.fold_leaves(std::slice::from_ref(&r));
         evaluation_points.push(r);
         polys.push(poly_over_field);
     }
@@ -1355,6 +1420,7 @@ fn prove_claims_with(
 
     (
         InitialSumcheckProof {
+            pair,
             polys,
             witness_eval,
             conj_witness_eval,
@@ -1411,7 +1477,14 @@ pub fn verify_claims(
     let canon: Vec<SnarkClaim> = claims.iter().map(canonicalize).collect();
     let claims = &canon[..];
     validate_claims(claims, total_vars);
-    assert_eq!(proof.polys.len(), total_vars);
+    let paired = pairable(claims, total_vars);
+    assert_eq!(
+        !proof.pair.is_empty(),
+        paired,
+        "the statement fixes the first message's form"
+    );
+    let skipped = if paired { 2 } else { 0 };
+    assert_eq!(proof.polys.len(), total_vars - skipped);
 
     let needs_conjugate = claims.iter().any(|claim| uses_conjugate(&claim.expr));
     assert_eq!(
@@ -1485,7 +1558,37 @@ pub fn verify_claims(
     field_combiner_evaluation.load_challenges_from(fe.clone());
 
     let mut evaluation_points: Vec<RingElement> = vec![];
+    if paired {
+        let (d1, d2) = first_degrees(claims, total_vars);
+        assert_eq!(proof.pair.len(), d1 + 1, "first message has the wrong number of rows");
+        let mut corners = FieldExtension::zero();
+        for (i, row) in proof.pair.iter().enumerate() {
+            hash_wrapper.update_with_field_extension_slice(&row.coefficients);
+            assert_eq!(row.num_coefficients, d2 + 1, "first message row has the wrong degree");
+            for c in &row.coefficients[row.num_coefficients..] {
+                assert_eq!(c, &FieldExtension::zero(), "first message tail nonzero");
+            }
+            let both = row.at_zero() + row.at_one();
+            if i == 0 {
+                corners += &both;
+            }
+            corners += &both;
+        }
+        assert_eq!(
+            corners, batched_claim_over_field,
+            "round claim mismatch in the two-variable first message"
+        );
+        let challenges: Vec<FieldExtension> = sample_fe_layers(hash_wrapper, 2);
+        let mut value = FieldExtension::zero();
+        for row in proof.pair.iter().rev() {
+            value *= &challenges[0];
+            value += &row.at(&challenges[1]);
+        }
+        batched_claim_over_field = value;
+        evaluation_points.extend(challenges.iter().map(embed_fe));
+    }
     for (round, poly_over_field) in proof.polys.iter().enumerate() {
+        let round = round + skipped;
         hash_wrapper.update_with_field_extension_slice(&poly_over_field.coefficients);
 
         // The transcript absorbs the full coefficient array; the unused tail
@@ -1908,8 +2011,8 @@ mod tests {
     }
 
     fn assert_flat_matches(witness: &VerticallyAlignedMatrix<RingElement>, claims: &[SnarkClaim]) {
-        let (flat, flat_chain) = prove_claims_with(witness, claims, &mut HashWrapper::new(), true);
-        let (tree, tree_chain) = prove_claims_with(witness, claims, &mut HashWrapper::new(), false);
+        let (flat, flat_chain) = prove_claims_with(witness, claims, &mut HashWrapper::new(), true, None);
+        let (tree, tree_chain) = prove_claims_with(witness, claims, &mut HashWrapper::new(), false, None);
         assert_eq!(flat.polys.len(), tree.polys.len());
         for (round, (a, b)) in flat.polys.iter().zip(&tree.polys).enumerate() {
             assert_eq!(a.num_coefficients, b.num_coefficients, "round {round}");
@@ -1981,6 +2084,110 @@ mod tests {
         for claim in &claims {
             assert_flat_matches(&witness, std::slice::from_ref(claim));
         }
+    }
+
+    fn tampered_first_message(tamper: impl Fn(&mut [Polynomial<FieldExtension>])) {
+        init_common();
+        let (witness, claims) = shaped_setup();
+        let (mut proof, _) = prove_claims(&witness, &claims, &mut HashWrapper::new());
+        tamper(&mut proof.pair);
+        verify_claims((witness.height, witness.width), &claims, &proof, &mut HashWrapper::new());
+    }
+
+    #[test]
+    fn test_first_message_covers_two_variables() {
+        init_common();
+        let (witness, claims) = shaped_setup();
+        let (proof, chain_p) = prove_claims(&witness, &claims, &mut HashWrapper::new());
+        assert_eq!(proof.pair.len(), 4);
+        assert_eq!(proof.polys.len(), witness.data.len().ilog2() as usize - 2);
+        let chain_v = verify_claims((witness.height, witness.width), &claims, &proof, &mut HashWrapper::new());
+        assert_eq!(chain_p.claims, chain_v.claims);
+        tampered_first_message(|_| {});
+    }
+
+    #[test]
+    #[should_panic(expected = "round claim mismatch in the two-variable first message")]
+    fn test_tampered_first_message_rejected() {
+        use crate::common::sumcheck_element::SumcheckElement;
+        tampered_first_message(|pair| pair[0].coefficients[0] += &FieldExtension::one());
+    }
+
+    #[test]
+    #[should_panic(expected = "round claim mismatch in sumcheck round 2")]
+    fn test_corner_preserving_first_message_rejected() {
+        use crate::common::sumcheck_element::SumcheckElement;
+        tampered_first_message(|pair| {
+            let one = FieldExtension::one();
+            pair[1].coefficients[1] += &one;
+            pair[1].coefficients[2] -= &one;
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "the statement fixes the first message's form")]
+    fn test_single_round_proof_of_pairable_statement_rejected() {
+        init_common();
+        let (witness, claims) = shaped_setup();
+        let (proof, _) = prove_claims_with(&witness, &claims, &mut HashWrapper::new(), true, Some(false));
+        assert!(proof.pair.is_empty());
+        verify_claims((witness.height, witness.width), &claims, &proof, &mut HashWrapper::new());
+    }
+
+    fn public_only_setup() -> (VerticallyAlignedMatrix<RingElement>, Vec<SnarkClaim>) {
+        let (witness, mut claims) = shaped_setup();
+        let expr = ClaimExpr::from(table(sample_random_short_vector(
+            witness.data.len(),
+            20,
+            Representation::IncompleteNTT,
+        )));
+        claims.push(SnarkClaim {
+            value: expr.sum(&witness),
+            expr,
+        });
+        (witness, claims)
+    }
+
+    #[test]
+    fn test_public_only_monomial_keeps_single_rounds() {
+        init_common();
+        let (witness, claims) = public_only_setup();
+        let (proof, chain_p) = prove_claims(&witness, &claims, &mut HashWrapper::new());
+        assert!(proof.pair.is_empty());
+        let chain_v = verify_claims((witness.height, witness.width), &claims, &proof, &mut HashWrapper::new());
+        assert_eq!(chain_p.claims, chain_v.claims);
+    }
+
+    #[test]
+    #[should_panic(expected = "the statement fixes the first message's form")]
+    fn test_paired_proof_of_unpairable_statement_rejected() {
+        init_common();
+        let (witness, claims) = public_only_setup();
+        let (proof, _) = prove_claims_with(&witness, &claims, &mut HashWrapper::new(), true, Some(true));
+        assert!(!proof.pair.is_empty());
+        verify_claims((witness.height, witness.width), &claims, &proof, &mut HashWrapper::new());
+    }
+
+    #[test]
+    fn test_unpairable_statement_keeps_single_rounds() {
+        init_common();
+        let (witness, mut claims) = shaped_setup();
+        let n = witness.data.len();
+        let three = || {
+            ClaimExpr::witness()
+                + ClaimExpr::conj_witness()
+                + ClaimExpr::from(table(sample_random_short_vector(n, 20, Representation::IncompleteNTT)))
+        };
+        let expr = three() * three();
+        claims.push(SnarkClaim {
+            value: expr.sum(&witness),
+            expr,
+        });
+        let (proof, chain_p) = prove_claims(&witness, &claims, &mut HashWrapper::new());
+        assert!(proof.pair.is_empty());
+        assert_eq!(proof.polys.len(), n.ilog2() as usize);
+        let chain_v = verify_claims((witness.height, witness.width), &claims, &proof, &mut HashWrapper::new());
+        assert_eq!(chain_p.claims, chain_v.claims);
     }
 
     #[test]

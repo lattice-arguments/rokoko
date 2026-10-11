@@ -4,22 +4,90 @@ use crate::{
         ring_arithmetic::{incomplete_ntt_dot_into, Representation, RingElement},
     },
     protocol::sumcheck_utils::{
-        common::{FlatTerm, HighOrderSumcheckData},
-        elephant_cell::ElephantCell,
+        common::{flat_cell, FlatTerm, HighOrderSumcheckData},
+        elephant_cell::{CellRef, ElephantCell},
         hypercube_point::HypercubePoint,
         linear::LinearSumcheck,
         polynomial::{add_poly_in_place, Polynomial},
+        selector_eq::SelectorEq,
     },
 };
 
 type Cell = ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>;
-type Term<'a> = FlatTerm<'a, RingElement>;
+type Node = dyn HighOrderSumcheckData<Element = RingElement>;
+
+struct Term<'c> {
+    negative: bool,
+    pair: bool,
+    tables: Vec<CellRef<'c, Node>>,
+    selectors: Vec<CellRef<'c, Node>>,
+}
+
+fn hold(term: &FlatTerm<RingElement>) -> Term<'_> {
+    Term {
+        negative: term.negative,
+        pair: term.pair,
+        tables: term.tables.iter().map(|cell| cell.get_ref()).collect(),
+        selectors: term.selectors.iter().map(|cell| cell.get_ref()).collect(),
+    }
+}
+
+fn hold_all(terms: &[FlatTerm<RingElement>]) -> Vec<Term<'_>> {
+    terms.iter().map(hold).collect()
+}
+
+fn table<'b>(node: &'b CellRef<'_, Node>) -> &'b LinearSumcheck<RingElement> {
+    node.as_linear().unwrap()
+}
+
+fn selector<'b>(node: &'b CellRef<'_, Node>) -> &'b SelectorEq<RingElement> {
+    node.as_selector().unwrap()
+}
 
 const CHUNK: usize = 32;
 
 pub struct FlatRounds {
     rounds: usize,
     previous: std::cell::RefCell<Vec<Polynomial<RingElement>>>,
+    pending: std::cell::RefCell<Vec<(usize, usize, Vec<RingElement>)>>,
+}
+
+struct PairPlan<'a> {
+    output: usize,
+    negative: bool,
+    start: usize,
+    end: usize,
+    slots: Vec<usize>,
+    small: Vec<Small<'a>>,
+    inactive: Vec<&'a LinearSumcheck<RingElement>>,
+    claims: Vec<&'a RingElement>,
+    shift: Option<u32>,
+    degrees: (usize, usize),
+}
+
+impl PairPlan<'_> {
+    fn sides(&self) -> (usize, usize) {
+        (points(self.degrees.0), points(self.degrees.1))
+    }
+
+    fn weighted(&self) -> bool {
+        !self.inactive.is_empty() || !self.claims.is_empty()
+    }
+}
+
+enum Small<'a> {
+    Table(&'a LinearSumcheck<RingElement>, (bool, bool)),
+    Selector(&'a SelectorEq<RingElement>, (bool, bool)),
+}
+
+struct QuadSlot<'a> {
+    table: &'a LinearSumcheck<RingElement>,
+    quads: usize,
+    width: usize,
+    sides: (usize, usize),
+    corners: Vec<RingElement>,
+    grid: [Vec<RingElement>; 16],
+    base: usize,
 }
 
 struct Plan<'a> {
@@ -78,15 +146,9 @@ fn points(degree: usize) -> usize {
     }
 }
 
-#[cfg(feature = "unsafe-sumcheck")]
-fn flatten(cell: &Cell) -> Option<Vec<Term<'_>>> {
+fn flatten(cell: &Cell) -> Option<Vec<FlatTerm<RingElement>>> {
     let mut terms = vec![];
-    cell.get_ref().flat_terms(&mut terms).map(|_| terms)
-}
-
-#[cfg(not(feature = "unsafe-sumcheck"))]
-fn flatten(_: &Cell) -> Option<Vec<Term<'_>>> {
-    None
+    flat_cell(cell, &mut terms).map(|_| terms)
 }
 
 impl FlatRounds {
@@ -94,11 +156,12 @@ impl FlatRounds {
         let mut any = false;
         let mut full = true;
         for terms in outputs.iter().filter_map(flatten) {
-            for term in &terms {
+            for term in hold_all(&terms) {
                 any = true;
                 full &= term
                     .tables
                     .iter()
+                    .map(table)
                     .any(|table| table.len() == 1 << total_vars && table.suffix() == 0);
             }
         }
@@ -109,7 +172,174 @@ impl FlatRounds {
                 0
             },
             previous: std::cell::RefCell::new(vec![]),
+            pending: std::cell::RefCell::new(vec![]),
         }
+    }
+
+    pub fn pair_polynomial(
+        &self,
+        outputs: &[Cell],
+        gammas: &[RingElement],
+        degrees: (usize, usize),
+    ) -> Option<Vec<Polynomial<RingElement>>> {
+        let flattened: Vec<Vec<FlatTerm<RingElement>>> = outputs.iter().map(flatten).collect::<Option<_>>()?;
+        let flattened: Vec<Vec<Term>> = flattened.iter().map(|terms| hold_all(terms)).collect();
+        let mut slots: Vec<QuadSlot> = vec![];
+        let mut plans: Vec<PairPlan> = vec![];
+        for (output, terms) in flattened.iter().enumerate() {
+            for term in terms {
+                let plan = pair_plan(output, term, &mut slots)?;
+                if plan.degrees.0 > degrees.0 || plan.degrees.1 > degrees.1 {
+                    return None;
+                }
+                plans.push(plan);
+            }
+        }
+        let mut accumulators: Vec<Accumulator> = plans
+            .iter()
+            .map(|plan| {
+                let (s1, s2) = plan.sides();
+                Accumulator {
+                    sums: vec![zero(); s1 * s2],
+                    run: vec![zero(); if plan.weighted() { s1 * s2 } else { 0 }],
+                    key: None,
+                    anchor: 0,
+                }
+            })
+            .collect();
+
+        let mut bounds: Vec<usize> = plans
+            .iter()
+            .filter(|plan| plan.start < plan.end)
+            .flat_map(|plan| [plan.start, plan.end])
+            .collect();
+        bounds.sort_unstable();
+        bounds.dedup();
+
+        let mut product = zero();
+        let mut scratch = if plans.iter().any(|plan| plan.slots.len() == 3) {
+            vec![zero(); CHUNK]
+        } else {
+            vec![]
+        };
+        let mut members: Vec<usize> = vec![];
+        for window in bounds.windows(2) {
+            let (from, to) = (window[0], window[1]);
+            members.clear();
+            members.extend((0..plans.len()).filter(|&m| plans[m].start <= from && to <= plans[m].end));
+            if members.is_empty() {
+                continue;
+            }
+            for slot in slots.iter_mut() {
+                slot.sides = (0, 0);
+            }
+            for &m in &members {
+                let (s1, s2) = plans[m].sides();
+                for &slot in &plans[m].slots {
+                    let sides = &mut slots[slot].sides;
+                    *sides = (sides.0.max(s1), sides.1.max(s2));
+                }
+            }
+            let width = slots
+                .iter()
+                .filter(|slot| slot.sides.0 > 0)
+                .map(|slot| slot.width)
+                .fold(CHUNK, usize::min);
+            let mut x = from;
+            while x < to {
+                let y = to.min((x / width + 1) * width);
+                for slot in slots.iter_mut().filter(|slot| slot.sides.0 > 0) {
+                    prepare_quads(slot, x, y);
+                }
+                for &m in &members {
+                    let plan = &plans[m];
+                    let accumulator = &mut accumulators[m];
+                    let mut u = x;
+                    while u < y {
+                        let v = match plan.shift {
+                            Some(shift) => y.min(((u >> shift) + 1) << shift),
+                            None => y,
+                        };
+                        let key = plan.shift.map_or(0, |shift| u >> shift);
+                        if accumulator.key != Some(key) {
+                            flush_pair(plan, accumulator, &mut product);
+                            accumulator.key = Some(key);
+                            accumulator.anchor = u;
+                        }
+                        let target = if plan.weighted() {
+                            &mut accumulator.run
+                        } else {
+                            &mut accumulator.sums
+                        };
+                        accumulate_pair(plan, &slots, u, u - x, v - u, target, &mut scratch, &mut product);
+                        u = v;
+                    }
+                }
+                x = y;
+            }
+        }
+        for (plan, accumulator) in plans.iter().zip(accumulators.iter_mut()) {
+            flush_pair(plan, accumulator, &mut product);
+        }
+
+        let (rows, columns) = (degrees.0 + 1, degrees.1 + 1);
+        let mut totals = vec![zero(); outputs.len() * rows * columns];
+        let mut pending = Vec::with_capacity(plans.len());
+        for (plan, accumulator) in plans.iter().zip(&accumulators) {
+            let (d1, d2) = plan.degrees;
+            let mut coefficients = vec![zero(); (d1 + 1) * (d2 + 1)];
+            if plan.start < plan.end {
+                interpolate_grid(plan.degrees, &accumulator.sums, &mut coefficients);
+                let total = &mut totals[plan.output * rows * columns..];
+                for i in 0..=d1 {
+                    for j in 0..=d2 {
+                        let c = &coefficients[i * (d2 + 1) + j];
+                        if plan.negative {
+                            total[i * columns + j] -= c;
+                        } else {
+                            total[i * columns + j] += c;
+                        }
+                    }
+                }
+            }
+            pending.push((d1, d2, coefficients));
+        }
+        *self.pending.borrow_mut() = pending;
+        let mut result: Vec<Polynomial<RingElement>> = (0..rows)
+            .map(|_| {
+                let mut row = Polynomial::<RingElement>::new(0);
+                row.num_coefficients = columns;
+                row
+            })
+            .collect();
+        for (output, gamma) in gammas.iter().enumerate().take(outputs.len()) {
+            for i in 0..rows {
+                for j in 0..columns {
+                    product *= (&totals[(output * rows + i) * columns + j], gamma);
+                    result[i].coefficients[j] += &product;
+                }
+            }
+        }
+        Some(result)
+    }
+
+    pub fn fix_first(&self, challenge: &RingElement) {
+        let pending = self.pending.take();
+        let mut previous = Vec::with_capacity(pending.len());
+        for (d1, d2, coefficients) in pending {
+            let mut poly = Polynomial::<RingElement>::new(0);
+            poly.num_coefficients = d2 + 1;
+            for j in 0..=d2 {
+                let c = &mut poly.coefficients[j];
+                c.set_from(&coefficients[d1 * (d2 + 1) + j]);
+                for i in (0..d1).rev() {
+                    *c *= challenge;
+                    *c += &coefficients[i * (d2 + 1) + j];
+                }
+            }
+            previous.push(poly);
+        }
+        *self.previous.borrow_mut() = previous;
     }
 
     pub fn rounds(&self) -> usize {
@@ -122,7 +352,11 @@ impl FlatRounds {
         gammas: &[RingElement],
         challenge: Option<&RingElement>,
     ) -> Polynomial<RingElement> {
-        let flattened: Vec<Option<Vec<Term>>> = outputs.iter().map(flatten).collect();
+        let flattened: Vec<Option<Vec<FlatTerm<RingElement>>>> = outputs.iter().map(flatten).collect();
+        let flattened: Vec<Option<Vec<Term>>> = flattened
+            .iter()
+            .map(|terms| terms.as_deref().map(hold_all))
+            .collect();
         let mut slots: Vec<Slot> = vec![];
         let mut plans: Vec<Plan> = vec![];
         for (output, terms) in flattened.iter().enumerate() {
@@ -286,7 +520,7 @@ impl FlatRounds {
     }
 }
 
-fn plan<'a>(output: usize, term: &Term<'a>, slots: &mut Vec<Slot<'a>>) -> Plan<'a> {
+fn plan<'a>(output: usize, term: &'a Term<'_>, slots: &mut Vec<Slot<'a>>) -> Plan<'a> {
     let mut start = 0;
     let mut end = usize::MAX;
     let mut half = 0;
@@ -296,7 +530,7 @@ fn plan<'a>(output: usize, term: &Term<'a>, slots: &mut Vec<Slot<'a>>) -> Plan<'
     let mut interleaved = 0;
     let mut claims = vec![];
     let mut rounds = vec![];
-    for &selector in &term.selectors {
+    for selector in term.selectors.iter().map(selector) {
         if let Some((from, to)) = selector.non_zero_range() {
             start = start.max(from);
             end = end.min(to);
@@ -307,7 +541,7 @@ fn plan<'a>(output: usize, term: &Term<'a>, slots: &mut Vec<Slot<'a>>) -> Plan<'
             None => {}
         }
     }
-    for &table in &term.tables {
+    for table in term.tables.iter().map(table) {
         interleaved += table.as_interleaved_data().is_some() as usize;
         if let Some((from, to)) = table.non_zero_range() {
             start = start.max(from);
@@ -547,6 +781,367 @@ fn interpolate(degree: usize, sums: &[RingElement], out: &mut Polynomial<RingEle
             v *= &RingElement::constant((MOD_Q + 1) / 2, Representation::IncompleteNTT);
             c[2].set_from(&v);
             c[1] -= (&u, &v);
+        }
+    }
+}
+
+fn pair_plan<'a>(output: usize, term: &'a Term<'_>, slots: &mut Vec<QuadSlot<'a>>) -> Option<PairPlan<'a>> {
+    let mut start = 0;
+    let mut end = usize::MAX;
+    let mut quarter = 0;
+    let mut active = vec![];
+    let mut small = vec![];
+    let mut inactive = vec![];
+    let mut claims = vec![];
+    let mut shift: Option<u32> = None;
+    let (mut d1, mut d2) = (0, 0);
+    for selector in term.selectors.iter().map(selector) {
+        let (bits, count, total) = selector.window();
+        if count == 0 || total - count >= 2 {
+            if count > 0 {
+                let free = total - count - 2;
+                start = start.max(bits << free);
+                end = end.min((bits + 1) << free);
+            }
+            if !selector.is_unit_constant() {
+                claims.push(selector.current_claim());
+            }
+        } else {
+            let free = total - count;
+            let quad = bits >> (2 - free);
+            start = start.max(quad);
+            end = end.min(quad + 1);
+            let dependence = (free == 0, true);
+            d1 += dependence.0 as usize;
+            d2 += dependence.1 as usize;
+            small.push(Small::Selector(selector, dependence));
+        }
+    }
+    for table in term.tables.iter().map(table) {
+        let (len, suffix) = (table.len(), table.suffix());
+        if len == 1 || suffix >= 2 {
+            if len > 1 {
+                let s = suffix as u32 - 2;
+                shift = Some(shift.map_or(s, |t| t.min(s)));
+            }
+            inactive.push(table);
+        } else if suffix == 1 || len == 2 {
+            let dependence = (suffix == 0, suffix == 1);
+            d1 += dependence.0 as usize;
+            d2 += dependence.1 as usize;
+            small.push(Small::Table(table, dependence));
+        } else {
+            if let Some((_, to)) = table.non_zero_range() {
+                end = end.min(to.div_ceil(2));
+            }
+            quarter = quarter.max(len / 4);
+            let slot = match slots.iter().position(|s| std::ptr::eq(s.table, table)) {
+                Some(slot) => slot,
+                None => {
+                    let width = CHUNK.min(len / 4);
+                    slots.push(QuadSlot {
+                        table,
+                        quads: len / 4,
+                        width,
+                        sides: (0, 0),
+                        corners: if table.values().is_none() {
+                            vec![zero(); 4 * width]
+                        } else {
+                            vec![]
+                        },
+                        grid: std::array::from_fn(|_| vec![]),
+                        base: 0,
+                    });
+                    slots.len() - 1
+                }
+            };
+            d1 += 1;
+            d2 += 1;
+            active.push(slot);
+        }
+    }
+    if active.is_empty() || active.len() > 3 || d1 > 3 || d2 > 3 {
+        return None;
+    }
+    Some(PairPlan {
+        output,
+        negative: term.negative,
+        start,
+        end: end.min(quarter),
+        slots: active,
+        small,
+        inactive,
+        claims,
+        shift,
+        degrees: (d1, d2),
+    })
+}
+
+fn prepare_quads(slot: &mut QuadSlot, from: usize, to: usize) {
+    let base = from & (slot.quads - 1);
+    slot.base = base;
+    let count = to - from;
+    let QuadSlot {
+        table,
+        corners,
+        grid,
+        sides,
+        width,
+        ..
+    } = slot;
+    if !corners.is_empty() {
+        for k in 0..count {
+            let quad = &mut corners[4 * k..4 * k + 4];
+            let (low, high) = quad.split_at_mut(2);
+            let (c0, c1) = low.split_at_mut(1);
+            table.pair_into(2 * (base + k), &mut c0[0], &mut c1[0]);
+            let (c2, c3) = high.split_at_mut(1);
+            table.pair_into(2 * (base + k) + 1, &mut c2[0], &mut c3[0]);
+        }
+    }
+    let values: &[RingElement] = if corners.is_empty() {
+        &table.values().unwrap()[4 * base..]
+    } else {
+        corners
+    };
+    let (s1, s2) = *sides;
+    let needed = |p1: usize, p2: usize| p1 < s1 && p2 < s2;
+    let [_, _, g2, g3, _, _, g6, g7, g8, g9, g10, g11, g12, g13, g14, g15] = grid;
+    for (g, used) in [
+        (&mut *g2, needed(0, 2) || needed(0, 3)),
+        (&mut *g3, needed(0, 3)),
+        (&mut *g6, needed(1, 2) || needed(1, 3) || needed(3, 2)),
+        (&mut *g7, needed(1, 3)),
+        (&mut *g8, needed(2, 0) || needed(3, 0)),
+        (&mut *g9, needed(2, 1) || needed(3, 1) || needed(2, 3)),
+        (&mut *g10, needed(2, 2)),
+        (&mut *g11, needed(2, 3)),
+        (&mut *g12, needed(3, 0)),
+        (&mut *g13, needed(3, 1)),
+        (&mut *g14, needed(3, 2)),
+        (&mut *g15, needed(3, 3)),
+    ] {
+        if used && g.is_empty() {
+            *g = vec![zero(); *width];
+        }
+    }
+    for k in 0..count {
+        let c = &values[4 * k..4 * k + 4];
+        if s1 > 2 {
+            g8[k] -= (&c[1], &c[0]);
+            g9[k] -= (&c[3], &c[2]);
+        }
+        if s2 > 2 {
+            g2[k] -= (&c[2], &c[0]);
+            g6[k] -= (&c[3], &c[1]);
+        }
+        if s1 > 2 && s2 > 2 {
+            g10[k] -= (&g9[k], &g8[k]);
+        }
+        if s1 > 3 {
+            g12[k] += (&c[1], &g8[k]);
+            g13[k] += (&c[3], &g9[k]);
+        }
+        if s2 > 3 {
+            g3[k] += (&c[2], &g2[k]);
+            g7[k] += (&c[3], &g6[k]);
+        }
+        if s1 > 3 && s2 > 2 {
+            g14[k] += (&g6[k], &g10[k]);
+        }
+        if s1 > 2 && s2 > 3 {
+            g11[k] += (&g9[k], &g10[k]);
+        }
+        if s1 > 3 && s2 > 3 {
+            g15[k] += (&g13[k], &g14[k]);
+        }
+    }
+}
+
+fn quad_operand<'b>(slot: &'b QuadSlot, p1: usize, p2: usize, offset: usize) -> (&'b [RingElement], usize) {
+    if p1 < 2 && p2 < 2 {
+        let values: &[RingElement] = if slot.corners.is_empty() {
+            &slot.table.values().unwrap()[4 * slot.base..]
+        } else {
+            &slot.corners
+        };
+        (&values[4 * offset + 2 * p2 + p1..], 4)
+    } else {
+        (&slot.grid[4 * p1 + p2][offset..], 1)
+    }
+}
+
+fn along(low: &RingElement, high: &RingElement, point: usize, dependent: bool, out: &mut RingElement) {
+    match point {
+        0 => out.set_from(low),
+        1 => out.set_from(high),
+        2 if dependent => *out -= (high, low),
+        2 => out.set_from(low),
+        _ => {
+            *out -= (high, low);
+            *out += high;
+        }
+    }
+}
+
+fn small_corners(small: &Small, quad: usize, corners: &mut [RingElement; 4]) -> (bool, bool) {
+    match small {
+        Small::Table(table, dependence) => {
+            let [c0, c1, c2, c3] = corners;
+            if dependence.0 {
+                table.pair_into(0, c0, c1);
+                c2.set_from(c0);
+                c3.set_from(c1);
+            } else {
+                table.pair_into(quad, c0, c2);
+                c1.set_from(c0);
+                c3.set_from(c2);
+            }
+            *dependence
+        }
+        Small::Selector(selector, dependence) => {
+            let (bits, count, total) = selector.window();
+            let free = total - count;
+            let low = bits & ((1 << (2 - free)) - 1);
+            for (j, corner) in corners.iter_mut().enumerate() {
+                if j >> free == low {
+                    corner.set_from(selector.current_claim());
+                } else {
+                    corner.set_zero();
+                }
+            }
+            *dependence
+        }
+    }
+}
+
+fn accumulate_pair(
+    plan: &PairPlan,
+    slots: &[QuadSlot],
+    first: usize,
+    offset: usize,
+    count: usize,
+    target: &mut [RingElement],
+    scratch: &mut [RingElement],
+    product: &mut RingElement,
+) {
+    let (s1, s2) = plan.sides();
+    if plan.small.is_empty() {
+        for p1 in 0..s1 {
+            for p2 in 0..s2 {
+                let sum = &mut target[p1 * s2 + p2];
+                match plan.slots[..] {
+                    [a] => {
+                        let (values, step) = quad_operand(&slots[a], p1, p2, offset);
+                        for i in 0..count {
+                            *sum += &values[i * step];
+                        }
+                    }
+                    [a, b] => {
+                        let (left, left_step) = quad_operand(&slots[a], p1, p2, offset);
+                        let (right, right_step) = quad_operand(&slots[b], p1, p2, offset);
+                        if count == 1 {
+                            *product *= (&left[0], &right[0]);
+                            *sum += &*product;
+                        } else {
+                            incomplete_ntt_dot_into(sum, left, left_step, right, right_step, count);
+                        }
+                    }
+                    [a, b, c] => {
+                        let (left, left_step) = quad_operand(&slots[a], p1, p2, offset);
+                        let (middle, middle_step) = quad_operand(&slots[b], p1, p2, offset);
+                        let (right, right_step) = quad_operand(&slots[c], p1, p2, offset);
+                        for i in 0..count {
+                            scratch[i] *= (&left[i * left_step], &middle[i * middle_step]);
+                        }
+                        incomplete_ntt_dot_into(sum, scratch, 1, right, right_step, count);
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+        return;
+    }
+    let mut corners: [RingElement; 4] = std::array::from_fn(|_| zero());
+    let (mut low, mut high) = (zero(), zero());
+    let mut grids: Vec<Vec<RingElement>> = vec![vec![zero(); s1 * s2]; plan.small.len()];
+    for i in 0..count {
+        for (small, grid) in plan.small.iter().zip(grids.iter_mut()) {
+            let dependence = small_corners(small, first + i, &mut corners);
+            for p1 in 0..s1 {
+                along(&corners[0], &corners[1], p1, dependence.0, &mut low);
+                along(&corners[2], &corners[3], p1, dependence.0, &mut high);
+                for p2 in 0..s2 {
+                    along(&low, &high, p2, dependence.1, &mut grid[p1 * s2 + p2]);
+                }
+            }
+        }
+        for p1 in 0..s1 {
+            for p2 in 0..s2 {
+                let mut started = false;
+                for &slot in &plan.slots {
+                    let (values, step) = quad_operand(&slots[slot], p1, p2, offset);
+                    if started {
+                        *product *= &values[i * step];
+                    } else {
+                        product.set_from(&values[i * step]);
+                        started = true;
+                    }
+                }
+                for grid in &grids {
+                    *product *= &grid[p1 * s2 + p2];
+                }
+                target[p1 * s2 + p2] += &*product;
+            }
+        }
+    }
+}
+
+fn flush_pair(plan: &PairPlan, accumulator: &mut Accumulator, product: &mut RingElement) {
+    if !plan.weighted() || accumulator.key.is_none() {
+        return;
+    }
+    let point = HypercubePoint::new(2 * accumulator.anchor);
+    let mut weight: Option<RingElement> = None;
+    for value in plan
+        .inactive
+        .iter()
+        .map(|table| &table[point])
+        .chain(plan.claims.iter().copied())
+    {
+        match &mut weight {
+            Some(weight) => *weight *= value,
+            None => weight = Some(value.clone()),
+        }
+    }
+    let weight = weight.unwrap();
+    for (sum, run) in accumulator.sums.iter_mut().zip(accumulator.run.iter_mut()) {
+        *product *= (&*run, &weight);
+        *sum += &*product;
+        run.set_zero();
+    }
+    accumulator.key = None;
+}
+
+fn interpolate_grid(degrees: (usize, usize), values: &[RingElement], out: &mut [RingElement]) {
+    let (d1, d2) = degrees;
+    let (s1, s2) = (points(d1), points(d2));
+    let mut rows = vec![zero(); s1 * (d2 + 1)];
+    let mut line = Polynomial::<RingElement>::new(0);
+    for p1 in 0..s1 {
+        interpolate(d2, &values[p1 * s2..p1 * s2 + s2], &mut line);
+        for j in 0..=d2 {
+            rows[p1 * (d2 + 1) + j].set_from(&line.coefficients[j]);
+        }
+    }
+    let mut column = vec![zero(); s1];
+    for j in 0..=d2 {
+        for p1 in 0..s1 {
+            column[p1].set_from(&rows[p1 * (d2 + 1) + j]);
+        }
+        interpolate(d1, &column, &mut line);
+        for i in 0..=d1 {
+            out[i * (d2 + 1) + j].set_from(&line.coefficients[i]);
         }
     }
 }

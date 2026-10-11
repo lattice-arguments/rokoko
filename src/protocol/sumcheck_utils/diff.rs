@@ -1,5 +1,4 @@
-#[cfg(feature = "unsafe-sumcheck")]
-use crate::protocol::sumcheck_utils::common::FlatTerm;
+use crate::protocol::sumcheck_utils::common::{flat_cell, FlatTerm};
 use std::{cell::RefCell, cmp::max};
 
 use crate::{
@@ -60,12 +59,11 @@ impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
         &self.scratch_poly
     }
 
-    #[cfg(feature = "unsafe-sumcheck")]
-    fn flat_terms<'a>(&'a self, out: &mut Vec<FlatTerm<'a, E>>) -> Option<usize> {
+    fn flat_terms(&self, out: &mut Vec<FlatTerm<E>>) -> Option<usize> {
         let start = out.len();
-        let left = self.lhs_sumcheck.get_ref().flat_terms(out)?;
+        let left = flat_cell(&self.lhs_sumcheck, out)?;
         let middle = out.len();
-        let right = self.rhs_sumcheck.get_ref().flat_terms(out)?;
+        let right = flat_cell(&self.rhs_sumcheck, out)?;
         for term in &mut out[middle..] {
             term.negative = !term.negative;
         }

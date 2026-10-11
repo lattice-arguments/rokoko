@@ -1029,6 +1029,7 @@ fn representation(tag: u64) -> Result<Representation, WireError> {
 
 pub fn initial_to_bytes(proof: &ClaimsProof) -> Vec<u8> {
     let mut encoder = Encoder::new();
+    encoder.polys(&proof.pair);
     encoder.polys(&proof.polys);
     encoder.ring(Role::WitnessEval, &proof.witness_eval);
     encoder.option_ring(Role::WitnessEval, &proof.conj_witness_eval);
@@ -1038,6 +1039,7 @@ pub fn initial_to_bytes(proof: &ClaimsProof) -> Vec<u8> {
 pub fn initial_from_bytes(bytes: &[u8]) -> Result<ClaimsProof, WireError> {
     let mut decoder = Decoder::new(bytes)?;
     Ok(ClaimsProof {
+        pair: decoder.polys()?,
         polys: decoder.polys()?,
         witness_eval: decoder.ring(Role::WitnessEval)?,
         conj_witness_eval: decoder.option_ring(Role::WitnessEval)?,

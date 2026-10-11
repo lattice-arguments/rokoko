@@ -2,18 +2,42 @@ use std::cell::RefCell;
 
 use crate::common::sumcheck_element::SumcheckElement;
 use crate::protocol::sumcheck_utils::{
+    elephant_cell::ElephantCell,
     hypercube_point::HypercubePoint,
     linear::LinearSumcheck,
     polynomial::{add_poly_in_place, Polynomial},
     selector_eq::SelectorEq,
 };
 
-pub struct FlatTerm<'a, E: SumcheckElement> {
+pub type FlatCell<E> = ElephantCell<dyn HighOrderSumcheckData<Element = E>>;
+
+pub struct FlatTerm<E: SumcheckElement> {
     pub negative: bool,
     pub leaf: bool,
     pub pair: bool,
-    pub tables: Vec<&'a LinearSumcheck<E>>,
-    pub selectors: Vec<&'a SelectorEq<E>>,
+    pub tables: Vec<FlatCell<E>>,
+    pub selectors: Vec<FlatCell<E>>,
+}
+
+pub fn flat_cell<E: SumcheckElement>(cell: &FlatCell<E>, out: &mut Vec<FlatTerm<E>>) -> Option<usize> {
+    let node = cell.get_ref();
+    let linear = node.as_linear().is_some();
+    if linear || node.as_selector().is_some() {
+        let (tables, selectors) = if linear {
+            (vec![cell.clone()], vec![])
+        } else {
+            (vec![], vec![cell.clone()])
+        };
+        out.push(FlatTerm {
+            negative: false,
+            leaf: linear,
+            pair: false,
+            tables,
+            selectors,
+        });
+        return Some(1);
+    }
+    node.flat_terms(out)
 }
 
 /// Marker trait for data that can be consumed by the sumcheck protocol.
@@ -99,7 +123,15 @@ pub trait HighOrderSumcheckData {
         false
     }
 
-    fn flat_terms<'a>(&'a self, _: &mut Vec<FlatTerm<'a, Self::Element>>) -> Option<usize> {
+    fn flat_terms(&self, _: &mut Vec<FlatTerm<Self::Element>>) -> Option<usize> {
+        None
+    }
+
+    fn as_linear(&self) -> Option<&LinearSumcheck<Self::Element>> {
+        None
+    }
+
+    fn as_selector(&self) -> Option<&SelectorEq<Self::Element>> {
         None
     }
 

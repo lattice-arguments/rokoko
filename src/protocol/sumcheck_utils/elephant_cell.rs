@@ -13,6 +13,12 @@ use std::rc::Rc;
 #[cfg(not(feature = "unsafe-sumcheck"))]
 use std::cell::{Ref, RefCell, RefMut};
 
+#[cfg(not(feature = "unsafe-sumcheck"))]
+pub type CellRef<'a, T> = Ref<'a, T>;
+
+#[cfg(feature = "unsafe-sumcheck")]
+pub type CellRef<'a, T> = &'a T;
+
 #[cfg(feature = "unsafe-sumcheck")]
 use std::cell::UnsafeCell;
 

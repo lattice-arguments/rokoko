@@ -8,7 +8,7 @@ use crate::{
         sumcheck_element::SumcheckElement,
     },
     protocol::sumcheck_utils::{
-        common::{EvaluationSumcheckData, FlatTerm, HighOrderSumcheckData, SumcheckBaseData},
+        common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
         polynomial::Polynomial,
@@ -183,6 +183,89 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
         true
     }
 
+    pub fn partial_evaluate_two_with_mapped(&mut self, mapped: &mut Self, first: &E, second: &E) -> bool {
+        let (Some(own), Some(other)) = (&self.borrowed, &mapped.borrowed) else {
+            return false;
+        };
+        let Some(map) = other.map else {
+            return false;
+        };
+        let shared = own.map.is_none()
+            && std::ptr::eq(own.data, other.data)
+            && self.non_zero_end == mapped.non_zero_end
+            && self.suffix == 0
+            && mapped.suffix == 0;
+        if !shared || own.data.len() < 4 {
+            return false;
+        }
+        let quarter = own.data.len() / 4;
+        let fold_end = self.non_zero_end.div_ceil(4).min(quarter);
+        let (mut first_folded, mut second_folded) = (Vec::with_capacity(quarter), Vec::with_capacity(quarter));
+        let mut conjugates: [E; 4] = std::array::from_fn(|_| E::zero());
+        let mut high = E::zero();
+        for quad in own.data.chunks_exact(4).take(fold_end) {
+            first_folded.push(E::zero());
+            fold_quad([&quad[0], &quad[1], &quad[2], &quad[3]], first, second, first_folded.last_mut().unwrap(), &mut high);
+            for (out, x) in conjugates.iter_mut().zip(quad) {
+                map(x, out);
+            }
+            second_folded.push(E::zero());
+            let [c0, c1, c2, c3] = &conjugates;
+            fold_quad([c0, c1, c2, c3], first, second, second_folded.last_mut().unwrap(), &mut high);
+        }
+        self.install_fold(first_folded, quarter, fold_end);
+        mapped.install_fold(second_folded, quarter, fold_end);
+        self.variable_count -= 1;
+        mapped.variable_count -= 1;
+        true
+    }
+
+    pub fn partial_evaluate_two(&mut self, first: &E, second: &E) {
+        if self.suffix > 0 || self.len() < 4 {
+            self.partial_evaluate(first);
+            self.partial_evaluate(second);
+            return;
+        }
+        let quarter = self.len() / 4;
+        let fold_end = self.non_zero_end.div_ceil(4).min(quarter);
+        let (mut out, mut high) = (E::zero(), E::zero());
+        match self.borrowed.take() {
+            Some(borrowed) => {
+                let mut folded = Vec::with_capacity(quarter);
+                let mut entries: [E; 4] = std::array::from_fn(|_| E::zero());
+                for quad in borrowed.data.chunks_exact(4).take(fold_end) {
+                    folded.push(E::zero());
+                    let target = folded.last_mut().unwrap();
+                    match borrowed.map {
+                        None => fold_quad([&quad[0], &quad[1], &quad[2], &quad[3]], first, second, target, &mut high),
+                        Some(map) => {
+                            for (entry, x) in entries.iter_mut().zip(quad) {
+                                map(x, entry);
+                            }
+                            let [e0, e1, e2, e3] = &entries;
+                            fold_quad([e0, e1, e2, e3], first, second, target, &mut high);
+                        }
+                    }
+                }
+                self.install_fold(folded, quarter, fold_end);
+                self.variable_count -= 1;
+            }
+            None => {
+                for q in 0..fold_end {
+                    let quad = &self.data[4 * q..4 * q + 4];
+                    fold_quad([&quad[0], &quad[1], &quad[2], &quad[3]], first, second, &mut out, &mut high);
+                    self.data[q].set_from(&out);
+                }
+                for q in fold_end..quarter {
+                    self.data[q].set_zero();
+                }
+                self.data.truncate(quarter);
+                self.non_zero_end = fold_end;
+                self.variable_count -= 2;
+            }
+        }
+    }
+
     fn install_fold(&mut self, mut folded: Vec<E>, half: usize, fold_end: usize) {
         folded.resize(half, E::zero());
         self.borrowed = None;
@@ -257,6 +340,18 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
         let len = src.len();
         self.data[index..index + len].clone_from_slice(src);
     }
+}
+
+fn fold_quad<E: SumcheckElement>(quad: [&E; 4], first: &E, second: &E, out: &mut E, high: &mut E) {
+    *out -= (quad[1], quad[0]);
+    *out *= first;
+    *out += quad[0];
+    *high -= (quad[3], quad[2]);
+    *high *= first;
+    *high += quad[2];
+    *high -= &*out;
+    *high *= second;
+    *out += &*high;
 }
 
 impl<E: SumcheckElement> Index<HypercubePoint> for LinearSumcheck<E> {
@@ -372,15 +467,8 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
         polynomial.num_coefficients = 2;
     }
 
-    fn flat_terms<'a>(&'a self, out: &mut Vec<FlatTerm<'a, E>>) -> Option<usize> {
-        out.push(FlatTerm {
-            negative: false,
-            leaf: true,
-            pair: false,
-            tables: vec![self],
-            selectors: vec![],
-        });
-        Some(1)
+    fn as_linear(&self) -> Option<&LinearSumcheck<E>> {
+        Some(self)
     }
 
     fn linear_pair_at_point(&self, point: HypercubePoint) -> Option<(&E, &E)> {
@@ -859,6 +947,62 @@ mod tests {
         let (mut a, mut b) = (table(None, n, 0, 0), table(None, n, 0, 0));
         assert!(!a.partial_evaluate_with_mapped(&mut b, &challenges[0]));
         assert!(a.borrowed.is_some() && b.borrowed.is_some());
+    }
+
+    #[test]
+    fn test_two_variable_folds_match_single_folds() {
+        crate::common::init_common();
+        let n = 2048;
+        let data = crate::common::sampling::sample_random_short_vector(n, 60, Representation::IncompleteNTT);
+        let challenges =
+            crate::common::sampling::sample_random_short_vector(16, 1 << 20, Representation::IncompleteNTT);
+        let map: fn(&RingElement, &mut RingElement) = conjugate;
+        for (end, prefix, suffix) in [(n, 0, 0), (n / 2 + 3, 0, 0), (777, 2, 0), (n, 0, 1), (n / 3, 1, 2), (5, 0, 0)] {
+            let mut kept = data.clone();
+            for x in &mut kept[end..] {
+                x.set_zero();
+            }
+            let borrowed = |map: Option<fn(&RingElement, &mut RingElement)>, end: usize, prefix: usize, suffix: usize| {
+                let mut table = unsafe { LinearSumcheck::from_borrowed(&kept, end, map) };
+                table.variable_count += prefix + suffix;
+                table.suffix = suffix;
+                table
+            };
+            let owned = |end: usize, prefix: usize, suffix: usize| {
+                let mut table = LinearSumcheck::from_data_with_prefixed_sufixed_data(kept.clone(), prefix, suffix);
+                table.non_zero_end = end;
+                table
+            };
+            let kinds = [
+                (borrowed(None, end, prefix, suffix), borrowed(None, end, prefix, suffix)),
+                (borrowed(Some(map), end, prefix, suffix), borrowed(Some(map), end, prefix, suffix)),
+                (owned(end, prefix, suffix), owned(end, prefix, suffix)),
+            ];
+            for (mut paired, mut single) in kinds {
+                let mut round = 0;
+                while paired.variable_count >= 2 {
+                    paired.partial_evaluate_two(&challenges[round], &challenges[round + 1]);
+                    single.partial_evaluate(&challenges[round]);
+                    single.partial_evaluate(&challenges[round + 1]);
+                    assert_eq!(snapshot(&paired), snapshot(&single));
+                    round += 2;
+                }
+            }
+            let (mut a, mut b) = (borrowed(None, end, prefix, suffix), borrowed(Some(map), end, prefix, suffix));
+            let (mut c, mut d) = (borrowed(None, end, prefix, suffix), borrowed(Some(map), end, prefix, suffix));
+            let eligible = suffix == 0;
+            assert_eq!(a.partial_evaluate_two_with_mapped(&mut b, &challenges[0], &challenges[1]), eligible);
+            if !eligible {
+                a.partial_evaluate_two(&challenges[0], &challenges[1]);
+                b.partial_evaluate_two(&challenges[0], &challenges[1]);
+            }
+            for r in &challenges[..2] {
+                c.partial_evaluate(r);
+                d.partial_evaluate(r);
+            }
+            assert_eq!(snapshot(&a), snapshot(&c));
+            assert_eq!(snapshot(&b), snapshot(&d));
+        }
     }
 
     #[test]

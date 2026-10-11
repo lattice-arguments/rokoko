@@ -1,5 +1,4 @@
-#[cfg(feature = "unsafe-sumcheck")]
-use crate::protocol::sumcheck_utils::common::FlatTerm;
+use crate::protocol::sumcheck_utils::common::{flat_cell, FlatTerm};
 use crate::{
     common::{
         ring_arithmetic::{Representation, RingElement},
@@ -64,11 +63,9 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SumSumcheck<E> {
         &self.scratch_poly
     }
 
-    #[cfg(feature = "unsafe-sumcheck")]
-    fn flat_terms<'a>(&'a self, out: &mut Vec<FlatTerm<'a, E>>) -> Option<usize> {
+    fn flat_terms(&self, out: &mut Vec<FlatTerm<E>>) -> Option<usize> {
         let start = out.len();
-        let leaves = self.lhs_sumcheck.get_ref().flat_terms(out)?
-            + self.rhs_sumcheck.get_ref().flat_terms(out)?;
+        let leaves = flat_cell(&self.lhs_sumcheck, out)? + flat_cell(&self.rhs_sumcheck, out)?;
         for term in &mut out[start..] {
             term.leaf = false;
         }

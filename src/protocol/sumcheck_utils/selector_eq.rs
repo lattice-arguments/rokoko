@@ -6,7 +6,7 @@ use crate::{
         sumcheck_element::SumcheckElement,
     },
     protocol::sumcheck_utils::{
-        common::{EvaluationSumcheckData, FlatTerm, HighOrderSumcheckData, SumcheckBaseData},
+        common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
         hypercube_point::HypercubePoint,
         polynomial::Polynomial,
     },
@@ -68,6 +68,10 @@ impl<E: SumcheckElement> SelectorEq<E> {
     pub(crate) fn current_claim(&self) -> &E {
         &self.current_claim
     }
+
+    pub(crate) fn window(&self) -> (usize, usize, usize) {
+        (self.selector, self.selector_variable_count, self.total_variable_count)
+    }
 }
 
 impl<E: SumcheckElement> HighOrderSumcheckData for SelectorEq<E> {
@@ -113,15 +117,8 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SelectorEq<E> {
         None
     }
 
-    fn flat_terms<'a>(&'a self, out: &mut Vec<FlatTerm<'a, E>>) -> Option<usize> {
-        out.push(FlatTerm {
-            negative: false,
-            leaf: false,
-            pair: false,
-            tables: vec![],
-            selectors: vec![self],
-        });
-        Some(1)
+    fn as_selector(&self) -> Option<&SelectorEq<E>> {
+        Some(self)
     }
 
     fn is_unit_constant(&self) -> bool {
