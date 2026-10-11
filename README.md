@@ -256,6 +256,7 @@ ROKOKO_RING = { value = "rings/mine.toml", relative = true }
 * `unsafe-sumcheck`: enables zero-cost borrow checking by using `UnsafeCell` instead of `RefCell` in sumcheck subprotocols
 * `debug-hardness`: verifies the hardness of underlying SIS instances (requires [Lattice Estimator](https://github.com/malb/lattice-estimator) cloned as a submodule and [SageMath](https://www.sagemath.org/) installed)
 * `debug-decomp`: additional checks for decomposition and overflows in type 0 projections
+* `crt-commitment`: computes the root commitment over a CRT basis of 16-bit NTT primes with VNNI instead of over q with the IFMA slot kernels; off by default, since on the Tiger Lake reference machine the ring kernels commit at least as fast
 
 ## License
 

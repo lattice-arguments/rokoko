@@ -11,14 +11,10 @@ use crate::protocol::commitment::{
     commit_basic_parallel as commit_basic, recursive_commit_parallel as recursive_commit,
 };
 
-#[cfg(feature = "crt-commitment")]
 use crate::protocol::project_coarse::Signed16RingElement;
 
 /// The digits the CRT basis wants, when the caller already has them from the decomposition.
-#[cfg(feature = "crt-commitment")]
 pub type Digits<'a> = Option<&'a VerticallyAlignedMatrix<Signed16RingElement>>;
-#[cfg(not(feature = "crt-commitment"))]
-pub type Digits<'a> = Option<&'a ()>;
 
 pub fn commit(
     crs: &CRS,
