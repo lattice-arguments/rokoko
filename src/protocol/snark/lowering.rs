@@ -1292,8 +1292,22 @@ fn prove_claims_with(
         field_to_ring_element_into(&mut r, &f);
         r.from_homogenized_field_extensions_to_incomplete_ntt();
 
+        let joint = match (
+            asm.witness_pool.first_cell(&FULL_WITNESS_KEY),
+            asm.conj_pool.first_cell(&FULL_WITNESS_KEY),
+        ) {
+            (Some(witness), Some(conjugate)) => witness
+                .borrow_mut()
+                .partial_evaluate_with_mapped(&mut conjugate.borrow_mut(), &r)
+                .then(|| [witness.clone(), conjugate.clone()]),
+            _ => None,
+        };
         for leaf in &asm.leaves {
-            leaf.partial_evaluate(&r);
+            match (leaf, &joint) {
+                (LeafCell::Linear(cell), Some(folded))
+                    if folded.iter().any(|f| std::ptr::eq(&*f.get_ref(), &*cell.get_ref())) => {}
+                _ => leaf.partial_evaluate(&r),
+            }
         }
         evaluation_points.push(r);
         polys.push(poly_over_field);

@@ -145,6 +145,48 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
         }
     }
 
+    pub fn partial_evaluate_with_mapped(&mut self, mapped: &mut Self, value: &E) -> bool {
+        let (Some(own), Some(other)) = (&self.borrowed, &mapped.borrowed) else {
+            return false;
+        };
+        let Some(map) = other.map else {
+            return false;
+        };
+        let shared = own.map.is_none()
+            && std::ptr::eq(own.data, other.data)
+            && self.non_zero_end == mapped.non_zero_end;
+        if !shared || own.data.len() < 2 {
+            return false;
+        }
+        let half = own.data.len() / 2;
+        let fold_end = ((self.non_zero_end + 1) / 2).min(half);
+        let (mut first, mut second) = (Vec::with_capacity(half), Vec::with_capacity(half));
+        let (mut even, mut odd) = (E::zero(), E::zero());
+        for pair in own.data.chunks_exact(2).take(fold_end) {
+            first.push(E::zero());
+            let out = first.last_mut().unwrap();
+            *out -= (&pair[1], &pair[0]);
+            *out *= value;
+            *out += &pair[0];
+            map(&pair[0], &mut even);
+            map(&pair[1], &mut odd);
+            second.push(E::zero());
+            let out = second.last_mut().unwrap();
+            *out -= (&odd, &even);
+            *out *= value;
+            *out += &even;
+        }
+        first.resize(half, E::zero());
+        second.resize(half, E::zero());
+        for (table, folded) in [(&mut *self, first), (&mut *mapped, second)] {
+            table.borrowed = None;
+            table.data = folded;
+            table.non_zero_end = fold_end;
+            table.variable_count -= 1;
+        }
+        true
+    }
+
     pub(crate) fn is_folding(&self) -> bool {
         self.suffix == 0 && self.len() > 1
     }
