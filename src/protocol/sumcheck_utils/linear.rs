@@ -8,7 +8,7 @@ use crate::{
         sumcheck_element::SumcheckElement,
     },
     protocol::sumcheck_utils::{
-        common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
+        common::{EvaluationSumcheckData, FlatTerm, HighOrderSumcheckData, SumcheckBaseData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
         polynomial::Polynomial,
@@ -130,19 +130,79 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
         }
     }
 
-    fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match &self.borrowed {
             Some(borrowed) => borrowed.data.len(),
             None => self.data.len(),
         }
     }
 
-    fn values(&self) -> Option<&[E]> {
+    pub(crate) fn values(&self) -> Option<&[E]> {
         match &self.borrowed {
             None => Some(self.data.as_slice()),
             Some(Borrowed { data, map: None }) => Some(data),
             Some(_) => None,
         }
+    }
+
+    pub fn partial_evaluate_with_mapped(&mut self, mapped: &mut Self, value: &E) -> bool {
+        let (Some(own), Some(other)) = (&self.borrowed, &mapped.borrowed) else {
+            return false;
+        };
+        let Some(map) = other.map else {
+            return false;
+        };
+        let shared = own.map.is_none()
+            && std::ptr::eq(own.data, other.data)
+            && self.non_zero_end == mapped.non_zero_end
+            && self.suffix == 0
+            && mapped.suffix == 0;
+        if !shared || own.data.len() < 2 {
+            return false;
+        }
+        let half = own.data.len() / 2;
+        let fold_end = ((self.non_zero_end + 1) / 2).min(half);
+        let (mut first, mut second) = (Vec::with_capacity(half), Vec::with_capacity(half));
+        let (mut even, mut odd) = (E::zero(), E::zero());
+        for pair in own.data.chunks_exact(2).take(fold_end) {
+            first.push(E::zero());
+            let out = first.last_mut().unwrap();
+            *out -= (&pair[1], &pair[0]);
+            *out *= value;
+            *out += &pair[0];
+            map(&pair[0], &mut even);
+            map(&pair[1], &mut odd);
+            second.push(E::zero());
+            let out = second.last_mut().unwrap();
+            *out -= (&odd, &even);
+            *out *= value;
+            *out += &even;
+        }
+        self.install_fold(first, half, fold_end);
+        mapped.install_fold(second, half, fold_end);
+        true
+    }
+
+    fn install_fold(&mut self, mut folded: Vec<E>, half: usize, fold_end: usize) {
+        folded.resize(half, E::zero());
+        self.borrowed = None;
+        self.data = folded;
+        self.non_zero_end = fold_end;
+        self.variable_count -= 1;
+    }
+
+    pub(crate) fn is_folding(&self) -> bool {
+        self.suffix == 0 && self.len() > 1
+    }
+
+    pub(crate) fn suffix(&self) -> usize {
+        self.suffix
+    }
+
+    pub(crate) fn pair_into(&self, point: usize, even: &mut E, odd: &mut E) {
+        let p = point & (self.len() / 2 - 1);
+        self.load(2 * p, even);
+        self.load(2 * p + 1, odd);
     }
 
     fn load(&self, index: usize, out: &mut E) {
@@ -312,6 +372,17 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
         polynomial.num_coefficients = 2;
     }
 
+    fn flat_terms<'a>(&'a self, out: &mut Vec<FlatTerm<'a, E>>) -> Option<usize> {
+        out.push(FlatTerm {
+            negative: false,
+            leaf: true,
+            pair: false,
+            tables: vec![self],
+            selectors: vec![],
+        });
+        Some(1)
+    }
+
     fn linear_pair_at_point(&self, point: HypercubePoint) -> Option<(&E, &E)> {
         if self.suffix > 0 || self.len() <= 1 {
             return None;
@@ -471,8 +542,7 @@ impl<E: SumcheckElement> SumcheckBaseData for LinearSumcheck<E> {
                     }
                 }
             }
-            folded.resize(half, E::zero());
-            self.data = folded;
+            self.install_fold(folded, half, fold_end);
         } else {
             if fold_end > 0 {
                 let (left, right) = self.data.split_at_mut(1);
@@ -492,9 +562,9 @@ impl<E: SumcheckElement> SumcheckBaseData for LinearSumcheck<E> {
             }
 
             self.data.truncate(half);
+            self.non_zero_end = fold_end;
+            self.variable_count -= 1;
         }
-        self.non_zero_end = fold_end;
-        self.variable_count -= 1;
     }
 
     fn final_evaluations(&self) -> &E {
@@ -731,6 +801,64 @@ mod tests {
         fn send<T: Send>() {}
         send::<LinearSumcheck<RingElement>>();
         send::<LinearSumcheck<FieldExtension>>();
+    }
+
+    fn conjugate(x: &RingElement, out: &mut RingElement) {
+        x.conjugate_into(out)
+    }
+
+    fn snapshot(table: &LinearSumcheck<RingElement>) -> (usize, usize, usize, Vec<RingElement>) {
+        let entries = (0..table.len())
+            .map(|i| {
+                let mut x = RingElement::zero(Representation::IncompleteNTT);
+                table.load(i, &mut x);
+                x
+            })
+            .collect();
+        (table.variable_count, table.suffix, table.non_zero_end, entries)
+    }
+
+    #[test]
+    fn test_fused_fold_matches_two_folds() {
+        crate::common::init_common();
+        let n = 2048;
+        let data = crate::common::sampling::sample_random_short_vector(n, 60, Representation::IncompleteNTT);
+        let challenges =
+            crate::common::sampling::sample_random_short_vector(16, 1 << 20, Representation::IncompleteNTT);
+        let map: fn(&RingElement, &mut RingElement) = conjugate;
+        let table = |map: Option<fn(&RingElement, &mut RingElement)>, end: usize, prefix: usize, suffix: usize| {
+            let mut table = unsafe { LinearSumcheck::from_borrowed(&data, end, map) };
+            table.variable_count += prefix + suffix;
+            table.suffix = suffix;
+            table
+        };
+        for (end, prefix, suffix) in [(n, 0, 0), (n / 2 + 3, 0, 0), (777, 2, 0), (n, 0, 1), (n / 3, 1, 2)] {
+            let (mut a, mut b) = (table(None, end, prefix, suffix), table(Some(map), end, prefix, suffix));
+            let (mut c, mut d) = (table(None, end, prefix, suffix), table(Some(map), end, prefix, suffix));
+            let mut fused_rounds = 0;
+            for r in &challenges[..a.variable_count] {
+                let eligible = a.borrowed.is_some() && b.borrowed.is_some() && a.suffix == 0;
+                let fused = a.partial_evaluate_with_mapped(&mut b, r);
+                assert_eq!(fused, eligible);
+                fused_rounds += fused as usize;
+                if !fused {
+                    a.partial_evaluate(r);
+                    b.partial_evaluate(r);
+                }
+                c.partial_evaluate(r);
+                d.partial_evaluate(r);
+                assert_eq!(snapshot(&a), snapshot(&c));
+                assert_eq!(snapshot(&b), snapshot(&d));
+            }
+            assert_eq!(fused_rounds, 1);
+            assert_eq!(a.final_evaluations(), c.final_evaluations());
+            assert_eq!(b.final_evaluations(), d.final_evaluations());
+        }
+        let (mut a, mut b) = (table(None, n, 0, 0), table(Some(map), n - 2, 0, 0));
+        assert!(!a.partial_evaluate_with_mapped(&mut b, &challenges[0]));
+        let (mut a, mut b) = (table(None, n, 0, 0), table(None, n, 0, 0));
+        assert!(!a.partial_evaluate_with_mapped(&mut b, &challenges[0]));
+        assert!(a.borrowed.is_some() && b.borrowed.is_some());
     }
 
     #[test]

@@ -17,7 +17,10 @@ use crate::{
             linear::{BasicEvaluationLinearSumcheck, FakeEvaluationLinearSumcheck, LinearSumcheck},
             polynomial::Polynomial,
             product::{ProductSumcheck, ProductSumcheckEvaluation},
-            ring_to_field_combiner::{RingToFieldCombiner, RingToFieldCombinerEvaluation},
+            flat::FlatRounds,
+            ring_to_field_combiner::{
+                ring_polynomial_to_field, RingToFieldCombiner, RingToFieldCombinerEvaluation,
+            },
             selector_eq::{SelectorEq, SelectorEqEvaluation},
             sum::{SumSumcheck, SumSumcheckEvaluation},
         },
@@ -1193,6 +1196,15 @@ pub fn prove_claims(
     claims: &[SnarkClaim],
     hash_wrapper: &mut HashWrapper,
 ) -> (InitialSumcheckProof, ChainInputs) {
+    prove_claims_with(witness, claims, hash_wrapper, true)
+}
+
+fn prove_claims_with(
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    claims: &[SnarkClaim],
+    hash_wrapper: &mut HashWrapper,
+    flat: bool,
+) -> (InitialSumcheckProof, ChainInputs) {
     let n = witness.data.len();
     assert!(n.is_power_of_two());
     let total_vars = n.ilog2() as usize;
@@ -1249,7 +1261,8 @@ pub fn prove_claims(
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
     let fe = combination_to_field.split_into_field_extensions();
 
-    let mut combiner = Combiner::new(outputs);
+    let flat = FlatRounds::new(&outputs, if flat { total_vars } else { 0 });
+    let mut combiner = Combiner::new(outputs.clone());
     combiner.load_challenges_from(&combination);
     let combiner_cell = ElephantCell::new(combiner);
     let mut field_combiner = RingToFieldCombiner::new(combiner_cell as _);
@@ -1264,7 +1277,13 @@ pub fn prove_claims(
         num_vars -= 1;
 
         let mut poly_over_field = Polynomial::<FieldExtension>::new(0);
-        field_combiner.univariate_polynomial_into(&mut poly_over_field);
+        if total_vars - num_vars <= flat.rounds() {
+            let mut ring_poly =
+                flat.round_polynomial(&outputs, &combination, evaluation_points.last());
+            ring_polynomial_to_field(&mut ring_poly, &fe, &mut poly_over_field);
+        } else {
+            field_combiner.univariate_polynomial_into(&mut poly_over_field);
+        }
         hash_wrapper.update_with_field_extension_slice(&poly_over_field.coefficients);
 
         let mut f = FieldExtension::zero();
@@ -1273,8 +1292,22 @@ pub fn prove_claims(
         field_to_ring_element_into(&mut r, &f);
         r.from_homogenized_field_extensions_to_incomplete_ntt();
 
+        let joint = match (
+            asm.witness_pool.first_cell(&FULL_WITNESS_KEY),
+            asm.conj_pool.first_cell(&FULL_WITNESS_KEY),
+        ) {
+            (Some(witness), Some(conjugate)) => witness
+                .borrow_mut()
+                .partial_evaluate_with_mapped(&mut conjugate.borrow_mut(), &r)
+                .then(|| [witness.clone(), conjugate.clone()]),
+            _ => None,
+        };
         for leaf in &asm.leaves {
-            leaf.partial_evaluate(&r);
+            match (leaf, &joint) {
+                (LeafCell::Linear(cell), Some(folded))
+                    if folded.iter().any(|f| std::ptr::eq(&*f.get_ref(), &*cell.get_ref())) => {}
+                _ => leaf.partial_evaluate(&r),
+            }
         }
         evaluation_points.push(r);
         polys.push(poly_over_field);
@@ -1507,7 +1540,7 @@ pub fn verify_claims(
 mod tests {
     use super::*;
     use crate::common::{init_common, sampling::sample_random_short_vector};
-    use crate::protocol::snark::{eq, table, Region};
+    use crate::protocol::snark::{combination, eq, powers, table, witness_in, Region};
 
     fn inner_product_direct(a: &[RingElement], b: &[RingElement]) -> RingElement {
         let mut acc = RingElement::zero(Representation::IncompleteNTT);
@@ -1872,6 +1905,82 @@ mod tests {
             value,
         }];
         (witness, claims)
+    }
+
+    fn assert_flat_matches(witness: &VerticallyAlignedMatrix<RingElement>, claims: &[SnarkClaim]) {
+        let (flat, flat_chain) = prove_claims_with(witness, claims, &mut HashWrapper::new(), true);
+        let (tree, tree_chain) = prove_claims_with(witness, claims, &mut HashWrapper::new(), false);
+        assert_eq!(flat.polys.len(), tree.polys.len());
+        for (round, (a, b)) in flat.polys.iter().zip(&tree.polys).enumerate() {
+            assert_eq!(a.num_coefficients, b.num_coefficients, "round {round}");
+            assert_eq!(a.coefficients, b.coefficients, "round {round}");
+        }
+        assert_eq!(flat.witness_eval, tree.witness_eval);
+        assert_eq!(flat.conj_witness_eval, tree.conj_witness_eval);
+        assert_eq!(flat_chain.claims, tree_chain.claims);
+    }
+
+    fn shaped_setup() -> (VerticallyAlignedMatrix<RingElement>, Vec<SnarkClaim>) {
+        let (height, width) = (1024, 4);
+        let n = height * width;
+        let mut data = sample_random_short_vector(n, 60, Representation::IncompleteNTT);
+        for x in &mut data[3 * n / 4 + 100..] {
+            *x = RingElement::zero(Representation::IncompleteNTT);
+        }
+        let witness = VerticallyAlignedMatrix {
+            height,
+            width,
+            used_cols: width,
+            data,
+        };
+        let mut hw = HashWrapper::new();
+        let half = Region::new(n / 2, n / 2, n);
+        let quarter = Region::new(n / 4, n / 4, n);
+        let small = Region::new(64, 64, n);
+        let (node, block) = half.vars().split_at(half.vars().len() - 6);
+        let alpha = crate::protocol::snark::challenge_point(&mut hw, node.len());
+        let rows = sample_random_short_vector(64, 40, Representation::IncompleteNTT);
+        let wide = sample_random_short_vector(n, 20, Representation::IncompleteNTT);
+        let gammas = sample_random_short_vector(2, 1 << 20, Representation::IncompleteNTT);
+        let seven = RingElement::constant(7, Representation::IncompleteNTT);
+        let exprs: Vec<ClaimExpr> = vec![
+            table(wide.clone()) * ClaimExpr::witness(),
+            eq(&alpha).on(node) * table(rows.clone()).on(block) * witness_in(half)
+                - eq(&alpha).on(node) * powers(3, block.len()).on(block) * witness_in(half),
+            table(wide[..n / 2].to_vec()).on(half.vars()) * witness_in(half) * witness_in(half).conjugate(),
+            witness_in(quarter) * witness_in(quarter).conjugate() - witness_in(quarter).scale(&seven),
+            witness_in(small) * witness_in(small).conjugate() + witness_in(quarter),
+            combination(vec![
+                (gammas[0].clone(), vec![table(rows.clone()).on(block), eq(&alpha).on(node)]),
+                (gammas[1].clone(), vec![powers(5, block.len()).on(block)]),
+            ])
+            .on(half.vars())
+                * witness_in(half),
+            table(rows[..16].to_vec()).on(Region::new(0, 16, n).vars())
+                * (witness_in(Region::new(0, 16, n)) + witness_in(Region::new(16, 16, n))),
+        ];
+        let claims = exprs
+            .into_iter()
+            .map(|expr| SnarkClaim {
+                value: expr.sum(&witness),
+                expr,
+            })
+            .collect();
+        (witness, claims)
+    }
+
+    #[test]
+    fn test_flat_rounds_match_the_gadget_tree() {
+        init_common();
+        let (witness, claims) = toy_setup();
+        assert_flat_matches(&witness, &claims);
+        let (witness, claims) = binariness_setup(false);
+        assert_flat_matches(&witness, &claims);
+        let (witness, claims) = shaped_setup();
+        assert_flat_matches(&witness, &claims);
+        for claim in &claims {
+            assert_flat_matches(&witness, std::slice::from_ref(claim));
+        }
     }
 
     #[test]

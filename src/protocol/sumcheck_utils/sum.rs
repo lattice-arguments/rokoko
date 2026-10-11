@@ -1,3 +1,5 @@
+#[cfg(feature = "unsafe-sumcheck")]
+use crate::protocol::sumcheck_utils::common::FlatTerm;
 use crate::{
     common::{
         ring_arithmetic::{Representation, RingElement},
@@ -60,6 +62,17 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SumSumcheck<E> {
 
     fn get_scratch_poly(&self) -> &RefCell<Polynomial<E>> {
         &self.scratch_poly
+    }
+
+    #[cfg(feature = "unsafe-sumcheck")]
+    fn flat_terms<'a>(&'a self, out: &mut Vec<FlatTerm<'a, E>>) -> Option<usize> {
+        let start = out.len();
+        let leaves = self.lhs_sumcheck.get_ref().flat_terms(out)?
+            + self.rhs_sumcheck.get_ref().flat_terms(out)?;
+        for term in &mut out[start..] {
+            term.leaf = false;
+        }
+        Some(leaves)
     }
     fn max_num_polynomial_coefficients(&self) -> usize {
         max(

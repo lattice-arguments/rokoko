@@ -761,7 +761,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         all_outputs.push(output_3.clone());
     }
 
-    let combiner = ElephantCell::new(Combiner::new(all_outputs));
+    let combiner = ElephantCell::new(Combiner::new(all_outputs.clone()));
 
     let field_combiner = ElephantCell::new(RingToFieldCombiner::new(combiner.clone()));
 
@@ -780,6 +780,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         fine_proj_sumchecks,
         combiner,
         field_combiner,
+        outputs: all_outputs,
         next: match &config.next {
             Some(next_config) => match next_config.as_ref() {
                 Config::Sumcheck(next_simple_config) => Some(Box::new(

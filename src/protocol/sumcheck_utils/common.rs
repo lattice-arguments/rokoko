@@ -3,8 +3,18 @@ use std::cell::RefCell;
 use crate::common::sumcheck_element::SumcheckElement;
 use crate::protocol::sumcheck_utils::{
     hypercube_point::HypercubePoint,
+    linear::LinearSumcheck,
     polynomial::{add_poly_in_place, Polynomial},
+    selector_eq::SelectorEq,
 };
+
+pub struct FlatTerm<'a, E: SumcheckElement> {
+    pub negative: bool,
+    pub leaf: bool,
+    pub pair: bool,
+    pub tables: Vec<&'a LinearSumcheck<E>>,
+    pub selectors: Vec<&'a SelectorEq<E>>,
+}
 
 /// Marker trait for data that can be consumed by the sumcheck protocol.
 /// Implementors must also provide the higher-order hooks so they can be
@@ -87,6 +97,10 @@ pub trait HighOrderSumcheckData {
 
     fn is_unit_constant(&self) -> bool {
         false
+    }
+
+    fn flat_terms<'a>(&'a self, _: &mut Vec<FlatTerm<'a, Self::Element>>) -> Option<usize> {
+        None
     }
 
     fn linear_pair_at_point(
