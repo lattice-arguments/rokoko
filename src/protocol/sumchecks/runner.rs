@@ -15,7 +15,9 @@ use crate::{
         sumcheck::SumcheckContext,
         sumcheck_utils::{
             common::{HighOrderSumcheckData, SumcheckBaseData},
+            flat::FlatRounds,
             polynomial::Polynomial,
+            ring_to_field_combiner::ring_polynomial_to_field,
         },
     },
 };
@@ -172,6 +174,8 @@ pub fn sumcheck(
         .load_challenges_from(fe.clone());
 
     let mut num_vars = sumcheck_context.combiner.borrow().variable_count();
+    let total_vars = num_vars;
+    let flat = FlatRounds::new(&sumcheck_context.outputs, total_vars);
     // Collect evaluation points during sumcheck
     let mut evaluation_points: Vec<RingElement> = vec![];
 
@@ -186,11 +190,19 @@ pub fn sumcheck(
         let poly_over_field = {
             let _s = tracing::trace_span!("sumcheck::round::poly").entered();
             let mut poly_over_field = Polynomial::<FieldExtension>::new(0);
-
-            sumcheck_context
-                .field_combiner
-                .borrow_mut()
-                .univariate_polynomial_into(&mut poly_over_field);
+            if round as usize <= flat.rounds() {
+                let mut ring_poly = flat.round_polynomial(
+                    &sumcheck_context.outputs,
+                    &combination,
+                    evaluation_points.last(),
+                );
+                ring_polynomial_to_field(&mut ring_poly, &fe, &mut poly_over_field);
+            } else {
+                sumcheck_context
+                    .field_combiner
+                    .borrow_mut()
+                    .univariate_polynomial_into(&mut poly_over_field);
+            }
             poly_over_field
         };
 

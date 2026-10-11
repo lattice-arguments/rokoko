@@ -1,3 +1,5 @@
+#[cfg(feature = "unsafe-sumcheck")]
+use crate::protocol::sumcheck_utils::common::FlatTerm;
 use std::cell::{Cell, RefCell};
 
 use crate::{
@@ -152,6 +154,28 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
     fn is_unit_constant(&self) -> bool {
         self.lhs_sumcheck.get_ref().is_unit_constant()
             && self.rhs_sumcheck.get_ref().is_unit_constant()
+    }
+
+    #[cfg(feature = "unsafe-sumcheck")]
+    fn flat_terms<'a>(&'a self, out: &mut Vec<FlatTerm<'a, E>>) -> bool {
+        let (mut lhs, mut rhs) = (vec![], vec![]);
+        if !self.lhs_sumcheck.get_ref().flat_terms(&mut lhs)
+            || !self.rhs_sumcheck.get_ref().flat_terms(&mut rhs)
+        {
+            return false;
+        }
+        for l in &lhs {
+            for r in &rhs {
+                out.push(FlatTerm {
+                    negative: l.negative ^ r.negative,
+                    leaf: false,
+                    pair: l.leaf && r.leaf,
+                    tables: l.tables.iter().chain(&r.tables).copied().collect(),
+                    selectors: l.selectors.iter().chain(&r.selectors).copied().collect(),
+                });
+            }
+        }
+        true
     }
 
     #[cfg(feature = "unsafe-sumcheck")]

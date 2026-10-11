@@ -41,6 +41,7 @@ pub struct SumcheckContext {
     pub fine_proj_sumchecks: Option<FineProjSumcheckContextWrapper>, // it should never go together with coarse_proj_sumcheck, left as option for easier handling
     pub combiner: ElephantCell<Combiner<RingElement>>,
     pub field_combiner: ElephantCell<RingToFieldCombiner>,
+    pub outputs: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>>,
     pub next: Option<Box<NextSumcheckContext>>,
 }
 

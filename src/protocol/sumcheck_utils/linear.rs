@@ -8,7 +8,7 @@ use crate::{
         sumcheck_element::SumcheckElement,
     },
     protocol::sumcheck_utils::{
-        common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
+        common::{EvaluationSumcheckData, FlatTerm, HighOrderSumcheckData, SumcheckBaseData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
         polynomial::Polynomial,
@@ -130,19 +130,33 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
         }
     }
 
-    fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match &self.borrowed {
             Some(borrowed) => borrowed.data.len(),
             None => self.data.len(),
         }
     }
 
-    fn values(&self) -> Option<&[E]> {
+    pub(crate) fn values(&self) -> Option<&[E]> {
         match &self.borrowed {
             None => Some(self.data.as_slice()),
             Some(Borrowed { data, map: None }) => Some(data),
             Some(_) => None,
         }
+    }
+
+    pub(crate) fn is_folding(&self) -> bool {
+        self.suffix == 0 && self.len() > 1
+    }
+
+    pub(crate) fn suffix(&self) -> usize {
+        self.suffix
+    }
+
+    pub(crate) fn pair_into(&self, point: usize, even: &mut E, odd: &mut E) {
+        let p = point & (self.len() / 2 - 1);
+        self.load(2 * p, even);
+        self.load(2 * p + 1, odd);
     }
 
     fn load(&self, index: usize, out: &mut E) {
@@ -310,6 +324,17 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
             }
         }
         polynomial.num_coefficients = 2;
+    }
+
+    fn flat_terms<'a>(&'a self, out: &mut Vec<FlatTerm<'a, E>>) -> bool {
+        out.push(FlatTerm {
+            negative: false,
+            leaf: true,
+            pair: false,
+            tables: vec![self],
+            selectors: vec![],
+        });
+        true
     }
 
     fn linear_pair_at_point(&self, point: HypercubePoint) -> Option<(&E, &E)> {

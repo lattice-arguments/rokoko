@@ -82,18 +82,7 @@ impl HighOrderSumcheckData for RingToFieldCombiner {
             .get_ref()
             .univariate_polynomial_into(&mut ring_poly);
 
-        // Convert the result to field
-        polynomial.set_zero();
-        for i in 0..ring_poly.num_coefficients {
-            ring_poly.coefficients[i].from_incomplete_ntt_to_homogenized_field_extensions();
-            let mut coeff = ring_poly.coefficients[i].split_into_field_extensions();
-            for j in 0..NUM_SLOTS {
-                coeff[j] *= &self.challenge_vec[j];
-                polynomial.coefficients[i] += &coeff[j];
-            }
-            ring_poly.coefficients[i].representation = Representation::IncompleteNTT;
-        }
-        polynomial.num_coefficients = ring_poly.num_coefficients;
+        ring_polynomial_to_field(&mut ring_poly, &self.challenge_vec, polynomial);
     }
 
     fn univariate_polynomial_at_point_into(
@@ -139,6 +128,24 @@ impl HighOrderSumcheckData for RingToFieldCombiner {
         }
         result
     }
+}
+
+pub fn ring_polynomial_to_field(
+    ring_poly: &mut Polynomial<RingElement>,
+    challenges: &[FieldExtension; NUM_SLOTS],
+    polynomial: &mut Polynomial<FieldExtension>,
+) {
+    polynomial.set_zero();
+    for i in 0..ring_poly.num_coefficients {
+        ring_poly.coefficients[i].from_incomplete_ntt_to_homogenized_field_extensions();
+        let mut coeff = ring_poly.coefficients[i].split_into_field_extensions();
+        for j in 0..NUM_SLOTS {
+            coeff[j] *= &challenges[j];
+            polynomial.coefficients[i] += &coeff[j];
+        }
+        ring_poly.coefficients[i].representation = Representation::IncompleteNTT;
+    }
+    polynomial.num_coefficients = ring_poly.num_coefficients;
 }
 
 /// Evaluation-only version of RingToFieldCombiner that evaluates a ring element sumcheck
