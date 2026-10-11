@@ -1,13 +1,14 @@
-use std::ops::IndexMut;
-
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use crate::{
     common::{
-        decomposition::decompose_chunks_into,
+        decomposition::{decompose, decompose_chunks_into, decompose_slots, Balanced},
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
-        ring_arithmetic::{incomplete_ntt_dot_into, Representation, RingElement},
+        ring_arithmetic::{
+            incomplete_ntt_dot_into, incomplete_ntt_dot_rows_blocked, incomplete_ntt_dot_rows_into,
+            DotRows, Representation, RingElement,
+        },
     },
     protocol::{
         crs::{CK, CRS},
@@ -84,17 +85,16 @@ fn commit_basic_internal_with(
     }
     let _ = parallel;
 
-    let chunk = cached_chunk(rank);
-    for start in (0..witness.height).step_by(chunk) {
-        for col in 0..witness.used_cols {
-            let column = &witness.col(col)[start..];
-            for (i, row) in ck.iter().take(rank).enumerate() {
-                let key = row.preprocessed_row.get(start..).unwrap_or(&[]);
-                let count = chunk.min(key.len()).min(column.len());
-                incomplete_ntt_dot_into(commitment.index_mut((i, col)), key, 1, column, 1, count);
-            }
-        }
-    }
+    let width = commitment.width;
+    dot_rows(
+        &mut commitment.data,
+        width,
+        ck,
+        rank,
+        &witness.data,
+        witness.height,
+        witness.used_cols,
+    );
     commitment
 }
 
@@ -103,6 +103,165 @@ fn commit_basic_internal_with(
 fn cached_chunk(rank: usize) -> usize {
     const BUDGET: usize = 512 << 10;
     (BUDGET / ((rank + 1) * std::mem::size_of::<RingElement>())).max(16)
+}
+
+pub fn commit_decomposing(
+    ck: &CK,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    base_log: u64,
+    radix: usize,
+    rank: usize,
+) -> (VerticallyAlignedMatrix<RingElement>, BasicCommitment) {
+    let height = witness.height * radix;
+    let width = witness.width;
+    let keys: Vec<&[RingElement]> = ck
+        .iter()
+        .take(rank)
+        .map(|row| row.preprocessed_row.as_slice())
+        .collect();
+    let count = keys
+        .iter()
+        .map(|key| key.len())
+        .min()
+        .unwrap_or(0)
+        .min(height);
+    if rank == 0 || base_log == 1 || keys.iter().any(|key| key.len().min(height) != count) {
+        let decomposed = VerticallyAlignedMatrix {
+            data: decompose(&witness.data, base_log, radix),
+            width,
+            height,
+            used_cols: witness.used_cols,
+        };
+        let commitment = commit_basic_internal(ck, &decomposed, rank);
+        return (decomposed, commitment);
+    }
+
+    let balanced = Balanced::new(base_log, radix);
+    let total = height * width;
+    let mut data: Vec<RingElement> = Vec::with_capacity(total);
+    let slots = data.spare_capacity_mut()[..total].as_mut_ptr();
+    let mut rows = DotRows::new(&keys, witness.used_cols, count);
+    let inputs = (DotRows::CHUNK / radix).max(1);
+    for first in (0..witness.height).step_by(inputs) {
+        let last = witness.height.min(first + inputs);
+        for tile in (0..width).step_by(DECOMPOSE_TILE) {
+            let tile_end = width.min(tile + DECOMPOSE_TILE);
+            for col in tile..tile_end {
+                let out = unsafe {
+                    std::slice::from_raw_parts_mut(
+                        slots.add(col * height + first * radix),
+                        (last - first) * radix,
+                    )
+                };
+                let input =
+                    &witness.data[col * witness.height + first..col * witness.height + last];
+                decompose_slots(&balanced, out, None, input);
+            }
+            let columns = tile.min(witness.used_cols)..tile_end.min(witness.used_cols);
+            let terms = (first * radix).min(count)..(last * radix).min(count);
+            if !columns.is_empty() && !terms.is_empty() {
+                unsafe { rows.accumulate(slots as *const RingElement, height, columns, terms) };
+            }
+        }
+    }
+    unsafe { data.set_len(total) };
+    #[cfg(feature = "debug-decomp")]
+    balanced.report(witness.data.len());
+
+    let mut commitment = HorizontallyAlignedMatrix {
+        data: vec![
+            RingElement::zero(Representation::IncompleteNTT);
+            rank.next_power_of_two() * width
+        ],
+        width,
+        height: rank.next_power_of_two(),
+    };
+    rows.finish(&mut commitment.data, width);
+    (
+        VerticallyAlignedMatrix {
+            data,
+            width,
+            height,
+            used_cols: witness.used_cols,
+        },
+        commitment,
+    )
+}
+
+const DECOMPOSE_TILE: usize = 4;
+const STREAMED: usize = 32 << 20;
+const BLOCKED_RANK: usize = 6;
+const BLOCKED_WORK: usize = 16;
+
+fn dot_rows(
+    results: &mut [RingElement],
+    width: usize,
+    ck: &CK,
+    rank: usize,
+    columns: &[RingElement],
+    height: usize,
+    used_cols: usize,
+) {
+    if rank == 0 || used_cols == 0 {
+        return;
+    }
+    let streamed = height * used_cols * std::mem::size_of::<RingElement>() > STREAMED;
+    let small = height * used_cols * rank < BLOCKED_WORK;
+    if streamed && rank < BLOCKED_RANK || small || !incomplete_ntt_dot_rows_blocked() {
+        dot_by_row(results, width, ck, rank, columns, height, used_cols);
+        return;
+    }
+    let keys: Vec<&[RingElement]> = ck
+        .iter()
+        .take(rank)
+        .map(|row| row.preprocessed_row.as_slice())
+        .collect();
+    let count = |key: &[RingElement]| key.len().min(height);
+    if keys.iter().all(|key| count(key) == count(keys[0])) {
+        incomplete_ntt_dot_rows_into(
+            results,
+            width,
+            &keys,
+            columns,
+            height,
+            used_cols,
+            count(keys[0]),
+        );
+        return;
+    }
+    for (row, key) in keys.iter().enumerate() {
+        incomplete_ntt_dot_rows_into(
+            &mut results[row * width..],
+            width,
+            &[key],
+            columns,
+            height,
+            used_cols,
+            count(key),
+        );
+    }
+}
+
+fn dot_by_row(
+    results: &mut [RingElement],
+    width: usize,
+    ck: &CK,
+    rank: usize,
+    columns: &[RingElement],
+    height: usize,
+    used_cols: usize,
+) {
+    let chunk = cached_chunk(rank);
+    for start in (0..height).step_by(chunk) {
+        for col in 0..used_cols {
+            let column = &columns[col * height + start..(col + 1) * height];
+            for (i, row) in ck.iter().take(rank).enumerate() {
+                let key = row.preprocessed_row.get(start..).unwrap_or(&[]);
+                let count = chunk.min(key.len()).min(column.len());
+                incomplete_ntt_dot_into(&mut results[i * width + col], key, 1, column, 1, count);
+            }
+        }
+    }
 }
 
 #[cfg(feature = "parallel")]
@@ -135,15 +294,7 @@ fn accumulate_rows(
         return;
     }
     let _ = parallel;
-    let chunk = cached_chunk(rank);
-    for start in (0..operand.len()).step_by(chunk) {
-        let operand = &operand[start..];
-        for r in 0..rank {
-            let key = ck[r].preprocessed_row.get(start..).unwrap_or(&[]);
-            let count = chunk.min(key.len()).min(operand.len());
-            incomplete_ntt_dot_into(&mut commitment[r], key, 1, operand, 1, count);
-        }
-    }
+    dot_rows(commitment, 1, ck, rank, operand, operand.len(), 1);
 }
 
 #[cfg(feature = "parallel")]
@@ -492,6 +643,75 @@ mod tests {
             RingElement::all(0, Representation::IncompleteNTT)
         );
         debug_assert!(recursive_commitment.next.is_none());
+    }
+
+    #[test]
+    fn row_dots_accumulate_onto_the_destination() {
+        crate::common::init_common();
+        let crs = CRS::gen_crs(64, 6);
+        for (height, used_cols, rank) in [(2, 1, 1), (8, 3, 5), (64, 2, 4), (32, 1, 1)] {
+            let columns: Vec<RingElement> = (0..height * used_cols)
+                .map(|_| RingElement::random(Representation::IncompleteNTT))
+                .collect();
+            let ck = crs.ck_for_wit_dim(height);
+            let initial: Vec<RingElement> = (0..rank * used_cols)
+                .map(|_| RingElement::random(Representation::IncompleteNTT))
+                .collect();
+            let mut expected = initial.clone();
+            for row in 0..rank {
+                for col in 0..used_cols {
+                    incomplete_ntt_dot_into(
+                        &mut expected[row * used_cols + col],
+                        &ck[row].preprocessed_row,
+                        1,
+                        &columns[col * height..(col + 1) * height],
+                        1,
+                        height,
+                    );
+                }
+            }
+            let mut blocked = initial.clone();
+            dot_rows(&mut blocked, used_cols, ck, rank, &columns, height, used_cols);
+            let mut by_row = initial.clone();
+            dot_by_row(&mut by_row, used_cols, ck, rank, &columns, height, used_cols);
+            assert!(blocked == expected, "blocked {height}x{used_cols} rank {rank}");
+            assert!(by_row == expected, "by row {height}x{used_cols} rank {rank}");
+        }
+    }
+
+    #[test]
+    fn commit_decomposing_matches_the_separate_path() {
+        crate::common::init_common();
+        let crs = CRS::gen_crs(512, 7);
+        for (height, width, used_cols, base_log, radix, rank, bound) in [
+            (64, 5, 4, 16, 2, 6, 1u64 << 30),
+            (128, 3, 3, 7, 4, 3, MOD_Q),
+            (32, 9, 9, 9, 3, 5, 1 << 20),
+            (256, 2, 1, 6, 2, 1, 1 << 11),
+        ] {
+            let witness = VerticallyAlignedMatrix {
+                data: (0..height * width)
+                    .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, bound))
+                    .collect(),
+                width,
+                height,
+                used_cols,
+            };
+            let decomposed = VerticallyAlignedMatrix {
+                data: decompose(&witness.data, base_log, radix),
+                width,
+                height: height * radix,
+                used_cols,
+            };
+            let ck = crs.ck_for_wit_dim(height * radix);
+            let expected = commit_basic_internal(ck, &decomposed, rank);
+            let (fused, commitment) = commit_decomposing(ck, &witness, base_log, radix, rank);
+            assert!(fused.data == decomposed.data, "digits at {height}x{width} radix {radix}");
+            assert!(
+                commitment.data == expected.data,
+                "commitment at {height}x{width} radix {radix} rank {rank}"
+            );
+        }
     }
 
     #[test]

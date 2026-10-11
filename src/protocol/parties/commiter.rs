@@ -1,6 +1,9 @@
 use crate::{
     common::{matrix::VerticallyAlignedMatrix, ring_arithmetic::RingElement},
-    protocol::{commitment::CommitmentWithAux, config::SumcheckConfig, crs::CRS},
+    protocol::{
+        commitment::CommitmentWithAux, config::SumcheckConfig, crs::CRS,
+        params::InitialWitnessParams,
+    },
 };
 
 #[cfg(not(feature = "parallel"))]
@@ -40,6 +43,48 @@ pub fn commit(
     };
 
     (commitment_with_aux, rc_commitment)
+}
+
+pub fn decompose_and_commit(
+    crs: &CRS,
+    config: &SumcheckConfig,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    params: &InitialWitnessParams,
+) -> (
+    VerticallyAlignedMatrix<RingElement>,
+    CommitmentWithAux,
+    Vec<RingElement>,
+) {
+    #[cfg(feature = "parallel")]
+    {
+        let decomposed = crate::protocol::params::decompose_witness(witness, params);
+        let (commitment_with_aux, rc_commitment) = commit(crs, config, &decomposed, None);
+        (decomposed, commitment_with_aux, rc_commitment)
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        let height = witness.height * params.decomposition_chunks;
+        let (decomposed, basic_commitment) = {
+            let _s = tracing::info_span!("commit::basic").entered();
+            crate::protocol::commitment::commit_decomposing(
+                crs.ck_for_wit_dim(height),
+                witness,
+                params.decomposition_base_log as u64,
+                params.decomposition_chunks,
+                config.basic_commitment_rank,
+            )
+        };
+        let rc_commitment_with_aux = {
+            let _s = tracing::info_span!("commit::recursive").entered();
+            recursive_commit(&crs, &config.commitment_recursion, &basic_commitment.data)
+        };
+        let rc_commitment = rc_commitment_with_aux.most_inner_commitment().clone();
+        let commitment_with_aux = CommitmentWithAux {
+            rc_commitment_with_aux,
+            witness_i16: None,
+        };
+        (decomposed, commitment_with_aux, rc_commitment)
+    }
 }
 
 /// The root commitment over the CRT basis when the CRS carries a key of this shape, and over the

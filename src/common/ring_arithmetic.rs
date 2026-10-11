@@ -919,6 +919,119 @@ pub fn incomplete_ntt_dot_many_into(
     }
 }
 
+pub struct DotRows<'a> {
+    cells: incomplete_rexl::RowCells,
+    keys: Vec<*const u64>,
+    count: usize,
+    columns: usize,
+    rows: std::marker::PhantomData<&'a [RingElement]>,
+}
+
+impl<'a> DotRows<'a> {
+    pub const CHUNK: usize = incomplete_rexl::ROWS_CHUNK;
+
+    pub fn new(keys: &[&'a [RingElement]], columns: usize, count: usize) -> DotRows<'a> {
+        assert!(
+            keys.iter().all(|key| key.len() >= count),
+            "terms past the end of the keys"
+        );
+        DotRows {
+            cells: SLOT_RING.row_cells(keys.len(), columns),
+            keys: keys.iter().map(|key| key.as_ptr() as *const u64).collect(),
+            count,
+            columns,
+            rows: std::marker::PhantomData,
+        }
+    }
+
+    pub unsafe fn accumulate(
+        &mut self,
+        witness: *const RingElement,
+        height: usize,
+        columns: std::ops::Range<usize>,
+        terms: std::ops::Range<usize>,
+    ) {
+        assert!(columns.end <= self.columns && terms.end <= self.count.min(height));
+        let stride = std::mem::size_of::<RingElement>() / std::mem::size_of::<u64>();
+        SLOT_RING.dot_rows_chunk(
+            &mut self.cells,
+            &self.keys,
+            stride,
+            witness as *const u64,
+            height * stride,
+            stride,
+            columns,
+            terms,
+        );
+    }
+
+    pub fn finish(self, results: &mut [RingElement], result_width: usize) {
+        let in_range = self.columns <= result_width
+            && self
+                .keys
+                .len()
+                .checked_mul(result_width)
+                .is_some_and(|end| end <= results.len());
+        assert!(in_range, "results past the end of the output");
+        let stride = std::mem::size_of::<RingElement>() / std::mem::size_of::<u64>();
+        unsafe {
+            SLOT_RING.dot_rows_finish(
+                &self.cells,
+                results.as_mut_ptr() as *mut u64,
+                result_width * stride,
+                stride,
+                true,
+            )
+        };
+    }
+}
+
+pub fn incomplete_ntt_dot_rows_into(
+    results: &mut [RingElement],
+    result_width: usize,
+    keys: &[&[RingElement]],
+    columns: &[RingElement],
+    height: usize,
+    used_cols: usize,
+    count: usize,
+) {
+    if count == 0 || keys.is_empty() || used_cols == 0 {
+        return;
+    }
+    let in_range = count <= height
+        && keys.iter().all(|key| key.len() >= count)
+        && used_cols <= result_width
+        && used_cols
+            .checked_mul(height)
+            .is_some_and(|end| end <= columns.len())
+        && keys
+            .len()
+            .checked_mul(result_width)
+            .is_some_and(|end| end <= results.len());
+    assert!(in_range, "terms past the end of the operands");
+    let stride = std::mem::size_of::<RingElement>() / std::mem::size_of::<u64>();
+    let pointers: Vec<*const u64> = keys.iter().map(|key| key.as_ptr() as *const u64).collect();
+    unsafe {
+        SLOT_RING.dot_rows(
+            results.as_mut_ptr() as *mut u64,
+            result_width * stride,
+            stride,
+            &pointers,
+            stride,
+            columns.as_ptr() as *const u64,
+            height * stride,
+            stride,
+            used_cols,
+            count,
+            true,
+        );
+    }
+}
+
+pub fn incomplete_ntt_dot_rows_blocked() -> bool {
+    SLOT_RING.blocks_rows()
+}
+
 /// `acc += sum_{k < count} a[k a_step] b[k b_step]` over IncompleteNTT elements.
 pub fn incomplete_ntt_dot_into(
     acc: &mut RingElement,

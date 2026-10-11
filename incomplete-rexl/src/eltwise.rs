@@ -2141,6 +2141,190 @@ pub(crate) unsafe fn slot_dot_avx512_ifma<const D: usize>(
     }
 }
 
+pub(crate) const SLOT_ROWS_CHUNK: usize = 64;
+const SLOT_ROWS_TILE: usize = 4;
+
+pub(crate) const fn slot_rows_lanes(d: usize, n: usize) -> usize {
+    2 * slot_cells(d) * (n / 8)
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512ifma")]
+pub(crate) unsafe fn slot_rows_chunk_avx512_ifma<const D: usize>(
+    cells: *mut __m512i,
+    since: &mut [usize],
+    keys: &[*const u64],
+    key_term: usize,
+    a: *const u64,
+    a_col: usize,
+    a_term: usize,
+    first: usize,
+    last: usize,
+    start: usize,
+    end: usize,
+    n: usize,
+    ifma: &Ifma52,
+) {
+    let c = Ifma52x8::new(ifma);
+    let rows = keys.len();
+    let groups = n / 8;
+    let lanes = slot_rows_lanes(D, n);
+    let block = if D == 2 { 4 } else { 1 };
+    for tile in (first..last).step_by(SLOT_ROWS_TILE) {
+        let tile_end = last.min(tile + SLOT_ROWS_TILE);
+        let mut row = 0;
+        while row < rows {
+            let taken = (rows - row).min(block);
+            let at = cells.add(lanes * row);
+            let keys = &keys[row..row + taken];
+            let stride = lanes * rows;
+            match (D, taken) {
+                (2, 4) => slot_rows_block::<2, 4>(
+                    at, stride, keys, key_term, a, a_col, tile, tile_end, a_term, start, end,
+                    groups, n, &c, since,
+                ),
+                (2, 3) => slot_rows_block::<2, 3>(
+                    at, stride, keys, key_term, a, a_col, tile, tile_end, a_term, start, end,
+                    groups, n, &c, since,
+                ),
+                (2, 2) => slot_rows_block::<2, 2>(
+                    at, stride, keys, key_term, a, a_col, tile, tile_end, a_term, start, end,
+                    groups, n, &c, since,
+                ),
+                (2, _) => slot_rows_block::<2, 1>(
+                    at, stride, keys, key_term, a, a_col, tile, tile_end, a_term, start, end,
+                    groups, n, &c, since,
+                ),
+                _ => slot_rows_block::<4, 1>(
+                    at, stride, keys, key_term, a, a_col, tile, tile_end, a_term, start, end,
+                    groups, n, &c, since,
+                ),
+            }
+            row += taken;
+        }
+    }
+    for terms in &mut since[first..last] {
+        *terms = if slot_rows_reduces(*terms, end - start) {
+            0
+        } else {
+            *terms + end - start
+        };
+    }
+}
+
+fn slot_rows_reduces(since: usize, terms: usize) -> bool {
+    since + terms + SLOT_ROWS_CHUNK > SLOT_DOT_BLOCK
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512ifma")]
+pub(crate) unsafe fn slot_rows_finish_avx512_ifma<const D: usize>(
+    cells: *const __m512i,
+    rows: usize,
+    columns: usize,
+    results: *mut u64,
+    row_stride: usize,
+    col_stride: usize,
+    accumulate: bool,
+    zetas: &[u64],
+    zetas_precon: &[u64],
+    n: usize,
+    ifma: &Ifma52,
+) {
+    let c = Ifma52x8::new(ifma);
+    let zero = _mm512_setzero_si512();
+    let (groups, cells_per) = (n / 8, slot_cells(D));
+    let width = 2 * cells_per;
+    for col in 0..columns {
+        for row in 0..rows {
+            for g in 0..groups {
+                let p = cells.add(slot_rows_lanes(D, n) * (col * rows + row) + width * g);
+                let mut lo = [zero; 7];
+                for d in 0..cells_per {
+                    let high =
+                        _mm512_add_epi64(*p.add(cells_per + d), _mm512_srli_epi64(*p.add(d), 52));
+                    lo[d] = c.reduce_wide(_mm512_and_si512(*p.add(d), c.mask), high);
+                }
+                let z = load!(zetas.as_ptr().add(8 * g));
+                let z_precon = load!(zetas_precon.as_ptr().add(8 * g));
+                let coefficients = c.combine_slot_cells::<D>(&lo, z, z_precon);
+                for d in 0..D {
+                    let out = results.add(row * row_stride + col * col_stride + d * n + 8 * g);
+                    let mut x = coefficients[d];
+                    if accumulate {
+                        x = _mm512_add_epi64(x, load!(out));
+                    }
+                    let reduced = c.reduce_wide(x, zero);
+                    _mm512_storeu_si512(out as *mut __m512i, c.canonical(reduced));
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512ifma")]
+#[inline]
+unsafe fn slot_rows_block<const D: usize, const R: usize>(
+    cells_at: *mut __m512i,
+    col_cells: usize,
+    keys: &[*const u64],
+    key_term: usize,
+    a: *const u64,
+    a_col: usize,
+    first: usize,
+    last: usize,
+    a_term: usize,
+    start: usize,
+    end: usize,
+    groups: usize,
+    n: usize,
+    c: &Ifma52x8,
+    since: &[usize],
+) {
+    let zero = _mm512_setzero_si512();
+    let cells = slot_cells(D);
+    let width = 2 * cells;
+    let keys: [*const u64; R] = std::array::from_fn(|r| keys[r]);
+    for col in first..last {
+        let column = a.add(col * a_col);
+        let base = cells_at.add(col * col_cells);
+        let reduce = slot_rows_reduces(since[col], end - start);
+        for g in 0..groups {
+            let mut lo = [[zero; 7]; R];
+            let mut hi = [[zero; 7]; R];
+            for r in 0..R {
+                let p = base.add(width * (r * groups + g));
+                for d in 0..cells {
+                    lo[r][d] = *p.add(d);
+                    hi[r][d] = *p.add(cells + d);
+                }
+            }
+            for k in start..end {
+                let av = load_slot_factors::<D>(column.add(k * a_term + 8 * g), n);
+                for r in 0..R {
+                    let bv = load_slot_factors::<D>(keys[r].add(k * key_term + 8 * g), n);
+                    add_slot_cells::<D>(&mut lo[r], &mut hi[r], &av, &bv);
+                }
+            }
+            for r in 0..R {
+                let p = base.add(width * (r * groups + g));
+                for d in 0..cells {
+                    let high = _mm512_add_epi64(hi[r][d], _mm512_srli_epi64(lo[r][d], 52));
+                    let low = _mm512_and_si512(lo[r][d], c.mask);
+                    if reduce {
+                        *p.add(d) = c.reduce_wide(low, high);
+                        *p.add(cells + d) = zero;
+                    } else {
+                        *p.add(d) = low;
+                        *p.add(cells + d) = high;
+                    }
+                }
+            }
+        }
+    }
+}
+
 // NEON 2-lane sibling of `fused_incomplete_ntt_mult_avx512_float`: same Karatsuba
 // structure and float-Barrett reduction. NEON has no high-half or widening 64-bit
 // integer multiply, so we reduce via the f64 53-bit mantissa with an FMA-based

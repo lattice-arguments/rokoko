@@ -60,12 +60,13 @@ fn run(
 
     let commit_span = tracing::info_span!("commit").entered();
     #[cfg(not(feature = "crt-commitment"))]
-    let (witness_decomposed, commitment_with_aux, rc_commitment) = {
-        let witness_decomposed =
-            crate::protocol::params::decompose_witness(&witness, witness_config);
-        let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness_decomposed, None);
-        (witness_decomposed, commitment_with_aux, rc_commitment)
-    };
+    let (witness_decomposed, commitment_with_aux, rc_commitment) =
+        crate::protocol::parties::commiter::decompose_and_commit(
+            &crs,
+            &config,
+            &witness,
+            witness_config,
+        );
     #[cfg(feature = "crt-commitment")]
     let (witness_decomposed, commitment_with_aux, rc_commitment) = {
         // Handing the digits over beats re-deriving them, but only while the array is small

@@ -387,6 +387,19 @@ unsafe fn slot_mult(
     }
 }
 
+pub const ROWS_CHUNK: usize = eltwise::SLOT_ROWS_CHUNK;
+
+#[derive(Clone, Copy)]
+#[repr(C, align(64))]
+struct Lanes([u64; 8]);
+
+pub struct RowCells {
+    cells: Vec<Lanes>,
+    since: Vec<usize>,
+    rows: usize,
+    columns: usize,
+}
+
 /// [`fused_slot_mult`] for one `(N, q)`, with the tables and kernel looked up once.
 pub struct SlotRing {
     ntt: Arc<ntt::Ntt>,
@@ -505,6 +518,155 @@ impl SlotRing {
                 eltwise::eltwise_add_mod_assign(result(o), product, self.modulus);
             }
         }
+    }
+
+    pub fn row_cells(&self, rows: usize, columns: usize) -> RowCells {
+        let lanes = match &self.ifma {
+            Some(_) => eltwise::slot_rows_lanes(self.slot_degree, self.ntt.degree()),
+            None => self.ring_degree / 8,
+        };
+        RowCells {
+            cells: vec![Lanes([0; 8]); lanes * rows * columns],
+            since: vec![0; columns],
+            rows,
+            columns,
+        }
+    }
+
+    pub unsafe fn dot_rows_chunk(
+        &self,
+        cells: &mut RowCells,
+        keys: &[*const u64],
+        key_term: usize,
+        a: *const u64,
+        a_col: usize,
+        a_term: usize,
+        columns: std::ops::Range<usize>,
+        terms: std::ops::Range<usize>,
+    ) {
+        assert!(keys.len() == cells.rows && columns.end <= cells.columns);
+        assert!(terms.start <= terms.end && terms.end - terms.start <= ROWS_CHUNK);
+        #[cfg(target_arch = "x86_64")]
+        if let Some(ifma) = &self.ifma {
+            let kernel = match self.slot_degree {
+                2 => eltwise::slot_rows_chunk_avx512_ifma::<2>,
+                _ => eltwise::slot_rows_chunk_avx512_ifma::<4>,
+            };
+            kernel(
+                cells.cells.as_mut_ptr() as *mut core::arch::x86_64::__m512i,
+                &mut cells.since,
+                keys,
+                key_term,
+                a,
+                a_col,
+                a_term,
+                columns.start,
+                columns.end,
+                terms.start,
+                terms.end,
+                self.ntt.degree(),
+                ifma,
+            );
+            return;
+        }
+        let element = self.ring_degree / 8;
+        for (row, key) in keys.iter().enumerate() {
+            for col in columns.clone() {
+                let out = cells
+                    .cells
+                    .as_mut_ptr()
+                    .add(element * (col * cells.rows + row));
+                self.dot(
+                    out as *mut u64,
+                    a.add(col * a_col + terms.start * a_term),
+                    a_term,
+                    key.add(terms.start * key_term),
+                    key_term,
+                    terms.end - terms.start,
+                    true,
+                );
+            }
+        }
+    }
+
+    pub fn blocks_rows(&self) -> bool {
+        self.ifma.is_some()
+    }
+
+    pub unsafe fn dot_rows_finish(
+        &self,
+        cells: &RowCells,
+        results: *mut u64,
+        row_stride: usize,
+        col_stride: usize,
+        accumulate: bool,
+    ) {
+        #[cfg(target_arch = "x86_64")]
+        if let Some(ifma) = &self.ifma {
+            let kernel = match self.slot_degree {
+                2 => eltwise::slot_rows_finish_avx512_ifma::<2>,
+                _ => eltwise::slot_rows_finish_avx512_ifma::<4>,
+            };
+            kernel(
+                cells.cells.as_ptr() as *const core::arch::x86_64::__m512i,
+                cells.rows,
+                cells.columns,
+                results,
+                row_stride,
+                col_stride,
+                accumulate,
+                self.ntt.shift_factors(),
+                self.ntt.shift_factors_precon52(),
+                self.ntt.degree(),
+                ifma,
+            );
+            return;
+        }
+        let element = self.ring_degree / 8;
+        for col in 0..cells.columns {
+            for row in 0..cells.rows {
+                let from =
+                    cells.cells.as_ptr().add(element * (col * cells.rows + row)) as *const u64;
+                let to = results.add(row * row_stride + col * col_stride);
+                for i in 0..self.ring_degree {
+                    *to.add(i) = match accumulate {
+                        true => add_mod(*from.add(i), *to.add(i), self.modulus),
+                        false => *from.add(i),
+                    };
+                }
+            }
+        }
+    }
+
+    pub unsafe fn dot_rows(
+        &self,
+        results: *mut u64,
+        row_stride: usize,
+        col_stride: usize,
+        keys: &[*const u64],
+        key_term: usize,
+        a: *const u64,
+        a_col: usize,
+        a_term: usize,
+        columns: usize,
+        count: usize,
+        accumulate: bool,
+    ) {
+        let mut cells = self.row_cells(keys.len(), columns);
+        for start in (0..count).step_by(ROWS_CHUNK) {
+            let terms = start..count.min(start + ROWS_CHUNK);
+            self.dot_rows_chunk(
+                &mut cells,
+                keys,
+                key_term,
+                a,
+                a_col,
+                a_term,
+                0..columns,
+                terms,
+            );
+        }
+        self.dot_rows_finish(&cells, results, row_stride, col_stride, accumulate);
     }
 
     /// `result (+)= sum_k (op1 + k stride1) (op2 + k stride2)`, strides in u64s; `result` must

@@ -645,6 +645,67 @@ fn test_slot_ring_dot_many_matches_dot() {
 }
 
 #[test]
+fn test_slot_ring_dot_rows_matches_dot() {
+    for (ring_degree, modulus, _, _) in SLOT_CASES {
+        let ring = SlotRing::new(ring_degree, modulus);
+        let stride = ring_degree + 8;
+        let (columns, count) = (3, 1500);
+        for (rows, extreme, accumulate) in [
+            (1, false, false),
+            (4, false, true),
+            (6, true, true),
+            (7, false, false),
+        ] {
+            let fill = |n: usize| match extreme {
+                true => vec![modulus - 1; n],
+                false => random_vec(n, modulus),
+            };
+            let a = fill(columns * count * stride);
+            let keys: Vec<Vec<u64>> = (0..rows).map(|_| fill(count * stride)).collect();
+            let pointers: Vec<*const u64> = keys.iter().map(|key| key.as_ptr()).collect();
+            let initial = fill(rows * columns * stride);
+            let mut rows_out = initial.clone();
+            unsafe {
+                ring.dot_rows(
+                    rows_out.as_mut_ptr(),
+                    columns * stride,
+                    stride,
+                    &pointers,
+                    stride,
+                    a.as_ptr(),
+                    count * stride,
+                    stride,
+                    columns,
+                    count,
+                    accumulate,
+                )
+            };
+            for row in 0..rows {
+                for col in 0..columns {
+                    let at = (row * columns + col) * stride;
+                    let mut single = initial[at..at + stride].to_vec();
+                    unsafe {
+                        ring.dot(
+                            single.as_mut_ptr(),
+                            a.as_ptr().add(col * count * stride),
+                            stride,
+                            pointers[row],
+                            stride,
+                            count,
+                            accumulate,
+                        )
+                    };
+                    assert!(
+                        rows_out[at..at + ring_degree] == single[..ring_degree],
+                        "N={ring_degree} q={modulus} rows={rows} row={row} col={col}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn test_fused_slot_mult_degree2_matches_even_odd() {
     for (ring_degree, modulus, _, d) in SLOT_CASES {
         if d != 2 {
