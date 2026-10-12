@@ -1,5 +1,3 @@
-use std::any::Any;
-
 use crate::{
     common::{
         arithmetic::{precompute_structured_values_fast, HALF_WAY_MOD_Q_RING_CF},
@@ -10,7 +8,7 @@ use crate::{
         ring_arithmetic::{Representation, RingElement},
     },
     hexl::bindings::{add_mod, eltwise_reduce_mod, multiply_mod},
-    protocol::config::{ConfigBase, SimpleConfig},
+    protocol::config::SimpleConfig,
 };
 
 /// Computes J_batched = c'_1^T * J_embedded
@@ -682,25 +680,14 @@ pub fn sample_layers(
     (c_0_layers, c_1_layers, c_2_layers)
 }
 
-fn batch_projection_into(
-    result: &mut [RingElement],
-    witness: &VerticallyAlignedMatrix<RingElement>,
+pub fn sample_projection_challenges(
     projection_matrix: &ProjectionMatrix,
+    witness_width: usize,
+    witness_height: usize,
     hash_wrapper: &mut HashWrapper,
-    is_simple_config: bool,
 ) -> BatchedProjectionChallenges {
-    //     .map(|_| hash_wrapper.sample_u64_mod_q())
-    //     .collect();
-
-    // let c_1_layers: Vec<u64> = (0..PROJECTION_HEIGHT.ilog2())
-    //     .map(|_| hash_wrapper.sample_u64_mod_q())
-    //     .collect();
-    let (c_0_layers, c_1_layers, c_2_layers) = sample_layers(
-        projection_matrix,
-        if is_simple_config { 1 } else { witness.width },
-        witness.height,
-        hash_wrapper,
-    );
+    let (c_0_layers, c_1_layers, c_2_layers) =
+        sample_layers(projection_matrix, witness_width, witness_height, hash_wrapper);
     // Precompute all structured row values for c_0 and c_1
     // For k layers, we compute all 2^k values in O(2^k) time
 
@@ -710,6 +697,30 @@ fn batch_projection_into(
 
     // ===== Step 1: Batch projection matrix with dual embedding =====
     let j_batched = compute_j_batched(projection_matrix, &c_1_values);
+
+    BatchedProjectionChallenges {
+        c_0_values,
+        c_1_values,
+        c_1_layers,
+        c_2_values,
+        j_batched,
+    }
+}
+
+fn batch_projection_into(
+    result: &mut [RingElement],
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    projection_matrix: &ProjectionMatrix,
+    hash_wrapper: &mut HashWrapper,
+) -> BatchedProjectionChallenges {
+    let challenges = sample_projection_challenges(
+        projection_matrix,
+        witness.width,
+        witness.height,
+        hash_wrapper,
+    );
+    let c_0_values = &challenges.c_0_values;
+    let j_batched = &challenges.j_batched;
     let inner_width_ring =
         projection_matrix.projection_ratio * (projection_matrix.projection_height / DEGREE);
 
@@ -748,20 +759,13 @@ fn batch_projection_into(
 
     //////
 
-    BatchedProjectionChallenges {
-        c_0_values,
-        c_1_values,
-        c_1_layers,
-        c_2_values,
-        j_batched,
-    }
+    challenges
 }
 
 pub fn batch_projection_n_times(
     witness: &VerticallyAlignedMatrix<RingElement>,
     projection_matrix: &ProjectionMatrix,
     hash_wrapper: &mut HashWrapper,
-    is_simple_config: bool,
 ) -> (
     HorizontallyAlignedMatrix<RingElement>,
     [BatchedProjectionChallenges; NOF_BATCHES],
@@ -777,7 +781,6 @@ pub fn batch_projection_n_times(
             witness,
             projection_matrix,
             hash_wrapper,
-            is_simple_config,
         )
     });
 
@@ -820,22 +823,12 @@ pub fn batch_projection_n_times(
 
 pub fn verifier_sample_projection_challenges(
     projection_matrix: &ProjectionMatrix,
-    // config: &Config,
-    config: &dyn ConfigBase,
+    witness_width: usize,
+    witness_height: usize,
     hash_wrapper: &mut HashWrapper,
 ) -> BatchedProjectionChallengesSuccinctWithoutJBatched {
-    let is_simple_config = (config as &dyn Any).is::<SimpleConfig>(); // we don't batch over columns in simple config
-
-    let (c_0_layers, c_1_layers, c_2_layers) = sample_layers(
-        projection_matrix,
-        if is_simple_config {
-            1
-        } else {
-            config.witness_width()
-        },
-        config.witness_height(),
-        hash_wrapper,
-    );
+    let (c_0_layers, c_1_layers, c_2_layers) =
+        sample_layers(projection_matrix, witness_width, witness_height, hash_wrapper);
 
     // let c_1_values = precompute_structured_values_fast(&c_1_layers);
     // let j_batched = compute_j_batched(projection_matrix, &c_1_values);
@@ -850,13 +843,19 @@ pub fn verifier_sample_projection_challenges(
 
 pub fn verifier_sample_projection_challenges_collectively(
     projection_matrix: &ProjectionMatrix,
-    config: &dyn ConfigBase,
+    witness_width: usize,
+    witness_height: usize,
     hash_wrapper: &mut HashWrapper,
 ) -> [BatchedProjectionChallengesSuccinct; NOF_BATCHES] {
     let challenges: [BatchedProjectionChallengesSuccinctWithoutJBatched; NOF_BATCHES] = {
         //let _s = tracing::info_span!("sample_projection_challenges::layers").entered();
         std::array::from_fn(|_| {
-            verifier_sample_projection_challenges(projection_matrix, config, hash_wrapper)
+            verifier_sample_projection_challenges(
+                projection_matrix,
+                witness_width,
+                witness_height,
+                hash_wrapper,
+            )
         })
     };
 
@@ -883,6 +882,92 @@ pub fn verifier_sample_projection_challenges_collectively(
         .collect::<Vec<BatchedProjectionChallengesSuccinct>>()
         .try_into()
         .unwrap_or_else(|_| panic!("Expected NOF_BATCHES challenges"))
+}
+
+/// Proven by the round committing to the terminal witness, read as one column; batch `i` enters
+/// that round's `i`-th constant-term claim at `weights[i]`.
+pub struct TerminalProjection {
+    pub image: VerticallyAlignedMatrix<RingElement>,
+    pub challenges: [BatchedProjectionChallenges; NOF_BATCHES],
+    pub weights: [u64; NOF_BATCHES],
+}
+
+pub struct TerminalProjectionChallenges {
+    pub challenges: [BatchedProjectionChallengesSuccinct; NOF_BATCHES],
+    pub weights: [u64; NOF_BATCHES],
+}
+
+fn terminal_projection_matrix(
+    config: &SimpleConfig,
+    hash_wrapper: &mut HashWrapper,
+) -> ProjectionMatrix {
+    let mut projection_matrix =
+        ProjectionMatrix::new(config.projection_ratio, config.projection_height);
+    projection_matrix.sample(hash_wrapper);
+    projection_matrix
+}
+
+pub fn project_terminal(
+    config: &SimpleConfig,
+    witness: &[RingElement],
+    hash_wrapper: &mut HashWrapper,
+) -> TerminalProjection {
+    let projection_matrix = terminal_projection_matrix(config, hash_wrapper);
+    let column = VerticallyAlignedMatrix {
+        data: witness.to_vec(),
+        width: 1,
+        height: witness.len(),
+        used_cols: 1,
+    };
+    let image = project_coefficients(&column, &projection_matrix);
+    hash_wrapper.update_with_ring_element_slice(&image.data);
+    let challenges = std::array::from_fn(|_| {
+        sample_projection_challenges(&projection_matrix, 1, witness.len(), hash_wrapper)
+    });
+    TerminalProjection {
+        image,
+        challenges,
+        weights: std::array::from_fn(|_| hash_wrapper.sample_u64_mod_q()),
+    }
+}
+
+pub fn verifier_terminal_projection_challenges(
+    config: &SimpleConfig,
+    witness_len: usize,
+    image: &VerticallyAlignedMatrix<RingElement>,
+    hash_wrapper: &mut HashWrapper,
+) -> TerminalProjectionChallenges {
+    let projection_matrix = terminal_projection_matrix(config, hash_wrapper);
+    hash_wrapper.update_with_ring_element_slice(&image.data);
+    let challenges = verifier_sample_projection_challenges_collectively(
+        &projection_matrix,
+        1,
+        witness_len,
+        hash_wrapper,
+    );
+    TerminalProjectionChallenges {
+        challenges,
+        weights: std::array::from_fn(|_| hash_wrapper.sample_u64_mod_q()),
+    }
+}
+
+/// The constant term of the batched projection of any preimage of `image`.
+pub fn image_constant_term(image: &[RingElement], c_0_layers: &[u64], c_1_layers: &[u64]) -> u64 {
+    let c_0 = precompute_structured_values_fast(c_0_layers);
+    let c_1 = precompute_structured_values_fast(c_1_layers);
+    let mut total = 0;
+    for (block, &weight) in c_0.iter().enumerate() {
+        let mut block_total = 0;
+        for (row, &c) in c_1.iter().enumerate() {
+            let at = block * c_1.len() + row;
+            unsafe {
+                let term = multiply_mod(image[at / DEGREE].v[at % DEGREE], c, MOD_Q);
+                block_total = add_mod(block_total, term, MOD_Q);
+            }
+        }
+        total = unsafe { add_mod(total, multiply_mod(block_total, weight, MOD_Q), MOD_Q) };
+    }
+    total
 }
 
 #[cfg(test)]
@@ -968,7 +1053,6 @@ mod tests {
             &witness,
             &projection_matrix,
             &mut hash_wrapper2,
-            false,
         );
 
         // Check each column separately
@@ -1017,7 +1101,6 @@ mod tests {
             &witness,
             &projection_matrix,
             &mut hash_wrapper,
-            false,
         );
 
         // Now, we want to check if

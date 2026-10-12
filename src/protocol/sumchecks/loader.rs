@@ -1,7 +1,7 @@
 use crate::{
     common::{
         arithmetic::{field_to_ring_element_into, precompute_structured_values_fast},
-        config::{DEGREE, NOF_BATCHES},
+        config::{DEGREE, MOD_Q, NOF_BATCHES},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
@@ -9,7 +9,7 @@ use crate::{
     protocol::{
         config::SumcheckConfig,
         open::Opening,
-        project_fine::BatchedProjectionChallenges,
+        project_fine::{BatchedProjectionChallenges, TerminalProjection},
         sumchecks::helpers::{
             projection_flatter_1_times_matrix, split_projection_flatter, tensor_product_u64,
         },
@@ -17,6 +17,7 @@ use crate::{
 };
 
 use super::context::SumcheckContext;
+use crate::hexl::bindings::multiply_mod;
 
 /// Loads all data into the sumcheck context.
 ///
@@ -30,6 +31,7 @@ pub fn load_sumcheck_data(
     conjugated_combined_witness: &Vec<RingElement>,
     folding_challenges: &Vec<RingElement>,
     fine_proj_batching_challenges: &Option<&[BatchedProjectionChallenges; NOF_BATCHES]>,
+    terminal_projection: Option<&TerminalProjection>,
     opening: &Opening,
     projection_matrix: &ProjectionMatrix,
     projection_matrix_flatter: &Option<(PreprocessedRow, StructuredRow)>,
@@ -150,7 +152,7 @@ pub fn load_sumcheck_data(
     if let Some(fine_proj_contexts) = &mut sumcheck_context.fine_proj_sumchecks {
         if let Some(challenges) = fine_proj_batching_challenges {
             // Each batch gets its own (c_0_values, c_1_values, j_batched) tuple
-            for (_batch_idx, (fine_proj_ctx, challenges)) in fine_proj_contexts
+            for (batch_idx, (fine_proj_ctx, challenges)) in fine_proj_contexts
                 .sumchecks
                 .iter_mut()
                 .zip(challenges.iter())
@@ -232,6 +234,28 @@ pub fn load_sumcheck_data(
                     .rhs_scalar_consistency_sumcheck
                     .borrow_mut()
                     .load_from(&vec![e]);
+
+                if let Some(terminal) = &fine_proj_ctx.terminal {
+                    let projection =
+                        terminal_projection.expect("the terminal projection must be computed");
+                    let weight = projection.weights[batch_idx];
+                    let challenges = &projection.challenges[batch_idx];
+                    let c_0: Vec<RingElement> = challenges
+                        .c_0_values
+                        .iter()
+                        .map(|&c| {
+                            RingElement::constant(
+                                unsafe { multiply_mod(c, weight, MOD_Q) },
+                                Representation::IncompleteNTT,
+                            )
+                        })
+                        .collect();
+                    terminal.c_0_sumcheck.borrow_mut().load_from(&c_0);
+                    terminal
+                        .j_batched_sumcheck
+                        .borrow_mut()
+                        .load_from(&challenges.j_batched);
+                }
             }
             // RHS: fold_challenge (same for all batches, already loaded in folding_challenges_sumcheck)
             fine_proj_contexts

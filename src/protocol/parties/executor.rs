@@ -395,23 +395,42 @@ pub fn execute_snark(inst: &Instantiation) {
 
 #[cfg(test)]
 mod tests {
-    use crate::common::init_common;
+    use crate::common::{
+        init_common,
+        ring_arithmetic::{Representation, RingElement},
+        structured_row::StructuredRow,
+    };
+    use crate::protocol::{
+        config::{SumcheckConfig, SumcheckRoundProof},
+        crs::VerifierCRS,
+        parties::verifier::verifier_round,
+        sumchecks::builder_verifier::init_verifier,
+        wire,
+    };
 
-    /// Prove and verify one round of `config` end to end. The input witness is decomposed into
+    struct Proved {
+        verifier_crs: VerifierCRS,
+        rc_commitment: Vec<RingElement>,
+        inner: Vec<StructuredRow>,
+        outer: Vec<StructuredRow>,
+        claims: Vec<RingElement>,
+        bytes: Vec<u8>,
+    }
+
+    /// Prove one round of `config` and serialise the proof. The input witness is decomposed into
     /// two element-major chunks, which is the top-level hypercube and independent of the round's
     /// own `witness_decomposition_chunks`.
-    fn round_trip(config: &crate::protocol::config::SumcheckConfig) {
+    fn prove(config: &SumcheckConfig) -> Proved {
         use crate::common::{
             decomposition::decompose, matrix::VerticallyAlignedMatrix,
-            ring_arithmetic::Representation, sampling::sample_random_short_vector,
+            sampling::sample_random_short_vector,
         };
         use crate::protocol::{
             crs::CRS,
             evaluation_point_sampler::sample_initial_evaluation_points,
             params::InitialWitnessParams,
-            parties::{commiter::commit, prover::prover_round, verifier::verifier_round},
+            parties::{commiter::commit, prover::prover_round},
             sumcheck::init_sumcheck,
-            sumchecks::builder_verifier::init_verifier,
         };
 
         let input_chunks = 2;
@@ -429,7 +448,6 @@ mod tests {
         let crs = CRS::gen_prover_crs(config, &witness_params);
         let verifier_crs = CRS::gen_verifier_crs(config);
         let mut sumcheck_context = init_sumcheck(&crs, config);
-        let mut sumcheck_context_verifier = init_verifier(&verifier_crs, config);
 
         let sampled = (0..config.nof_openings)
             .map(|_| sample_initial_evaluation_points(height, width, base_log, input_chunks))
@@ -469,18 +487,41 @@ mod tests {
         let claims = claims.expect("prover must return claims");
         assert_eq!(claims.len(), config.nof_openings);
 
+        Proved {
+            verifier_crs,
+            rc_commitment,
+            inner,
+            outer,
+            claims,
+            bytes: wire::to_bytes(&proof),
+        }
+    }
+
+    fn verify(config: &SumcheckConfig, proved: &Proved, proof: &SumcheckRoundProof) {
+        let mut sumcheck_context_verifier = init_verifier(&proved.verifier_crs, config);
         verifier_round(
-            &verifier_crs,
+            &proved.verifier_crs,
             config,
-            &rc_commitment,
-            &proof,
-            &inner,
-            &outer,
-            &claims,
+            &proved.rc_commitment,
+            proof,
+            &proved.inner,
+            &proved.outer,
+            &proved.claims,
             &mut sumcheck_context_verifier,
             None,
             None,
         );
+    }
+
+    fn rejected(config: &SumcheckConfig, proved: &Proved, proof: &SumcheckRoundProof) -> bool {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| verify(config, proved, proof)))
+            .is_err()
+    }
+
+    fn round_trip(config: &SumcheckConfig) {
+        let proved = prove(config);
+        let proof = wire::from_bytes(&proved.bytes).expect("the proof must deserialise");
+        verify(config, &proved, &proof);
     }
 
     /// A round with a non-power-of-two number of openings: the opening commitment is padded to
@@ -558,18 +599,13 @@ mod tests {
         round_trip(config);
     }
 
-    /// A round whose folded witness is decomposed into three digit planes: the component is two
-    /// dyadic blocks and the recomposition is a weighted sum over the planes.
-    #[test]
-    fn three_decomposition_chunks_round_trip() {
+    fn three_decomposition_chunks_config() -> crate::protocol::config::Config {
         use crate::protocol::config::SimpleConfig;
         use crate::protocol::config_generator::{
             AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig,
         };
 
-        init_common();
-
-        let aux = AuxSumcheckConfig {
+        AuxSumcheckConfig {
             exact_projection_norm: false,
             witness_height: 512,
             witness_width: 16,
@@ -619,9 +655,17 @@ mod tests {
                 witness_norm_bound: f64::INFINITY,
                 projection_norm_bound: f64::INFINITY,
             }))),
-        };
+        }
+        .generate_config()
+    }
 
-        let generated = aux.generate_config();
+    /// A round whose folded witness is decomposed into three digit planes: the component is two
+    /// dyadic blocks and the recomposition is a weighted sum over the planes.
+    #[test]
+    fn three_decomposition_chunks_round_trip() {
+        init_common();
+
+        let generated = three_decomposition_chunks_config();
         let config = match &generated {
             crate::protocol::config::Config::Sumcheck(config) => config,
             _ => panic!("expected a sumcheck config"),
@@ -636,6 +680,24 @@ mod tests {
         );
 
         round_trip(config);
+    }
+
+    #[test]
+    fn tampered_terminal_projection_image_is_rejected() {
+        init_common();
+        let generated = three_decomposition_chunks_config();
+        let crate::protocol::config::Config::Sumcheck(config) = &generated else {
+            panic!("expected a sumcheck config")
+        };
+        let proved = prove(config);
+        let mut proof = wire::from_bytes(&proved.bytes).expect("the proof must deserialise");
+        assert!(!rejected(config, &proved, &proof));
+        proof.terminal_projection_image.as_mut().unwrap()[(0, 0)] +=
+            &RingElement::constant(1, Representation::IncompleteNTT);
+        assert!(
+            rejected(config, &proved, &proof),
+            "a tampered terminal projection image was accepted"
+        );
     }
 
     /// A coarse-projection round whose image leaves both i16 and the window of its two base-2^8

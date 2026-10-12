@@ -562,6 +562,13 @@ impl Encoder {
         self.ring_slice(role, &m.data);
     }
 
+    fn option_matrix_v(&mut self, role: Role, m: &Option<VerticallyAlignedMatrix<RingElement>>) {
+        self.shape.put(m.is_some() as u64, 1);
+        if let Some(m) = m {
+            self.matrix_v(role, m);
+        }
+    }
+
     fn polys(&mut self, polys: &[Polynomial<FieldExtension>]) {
         self.shape.put_varint(polys.len() as u64);
         for poly in polys {
@@ -623,13 +630,12 @@ impl Encoder {
         }
         self.option_slice(Role::ConstantTerm, &p.constant_term_claims);
         self.next_commitment(&p.next_round_commitment);
+        self.option_matrix_v(Role::ProjectionCt, &p.terminal_projection_image);
         self.next(&p.next);
     }
 
     fn simple(&mut self, p: &SimpleRoundProof) {
         self.matrix_v(Role::Folded, &p.folded_witness);
-        self.matrix_v(Role::ProjectionCt, &p.projection_image_ct);
-        self.matrix_h(Role::BatchedProjection, &p.batched_projection_image);
         self.matrix_h(Role::OpeningRhs, &p.opening_rhs);
     }
 
@@ -902,6 +908,16 @@ impl<'a> Decoder<'a> {
         })
     }
 
+    fn option_matrix_v(
+        &mut self,
+        role: Role,
+    ) -> Result<Option<VerticallyAlignedMatrix<RingElement>>, WireError> {
+        if self.shape.get(1)? == 0 {
+            return Ok(None);
+        }
+        Ok(Some(self.matrix_v(role)?))
+    }
+
     fn polys(&mut self) -> Result<Vec<Polynomial<FieldExtension>>, WireError> {
         let len = self.shape.get_len()?;
         let mut polys = Vec::with_capacity(len.min(4096));
@@ -962,6 +978,7 @@ impl<'a> Decoder<'a> {
         };
         let constant_term_claims = self.option_slice(Role::ConstantTerm)?;
         let next_round_commitment = self.next_commitment()?;
+        let terminal_projection_image = self.option_matrix_v(Role::ProjectionCt)?;
         Ok(SumcheckRoundProof {
             polys,
             claim_over_witness,
@@ -974,6 +991,7 @@ impl<'a> Decoder<'a> {
             rc_fine_projection_inner,
             constant_term_claims,
             next_round_commitment,
+            terminal_projection_image,
             next: self.next()?,
         })
     }
@@ -981,8 +999,6 @@ impl<'a> Decoder<'a> {
     fn simple(&mut self) -> Result<SimpleRoundProof, WireError> {
         Ok(SimpleRoundProof {
             folded_witness: self.matrix_v(Role::Folded)?,
-            projection_image_ct: self.matrix_v(Role::ProjectionCt)?,
-            batched_projection_image: self.matrix_h(Role::BatchedProjection)?,
             opening_rhs: self.matrix_h(Role::OpeningRhs)?,
         })
     }
@@ -1102,8 +1118,6 @@ mod tests {
     fn simple() -> RoundProof {
         RoundProof::Simple(SimpleRoundProof {
             folded_witness: vertical(4, 3, 1 << 11),
-            projection_image_ct: vertical(2, 2, 1 << 5),
-            batched_projection_image: horizontal(2, 2),
             opening_rhs: horizontal(2, 2),
         })
     }
@@ -1135,6 +1149,7 @@ mod tests {
             rc_fine_projection_inner: full.then(|| (vec![uniform()], vec![uniform(), uniform()])),
             constant_term_claims: full.then(|| vec![uniform()]),
             next_round_commitment: Some(NextRoundCommitment::Recursive(vec![uniform(); 3])),
+            terminal_projection_image: full.then(|| vertical(2, 1, 1 << 13)),
             next,
         }
     }
@@ -1196,6 +1211,10 @@ mod tests {
         assert_eq!(
             last.folded_witness.used_cols,
             last_back.folded_witness.used_cols
+        );
+        same_ring(
+            &proof.terminal_projection_image.as_ref().unwrap().data,
+            &back.terminal_projection_image.as_ref().unwrap().data,
         );
         same_ring(&mid.opening_rhs.data, &mid_back.opening_rhs.data);
     }

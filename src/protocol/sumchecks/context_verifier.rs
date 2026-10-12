@@ -103,7 +103,13 @@ pub struct FineProjVerifierContext {
 
     pub rhs_scalar_consistency_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
 
-    pub output_2: ElephantCell<DiffSumcheckEvaluation>,
+    pub output_2: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
+    pub terminal: Option<TerminalProjectionVerifierContext>,
+}
+
+pub struct TerminalProjectionVerifierContext {
+    pub c_0_evaluation_field: ElephantCell<StructuredRowEvaluationLinearSumcheck<FieldExtension>>,
+    pub j_batched_evaluation: ElephantCell<BasicEvaluationLinearSumcheck<RingElement>>,
 }
 pub struct FineProjVerifierContextWrapper {
     pub sumchecks: [FineProjVerifierContext; NOF_BATCHES],

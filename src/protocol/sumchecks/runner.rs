@@ -11,7 +11,7 @@ use crate::{
     protocol::{
         config::{Projection, SumcheckConfig},
         open::{evaluation_point_to_structured_row, Opening},
-        project_fine::BatchedProjectionChallenges,
+        project_fine::{BatchedProjectionChallenges, TerminalProjection},
         sumcheck::SumcheckContext,
         sumcheck_utils::{
             common::{HighOrderSumcheckData, SumcheckBaseData},
@@ -52,6 +52,7 @@ pub fn sumcheck(
     projection_matrix: &ProjectionMatrix,
     folding_challenges: &Vec<RingElement>,
     fine_proj_batching_challenges: &Option<&[BatchedProjectionChallenges; NOF_BATCHES]>,
+    terminal_projection: Option<&TerminalProjection>,
     opening: &Opening,
     sumcheck_context: &mut SumcheckContext,
     hash_wrapper: &mut HashWrapper,
@@ -113,6 +114,7 @@ pub fn sumcheck(
             &conjugated_combined_witness,
             folding_challenges,
             fine_proj_batching_challenges,
+            terminal_projection,
             opening,
             projection_matrix,
             &projection_matrix_flatter,

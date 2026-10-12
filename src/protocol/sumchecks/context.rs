@@ -130,6 +130,10 @@ impl SumcheckContext {
                     .rhs_scalar_consistency_sumcheck
                     .borrow_mut()
                     .partial_evaluate(r);
+                if let Some(terminal) = &fine_proj_sc.terminal {
+                    terminal.c_0_sumcheck.borrow_mut().partial_evaluate(r);
+                    terminal.j_batched_sumcheck.borrow_mut().partial_evaluate(r);
+                }
             }
         }
 
@@ -261,7 +265,15 @@ pub struct FineProjSumcheckContext {
     pub lhs_consistency_flatter_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub rhs_consistency_flatter_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
     pub rhs_scalar_consistency_sumcheck: ElephantCell<LinearSumcheck<RingElement>>, // for e
-    pub output_2: ElephantCell<DiffSumcheck<RingElement>>,
+    pub output_2: ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>,
+    pub terminal: Option<TerminalProjectionSumcheckContext>,
+}
+
+/// The terminal witness's batched projection `c_0 ⊗ j_batched` over the round's composed witness,
+/// added to `output_2`.
+pub struct TerminalProjectionSumcheckContext {
+    pub c_0_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    pub j_batched_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
 }
 
 /// Wrapper for multiple FineProj sumchecks (one per batch) with shared combiners.

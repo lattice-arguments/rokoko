@@ -1,7 +1,7 @@
 use crate::{
     common::{
         arithmetic::field_to_ring_element,
-        config::{NOF_BATCHES, NUM_SLOTS},
+        config::{MOD_Q, NOF_BATCHES, NUM_SLOTS},
         hash::HashWrapper,
         norms::assert_norm_bounded,
         projection_matrix::ProjectionMatrix,
@@ -9,15 +9,18 @@ use crate::{
         structured_row::StructuredRow,
         sumcheck_element::SumcheckElement,
     },
+    hexl::bindings::multiply_mod,
     protocol::{
         config::{NextRoundCommitment, Projection, SumcheckConfig, SumcheckRoundProof},
         open::evaluation_point_to_structured_row,
         project_fine::{
-            verifier_sample_projection_challenges_collectively, BatchedProjectionChallengesSuccinct,
+            image_constant_term, verifier_sample_projection_challenges_collectively,
+            verifier_terminal_projection_challenges, BatchedProjectionChallengesSuccinct,
         },
         sumcheck_utils::common::EvaluationSumcheckData,
         sumchecks::{
-            context_verifier::VerifierSumcheckContext, loader_verifier::load_verifier_sumcheck_data,
+            builder::terminal_config, context_verifier::VerifierSumcheckContext,
+            loader_verifier::load_verifier_sumcheck_data,
         },
     },
 };
@@ -173,7 +176,8 @@ pub fn sumcheck_verifier(
         let challenges_3_1: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] =
             verifier_sample_projection_challenges_collectively(
                 &projection_matrix,
-                config,
+                config.witness_width,
+                config.witness_height,
                 hash_wrapper,
             );
         hash_wrapper.update_with_ring_element_slice(rcs_projection_1_batched);
@@ -198,6 +202,37 @@ pub fn sumcheck_verifier(
             }
         }
     }
+
+    let terminal_projection = match (
+        terminal_config(config),
+        round_proof.terminal_projection_image.as_ref(),
+    ) {
+        (Some(next), Some(image)) => {
+            assert_eq!(
+                (image.height, image.width),
+                (config.composed_witness_length / next.projection_ratio, 1),
+                "terminal projection image shape"
+            );
+            Some(verifier_terminal_projection_challenges(
+                next,
+                config.composed_witness_length,
+                image,
+                hash_wrapper,
+            ))
+        }
+        (None, None) => None,
+        _ => panic!("terminal projection image presence does not match the round's config"),
+    };
+    let terminal_constant_terms: Option<[u64; NOF_BATCHES]> =
+        terminal_projection.as_ref().map(|projection| {
+            let image = &round_proof.terminal_projection_image.as_ref().unwrap().data;
+            std::array::from_fn(|i| {
+                let challenges = &projection.challenges[i];
+                let constant_term =
+                    image_constant_term(image, &challenges.c_0_layers, &challenges.c_1_layers);
+                unsafe { multiply_mod(constant_term, projection.weights[i], MOD_Q) }
+            })
+        });
 
     let projection_matrix_flatter_structured = match config.projection_recursion {
         Projection::Coarse(_) => {
@@ -272,9 +307,9 @@ pub fn sumcheck_verifier(
     );
 
     if let Some(constant_term_claims) = &round_proof.constant_term_claims {
-        for ct_claim in constant_term_claims.iter() {
+        for (i, ct_claim) in constant_term_claims.iter().enumerate() {
             let ct = ct_claim.constant_term_from_incomplete_ntt();
-            assert_eq!(ct, 0);
+            assert_eq!(ct, terminal_constant_terms.map_or(0, |terms| terms[i]));
         }
     }
 
@@ -357,6 +392,7 @@ pub fn sumcheck_verifier(
         &projection_matrix,
         &projection_matrix_flatter_structured,
         &challenges_3_1, // for 1 projection type only
+        terminal_projection.as_ref(),
         &combination,
         &fe,
     );

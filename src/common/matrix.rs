@@ -142,6 +142,11 @@ impl<T> HorizontallyAlignedMatrix<T> {
         let end = start + self.width;
         &mut self.data[start..end]
     }
+
+    pub fn truncate_rows(&mut self, rows: usize) {
+        self.data.truncate(rows * self.width);
+        self.height = rows;
+    }
 }
 
 #[cfg(test)]
