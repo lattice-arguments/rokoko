@@ -397,7 +397,7 @@ pub fn execute_snark(inst: &Instantiation) {
 mod tests {
     use crate::common::{
         init_common,
-        ring_arithmetic::{Representation, RingElement},
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::StructuredRow,
     };
     use crate::protocol::{
@@ -535,6 +535,67 @@ mod tests {
         let proved = prove(config);
         let proof = wire::from_bytes(&proved.bytes).expect("the proof must deserialise");
         verify(config, &proved, &proof);
+    }
+
+    fn bump(claim: &mut FieldExtension, part: usize) {
+        claim.coeffs[part] = (claim.coeffs[part] + 1) % crate::common::config::MOD_Q;
+    }
+
+    #[test]
+    fn tampered_trace_claims_are_rejected() {
+        init_common();
+        let generated = three_decomposition_chunks_config();
+        let crate::protocol::config::Config::Sumcheck(config) = &generated else {
+            panic!("expected a sumcheck config")
+        };
+        let proved = prove(config);
+        let decode = || wire::from_bytes(&proved.bytes).expect("the proof must deserialise");
+        assert!(!rejected(config, &proved, &decode()));
+
+        let tampers: Vec<(&str, Box<dyn Fn(&mut SumcheckRoundProof)>)> = vec![
+            (
+                "part 0 of a constant-term claim",
+                Box::new(|proof| bump(&mut proof.constant_term_claims.as_mut().unwrap()[0], 0)),
+            ),
+            (
+                "trace-free coordinate of a constant-term claim",
+                Box::new(|proof| bump(&mut proof.constant_term_claims.as_mut().unwrap()[1], 1)),
+            ),
+            (
+                "norm of the norm claim",
+                Box::new(|proof| bump(&mut proof.norm_claim, 0)),
+            ),
+            (
+                "trace-free coordinate of the norm claim",
+                Box::new(|proof| bump(&mut proof.norm_claim, 1)),
+            ),
+            (
+                "norm of the most inner norm claim",
+                Box::new(|proof| bump(&mut proof.most_inner_norm_claim, 0)),
+            ),
+            (
+                "trace-free coordinate of the most inner norm claim",
+                Box::new(|proof| bump(&mut proof.most_inner_norm_claim, 1)),
+            ),
+        ];
+        for (what, tamper) in tampers {
+            let mut proof = decode();
+            tamper(&mut proof);
+            assert!(
+                rejected(config, &proved, &proof),
+                "tampered {what} was accepted"
+            );
+        }
+
+        let norm = (decode().norm_claim.coeffs[0] as f64).sqrt();
+        let mut bounded = config.clone();
+        bounded.norm_bound = norm * 1.001;
+        assert!(!rejected(&bounded, &proved, &decode()));
+        bounded.norm_bound = norm * 0.999;
+        assert!(
+            rejected(&bounded, &proved, &decode()),
+            "a norm over its bound was accepted"
+        );
     }
 
     /// A round with a non-power-of-two number of openings: the opening commitment is padded to
@@ -958,6 +1019,24 @@ mod tests {
         let proof = wire::from_bytes(&proved.bytes).expect("the proof must deserialise");
         proved.rc_commitment[0] += &one;
         assert!(rejected(config, &proved, &proof), "a wrong commitment digest was accepted");
+    }
+
+    #[test]
+    fn tampered_binariness_claim_is_rejected() {
+        init_common();
+        let generated = binary_top_config();
+        let crate::protocol::config::Config::Sumcheck(config) = &generated else {
+            panic!("expected a sumcheck config")
+        };
+        let proved = prove(config);
+        for part in [0, 1] {
+            let mut proof = wire::from_bytes(&proved.bytes).expect("the proof must deserialise");
+            bump(proof.binariness_claim.as_mut().unwrap(), part);
+            assert!(
+                rejected(config, &proved, &proof),
+                "a tampered binariness claim was accepted"
+            );
+        }
     }
 
     /// Planes that recompose the leaf but are not bits, committed under a digest of their own,
