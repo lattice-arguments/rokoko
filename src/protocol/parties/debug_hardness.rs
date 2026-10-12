@@ -6,8 +6,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{
     common::{
-        config::MOD_Q,
-        estimator::{estimate_rsis_security, RSISParameters},
+        config::{DEGREE, MOD_Q},
+        estimator::{
+            estimate_rsis_security, estimate_sis_security, Norm, RSISParameters, SISParameters,
+        },
         norms,
         ring_arithmetic::{Representation, RingElement},
         short_challenge::T_OP_NORM_BOUND,
@@ -15,6 +17,7 @@ use crate::{
     protocol::{
         commitment::{RecursionConfig, RecursiveCommitmentWithAux},
         config::{IntermediateConfig, Projection, SimpleConfig, SumcheckConfig},
+        crs::BINARY_KEY_BOUND,
         params::NORM_MARGIN,
         sumchecks::helpers::plane_weight,
     },
@@ -100,6 +103,54 @@ fn length_bound(norm: f64) -> u64 {
 static ROUND_ID: AtomicUsize = AtomicUsize::new(0);
 static DEBUG_HARDNESS_FROM_ROUND: usize = 0;
 
+/// The level whose digits the most-inner norm claim bounds, as `most_inner_digits_config`.
+fn most_inner_digits<'a>(
+    rc: &'a RecursiveCommitmentWithAux,
+    config: &RecursionConfig,
+) -> &'a RecursiveCommitmentWithAux {
+    match (&rc.next, &config.next) {
+        (Some(next_rc), Some(next_config)) if !next_config.binary => {
+            most_inner_digits(next_rc, next_config)
+        }
+        _ => rc,
+    }
+}
+
+/// A binary leaf binds its bit planes by l_inf-SIS mod `2 * BINARY_KEY_BOUND + 1` at bound 1:
+/// its digest never wraps mod q, so a collision is a ternary kernel vector over the integers.
+fn check_binary_leaf(
+    rc: &RecursiveCommitmentWithAux,
+    config: &RecursionConfig,
+    name: &str,
+    depth: usize,
+) {
+    let planes = config.placement().size;
+    let modulus = 2 * BINARY_KEY_BOUND + 1;
+    let digest_bound = (planes * DEGREE) as u64 * BINARY_KEY_BOUND;
+    assert!(
+        digest_bound < MOD_Q / 2,
+        "a binary digest can wrap mod q: {digest_bound}"
+    );
+    let parameters = SISParameters {
+        n: DEGREE as u64,
+        m: (planes * DEGREE) as u64,
+        q: modulus,
+        length_bound: 1,
+        norm: Norm::Infinity,
+    };
+    let hardness = estimate_sis_security(&parameters);
+    println!(
+        "{}Binary leaf '{}': l_inf = {}, l_inf-SIS n = {}, m = {}, mod {}, bound 1 => {:?} (MATZOV)",
+        "  ".repeat(depth),
+        name,
+        norms::inf_norm(&rc.committed_data),
+        parameters.n,
+        parameters.m,
+        modulus,
+        hardness,
+    );
+}
+
 fn check_recursive_commitment(
     rc: &RecursiveCommitmentWithAux,
     config: &RecursionConfig,
@@ -108,14 +159,19 @@ fn check_recursive_commitment(
     extracted_norm_most_inner: f64,
     depth: usize,
 ) {
+    if config.binary {
+        check_binary_leaf(rc, config, name, depth);
+        return;
+    }
+
     let ell_inf_norm = norms::inf_norm(&rc.committed_data);
     let ell_2_norm = norms::l2_norm(&rc.committed_data);
 
     let current_extracted_norm = 2.0
         * NORM_MARGIN
-        * match config.next {
-            Some(_) => extracted_norm,
-            None => extracted_norm_most_inner,
+        * match &config.next {
+            Some(next) if !next.binary => extracted_norm,
+            _ => extracted_norm_most_inner,
         };
 
     let hardness = estimate_rsis_security(&RSISParameters {
@@ -171,21 +227,23 @@ pub fn check_sumcheck_round(
     let most_inner_commitment_data_ell_2 = {
         let squared = |data: &[RingElement]| norms::l2_norm(data).powi(2);
 
-        let commitment_data = &rc_commitment
-            .most_inner_commitment_with_aux()
-            .committed_data;
-        let norm_commitment_data_ell_2_sq = squared(commitment_data);
+        let digits = |rc, config| squared(&most_inner_digits(rc, config).committed_data);
 
-        let opening_data = &rc_opening.most_inner_commitment_with_aux().committed_data;
-        let norm_opening_data_ell_2_sq = squared(opening_data);
+        let norm_commitment_data_ell_2_sq = digits(rc_commitment, &config.commitment_recursion);
+        let norm_opening_data_ell_2_sq = digits(rc_opening, &config.opening_recursion);
 
-        let norm_projection_data_ell_2_sq = match (rc_coarse_projection, rc_fine_projection) {
-            (Some(rc_proj), _) => squared(&rc_proj.most_inner_commitment_with_aux().committed_data),
-            (_, Some((rc_ct, rc_batched))) => {
-                squared(&rc_ct.most_inner_commitment_with_aux().committed_data)
-                    + rc_batched.map_or(0.0, |rc_batched| {
-                        squared(&rc_batched.most_inner_commitment_with_aux().committed_data)
-                    })
+        let norm_projection_data_ell_2_sq = match (
+            rc_coarse_projection,
+            rc_fine_projection,
+            &config.projection_recursion,
+        ) {
+            (Some(rc_proj), _, Projection::Coarse(proj_config)) => digits(rc_proj, proj_config),
+            (_, Some((rc_ct, rc_batched)), Projection::Fine(proj_config)) => {
+                digits(rc_ct, &proj_config.recursion_constant_term)
+                    + match (rc_batched, &proj_config.recursion_batched_projection) {
+                        (Some(rc_batched), Some(batched)) => digits(rc_batched, batched),
+                        _ => 0.0,
+                    }
             }
             _ => 0.0,
         };

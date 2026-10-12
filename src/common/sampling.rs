@@ -78,6 +78,35 @@ impl AesCtrPublicSampler {
         }
     }
 
+    fn next_u64_below(&mut self, bound: u64) -> u64 {
+        let threshold = u64::MAX - (u64::MAX % bound);
+        loop {
+            if self.pos >= AES_BUF_U64 {
+                self.refill();
+            }
+            let x = self.buf[self.pos];
+            self.pos += 1;
+            if x < threshold {
+                return x % bound;
+            }
+        }
+    }
+
+    /// Coefficients uniform in `[-bound, bound]`.
+    pub fn fill_bounded_ring_element(
+        &mut self,
+        element: &mut RingElement,
+        bound: u64,
+        representation: Representation,
+    ) {
+        element.representation = Representation::Coefficients;
+        for i in 0..DEGREE {
+            let shifted = self.next_u64_below(2 * bound + 1);
+            element.v[i] = (shifted + MOD_Q - bound) % MOD_Q;
+        }
+        element.to_representation(representation);
+    }
+
     pub fn fill_ring_element(&mut self, element: &mut RingElement, representation: Representation) {
         element.representation = Representation::IncompleteNTT;
         for i in 0..DEGREE {
@@ -102,9 +131,44 @@ pub fn sample_public_vector_from_seed(
     vec
 }
 
+pub fn sample_public_bounded_vector_from_seed(
+    seed: &[u8],
+    size: usize,
+    bound: u64,
+    representation: Representation,
+) -> Vec<RingElement> {
+    let mut sampler = AesCtrPublicSampler::from_seed(seed);
+    (0..size)
+        .map(|_| {
+            let mut element = RingElement::new(representation);
+            sampler.fill_bounded_ring_element(&mut element, bound, representation);
+            element
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_sampler_stays_in_its_interval() {
+        let v =
+            sample_public_bounded_vector_from_seed(b"seed", 64, 146, Representation::Coefficients);
+        let mut seen = std::collections::HashSet::new();
+        for el in &v {
+            for &c in &el.v {
+                let centred = if c > MOD_Q / 2 {
+                    c as i64 - MOD_Q as i64
+                } else {
+                    c as i64
+                };
+                assert!(centred.abs() <= 146);
+                seen.insert(centred);
+            }
+        }
+        assert_eq!(seen.len(), 293);
+    }
 
     #[test]
     fn sampler_is_deterministic() {

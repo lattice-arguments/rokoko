@@ -421,6 +421,18 @@ mod tests {
     /// two element-major chunks, which is the top-level hypercube and independent of the round's
     /// own `witness_decomposition_chunks`.
     fn prove(config: &SumcheckConfig) -> Proved {
+        prove_with(config, &|_, _, _| {})
+    }
+
+    /// `prove`, with the commitment and its published root rewritten before the round runs.
+    fn prove_with(
+        config: &SumcheckConfig,
+        tamper: &dyn Fn(
+            &crate::protocol::crs::CRS,
+            &mut crate::protocol::commitment::CommitmentWithAux,
+            &mut Vec<RingElement>,
+        ),
+    ) -> Proved {
         use crate::common::{
             decomposition::decompose, matrix::VerticallyAlignedMatrix,
             sampling::sample_random_short_vector,
@@ -470,7 +482,8 @@ mod tests {
             data: decompose(&raw, base_log as u64, input_chunks),
         };
 
-        let (commitment_with_aux, rc_commitment) = commit(&crs, config, &witness, None);
+        let (mut commitment_with_aux, mut rc_commitment) = commit(&crs, config, &witness, None);
+        tamper(&crs, &mut commitment_with_aux, &mut rc_commitment);
 
         let (proof, claims) = prover_round(
             &crs,
@@ -537,6 +550,7 @@ mod tests {
 
         let aux = AuxSumcheckConfig {
             exact_projection_norm: false,
+            binary_tops: false,
             witness_height: 1024,
             witness_width: 16,
             projection_ratio: 32,
@@ -607,6 +621,7 @@ mod tests {
 
         AuxSumcheckConfig {
             exact_projection_norm: false,
+            binary_tops: false,
             witness_height: 512,
             witness_width: 16,
             projection_ratio: 32,
@@ -727,6 +742,7 @@ mod tests {
         };
         let aux = AuxSumcheckConfig {
             exact_projection_norm: false,
+            binary_tops: false,
             witness_height: 1024,
             witness_width: 16,
             projection_ratio: 4,
@@ -763,6 +779,7 @@ mod tests {
 
         let layout = |nof_openings: usize| AuxSumcheckConfig {
             exact_projection_norm: false,
+            binary_tops: false,
             witness_height: 256,
             witness_width: 256,
             projection_ratio: 32,
@@ -821,6 +838,7 @@ mod tests {
         };
         let generated = AuxSumcheckConfig {
             exact_projection_norm: false,
+            binary_tops: false,
             witness_height: 512,
             witness_width: 16,
             projection_ratio: 32,
@@ -861,5 +879,125 @@ mod tests {
 
         proof.rc_opening_inner[0] += &RingElement::constant(1, Representation::IncompleteNTT);
         assert!(rejected(config, &proved, &proof), "a wrong merged leaf was accepted");
+    }
+
+    fn binary_top_config() -> crate::protocol::config::Config {
+        use crate::protocol::config::SimpleConfig;
+        use crate::protocol::config_generator::{
+            AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig,
+        };
+
+        let leaf = |decomposition_base_log, decomposition_chunks| AuxRecursionConfig {
+            decomposition_base_log,
+            decomposition_chunks,
+            rank: 1,
+            next: None,
+        };
+        AuxSumcheckConfig {
+            exact_projection_norm: false,
+            binary_tops: true,
+            witness_height: 512,
+            witness_width: 16,
+            projection_ratio: 32,
+            projection_height: 256,
+            basic_commitment_rank: 3,
+            nof_openings: 1,
+            commitment_recursion: AuxRecursionConfig {
+                next: Some(Box::new(leaf(7, 8))),
+                ..leaf(15, 4)
+            },
+            opening_recursion: leaf(15, 4),
+            projection_recursion: AuxProjection::Fine {
+                recursion_constant_term: leaf(15, 2),
+                recursion_batched_projection: leaf(15, 4),
+            },
+            witness_decomposition_chunks: 2,
+            witness_decomposition_base_log: 15,
+            next: Some(Box::new(AuxConfig::Simple(SimpleConfig {
+                witness_height: 256,
+                witness_width: 16,
+                projection_ratio: crate::common::config::DEGREE,
+                projection_height: 256,
+                basic_commitment_rank: 2,
+                witness_norm_bound: f64::INFINITY,
+                projection_norm_bound: f64::INFINITY,
+            }))),
+        }
+        .generate_config()
+    }
+
+    #[test]
+    fn binary_top_round_trip() {
+        init_common();
+        let generated = binary_top_config();
+        let crate::protocol::config::Config::Sumcheck(config) = &generated else {
+            panic!("expected a sumcheck config")
+        };
+        assert_eq!(config.binary_leaves().len(), 4);
+        round_trip(config);
+    }
+
+    /// A digest the bit planes do not commit to is rejected, whether it is a leaf in the proof
+    /// or the published commitment.
+    #[test]
+    fn wrong_binary_digest_is_rejected() {
+        init_common();
+        let generated = binary_top_config();
+        let crate::protocol::config::Config::Sumcheck(config) = &generated else {
+            panic!("expected a sumcheck config")
+        };
+        let one = RingElement::constant(1, Representation::IncompleteNTT);
+
+        let proved = prove(config);
+        let mut proof = wire::from_bytes(&proved.bytes).expect("the proof must deserialise");
+        assert!(!rejected(config, &proved, &proof));
+        proof.rc_opening_inner[0] += &one;
+        assert!(rejected(config, &proved, &proof), "a wrong opening digest was accepted");
+
+        let mut proved = prove(config);
+        let proof = wire::from_bytes(&proved.bytes).expect("the proof must deserialise");
+        proved.rc_commitment[0] += &one;
+        assert!(rejected(config, &proved, &proof), "a wrong commitment digest was accepted");
+    }
+
+    /// Planes that recompose the leaf but are not bits, committed under a digest of their own,
+    /// satisfy every commitment relation and fail only the binariness claim.
+    #[test]
+    fn non_binary_planes_are_rejected() {
+        init_common();
+        let generated = binary_top_config();
+        let crate::protocol::config::Config::Sumcheck(config) = &generated else {
+            panic!("expected a sumcheck config")
+        };
+
+        let carry = |crs: &crate::protocol::crs::CRS,
+                     commitment: &mut crate::protocol::commitment::CommitmentWithAux,
+                     root: &mut Vec<RingElement>| {
+            let mut leaf = &mut commitment.rc_commitment_with_aux;
+            while leaf.next.is_some() {
+                leaf = leaf.next.as_mut().unwrap();
+            }
+            let planes = &mut leaf.committed_data;
+            let mut doubled = planes[1].clone();
+            doubled += &planes[1].clone();
+            planes[0] += &doubled;
+            planes[1] = RingElement::zero(Representation::IncompleteNTT);
+
+            let mut digest = RingElement::zero(Representation::IncompleteNTT);
+            let mut term = RingElement::zero(Representation::IncompleteNTT);
+            for (key, plane) in crs.binary_ck[0].preprocessed_row.iter().zip(planes.iter()) {
+                term *= (key, plane);
+                digest += &term;
+            }
+            leaf.commitment = vec![digest.clone()];
+            *root = vec![digest];
+        };
+
+        let proved = prove_with(config, &carry);
+        let proof = wire::from_bytes(&proved.bytes).expect("the proof must deserialise");
+        assert!(
+            rejected(config, &proved, &proof),
+            "non-binary planes were accepted"
+        );
     }
 }

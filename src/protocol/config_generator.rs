@@ -1,5 +1,6 @@
 use crate::common::config::NOF_BATCHES;
 use crate::protocol::commitment::{block_sizes, Placement, Prefix, RecursionConfig};
+use crate::protocol::crs::binary_planes;
 use crate::protocol::config::{
     Config, FineProjectionConfig, IntermediateConfig, Projection, SimpleConfig, SumcheckConfig,
 };
@@ -58,6 +59,8 @@ pub struct AuxSumcheckConfig {
     pub witness_decomposition_chunks: usize,
     /// Adds the exact projection-image norm claim to the generated round.
     pub exact_projection_norm: bool,
+    /// Every tree ends in a rank-1 leaf whose bit planes the round commits, sending their digest.
+    pub binary_tops: bool,
     pub next: Option<Box<AuxConfig>>,
 }
 
@@ -380,6 +383,14 @@ impl AuxSumcheckConfig {
                 path,
                 1,
             );
+        } else if self.binary_tops {
+            assert_eq!(config.rank, 1, "a binary top commits a rank-1 leaf");
+            path.push("next".to_string());
+            components.push(ComponentInfo {
+                name: format!("{name_prefix}_binary_top"),
+                size: binary_planes(),
+                path,
+            });
         }
     }
 
@@ -528,15 +539,24 @@ impl AuxSumcheckConfig {
                 .collect()
         };
 
+        let mut next_path = base_path.to_vec();
+        next_path.push("next".to_string());
         let next = if let Some(aux_next) = &aux_config.next {
-            let mut next_path = base_path.to_vec();
-            next_path.push("next".to_string());
             Some(Box::new(self.build_recursion_config(
                 aux_next,
                 assigned_prefixes,
                 &next_path,
                 1,
             )))
+        } else if self.binary_tops {
+            Some(Box::new(RecursionConfig {
+                decomposition_base_log: 1,
+                decomposition_chunks: binary_planes(),
+                rank: 1,
+                placements: vec![find(&next_path)],
+                next: None,
+                binary: true,
+            }))
         } else {
             None
         };
@@ -547,6 +567,7 @@ impl AuxSumcheckConfig {
             rank: aux_config.rank,
             placements,
             next,
+            binary: false,
         }
     }
 }
@@ -558,6 +579,7 @@ mod tests {
     fn toy_config_aux() -> AuxSumcheckConfig {
         AuxSumcheckConfig {
             exact_projection_norm: false,
+            binary_tops: false,
             witness_height: 512,
             witness_width: 16,
             projection_ratio: 32,
@@ -602,6 +624,7 @@ mod tests {
     fn test_toy_config_ii_generation() {
         let aux_config = AuxSumcheckConfig {
             exact_projection_norm: false,
+            binary_tops: false,
             witness_height: 512,
             witness_width: 16,
             projection_ratio: 64,

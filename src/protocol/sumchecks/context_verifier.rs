@@ -125,12 +125,12 @@ pub struct ComVerifyVerifierContext {
 }
 
 pub struct ComVerifyLayerVerifierContext {
-    pub ck_evaluations: Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
+    pub ck_evaluations: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
     pub outputs: Vec<ElephantCell<DiffSumcheckEvaluation>>,
 }
 
 pub struct ComVerifyOutputLayerVerifierContext {
-    pub ck_evaluations: Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
+    pub ck_evaluations: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
     pub outputs: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>>,
 }
 
@@ -143,4 +143,6 @@ pub struct NormCheckVerifierContext {
     pub output_2: ElephantCell<ProductSumcheckEvaluation>,
 
     pub output_3: Option<ElephantCell<ProductSumcheckEvaluation>>,
+
+    pub binariness: Option<ElephantCell<DiffSumcheckEvaluation>>,
 }

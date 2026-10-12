@@ -5,7 +5,7 @@ use rayon::prelude::*;
 
 use crate::{
     common::{
-        decomposition::decompose_chunks_into,
+        decomposition::{decompose_bits_chunks_into, decompose_chunks_into},
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         ring_arithmetic::{incomplete_ntt_dot_into, Representation, RingElement},
     },
@@ -262,6 +262,8 @@ pub struct RecursionConfig {
     /// One placement per row segment of this level's input, in row order.
     pub placements: Vec<Placement>,
     pub next: Option<Box<RecursionConfig>>,
+    /// A binary leaf: the input's unsigned bit planes, committed against `CRS::binary_ck`.
+    pub binary: bool,
 }
 
 impl RecursionConfig {
@@ -269,6 +271,15 @@ impl RecursionConfig {
         match &self.next {
             Some(next_config) => next_config.most_inner_config(),
             None => self,
+        }
+    }
+
+    /// The innermost level whose digits the most-inner norm claim bounds: the leaf, or the level
+    /// a binary leaf takes the bits of.
+    pub fn most_inner_digits_config(&self) -> &RecursionConfig {
+        match &self.next {
+            Some(next_config) if !next_config.binary => next_config.most_inner_digits_config(),
+            _ => self,
         }
     }
 
@@ -381,15 +392,20 @@ fn recursive_commit_with(
 
     for row in 0..config.placements.len() {
         let start = row * row_len * padded;
-        decompose_chunks_into(
-            &mut committed_data[start..start + row_len * chunks],
-            &data[row * row_len..(row + 1) * row_len],
-            config.decomposition_base_log as u64,
-            chunks,
-        );
+        let output = &mut committed_data[start..start + row_len * chunks];
+        let input = &data[row * row_len..(row + 1) * row_len];
+        if config.binary {
+            decompose_bits_chunks_into(output, input, chunks);
+        } else {
+            decompose_chunks_into(output, input, config.decomposition_base_log as u64, chunks);
+        }
     }
 
-    let ck = crs.ck_for_wit_dim(committed_data.len());
+    let ck = if config.binary {
+        &crs.binary_ck
+    } else {
+        crs.ck_for_wit_dim(committed_data.len())
+    };
 
     let mut commitment = vec![RingElement::zero(Representation::IncompleteNTT); config.rank];
 
@@ -441,6 +457,7 @@ mod tests {
                 },
             )],
             next: None,
+            binary: false,
         };
 
         let recursive_commitment = recursive_commit(&crs, &config, &data);

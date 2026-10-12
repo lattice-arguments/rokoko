@@ -229,27 +229,47 @@ fn selected_input_piece_evaluations(
         .collect()
 }
 
+/// The `segment`-th of `segments` equal dyadic slices of the binary key, which the verifier
+/// holds expanded.
+fn binary_key_segment_evaluation(
+    crs: &VerifierCRS,
+    total_vars: usize,
+    segments: usize,
+    segment: usize,
+) -> ElephantCell<EvalData> {
+    let len = crs.binary_key.len() / segments;
+    let eval = basic_evaluation_linear(len, total_vars - len.ilog2() as usize, 0);
+    eval.borrow_mut()
+        .load_from(&crs.binary_key[segment * len..(segment + 1) * len]);
+    eval
+}
+
 fn ck_over_pieces_evaluation(
     crs: &VerifierCRS,
     total_vars: usize,
     config: &commitment::RecursionConfig,
     i: usize,
     data_selected: &[Vec<InputPieceEvaluation>],
-    ck_evals: &mut Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
+    ck_evals: &mut Vec<ElephantCell<EvalData>>,
 ) -> ElephantCell<EvalData> {
     let committed_len = config.committed_len();
     let mut terms: Vec<ElephantCell<EvalData>> = Vec::new();
 
     for pieces in data_selected {
         for piece in pieces {
-            let ck = structured_row_ck_segment_evaluation(
-                crs,
-                total_vars,
-                committed_len,
-                i,
-                piece.ck_slices,
-                piece.ck_slice,
-            );
+            let ck = if config.binary {
+                debug_assert_eq!(committed_len, crs.binary_key.len());
+                binary_key_segment_evaluation(crs, total_vars, piece.ck_slices, piece.ck_slice)
+            } else {
+                structured_row_ck_segment_evaluation(
+                    crs,
+                    total_vars,
+                    committed_len,
+                    i,
+                    piece.ck_slices,
+                    piece.ck_slice,
+                )
+            };
             ck_evals.push(ck.clone());
             terms.push(
                 ElephantCell::new(ProductSumcheckEvaluation::new(ck, piece.data.clone()))
@@ -790,7 +810,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
     let mut most_inner_commitments_selectors: Vec<ElephantCell<SelectorEqEvaluation>> = vec![];
     let push_most_inner = |recursion: &commitment::RecursionConfig,
                                out: &mut Vec<ElephantCell<SelectorEqEvaluation>>| {
-        for placement in &recursion.most_inner_config().placements {
+        for placement in &recursion.most_inner_digits_config().placements {
             for block in &placement.blocks {
                 out.push(selector_evaluation_from_prefix(block, total_vars));
             }
@@ -860,12 +880,37 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
         ))
     });
 
+    let bit_selectors: Vec<ElephantCell<EvalData>> = config
+        .binary_leaves()
+        .into_iter()
+        .flat_map(|leaf| leaf.placement().blocks.iter())
+        .map(|block| selector_evaluation_from_prefix(block, total_vars) as ElephantCell<EvalData>)
+        .collect();
+    let binariness = (!bit_selectors.is_empty()).then(|| {
+        let bits = sum_of_evaluations(bit_selectors);
+        let conjugated_ones = basic_evaluation_linear(1, total_vars, 0);
+        conjugated_ones
+            .borrow_mut()
+            .load_from(&[RingElement::all(1, Representation::IncompleteNTT).conjugate()]);
+        let squares =
+            ElephantCell::new(ProductSumcheckEvaluation::new(bits.clone(), output.clone()));
+        let sums = ElephantCell::new(ProductSumcheckEvaluation::new(
+            bits,
+            ElephantCell::new(ProductSumcheckEvaluation::new(
+                witness.clone(),
+                conjugated_ones,
+            )),
+        ));
+        ElephantCell::new(DiffSumcheckEvaluation::new(squares, sums))
+    });
+
     let norm_check_evaluation = NormCheckVerifierContext {
         conjugated_combined_witness_evaluation: conjugated_combined_witness_evaluation.clone(),
         output,
         selectors: most_inner_commitments_selectors,
         output_2,
         output_3,
+        binariness,
     };
 
     let mut all_outputs: Vec<ElephantCell<EvalData>> = vec![];
@@ -902,6 +947,9 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
     all_outputs.push(norm_check_evaluation.output_2.clone());
     if let Some(output_3) = &norm_check_evaluation.output_3 {
         all_outputs.push(output_3.clone());
+    }
+    if let Some(binariness) = &norm_check_evaluation.binariness {
+        all_outputs.push(binariness.clone());
     }
 
     let combiner_evaluation = ElephantCell::new(CombinerEvaluation::new(all_outputs));
