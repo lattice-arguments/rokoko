@@ -10,6 +10,7 @@ use crate::{
     hexl::bindings::{eltwise_reduce_mod, multiply_mod},
     protocol::{
         commitment::{Placement, Prefix, RecursionConfig},
+        config::{Projection, SumcheckConfig},
         crs::CRS,
         sumcheck_utils::{
             common::HighOrderSumcheckData, elephant_cell::ElephantCell, linear::LinearSumcheck,
@@ -103,13 +104,27 @@ pub(crate) struct BlockWeights {
     pub suffix: usize,
 }
 
-/// Where batch `batch` of the batched projection lives, as `(placement, parts, part)` for
-/// `block_recomposition_weights`: its own row of a level with one row per batch, or else the
-/// `batch`-th piece of every digit plane of the level's single row.
-pub(crate) fn batch_piece(recursion: &RecursionConfig, batch: usize) -> (&Placement, usize, usize) {
-    match recursion.placements.len() {
-        1 => (recursion.placement(), NOF_BATCHES, batch),
-        _ => (&recursion.placements[batch], 1, 0),
+/// Where batch `batch` of the batched projection lives, as the tree holding it and
+/// `(placement, parts, part)` for `block_recomposition_weights`: its own row of a level with one
+/// row per batch, or else the `batch`-th piece of every digit plane of the level's single row.
+/// In the opening tree the batches are the rows after the openings.
+pub(crate) fn batch_piece(
+    config: &SumcheckConfig,
+    batch: usize,
+) -> (&RecursionConfig, &Placement, usize, usize) {
+    let fine = match &config.projection_recursion {
+        Projection::Fine(fine) => fine,
+        _ => unreachable!("only a fine projection is batched"),
+    };
+    match &fine.recursion_batched_projection {
+        None => {
+            let opening = &config.opening_recursion;
+            (opening, &opening.placements[config.nof_openings + batch], 1, 0)
+        }
+        Some(recursion) if recursion.placements.len() == 1 => {
+            (recursion, recursion.placement(), NOF_BATCHES, batch)
+        }
+        Some(recursion) => (recursion, &recursion.placements[batch], 1, 0),
     }
 }
 

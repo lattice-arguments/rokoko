@@ -575,9 +575,8 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 RingToFieldWrapperEvaluation::new(lhs_scalar_consistency_evaluation_field.clone()),
             );
 
-            let recursion = &proj_config.recursion_batched_projection;
             let batched: [RecompositionEvaluation; NOF_BATCHES] = std::array::from_fn(|i| {
-                let (placement, parts, part) = batch_piece(recursion, i);
+                let (recursion, placement, parts, part) = batch_piece(config, i);
                 recomposition_evaluation(
                     placement,
                     recursion.decomposition_chunks,
@@ -772,12 +771,14 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 &proj_config.recursion_constant_term,
             ));
 
-            com_verify_evaluations.push(build_com_verify_verifier_context(
-                crs,
-                total_vars,
-                combined_witness_evaluation.clone(),
-                &proj_config.recursion_batched_projection,
-            ));
+            if let Some(batched) = &proj_config.recursion_batched_projection {
+                com_verify_evaluations.push(build_com_verify_verifier_context(
+                    crs,
+                    total_vars,
+                    combined_witness_evaluation.clone(),
+                    batched,
+                ));
+            }
         }
         Projection::Skip => {
             // Do nothing
@@ -814,10 +815,9 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                 &proj_config.recursion_constant_term,
                 &mut most_inner_commitments_selectors,
             );
-            push_most_inner(
-                &proj_config.recursion_batched_projection,
-                &mut most_inner_commitments_selectors,
-            );
+            if let Some(batched) = &proj_config.recursion_batched_projection {
+                push_most_inner(batched, &mut most_inner_commitments_selectors);
+            }
         }
         Projection::Skip => {
             // Do nothing

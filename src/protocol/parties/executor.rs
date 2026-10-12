@@ -801,4 +801,65 @@ mod tests {
         assert_eq!(demanded(4), 5120);
         assert_eq!(composed(4), 8192);
     }
+
+    /// A round whose opening tree also commits the batched projection: one opening and two
+    /// batches are three rows of a four-row tree, and the round sends no batched leaf.
+    #[test]
+    fn batched_projection_in_opening_round_trip() {
+        use crate::protocol::config::SimpleConfig;
+        use crate::protocol::config_generator::{
+            AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig,
+        };
+
+        init_common();
+
+        let leaf = |decomposition_base_log, decomposition_chunks| AuxRecursionConfig {
+            decomposition_base_log,
+            decomposition_chunks,
+            rank: 1,
+            next: None,
+        };
+        let generated = AuxSumcheckConfig {
+            exact_projection_norm: false,
+            witness_height: 512,
+            witness_width: 16,
+            projection_ratio: 32,
+            projection_height: 256,
+            basic_commitment_rank: 3,
+            nof_openings: 1,
+            commitment_recursion: leaf(15, 4),
+            opening_recursion: leaf(15, 4),
+            projection_recursion: AuxProjection::FineBatchedInOpening {
+                recursion_constant_term: leaf(15, 2),
+            },
+            witness_decomposition_chunks: 2,
+            witness_decomposition_base_log: 15,
+            next: Some(Box::new(AuxConfig::Simple(SimpleConfig {
+                witness_height: 256,
+                witness_width: 8,
+                projection_ratio: crate::common::config::DEGREE,
+                projection_height: 256,
+                basic_commitment_rank: 2,
+                witness_norm_bound: f64::INFINITY,
+                projection_norm_bound: f64::INFINITY,
+            }))),
+        }
+        .generate_config();
+        let crate::protocol::config::Config::Sumcheck(config) = &generated else {
+            panic!("expected a sumcheck config")
+        };
+        assert!(config.batched_projection_in_opening());
+        assert_eq!(
+            config.opening_recursion.placements.len(),
+            1 + crate::common::config::NOF_BATCHES
+        );
+
+        let proved = prove(config);
+        let mut proof = wire::from_bytes(&proved.bytes).expect("the proof must deserialise");
+        assert!(proof.rc_fine_projection_inner.as_ref().unwrap().1.is_none());
+        assert!(!rejected(config, &proved, &proof));
+
+        proof.rc_opening_inner[0] += &RingElement::constant(1, Representation::IncompleteNTT);
+        assert!(rejected(config, &proved, &proof), "a wrong merged leaf was accepted");
+    }
 }

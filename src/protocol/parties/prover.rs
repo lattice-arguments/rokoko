@@ -1,5 +1,6 @@
 use crate::{
     common::{
+        config::NOF_BATCHES,
         decomposition::{decompose, decompose_chunks_into},
         hash::HashWrapper,
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
@@ -108,12 +109,14 @@ pub fn prover_round(
         (opening, claims)
     };
 
-    let rc_opening = {
+    // The opening only has to be bound before the fold challenge, so a tree that also carries the
+    // batched projection is committed once that exists.
+    let rc_opening = (!config.batched_projection_in_opening()).then(|| {
         let _s = tracing::info_span!("prover_round::rc_opening").entered();
-        recursive_commit(crs, &config.opening_recursion, &opening.rhs.data)
-    };
-
-    hash_wrapper.update_with_ring_element_slice(&rc_opening.most_inner_commitment());
+        let rc_opening = recursive_commit(crs, &config.opening_recursion, &opening.rhs.data);
+        hash_wrapper.update_with_ring_element_slice(&rc_opening.most_inner_commitment());
+        rc_opening
+    });
 
     let mut projection_matrix =
         ProjectionMatrix::new(config.projection_ratio, config.projection_height);
@@ -171,27 +174,45 @@ pub fn prover_round(
                 batch_projection_n_times(&witness, &projection_matrix, &mut hash_wrapper)
             };
 
-            let rc_projection_batched = {
-                let _s = tracing::info_span!("prover_round::rc_projection_batched").entered();
-                // A batch count that is not a power of two commits one zero padding row.
-                let mut rows = projection_batched.data.clone();
-                rows.resize(
-                    rows.len().next_power_of_two(),
-                    RingElement::zero(Representation::IncompleteNTT),
-                );
-                recursive_commit(&crs, &proj_config.recursion_batched_projection, &rows)
-            };
-            hash_wrapper
-                .update_with_ring_element_slice(&rc_projection_batched.most_inner_commitment());
+            let rc_projection_batched = proj_config.recursion_batched_projection.as_ref().map(
+                |recursion_batched_projection| {
+                    let _s = tracing::info_span!("prover_round::rc_projection_batched").entered();
+                    // A batch count that is not a power of two commits one zero padding row.
+                    let mut rows = projection_batched.data.clone();
+                    rows.resize(
+                        rows.len().next_power_of_two(),
+                        RingElement::zero(Representation::IncompleteNTT),
+                    );
+                    let rc = recursive_commit(&crs, recursion_batched_projection, &rows);
+                    hash_wrapper.update_with_ring_element_slice(&rc.most_inner_commitment());
+                    rc
+                },
+            );
 
             Some((
                 rc_projection_ct,
                 rc_projection_batched,
                 fine_proj_batching_challenges,
+                projection_batched,
             ))
         }
         _ => None,
     };
+
+    let rc_opening = rc_opening.unwrap_or_else(|| {
+        let _s = tracing::info_span!("prover_round::rc_opening").entered();
+        let width = witness.width;
+        let batched = &rc_fine_projection.as_ref().unwrap().3;
+        let mut rows = opening.rhs.data[..config.nof_openings * width].to_vec();
+        rows.extend_from_slice(&batched.data[..NOF_BATCHES * width]);
+        rows.resize(
+            config.opening_recursion.segments() * width,
+            RingElement::zero(Representation::IncompleteNTT),
+        );
+        let rc_opening = recursive_commit(crs, &config.opening_recursion, &rows);
+        hash_wrapper.update_with_ring_element_slice(&rc_opening.most_inner_commitment());
+        rc_opening
+    });
 
     if let Projection::Skip = &config.projection_recursion {
     }
@@ -268,11 +289,16 @@ pub fn prover_round(
                 &rc_fine_projection.as_ref().unwrap().0,
                 &projection_config.recursion_constant_term,
             );
-            paste_recursive_commitment(
-                &mut next_round_data,
+            if let (Some(rc_batched), Some(recursion_batched_projection)) = (
                 &rc_fine_projection.as_ref().unwrap().1,
                 &projection_config.recursion_batched_projection,
-            );
+            ) {
+                paste_recursive_commitment(
+                    &mut next_round_data,
+                    rc_batched,
+                    recursion_batched_projection,
+                );
+            }
         }
         Projection::Skip => {
             // Do nothing
@@ -310,7 +336,9 @@ pub fn prover_round(
         rc_commitment,
         &rc_opening,
         rc_coarse_projection.as_ref(),
-        rc_fine_projection.as_ref().map(|(ct, b, _)| (ct, b)),
+        rc_fine_projection
+            .as_ref()
+            .map(|(ct, batched, _, _)| (ct, batched.as_ref())),
         next_config_base.map_or(1, |c| c.witness_width()),
     );
 
@@ -368,7 +396,7 @@ pub fn prover_round(
             &fold_challenge,
             &rc_fine_projection
                 .as_ref()
-                .map(|(_, _, challenges)| challenges),
+                .map(|(_, _, challenges, _)| challenges),
             terminal_projection.as_ref(),
             &opening,
             sumcheck_context,
@@ -526,10 +554,12 @@ pub fn prover_round(
         rc_coarse_projection_inner: rc_coarse_projection
             .as_ref()
             .map(|rc| rc.most_inner_commitment().clone()),
-        rc_fine_projection_inner: rc_fine_projection.as_ref().map(|(rc_ct, rc_batched, _)| {
+        rc_fine_projection_inner: rc_fine_projection.as_ref().map(|(rc_ct, rc_batched, _, _)| {
             (
                 rc_ct.most_inner_commitment().clone(),
-                rc_batched.most_inner_commitment().clone(),
+                rc_batched
+                    .as_ref()
+                    .map(|rc_batched| rc_batched.most_inner_commitment().clone()),
             )
         }),
         constant_term_claims,
