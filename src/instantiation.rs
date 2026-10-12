@@ -233,6 +233,7 @@ const NB_P_EN_29: [[f64; 3]; 8] = [
 pub fn p_exact_norm_root_aux(set: ParamSet, nof_openings: usize) -> AuxSumcheckConfig {
     AuxSumcheckConfig {
         exact_projection_norm: true,
+        binary_tops: false,
         witness_height: set.pick(
             2usize.pow(13),
             2usize.pow(14),
@@ -273,6 +274,7 @@ pub fn p_exact_norm_root_aux(set: ParamSet, nof_openings: usize) -> AuxSumcheckC
 pub fn p_int(set: ParamSet) -> AuxSumcheckConfig {
     AuxSumcheckConfig {
         exact_projection_norm: true,
+        binary_tops: false,
         witness_height: set.pick(
             2usize.pow(14),
             2usize.pow(15),
@@ -313,6 +315,7 @@ pub fn p_int(set: ParamSet) -> AuxSumcheckConfig {
 pub fn p_root_aux(set: ParamSet, nof_openings: usize) -> AuxSumcheckConfig {
     AuxSumcheckConfig {
         exact_projection_norm: false,
+        binary_tops: true,
         witness_height: set.pick(
             2usize.pow(13),
             2usize.pow(14),
@@ -351,6 +354,7 @@ pub fn p_root_aux_short(set: ParamSet, nof_openings: usize) -> AuxSumcheckConfig
     let tiny = set == ParamSet::P24;
     AuxSumcheckConfig {
         exact_projection_norm: false,
+        binary_tops: true,
         witness_height: if tiny { 2usize.pow(11) } else { 2usize.pow(10) },
         witness_width: if tiny { 2usize.pow(7) } else { 2usize.pow(6) },
         projection_ratio: 1,              // no-op
@@ -381,6 +385,7 @@ pub fn p_root_aux_short(set: ParamSet, nof_openings: usize) -> AuxSumcheckConfig
 pub fn p_1(set: ParamSet) -> AuxSumcheckConfig {
     AuxSumcheckConfig {
         exact_projection_norm: false,
+        binary_tops: true,
         witness_height: set.pick(
             2usize.pow(13),
             2usize.pow(13),
@@ -425,6 +430,7 @@ pub fn p_1(set: ParamSet) -> AuxSumcheckConfig {
 pub fn p_2(set: ParamSet) -> AuxSumcheckConfig {
     AuxSumcheckConfig {
         exact_projection_norm: false,
+        binary_tops: true,
         witness_height: match set {
             ParamSet::P22 => 2usize.pow(9),
             _ => set.pick(
@@ -470,6 +476,7 @@ pub fn p_2(set: ParamSet) -> AuxSumcheckConfig {
 
 pub static P_3: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
     exact_projection_norm: false,
+    binary_tops: true,
     witness_height: 2usize.pow(8),
     witness_width: 2usize.pow(5),
     projection_ratio: 2usize.pow(5),
@@ -505,6 +512,7 @@ pub static P_3: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
 
 pub static P_4: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
     exact_projection_norm: false,
+    binary_tops: false,
     witness_height: 2usize.pow(9),
     witness_width: 2usize.pow(3),
     projection_ratio: 2usize.pow(5),
@@ -540,6 +548,7 @@ pub static P_4: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig
 
 pub static P_5: LazyLock<AuxSumcheckConfig> = LazyLock::new(|| AuxSumcheckConfig {
     exact_projection_norm: false,
+    binary_tops: false,
     witness_height: 2usize.pow(8),
     witness_width: 2usize.pow(3),
     projection_ratio: 2usize.pow(6),

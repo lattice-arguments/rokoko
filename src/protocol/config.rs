@@ -112,6 +112,24 @@ impl SumcheckConfig {
             })
         )
     }
+
+    /// The binary leaves of the round's trees, whose bit planes the binariness claim covers.
+    pub fn binary_leaves(&self) -> Vec<&RecursionConfig> {
+        let mut trees = vec![&self.commitment_recursion, &self.opening_recursion];
+        match &self.projection_recursion {
+            Projection::Coarse(recursion) => trees.push(recursion),
+            Projection::Fine(recursion) => {
+                trees.push(&recursion.recursion_constant_term);
+                trees.extend(&recursion.recursion_batched_projection);
+            }
+            Projection::Skip => {}
+        }
+        trees
+            .into_iter()
+            .map(RecursionConfig::most_inner_config)
+            .filter(|leaf| leaf.binary)
+            .collect()
+    }
 }
 
 impl ConfigBase for SumcheckConfig {
@@ -236,6 +254,8 @@ pub struct SumcheckRoundProof {
     /// The constant-term leaf and, unless the opening tree carries it, the batched one.
     pub rc_fine_projection_inner: Option<(Vec<RingElement>, Option<Vec<RingElement>>)>,
     pub constant_term_claims: Option<Vec<RingElement>>,
+    /// Present exactly when the round has binary leaves; its constant term is zero.
+    pub binariness_claim: Option<RingElement>,
     pub next_round_commitment: Option<NextRoundCommitment>,
     pub terminal_projection_image: Option<VerticallyAlignedMatrix<RingElement>>,
     pub next: Option<Box<RoundProof>>,
@@ -321,6 +341,12 @@ impl SizeableProof for SumcheckRoundProof {
                 "Constant term claims size: {} KB, ",
                 to_kb(constant_term_claims_size)
             );
+        }
+
+        if let Some(binariness_claim) = &self.binariness_claim {
+            let binariness_claim_size = binariness_claim.compact_size_in_bits();
+            size += binariness_claim_size;
+            tracing::debug!("Binariness claim size: {} KB, ", to_kb(binariness_claim_size));
         }
 
         let next_round_size = if let Some(next_round_commitment) = &self.next_round_commitment {

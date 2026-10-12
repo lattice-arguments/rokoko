@@ -144,6 +144,9 @@ impl SumcheckContext {
             .conjugated_combined_witness
             .borrow_mut()
             .partial_evaluate(r);
+        if let Some(binariness) = &self.norm_check_sumcheck.binariness {
+            binariness.conjugated_ones.borrow_mut().partial_evaluate(r);
+        }
     }
 }
 
@@ -246,6 +249,13 @@ pub struct NormCheckSumcheckContext {
     /// The same inner product scoped to the projection recursion's level-0 placements, present
     /// when the round's config asks for the exact projection-image norm.
     pub output_3: Option<ElephantCell<ProductSumcheck<RingElement>>>,
+
+    pub binariness: Option<BinarinessSumcheckContext>,
+}
+
+pub struct BinarinessSumcheckContext {
+    pub conjugated_ones: ElephantCell<LinearSumcheck<RingElement>>,
+    pub output: ElephantCell<DiffSumcheck<RingElement>>,
 }
 
 /// FineProj: fine (coefficient-level) projection validity (paper: Pi^proj-f).

@@ -7,7 +7,10 @@ use crate::protocol::sumchecks::context::{
     FineProjSumcheckContextWrapper, NextSumcheckContext, TerminalProjectionSumcheckContext,
 };
 use crate::{
-    common::{config::NOF_BATCHES, ring_arithmetic::RingElement},
+    common::{
+        config::NOF_BATCHES,
+        ring_arithmetic::{Representation, RingElement},
+    },
     protocol::{
         commitment::{self},
         config::Config,
@@ -17,7 +20,7 @@ use crate::{
             elephant_cell::ElephantCell, linear::LinearSumcheck, product::ProductSumcheck,
             ring_to_field_combiner::RingToFieldCombiner, selector_eq::SelectorEq,
         },
-        sumchecks::context::NormCheckSumcheckContext,
+        sumchecks::context::{BinarinessSumcheckContext, NormCheckSumcheckContext},
     },
 };
 
@@ -94,7 +97,6 @@ fn ck_over_pieces(
     data_selected: &[Vec<InputPiece>],
     ck_sumchecks: &mut Vec<ElephantCell<LinearSumcheck<RingElement>>>,
 ) -> Data {
-    let committed_len = config.committed_len();
     let mut terms: Vec<Data> = Vec::new();
 
     for pieces in data_selected {
@@ -102,7 +104,7 @@ fn ck_over_pieces(
             let ck = ck_segment_sumcheck(
                 crs,
                 total_vars,
-                committed_len,
+                config,
                 i,
                 piece.ck_slices,
                 piece.ck_slice,
@@ -642,7 +644,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     let mut most_inner_commitments_selectors: Selectors = Vec::new();
     let push_most_inner = |recursion: &commitment::RecursionConfig,
                                out: &mut Selectors| {
-        for placement in &recursion.most_inner_config().placements {
+        for placement in &recursion.most_inner_digits_config().placements {
             for block in &placement.blocks {
                 out.push(sumcheck_from_prefix(block, total_vars));
             }
@@ -711,11 +713,43 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         ))
     });
 
+    // SUM <b, conj b> - <b, conj 1> over the bit planes of the binary leaves, whose constant
+    // term SUM b_k^2 - b_k vanishes exactly when every bit is 0 or 1.
+    let bit_selectors: Selectors = config
+        .binary_leaves()
+        .into_iter()
+        .flat_map(|leaf| leaf.placement().blocks.iter())
+        .map(|block| sumcheck_from_prefix(block, total_vars))
+        .collect();
+    leaves.selectors.extend(bit_selectors.iter().cloned());
+    let binariness = (!bit_selectors.is_empty()).then(|| {
+        let bits = sum_of(bit_selectors.iter().map(|s| s.clone() as Data).collect());
+        let conjugated_ones = ElephantCell::new(
+            LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(1, total_vars, 0),
+        );
+        conjugated_ones
+            .borrow_mut()
+            .load_from(&[RingElement::all(1, Representation::IncompleteNTT).conjugate()]);
+        let squares = ElephantCell::new(ProductSumcheck::new(bits.clone(), output.clone()));
+        let sums = ElephantCell::new(ProductSumcheck::new(
+            bits,
+            ElephantCell::new(ProductSumcheck::new(
+                witness.clone(),
+                conjugated_ones.clone(),
+            )),
+        ));
+        BinarinessSumcheckContext {
+            conjugated_ones,
+            output: ElephantCell::new(DiffSumcheck::new(squares, sums)),
+        }
+    });
+
     let norm_check_sumcheck = NormCheckSumcheckContext {
         conjugated_combined_witness: conjugated_combined_witness_sumcheck.clone(),
         output,
         output_2,
         output_3,
+        binariness,
     };
 
     // ComVerify sumchecks: Three separate recursive commitment trees
@@ -810,6 +844,9 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     all_outputs.push(norm_check_sumcheck.output_2.clone());
     if let Some(output_3) = &norm_check_sumcheck.output_3 {
         all_outputs.push(output_3.clone());
+    }
+    if let Some(binariness) = &norm_check_sumcheck.binariness {
+        all_outputs.push(binariness.output.clone());
     }
 
     let combiner = ElephantCell::new(Combiner::new(all_outputs.clone()));

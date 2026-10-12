@@ -303,23 +303,24 @@ pub(crate) fn ck_sumcheck(
     )
 }
 
-/// The `segment`-th of `segments` equal dyadic slices of the `i`-th commitment key row: the part
-/// of the row that meets one separately placed row block of the commitment's input.
-/// `segments == 1` reproduces `ck_sumcheck`.
+/// The `segment`-th of `segments` equal dyadic slices of the `i`-th key row of `config`'s level:
+/// the part of the row that meets one separately placed row block of the commitment's input.
 pub(crate) fn ck_segment_sumcheck(
     crs: &CRS,
     total_vars: usize,
-    wit_dim: usize,
+    config: &RecursionConfig,
     i: usize,
     segments: usize,
     segment: usize,
 ) -> ElephantCell<LinearSumcheck<RingElement>> {
+    let wit_dim = config.committed_len();
+    let row = if config.binary {
+        &crs.binary_ck[i].preprocessed_row
+    } else {
+        &crs.ck_for_wit_dim(wit_dim)[i].preprocessed_row
+    };
     let len = wit_dim / segments;
-    ck_row_sumcheck(
-        &crs.ck_for_wit_dim(wit_dim)[i].preprocessed_row[segment * len..(segment + 1) * len],
-        total_vars,
-        0,
-    )
+    ck_row_sumcheck(&row[segment * len..(segment + 1) * len], total_vars, 0)
 }
 
 pub fn tensor_product_u64(a: &Vec<u64>, b: &Vec<u64>) -> Vec<u64> {

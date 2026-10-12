@@ -30,9 +30,9 @@ const SCALE: u32 = 1 << SCALE_BITS;
 const RANS_LOW: u32 = 1 << 16;
 const LANES: usize = 8;
 const SYMBOLS: usize = 56;
-const ROLES: usize = 16;
+const ROLES: usize = 18;
 const MAX_ELEMENTS: usize = 1 << 20;
-const VERSION: u8 = 1;
+const VERSION: u8 = 2;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -53,6 +53,8 @@ enum Role {
     BatchedProjection,
     OpeningRhs,
     WitnessEval,
+    Binariness,
+    Digest,
 }
 
 fn residue_bits() -> u32 {
@@ -486,6 +488,12 @@ impl Encoder {
     }
 
     fn ring_slice(&mut self, role: Role, els: &[RingElement]) {
+        self.ring_slice_as(role, role, els);
+    }
+
+    /// A slice coded in the coefficient domain draws on `flipped`'s octave law: a commitment
+    /// leaf is either uniform or a binary digest, whose coefficients are short.
+    fn ring_slice_as(&mut self, role: Role, flipped: Role, els: &[RingElement]) {
         self.shape.put_varint(els.len() as u64);
         if els.is_empty() {
             return;
@@ -523,6 +531,7 @@ impl Encoder {
         } else {
             Vec::new()
         };
+        let role = if flip { flipped } else { role };
         for e in if flip { &coded[..] } else { els } {
             for v in &e.v {
                 self.push(role, *v);
@@ -546,6 +555,13 @@ impl Encoder {
         self.shape.put(els.is_some() as u64, 1);
         if let Some(els) = els {
             self.ring_slice(role, els);
+        }
+    }
+
+    fn option_leaf(&mut self, role: Role, els: &Option<Vec<RingElement>>) {
+        self.shape.put(els.is_some() as u64, 1);
+        if let Some(els) = els {
+            self.ring_slice_as(role, Role::Digest, els);
         }
     }
 
@@ -587,7 +603,7 @@ impl Encoder {
             None => {}
             Some(NextRoundCommitment::Recursive(rc)) => {
                 self.shape.put(0, 1);
-                self.ring_slice(Role::Commitment, rc);
+                self.ring_slice_as(Role::Commitment, Role::Digest, rc);
             }
             Some(NextRoundCommitment::Simple(m)) => {
                 self.shape.put(1, 1);
@@ -620,15 +636,16 @@ impl Encoder {
         self.ring(Role::Norm, &p.norm_claim);
         self.ring(Role::InnerNorm, &p.most_inner_norm_claim);
         self.option_ring(Role::ProjectionNorm, &p.projection_norm_claim);
-        self.ring_slice(Role::Opening, &p.rc_opening_inner);
-        self.option_slice(Role::CoarseProjection, &p.rc_coarse_projection_inner);
+        self.ring_slice_as(Role::Opening, Role::Digest, &p.rc_opening_inner);
+        self.option_leaf(Role::CoarseProjection, &p.rc_coarse_projection_inner);
         self.shape
             .put(p.rc_fine_projection_inner.is_some() as u64, 1);
         if let Some((left, right)) = &p.rc_fine_projection_inner {
-            self.ring_slice(Role::FineProjection, left);
-            self.option_slice(Role::FineProjection, right);
+            self.ring_slice_as(Role::FineProjection, Role::Digest, left);
+            self.option_leaf(Role::FineProjection, right);
         }
         self.option_slice(Role::ConstantTerm, &p.constant_term_claims);
+        self.option_ring(Role::Binariness, &p.binariness_claim);
         self.next_commitment(&p.next_round_commitment);
         self.option_matrix_v(Role::ProjectionCt, &p.terminal_projection_image);
         self.next(&p.next);
@@ -827,6 +844,10 @@ impl<'a> Decoder<'a> {
     }
 
     fn ring_slice(&mut self, role: Role) -> Result<Vec<RingElement>, WireError> {
+        self.ring_slice_as(role, role)
+    }
+
+    fn ring_slice_as(&mut self, role: Role, flipped: Role) -> Result<Vec<RingElement>, WireError> {
         let len = self.shape.get_len()?;
         if len == 0 {
             return Ok(Vec::new());
@@ -842,6 +863,7 @@ impl<'a> Decoder<'a> {
             }
         }
         let flip = self.shape.get(1)? != 0;
+        let role = if flip { flipped } else { role };
 
         let mut els = Vec::with_capacity(len.min(4096));
         for representation in representations {
@@ -879,6 +901,13 @@ impl<'a> Decoder<'a> {
             return Ok(None);
         }
         Ok(Some(self.ring_slice(role)?))
+    }
+
+    fn option_leaf(&mut self, role: Role) -> Result<Option<Vec<RingElement>>, WireError> {
+        if self.shape.get(1)? == 0 {
+            return Ok(None);
+        }
+        Ok(Some(self.ring_slice_as(role, Role::Digest)?))
     }
 
     fn matrix_v(&mut self, role: Role) -> Result<VerticallyAlignedMatrix<RingElement>, WireError> {
@@ -944,7 +973,7 @@ impl<'a> Decoder<'a> {
             return Ok(None);
         }
         Ok(Some(if self.shape.get(1)? == 0 {
-            NextRoundCommitment::Recursive(self.ring_slice(Role::Commitment)?)
+            NextRoundCommitment::Recursive(self.ring_slice_as(Role::Commitment, Role::Digest)?)
         } else {
             NextRoundCommitment::Simple(self.matrix_h(Role::Commitment)?)
         }))
@@ -966,17 +995,18 @@ impl<'a> Decoder<'a> {
         let norm_claim = self.ring(Role::Norm)?;
         let most_inner_norm_claim = self.ring(Role::InnerNorm)?;
         let projection_norm_claim = self.option_ring(Role::ProjectionNorm)?;
-        let rc_opening_inner = self.ring_slice(Role::Opening)?;
-        let rc_coarse_projection_inner = self.option_slice(Role::CoarseProjection)?;
+        let rc_opening_inner = self.ring_slice_as(Role::Opening, Role::Digest)?;
+        let rc_coarse_projection_inner = self.option_leaf(Role::CoarseProjection)?;
         let rc_fine_projection_inner = if self.shape.get(1)? != 0 {
             Some((
-                self.ring_slice(Role::FineProjection)?,
-                self.option_slice(Role::FineProjection)?,
+                self.ring_slice_as(Role::FineProjection, Role::Digest)?,
+                self.option_leaf(Role::FineProjection)?,
             ))
         } else {
             None
         };
         let constant_term_claims = self.option_slice(Role::ConstantTerm)?;
+        let binariness_claim = self.option_ring(Role::Binariness)?;
         let next_round_commitment = self.next_commitment()?;
         let terminal_projection_image = self.option_matrix_v(Role::ProjectionCt)?;
         Ok(SumcheckRoundProof {
@@ -990,6 +1020,7 @@ impl<'a> Decoder<'a> {
             rc_coarse_projection_inner,
             rc_fine_projection_inner,
             constant_term_claims,
+            binariness_claim,
             next_round_commitment,
             terminal_projection_image,
             next: self.next()?,
@@ -1145,10 +1176,11 @@ mod tests {
             most_inner_norm_claim: short(1 << 19),
             projection_norm_claim: full.then(|| short(1 << 24)),
             rc_opening_inner: vec![uniform(), uniform()],
-            rc_coarse_projection_inner: full.then(|| vec![uniform()]),
+            rc_coarse_projection_inner: full.then(|| vec![short(1 << 14)]),
             rc_fine_projection_inner: full
                 .then(|| (vec![uniform()], Some(vec![uniform(), uniform()]))),
             constant_term_claims: full.then(|| vec![uniform()]),
+            binariness_claim: full.then(|| short(1 << 13)),
             next_round_commitment: Some(NextRoundCommitment::Recursive(vec![uniform(); 3])),
             terminal_projection_image: full.then(|| vertical(2, 1, 1 << 13)),
             next,
@@ -1182,6 +1214,10 @@ mod tests {
         same_ring(
             std::slice::from_ref(&proof.norm_claim),
             std::slice::from_ref(&back.norm_claim),
+        );
+        same_ring(
+            std::slice::from_ref(proof.binariness_claim.as_ref().unwrap()),
+            std::slice::from_ref(back.binariness_claim.as_ref().unwrap()),
         );
         for (l, r) in proof.polys.iter().zip(&back.polys) {
             assert_eq!(l.num_coefficients, r.num_coefficients);

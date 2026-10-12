@@ -1,7 +1,10 @@
 use crate::common::{
+    config::MOD_Q,
     matrix::HorizontallyAlignedMatrix,
     ring_arithmetic::{Representation, RingElement},
-    sampling::{sample_public_vector_from_seed, PUBLIC_CRS_SEED},
+    sampling::{
+        sample_public_bounded_vector_from_seed, sample_public_vector_from_seed, PUBLIC_CRS_SEED,
+    },
     structured_row::{PreprocessedRow, StructuredRow},
 };
 use crate::protocol::{
@@ -12,10 +15,33 @@ use crate::protocol::{
 pub type CK = Vec<PreprocessedRow>;
 pub type SCK = Vec<StructuredRow>;
 
+/// A binary-key collision is a ternary kernel vector mod 293: 128-bit l_inf-SIS over 50 planes.
+pub const BINARY_KEY_BOUND: u64 = 146;
+const BINARY_KEY_SEED: &[u8] = b"rokoko-CRS-v1/AES-256-CTR public seed/binary key";
+
+pub fn binary_planes() -> usize {
+    MOD_Q.ilog2() as usize + 1
+}
+
+fn gen_binary_key() -> Vec<RingElement> {
+    let mut key = sample_public_bounded_vector_from_seed(
+        BINARY_KEY_SEED,
+        binary_planes(),
+        BINARY_KEY_BOUND,
+        Representation::IncompleteNTT,
+    );
+    key.resize(
+        binary_planes().next_power_of_two(),
+        RingElement::zero(Representation::IncompleteNTT),
+    );
+    key
+}
+
 /// Struct representing the Common Reference String (CRS).
 pub struct CRS {
     pub cks: Vec<CK>,             // Commitment keys for each witness length
     pub structured_cks: Vec<SCK>, // Structured commitment keys for each witness length
+    pub binary_ck: CK,
     /// The root key in the CRT basis, planned from the witness schedule rather than from a
     /// witness, so that the transform of the key never sits on the commitment's critical path.
     #[cfg(feature = "crt-commitment")]
@@ -29,6 +55,7 @@ pub struct CRS {
 #[derive(Debug)]
 pub struct VerifierCRS {
     pub structured_cks: Vec<SCK>,
+    pub binary_key: Vec<RingElement>,
     /// The simple round's key rows, expanded at setup.
     pub simple_ck: CK,
 }
@@ -113,6 +140,9 @@ impl CRS {
             crt_root: None,
             cks,
             structured_cks,
+            binary_ck: vec![PreprocessedRow {
+                preprocessed_row: gen_binary_key(),
+            }],
         }
     }
 
@@ -145,6 +175,7 @@ impl CRS {
                 config.composed_witness_length,
                 config.basic_commitment_rank + 2,
             ),
+            binary_key: gen_binary_key(),
             simple_ck: Vec::new(),
         };
         if let Some(simple) = simple_round(config) {

@@ -36,6 +36,7 @@ fn batch_claims(
     norm_claim: &RingElement,
     most_inner_norm_claim: &RingElement,
     projection_norm_claim: Option<&RingElement>,
+    binariness_claim: Option<&RingElement>,
     combination: &[RingElement],
 ) -> RingElement {
     let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
@@ -139,6 +140,13 @@ fn batch_claims(
         let mut weighted_norm = projection_norm_claim.clone();
         weighted_norm *= &combination[idx];
         batched_claim += &weighted_norm;
+        idx += 1;
+    }
+
+    if let Some(binariness_claim) = binariness_claim {
+        let mut weighted = binariness_claim.clone();
+        weighted *= &combination[idx];
+        batched_claim += &weighted;
         idx += 1;
     }
 
@@ -284,10 +292,20 @@ pub fn sumcheck_verifier(
         ),
     };
 
+    let binariness_claim = round_proof.binariness_claim.as_ref();
+    assert_eq!(
+        binariness_claim.is_some(),
+        !config.binary_leaves().is_empty(),
+        "binariness claim presence does not match the round's binary leaves"
+    );
+
     hash_wrapper.update_with_ring_element(&round_proof.norm_claim);
     hash_wrapper.update_with_ring_element(&round_proof.most_inner_norm_claim);
     if let Some(projection_norm_claim) = projection_norm_claim {
         hash_wrapper.update_with_ring_element(projection_norm_claim);
+    }
+    if let Some(binariness_claim) = binariness_claim {
+        hash_wrapper.update_with_ring_element(binariness_claim);
     }
     if let Some(constant_term_claims) = &round_proof.constant_term_claims {
         hash_wrapper.update_with_ring_element_slice(constant_term_claims);
@@ -322,6 +340,7 @@ pub fn sumcheck_verifier(
         &round_proof.norm_claim,
         &round_proof.most_inner_norm_claim,
         projection_norm_claim,
+        binariness_claim,
         &combination,
     );
 
@@ -330,6 +349,14 @@ pub fn sumcheck_verifier(
             let ct = ct_claim.constant_term_from_incomplete_ntt();
             assert_eq!(ct, terminal_constant_terms.map_or(0, |terms| terms[i]));
         }
+    }
+
+    if let Some(binariness_claim) = binariness_claim {
+        assert_eq!(
+            binariness_claim.constant_term_from_incomplete_ntt(),
+            0,
+            "a binary leaf holds a coefficient other than 0 or 1"
+        );
     }
 
     let norm_ct = round_proof.norm_claim.constant_term_from_incomplete_ntt();

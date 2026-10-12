@@ -266,6 +266,17 @@ pub fn decompose_chunks_into(
     }
 }
 
+/// `decompose_bits` laid out digit-major, as `decompose_chunks_into` lays out `decompose`.
+pub fn decompose_bits_chunks_into(output: &mut [RingElement], input: &[RingElement], radix: usize) {
+    let mut flat = decompose_bits(input, radix);
+    let n = input.len();
+    for index in 0..n {
+        for i in 0..radix {
+            std::mem::swap(&mut output[i * n + index], &mut flat[index * radix + i]);
+        }
+    }
+}
+
 // With the balanced decomposition using k = (b/2) * Σ b^i, the recomposition offset is zero.
 // Kept for API compatibility.
 pub fn get_composer_offset(_base_log: u64, _radix: usize) -> u64 {
