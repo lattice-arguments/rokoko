@@ -401,10 +401,13 @@ mod tests {
         structured_row::StructuredRow,
     };
     use crate::protocol::{
-        config::{SumcheckConfig, SumcheckRoundProof},
+        config::{RoundProof, SumcheckConfig, SumcheckRoundProof},
         crs::VerifierCRS,
-        parties::verifier::verifier_round,
-        sumchecks::builder_verifier::init_verifier,
+        parties::verifier::verify_round,
+        sumchecks::{
+            batching::{slot_form, FieldClaim, OuterClaim, SlotWeights},
+            builder_verifier::init_verifier,
+        },
         wire,
     };
 
@@ -433,6 +436,19 @@ mod tests {
             &mut Vec<RingElement>,
         ),
     ) -> Proved {
+        prove_deferred(config, tamper, None)
+    }
+
+    /// `prove_with`, the first outer claim batched as `Σ_s λ_s · slot_s(claim)`.
+    fn prove_deferred(
+        config: &SumcheckConfig,
+        tamper: &dyn Fn(
+            &crate::protocol::crs::CRS,
+            &mut crate::protocol::commitment::CommitmentWithAux,
+            &mut Vec<RingElement>,
+        ),
+        first_outer_weights: Option<&SlotWeights>,
+    ) -> Proved {
         use crate::common::{
             decomposition::decompose, matrix::VerticallyAlignedMatrix,
             sampling::sample_random_short_vector,
@@ -441,7 +457,7 @@ mod tests {
             crs::CRS,
             evaluation_point_sampler::sample_initial_evaluation_points,
             params::InitialWitnessParams,
-            parties::{commiter::commit, prover::prover_round},
+            parties::{commiter::commit, prover::prove_round},
             sumcheck::init_sumcheck,
         };
 
@@ -485,7 +501,7 @@ mod tests {
         let (mut commitment_with_aux, mut rc_commitment) = commit(&crs, config, &witness, None);
         tamper(&crs, &mut commitment_with_aux, &mut rc_commitment);
 
-        let (proof, claims) = prover_round(
+        let (proof, claims) = prove_round(
             &crs,
             config,
             &commitment_with_aux,
@@ -494,6 +510,7 @@ mod tests {
             &outer,
             &mut sumcheck_context,
             true,
+            first_outer_weights,
             None,
             None,
         );
@@ -511,15 +528,29 @@ mod tests {
     }
 
     fn verify(config: &SumcheckConfig, proved: &Proved, proof: &SumcheckRoundProof) {
+        let claims = proved
+            .claims
+            .iter()
+            .map(|claim| OuterClaim::Ring(claim.clone()))
+            .collect::<Vec<_>>();
+        verify_outer(config, proved, proof, &claims);
+    }
+
+    fn verify_outer(
+        config: &SumcheckConfig,
+        proved: &Proved,
+        proof: &SumcheckRoundProof,
+        claims: &[OuterClaim],
+    ) {
         let mut sumcheck_context_verifier = init_verifier(&proved.verifier_crs, config);
-        verifier_round(
+        verify_round(
             &proved.verifier_crs,
             config,
             &proved.rc_commitment,
             proof,
             &proved.inner,
             &proved.outer,
-            &proved.claims,
+            claims,
             &mut sumcheck_context_verifier,
             None,
             None,
@@ -596,6 +627,157 @@ mod tests {
             rejected(&bounded, &proved, &decode()),
             "a norm over its bound was accepted"
         );
+    }
+
+    /// Two sumcheck rounds before the terminal one, shaped as the tail of the p-26 chain, each
+    /// next round sized to the composed witness of the one before.
+    fn two_sumcheck_rounds_config() -> crate::protocol::config::Config {
+        use crate::protocol::config::SimpleConfig;
+        use crate::protocol::config_generator::{
+            AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig,
+        };
+
+        let recursion = |decomposition_base_log, decomposition_chunks| AuxRecursionConfig {
+            decomposition_base_log,
+            decomposition_chunks,
+            rank: 2,
+            next: None,
+        };
+        let round = |witness_height, witness_width, projection_ratio, base_log, next| {
+            AuxSumcheckConfig {
+                exact_projection_norm: false,
+                binary_tops: false,
+                witness_height,
+                witness_width,
+                projection_ratio,
+                projection_height: 256,
+                basic_commitment_rank: 3,
+                nof_openings: 2,
+                commitment_recursion: recursion(6, 8),
+                opening_recursion: recursion(6, 9),
+                projection_recursion: AuxProjection::FineBatchedInOpening {
+                    recursion_constant_term: recursion(7, 2),
+                },
+                witness_decomposition_chunks: 2,
+                witness_decomposition_base_log: base_log,
+                next: Some(Box::new(next)),
+            }
+        };
+        let terminal = |composed: usize| {
+            AuxConfig::Simple(SimpleConfig {
+                witness_height: composed / 8,
+                witness_width: 8,
+                projection_ratio: 128,
+                projection_height: 256,
+                basic_commitment_rank: 3,
+                witness_norm_bound: f64::INFINITY,
+                projection_norm_bound: f64::INFINITY,
+            })
+        };
+        let composed = |round: &AuxSumcheckConfig| match round.generate_config() {
+            crate::protocol::config::Config::Sumcheck(config) => config.composed_witness_length,
+            _ => unreachable!(),
+        };
+        let first = |next| round(512, 16, 256, 4, next);
+        let last = |next| round(composed(&first(terminal(1024))) / 8, 8, 128, 5, next);
+        let terminal = terminal(composed(&last(terminal(1024))));
+        first(AuxConfig::Sumcheck(last(terminal))).generate_config()
+    }
+
+    fn next_sumcheck(proof: &mut SumcheckRoundProof) -> &mut SumcheckRoundProof {
+        match proof.next.as_deref_mut() {
+            Some(RoundProof::Sumcheck(next)) => next,
+            _ => panic!("expected a sumcheck round after the first"),
+        }
+    }
+
+    /// A sumcheck round followed by another sends z_1 only; the next round batches z_0's claim.
+    #[test]
+    fn sumcheck_round_defers_its_witness_claim() {
+        init_common();
+        let generated = two_sumcheck_rounds_config();
+        let crate::protocol::config::Config::Sumcheck(config) = &generated else {
+            panic!("expected a sumcheck config")
+        };
+        let proved = prove(config);
+        let decode = || wire::from_bytes(&proved.bytes).expect("the proof must deserialise");
+        let mut proof = decode();
+        assert!(proof.claim_over_witness.is_none());
+        assert!(next_sumcheck(&mut proof).claim_over_witness.is_some());
+        assert!(!rejected(config, &proved, &proof));
+
+        let tampers: Vec<(&str, Box<dyn Fn(&mut SumcheckRoundProof)>)> = vec![
+            (
+                "conjugate witness claim of the deferring round",
+                Box::new(|proof| {
+                    proof.claim_over_witness_conjugate +=
+                        &RingElement::constant(1, Representation::IncompleteNTT)
+                }),
+            ),
+            (
+                "witness claim sent by the deferring round",
+                Box::new(|proof| {
+                    proof.claim_over_witness =
+                        Some(RingElement::constant(1, Representation::IncompleteNTT))
+                }),
+            ),
+            (
+                "witness claim of the round before the terminal one",
+                Box::new(|proof| next_sumcheck(proof).claim_over_witness = None),
+            ),
+            (
+                "rounds after the deferring one",
+                Box::new(|proof| proof.next = None),
+            ),
+        ];
+        for (what, tamper) in tampers {
+            let mut proof = decode();
+            tamper(&mut proof);
+            assert!(
+                rejected(config, &proved, &proof),
+                "tampered {what} was accepted"
+            );
+        }
+    }
+
+    /// A round whose first outer claim is held as `Σ_s λ_s · slot_s(claim) = v` accepts exactly
+    /// the weights and value the prover batched.
+    #[test]
+    fn wrong_deferred_witness_claim_is_rejected() {
+        init_common();
+        let generated = three_decomposition_chunks_config();
+        let crate::protocol::config::Config::Sumcheck(config) = &generated else {
+            panic!("expected a sumcheck config")
+        };
+        let weights: SlotWeights = std::array::from_fn(|s| {
+            let mut w = FieldExtension::from_base(5 + s as u64);
+            w.coeffs[1] = 11 * s as u64 + 1;
+            w
+        });
+        let proved = prove_deferred(config, &|_, _, _| {}, Some(&weights));
+        let proof = || wire::from_bytes(&proved.bytes).expect("the proof must deserialise");
+        let held = FieldClaim {
+            weights,
+            value: slot_form(&weights, &proved.claims[0]),
+        };
+        let verifies = |claim: OuterClaim| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                verify_outer(config, &proved, &proof(), &[claim])
+            }))
+            .is_ok()
+        };
+        assert!(verifies(OuterClaim::Field(held.clone())));
+
+        let mut wrong_value = held.clone();
+        bump(&mut wrong_value.value, 0);
+        assert!(!verifies(OuterClaim::Field(wrong_value)));
+
+        let mut wrong_weights = held.clone();
+        bump(&mut wrong_weights.weights[7], 1);
+        wrong_weights.value = slot_form(&wrong_weights.weights, &proved.claims[0]);
+        assert!(!verifies(OuterClaim::Field(wrong_weights)));
+
+        assert!(!verifies(OuterClaim::Ring(proved.claims[0].clone())));
     }
 
     /// A round with a non-power-of-two number of openings: the opening commitment is padded to

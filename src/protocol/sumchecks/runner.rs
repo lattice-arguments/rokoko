@@ -1,6 +1,6 @@
 use crate::{
     common::{
-        arithmetic::{field_to_ring_element_into, inner_product},
+        arithmetic::{field_to_ring_element_into, inner_product, ONE},
         config::NOF_BATCHES,
         hash::HashWrapper,
         projection_matrix::ProjectionMatrix,
@@ -20,7 +20,8 @@ use crate::{
             ring_to_field_combiner::ring_polynomial_to_field,
         },
         sumchecks::batching::{
-            sample_batching, slot_form, Batching, TraceTerms, TRACE_WEIGHTS,
+            field_terms, sample_batching, slot_form, slot_weights, Batching, SlotWeights,
+            TRACE_WEIGHTS,
         },
     },
 };
@@ -57,19 +58,11 @@ pub fn sumcheck(
     fine_proj_batching_challenges: &Option<&[BatchedProjectionChallenges; NOF_BATCHES]>,
     terminal_projection: Option<&TerminalProjection>,
     opening: &Opening,
+    first_outer_weights: Option<&SlotWeights>,
+    defer_witness_claim: bool,
     sumcheck_context: &mut SumcheckContext,
     hash_wrapper: &mut HashWrapper,
-) -> (
-    RingElement,
-    RingElement,
-    FieldExtension,
-    FieldExtension,
-    Option<FieldExtension>,
-    Vec<Polynomial<FieldExtension>>,
-    Vec<RingElement>,
-    Option<Vec<FieldExtension>>,
-    Option<FieldExtension>,
-) {
+) -> SumcheckOutput {
     let projection_matrix_flatter = match config.projection_recursion {
         Projection::Coarse(_) => {
             let projection_height_flat = config.witness_height / config.projection_ratio;
@@ -163,11 +156,11 @@ pub fn sumcheck(
     }
 
     let num_sumchecks = sumcheck_context.combiner.borrow().sumchecks_count();
-    let field_terms = TraceTerms::new(config, num_sumchecks)
-        .indices()
-        .into_iter()
-        .map(|index| (index, &*TRACE_WEIGHTS))
-        .collect::<Vec<_>>();
+    let field_terms = field_terms(
+        config,
+        num_sumchecks,
+        first_outer_weights.map(|weights| (0, weights)),
+    );
     let Batching {
         combination, fe, ..
     } = sample_batching(hash_wrapper, num_sumchecks, &field_terms);
@@ -190,6 +183,7 @@ pub fn sumcheck(
 
     let mut polys: Vec<Polynomial<FieldExtension>> = vec![];
     let mut round = 0u64;
+    let mut final_claim = FieldExtension::zero();
 
     while num_vars > 0 {
         num_vars -= 1;
@@ -221,6 +215,7 @@ pub fn sumcheck(
         let mut f = FieldExtension::zero();
 
         hash_wrapper.sample_field_element_into(&mut f);
+        final_claim = poly_over_field.at(&f);
 
         field_to_ring_element_into(&mut r, &f);
         r.from_homogenized_field_extensions_to_incomplete_ntt();
@@ -250,14 +245,37 @@ pub fn sumcheck(
         .final_evaluations()
         .clone();
 
-    // z_0, z_1 become the next round's outer claims; bind them before any
+    // Every output carries the witness evaluation z_0 as exactly one factor, so the final check
+    // is `Σ_s λ_s · slot_s(z_0) = v` with `λ_s = fe_s · slot_s(A)`, `A` the combination at z_0 = 1.
+    let next_outer_weights = defer_witness_claim.then(|| {
+        let witness = &sumcheck_context.combined_witness_sumcheck;
+        witness.borrow_mut().load_from(&[ONE.clone()]);
+        let slope = sumcheck_context
+            .combiner
+            .borrow()
+            .final_evaluations_test_only();
+        witness
+            .borrow_mut()
+            .load_from(std::slice::from_ref(&claim_over_witness));
+        let weights = slot_weights(&fe, &slope);
+        assert_eq!(
+            slot_form(&weights, &claim_over_witness),
+            final_claim,
+            "the final check is not linear in the witness evaluation"
+        );
+        weights
+    });
+
+    // z_0 (unless deferred) and z_1 become the next round's outer claims; bind them before any
     // later challenge is sampled.
-    hash_wrapper.update_with_ring_element(&claim_over_witness);
+    if !defer_witness_claim {
+        hash_wrapper.update_with_ring_element(&claim_over_witness);
+    }
     hash_wrapper.update_with_ring_element(&claim_over_witness_conjugate);
 
     evaluation_points.reverse();
 
-    (
+    SumcheckOutput {
         claim_over_witness,
         claim_over_witness_conjugate,
         norm_claim,
@@ -267,5 +285,20 @@ pub fn sumcheck(
         evaluation_points,
         constant_term_claims,
         binariness_claim,
-    )
+        next_outer_weights,
+    }
+}
+
+pub struct SumcheckOutput {
+    pub claim_over_witness: RingElement,
+    pub claim_over_witness_conjugate: RingElement,
+    pub norm_claim: FieldExtension,
+    pub most_inner_norm_claim: FieldExtension,
+    pub projection_norm_claim: Option<FieldExtension>,
+    pub polys: Vec<Polynomial<FieldExtension>>,
+    pub evaluation_points: Vec<RingElement>,
+    pub constant_term_claims: Option<Vec<FieldExtension>>,
+    pub binariness_claim: Option<FieldExtension>,
+    /// The weights `λ` of the next round's first outer claim when z_0 is not sent.
+    pub next_outer_weights: Option<SlotWeights>,
 }

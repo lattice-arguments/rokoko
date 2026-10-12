@@ -30,13 +30,13 @@ use crate::{
             verifier_sample_projection_challenges_collectively, BatchedProjectionChallengesSuccinct,
         },
         sumchecks::{
+            batching::OuterClaim,
             context_verifier::{NextVerifierSumcheckContext, VerifierSumcheckContext},
             runner_verifier::sumcheck_verifier,
         },
     },
 };
 
-#[tracing::instrument(skip_all, name = "verifier_round")]
 pub fn verifier_round(
     crs: &VerifierCRS,
     config: &SumcheckConfig,
@@ -49,20 +49,62 @@ pub fn verifier_round(
     hash_wrapper_verifier: Option<HashWrapper>,
     boundary: Option<BoundaryCapture<'_, VerifierBoundary>>,
 ) {
+    let claims = claims
+        .iter()
+        .map(|claim| OuterClaim::Ring(claim.clone()))
+        .collect::<Vec<_>>();
+    verify_round(
+        crs,
+        config,
+        rc_commitment,
+        round_proof,
+        evaluation_points_inner,
+        evaluation_points_outer,
+        &claims,
+        sumcheck_context_verifier,
+        hash_wrapper_verifier,
+        boundary,
+    )
+}
+
+/// `verifier_round` for outer claims some of which are held only as field claims.
+#[tracing::instrument(skip_all, name = "verifier_round")]
+pub(crate) fn verify_round(
+    crs: &VerifierCRS,
+    config: &SumcheckConfig,
+    rc_commitment: &[RingElement],
+    round_proof: &SumcheckRoundProof,
+    evaluation_points_inner: &[StructuredRow],
+    evaluation_points_outer: &[StructuredRow],
+    claims: &[OuterClaim],
+    sumcheck_context_verifier: &mut VerifierSumcheckContext,
+    hash_wrapper_verifier: Option<HashWrapper>,
+    boundary: Option<BoundaryCapture<'_, VerifierBoundary>>,
+) {
     let mut hash_wrapper_verifier = hash_wrapper_verifier.unwrap_or_else(HashWrapper::new);
 
-    let evaluation_points = sumcheck_verifier(
+    let at_cut = boundary.as_ref().is_some_and(BoundaryCapture::is_at_cut);
+    let defer_witness_claim =
+        matches!(config.next.as_deref(), Some(Config::Sumcheck(_))) && !at_cut;
+
+    let (evaluation_points, next_outer_claim) = sumcheck_verifier(
         &config,
         sumcheck_context_verifier,
         &rc_commitment,
         &round_proof,
         &evaluation_points_inner,
         &evaluation_points_outer,
-        &claims,
+        claims,
+        defer_witness_claim,
         &mut hash_wrapper_verifier,
     );
-
-    let at_cut = boundary.as_ref().is_some_and(BoundaryCapture::is_at_cut);
+    // Present exactly when the round sends z_0, as `sumcheck_verifier` checks.
+    let witness_claims = || {
+        [
+            round_proof.claim_over_witness.clone().unwrap(),
+            round_proof.claim_over_witness_conjugate.conjugate(),
+        ]
+    };
 
     if at_cut {
         let next_config = match config.next.as_deref() {
@@ -83,10 +125,7 @@ pub fn verifier_round(
         *capture.slot = Some(VerifierBoundary {
             config: next_config,
             commitment_root,
-            claims: [
-                round_proof.claim_over_witness.clone(),
-                round_proof.claim_over_witness_conjugate.conjugate(),
-            ],
+            claims: witness_claims(),
             evaluation_points,
             transcript: hash_wrapper_verifier,
         });
@@ -133,11 +172,13 @@ pub fn verifier_round(
                         evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
                     ];
                     let new_claims = [
-                        round_proof.claim_over_witness.clone(),
-                        round_proof.claim_over_witness_conjugate.conjugate(),
+                        OuterClaim::Field(
+                            next_outer_claim.expect("a sumcheck round defers z_0 to the next"),
+                        ),
+                        OuterClaim::Ring(round_proof.claim_over_witness_conjugate.conjugate()),
                     ];
 
-                    verifier_round(
+                    verify_round(
                         crs,
                         &next_sumcheck_config,
                         next_round_commiments_recursive.as_slice(),
@@ -184,10 +225,7 @@ pub fn verifier_round(
                         evaluation_point_to_structured_row(new_evaluation_points_outer),
                         evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
                     ];
-                    let new_claims = [
-                        round_proof.claim_over_witness.clone(),
-                        round_proof.claim_over_witness_conjugate.conjugate(),
-                    ];
+                    let new_claims = witness_claims();
 
                     verifier_round_simple(
                         crs,
@@ -238,10 +276,7 @@ pub fn verifier_round(
                         evaluation_point_to_structured_row(new_evaluation_points_outer),
                         evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
                     ];
-                    let new_claims = [
-                        round_proof.claim_over_witness.clone(),
-                        round_proof.claim_over_witness_conjugate.conjugate(),
-                    ];
+                    let new_claims = witness_claims();
 
                     verifier_round_intermediate(
                         crs,
@@ -264,6 +299,10 @@ pub fn verifier_round(
             assert!(
                 boundary.is_none(),
                 "round boundary cut requested past the end of the round chain"
+            );
+            assert!(
+                config.next.is_none(),
+                "the proof ends before the round chain"
             );
         }
     }

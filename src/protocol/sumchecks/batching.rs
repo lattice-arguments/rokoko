@@ -32,6 +32,45 @@ pub fn slot_form(weights: &SlotWeights, a: &RingElement) -> FieldExtension {
     result
 }
 
+/// `fe_s · slot_s(a)`.
+pub fn slot_weights(fe: &SlotWeights, a: &RingElement) -> SlotWeights {
+    let mut homogenized = a.clone();
+    homogenized.from_incomplete_ntt_to_homogenized_field_extensions();
+    let slots = homogenized.split_into_field_extensions();
+    std::array::from_fn(|s| fe[s] * slots[s])
+}
+
+/// `Σ_s w_s · slot_s(y) = value`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FieldClaim {
+    pub weights: SlotWeights,
+    pub value: FieldExtension,
+}
+
+pub enum OuterClaim {
+    Ring(RingElement),
+    Field(FieldClaim),
+}
+
+/// The outer evaluation claims given as `(opening, weights)`, then the trace terms.
+pub fn field_terms<'a>(
+    config: &SumcheckConfig,
+    outputs: usize,
+    outer: impl IntoIterator<Item = (usize, &'a SlotWeights)>,
+) -> Vec<(usize, &'a SlotWeights)> {
+    let first_outer = config.basic_commitment_rank + config.nof_openings;
+    outer
+        .into_iter()
+        .map(|(opening, weights)| (first_outer + opening, weights))
+        .chain(
+            TraceTerms::new(config, outputs)
+                .indices()
+                .into_iter()
+                .map(|index| (index, &*TRACE_WEIGHTS)),
+        )
+        .collect()
+}
+
 /// The combiner outputs claimed through `TRACE_WEIGHTS`.
 pub struct TraceTerms {
     pub constant_terms: Option<[usize; NOF_BATCHES]>,

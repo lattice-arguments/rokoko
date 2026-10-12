@@ -633,7 +633,7 @@ impl Encoder {
 
     fn sumcheck(&mut self, p: &SumcheckRoundProof) {
         self.polys(&p.polys);
-        self.ring(Role::Claim, &p.claim_over_witness);
+        self.option_ring(Role::Claim, &p.claim_over_witness);
         self.ring(Role::Conjugate, &p.claim_over_witness_conjugate);
         self.trace_claim(Role::Norm, &p.norm_claim);
         self.trace_claim(Role::InnerNorm, &p.most_inner_norm_claim);
@@ -1008,7 +1008,7 @@ impl<'a> Decoder<'a> {
 
     fn sumcheck(&mut self) -> Result<SumcheckRoundProof, WireError> {
         let polys = self.polys()?;
-        let claim_over_witness = self.ring(Role::Claim)?;
+        let claim_over_witness = self.option_ring(Role::Claim)?;
         let claim_over_witness_conjugate = self.ring(Role::Conjugate)?;
         let norm_claim = self.trace_claim(Role::Norm)?;
         let most_inner_norm_claim = self.trace_claim(Role::InnerNorm)?;
@@ -1213,7 +1213,7 @@ mod tests {
     fn sumcheck(next: Option<Box<RoundProof>>, full: bool) -> SumcheckRoundProof {
         SumcheckRoundProof {
             polys: (2..=3).map(poly).collect(),
-            claim_over_witness: uniform(),
+            claim_over_witness: full.then(uniform),
             claim_over_witness_conjugate: uniform(),
             norm_claim: field(1 << 28),
             most_inner_norm_claim: field(1 << 19),

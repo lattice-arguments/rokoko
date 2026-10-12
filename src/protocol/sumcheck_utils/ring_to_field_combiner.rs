@@ -205,16 +205,29 @@ impl EvaluationSumcheckData for RingToFieldCombinerEvaluation {
     type Element = FieldExtension;
 
     fn evaluate(&mut self, point: &Vec<FieldExtension>) -> &Self::Element {
-        // Convert FieldExtension point to RingElement
-        let mut ring_point = Vec::with_capacity(point.len());
-        for fe in point {
+        self.evaluate_at_ring_point(&ring_point(point))
+    }
+}
+
+fn ring_point(point: &[FieldExtension]) -> Vec<RingElement> {
+    point
+        .iter()
+        .map(|fe| {
             let mut r = RingElement::constant(0, Representation::HomogenizedFieldExtensions);
             r.combine_from_field_extensions(&[*fe; NUM_SLOTS]);
             r.from_homogenized_field_extensions_to_incomplete_ntt();
-            ring_point.push(r);
-        }
+            r
+        })
+        .collect()
+}
 
-        self.evaluate_at_ring_point(&ring_point)
+impl RingToFieldCombinerEvaluation {
+    /// The ring combination at `point`, before it is mapped to the field.
+    pub fn evaluate_ring(&mut self, point: &[FieldExtension]) -> RingElement {
+        self.evaluation
+            .borrow_mut()
+            .evaluate(&ring_point(point))
+            .clone()
     }
 }
 

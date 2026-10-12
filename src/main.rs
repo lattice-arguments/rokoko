@@ -179,6 +179,7 @@ mod tests {
         assert_eq!(run.verifier.commitment_root.len(), 1);
         assert_eq!(run.prover.claims.len(), 2);
         assert_eq!(run.verifier.claims.len(), 2);
+        assert_eq!(run.prover.claims[0], run.verifier.claims[0]);
         assert_eq!(run.prover.evaluation_points, run.verifier.evaluation_points);
 
         let mut prover_bytes = [0u8; 16];

@@ -243,7 +243,8 @@ pub trait SizeableProof {
 
 pub struct SumcheckRoundProof {
     pub polys: Vec<Polynomial<FieldExtension>>,
-    pub claim_over_witness: RingElement,
+    /// Absent when the next round is a sumcheck round, which binds it through its batching.
+    pub claim_over_witness: Option<RingElement>,
     pub claim_over_witness_conjugate: RingElement,
     /// `Σ_s CONSTANT_TERM_FACTORS[s] · slot_s(N)` for the norm claims `N`; part 0 is `ct(N)`.
     pub norm_claim: FieldExtension,
@@ -278,7 +279,11 @@ impl SizeableProof for SumcheckRoundProof {
         tracing::debug!("Polys size: {} KB, ", to_kb(size));
 
         let mut claims_size = 0;
-        for claim in [&self.claim_over_witness, &self.claim_over_witness_conjugate] {
+        for claim in self
+            .claim_over_witness
+            .iter()
+            .chain([&self.claim_over_witness_conjugate])
+        {
             claims_size += claim.compact_size_in_bits();
         }
         for claim in [&self.norm_claim, &self.most_inner_norm_claim]

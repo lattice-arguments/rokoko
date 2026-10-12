@@ -1,6 +1,6 @@
 use crate::{
     common::{
-        arithmetic::field_to_ring_element,
+        arithmetic::{field_to_ring_element, ONE},
         config::{MOD_Q, NOF_BATCHES},
         hash::HashWrapper,
         norms::assert_norm_bounded,
@@ -19,7 +19,10 @@ use crate::{
         },
         sumcheck_utils::common::EvaluationSumcheckData,
         sumchecks::{
-            batching::{sample_batching, slot_form, Batching, TraceTerms, TRACE_WEIGHTS},
+            batching::{
+                field_terms, sample_batching, slot_form, slot_weights, Batching, FieldClaim,
+                OuterClaim, TraceTerms,
+            },
             builder::terminal_config,
             context_verifier::VerifierSumcheckContext,
             loader_verifier::load_verifier_sumcheck_data,
@@ -30,7 +33,7 @@ use crate::{
 /// The ring-claimed terms' share of the batched claim, in the combiner's output order.
 fn batch_claims(
     config: &SumcheckConfig,
-    claims: &[RingElement],
+    claims: &[OuterClaim],
     rc_commitment_inner: &[RingElement],
     rc_opening_inner: &[RingElement],
     rc_coarse_projection_inner: Option<&[RingElement]>,
@@ -47,11 +50,13 @@ fn batch_claims(
     // InnerEvalFold: zero claims (difference sumchecks)
     idx += config.nof_openings;
 
-    // OuterEvalClaim: claims for evaluations
+    // OuterEvalClaim: claims for evaluations, those held as field claims batched apart
     for claim in claims.iter() {
-        let mut weighted = claim.clone();
-        weighted *= &combination[idx];
-        batched_claim += &weighted;
+        if let OuterClaim::Ring(claim) = claim {
+            let mut weighted = claim.clone();
+            weighted *= &combination[idx];
+            batched_claim += &weighted;
+        }
         idx += 1;
     }
 
@@ -140,9 +145,20 @@ pub fn sumcheck_verifier(
     round_proof: &SumcheckRoundProof,
     evaluation_points_inner: &[StructuredRow],
     evaluation_points_outer: &[StructuredRow],
-    claims: &[RingElement],
+    claims: &[OuterClaim],
+    defer_witness_claim: bool,
     hash_wrapper: &mut HashWrapper,
-) -> Vec<RingElement> {
+) -> (Vec<RingElement>, Option<FieldClaim>) {
+    assert_eq!(
+        claims.len(),
+        config.nof_openings,
+        "outer claim count does not match the round's openings"
+    );
+    assert_eq!(
+        round_proof.claim_over_witness.is_none(),
+        defer_witness_claim,
+        "witness evaluation presence does not match the next round"
+    );
     assert_eq!(
         round_proof.rc_fine_projection_inner.is_some(),
         matches!(config.projection_recursion, Projection::Fine(_)),
@@ -284,12 +300,21 @@ pub fn sumcheck_verifier(
         hash_wrapper.update_with_field_extension_slice(constant_term_claims);
     }
 
-    // The trace-claimed terms' values, in the order of `TraceTerms::indices`.
+    // The field-claimed terms' values, in the order of `field_terms`.
+    let outer_claims = claims
+        .iter()
+        .enumerate()
+        .filter_map(|(opening, claim)| match claim {
+            OuterClaim::Ring(_) => None,
+            OuterClaim::Field(claim) => Some((opening, claim)),
+        });
+    let mut field_claims: Vec<FieldExtension> =
+        outer_claims.clone().map(|(_, claim)| claim.value).collect();
     let with_constant_term = |claim: &FieldExtension, constant_term: u64| {
         assert_eq!(claim.coeffs[0], constant_term, "a trace claim with the wrong part 0");
         *claim
     };
-    let mut trace_claims = match (&round_proof.constant_term_claims, &challenges_3_1) {
+    field_claims.extend(match (&round_proof.constant_term_claims, &challenges_3_1) {
         (Some(claims), Some(_)) => {
             assert_eq!(claims.len(), NOF_BATCHES, "constant-term claim count");
             claims
@@ -302,22 +327,22 @@ pub fn sumcheck_verifier(
         }
         (None, None) => vec![],
         _ => panic!("constant-term claim presence does not match the round's config"),
-    };
-    trace_claims.extend([round_proof.norm_claim, round_proof.most_inner_norm_claim]);
-    trace_claims.extend(projection_norm_claim.copied());
-    trace_claims.extend(binariness_claim.map(|claim| with_constant_term(claim, 0)));
+    });
+    field_claims.extend([round_proof.norm_claim, round_proof.most_inner_norm_claim]);
+    field_claims.extend(projection_norm_claim.copied());
+    field_claims.extend(binariness_claim.map(|claim| with_constant_term(claim, 0)));
 
     let num_sumchecks = verifier_sumcheck_context
         .combiner_evaluation
         .borrow()
         .sumchecks_count();
     let trace_terms = TraceTerms::new(config, num_sumchecks);
-    let field_terms = trace_terms
-        .indices()
-        .into_iter()
-        .map(|index| (index, &*TRACE_WEIGHTS))
-        .collect::<Vec<_>>();
-    debug_assert_eq!(field_terms.len(), trace_claims.len());
+    let field_terms = field_terms(
+        config,
+        num_sumchecks,
+        outer_claims.map(|(opening, claim)| (opening, &claim.weights)),
+    );
+    assert_eq!(field_terms.len(), field_claims.len());
     let Batching {
         combination,
         fe,
@@ -361,7 +386,7 @@ pub fn sumcheck_verifier(
     }
 
     let mut batched_claim_over_field = slot_form(&fe, &batched_claim);
-    for (rho, claim) in rho.iter().zip(trace_claims.iter()) {
+    for (rho, claim) in rho.iter().zip(field_claims.iter()) {
         batched_claim_over_field += &(*rho * *claim);
     }
 
@@ -397,7 +422,7 @@ pub fn sumcheck_verifier(
     load_verifier_sumcheck_data(
         verifier_sumcheck_context,
         &folding_challenges,
-        &round_proof.claim_over_witness,
+        round_proof.claim_over_witness.as_ref().unwrap_or(&ONE),
         &round_proof.claim_over_witness_conjugate,
         evaluation_points_inner,
         evaluation_points_outer,
@@ -409,15 +434,31 @@ pub fn sumcheck_verifier(
         &fe,
     );
 
-    assert_eq!(
-        &batched_claim_over_field,
-        verifier_sumcheck_context
-            .field_combiner_evaluation
-            .borrow_mut()
-            .evaluate(&evaluation_points)
-    );
-
-    hash_wrapper.update_with_ring_element(&round_proof.claim_over_witness);
+    // Without z_0 the final check is the next round's first outer claim
+    // `Σ_s λ_s · slot_s(z_0) = v`, `λ_s = fe_s · slot_s(A)` for the combination `A` at z_0 = 1.
+    let next_outer_claim = match &round_proof.claim_over_witness {
+        Some(claim_over_witness) => {
+            assert_eq!(
+                &batched_claim_over_field,
+                verifier_sumcheck_context
+                    .field_combiner_evaluation
+                    .borrow_mut()
+                    .evaluate(&evaluation_points)
+            );
+            hash_wrapper.update_with_ring_element(claim_over_witness);
+            None
+        }
+        None => {
+            let slope = verifier_sumcheck_context
+                .field_combiner_evaluation
+                .borrow_mut()
+                .evaluate_ring(&evaluation_points);
+            Some(FieldClaim {
+                weights: slot_weights(&fe, &slope),
+                value: batched_claim_over_field,
+            })
+        }
+    };
     hash_wrapper.update_with_ring_element(&round_proof.claim_over_witness_conjugate);
 
     let eps = evaluation_points
@@ -430,5 +471,5 @@ pub fn sumcheck_verifier(
         })
         .collect();
 
-    eps
+    (eps, next_outer_claim)
 }
