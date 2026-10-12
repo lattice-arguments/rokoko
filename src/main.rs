@@ -174,8 +174,8 @@ mod tests {
         let inst = instantiation(ParamSet::P28).unwrap();
         let mut run = execute_to_boundary(&inst, NonZeroUsize::new(3).unwrap());
 
-        assert_eq!(run.prover.witness.height, 256);
-        assert_eq!(run.prover.witness.width, 32);
+        assert_eq!(run.prover.witness.height, 512);
+        assert_eq!(run.prover.witness.width, 8);
         assert_eq!(run.verifier.commitment_root.len(), 1);
         assert_eq!(run.prover.claims.len(), 2);
         assert_eq!(run.verifier.claims.len(), 2);
@@ -197,7 +197,7 @@ mod tests {
         assert_eq!(first_row.tensor_layers.len(), 1);
 
         let run4 = execute_to_boundary(&inst, NonZeroUsize::new(4).unwrap());
-        assert_eq!(run4.prover.witness.height, 512);
+        assert_eq!(run4.prover.witness.height, 256);
         assert_eq!(run4.prover.witness.width, 8);
         assert_eq!(
             run4.prover.evaluation_points,
