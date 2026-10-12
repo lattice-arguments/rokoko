@@ -8,7 +8,9 @@ use rokoko::protocol::{
     params::{assign_norm_bounds, Instantiation},
 };
 
-use crate::instantiation::{initial_witness, root_aux, ParamSet};
+use crate::instantiation::{
+    initial_witness, p_head, root_aux, terminal, ParamSet, TAIL_10, TAIL_11, TAIL_12, TAIL_14,
+};
 
 const _: () = assert!(
     DEGREE == 128
@@ -46,35 +48,71 @@ pub fn chain(set: ParamSet) -> Option<Config> {
         root.basic_commitment_rank = 12;
         root.witness_decomposition_base_log = 7;
     }
-    let p_3 = from_last(&mut root, 2);
-    // base-2^10 digits overflow P_4's base-2^7 fold window
-    constant_term(p_3).decomposition_base_log = 9;
-    // with rank 5 for 128-bit SIS, P_5's 2^10 composed witness fits only these digits
-    let p_5 = from_last(p_3, 0);
-    p_5.basic_commitment_rank = 5;
-    set_digits(&mut p_5.commitment_recursion, 9, 6);
-    set_digits(&mut p_5.opening_recursion, 10, 5);
+    let mut root = then(
+        root,
+        match set {
+            ParamSet::P22 => tails(set),
+            _ => then(head(set), tails(set)),
+        },
+    );
+    // only these sets' verifier budget covers the 2^7 terminal ratio
+    if matches!(set, ParamSet::P22 | ParamSet::P26 | ParamSet::P30) {
+        terminal(&mut root).projection_ratio = 2usize.pow(7);
+    }
     let mut c = root.generate_config();
     assign_norm_bounds(&mut c, bounds);
     Some(c)
 }
 
-/// The sumcheck round of `round`'s chain `k` places from its last one, `P_5`.
-fn from_last(round: &mut AuxSumcheckConfig, k: usize) -> &mut AuxSumcheckConfig {
-    let mut depth = 0;
-    let mut r = &*round;
-    while let Some(AuxConfig::Sumcheck(next)) = r.next.as_deref() {
-        r = next;
-        depth += 1;
+fn head(set: ParamSet) -> AuxSumcheckConfig {
+    let mut head = p_head(set);
+    match set {
+        ParamSet::P26 => head.projection_ratio = 2usize.pow(5),
+        ParamSet::P30 => head.basic_commitment_rank = 5,
+        _ => {}
     }
-    let mut r = round;
-    for _ in k..depth {
-        let Some(AuxConfig::Sumcheck(next)) = r.next.as_deref_mut() else {
-            unreachable!();
-        };
-        r = next;
+    head
+}
+
+/// Each round sheds the opening row the third batch adds.
+fn tails(set: ParamSet) -> AuxSumcheckConfig {
+    let mut tail_14 = TAIL_14.clone();
+    tail_14.basic_commitment_rank = 4;
+    let mut tail_12 = TAIL_12.clone();
+    if set == ParamSet::P24 {
+        tail_12.projection_ratio = 2usize.pow(6);
+    } else {
+        set_digits(&mut tail_12.opening_recursion, 7, 7);
     }
-    r
+    let mut tail_11 = TAIL_11.clone();
+    set_digits(&mut tail_11.commitment_recursion, 7, 7);
+    set_digits(&mut tail_11.opening_recursion, 7, 7);
+    tail_11.witness_decomposition_base_log = 4;
+    let mut tail_10 = TAIL_10.clone();
+    *constant_term(&mut tail_10) = single_level(8, 2);
+    if set == ParamSet::P28 {
+        tail_10.projection_ratio = 2usize.pow(5);
+        tail_10.commitment_recursion = single_level(8, 6);
+        tail_10.opening_recursion = single_level(8, 6);
+    } else {
+        tail_10.commitment_recursion = single_level(7, 7);
+        tail_10.opening_recursion = single_level(7, 7);
+    }
+    then(tail_14, then(tail_12, then(tail_11, tail_10)))
+}
+
+fn then(mut round: AuxSumcheckConfig, next: AuxSumcheckConfig) -> AuxSumcheckConfig {
+    round.next = Some(Box::new(AuxConfig::Sumcheck(next)));
+    round
+}
+
+fn single_level(base_log: usize, chunks: usize) -> AuxRecursionConfig {
+    AuxRecursionConfig {
+        decomposition_base_log: base_log,
+        decomposition_chunks: chunks,
+        rank: 2,
+        next: None,
+    }
 }
 
 fn constant_term(round: &mut AuxSumcheckConfig) -> &mut AuxRecursionConfig {
@@ -82,7 +120,7 @@ fn constant_term(round: &mut AuxSumcheckConfig) -> &mut AuxRecursionConfig {
         AuxProjection::FineBatchedInOpening {
             recursion_constant_term,
         } => recursion_constant_term,
-        _ => unreachable!("the rounds from P_2 on have fine projections"),
+        _ => unreachable!("the tails batch their projection in the opening tree"),
     }
 }
 
@@ -92,49 +130,50 @@ fn set_digits(recursion: &mut AuxRecursionConfig, base_log: usize, chunks: usize
 }
 
 const NB_P_22: [[f64; 3]; 6] = [
-    [31598.375606983343, 664.8593836293506, f64::INFINITY],
-    [33585.30718930527, 937.0949791776712, f64::INFINITY],
-    [29566.72037950777, 939.3785179574845, f64::INFINITY],
-    [22522.740552605937, 941.50305363286, f64::INFINITY],
-    [53993.15626077068, 53569.69525767344, f64::INFINITY],
-    [301167.36895121954, 613877.4225046886, f64::INFINITY],
+    [31597.69637172938, 664.8593836293506, f64::INFINITY],
+    [10641.773583383552, 806.8413722659492, f64::INFINITY],
+    [11009.769797775065, 807.5239934515878, f64::INFINITY],
+    [11552.691374740347, 10863.416635663018, f64::INFINITY],
+    [65186.99179284162, 8214.84004713421, f64::INFINITY],
+    [337408.247544425, 732389.6760775646, f64::INFINITY],
 ];
 
-const NB_P_24: [[f64; 3]; 6] = [
-    [44652.98684298733, 672.1926807099286, f64::INFINITY],
-    [43428.70740650705, 939.8467960258204, f64::INFINITY],
-    [31946.698593125395, 931.3066090176746, f64::INFINITY],
-    [22855.352327190234, 933.4655858680597, f64::INFINITY],
-    [53977.22650340605, 53550.77276753343, f64::INFINITY],
-    [301487.444141543, 608682.5689856742, f64::INFINITY],
+const NB_P_24: [[f64; 3]; 7] = [
+    [44650.16811838451, 672.1926807099286, f64::INFINITY],
+    [14433.937196759587, 817.1272850664087, f64::INFINITY],
+    [7877.342572213043, 810.0203701142336, f64::INFINITY],
+    [7702.501087309239, 799.2659131978543, f64::INFINITY],
+    [11223.849651523313, 10872.278877953784, f64::INFINITY],
+    [63266.023914894475, 8223.424773170847, f64::INFINITY],
+    [363359.894182063, 723773.615755645, f64::INFINITY],
 ];
 
 const NB_P_26: [[f64; 3]; 7] = [
-    [53031.955319410954, 940.4302206968894, f64::INFINITY],
-    [50785.180043000735, 813.0202949496403, f64::INFINITY],
-    [43678.40070332246, 937.0037353180616, f64::INFINITY],
-    [32071.432786827594, 936.8991407830407, f64::INFINITY],
-    [22792.602286706973, 945.7113724599066, f64::INFINITY],
-    [54238.60899765037, 53816.696721370776, f64::INFINITY],
-    [302487.0330278638, 633960.9730827285, f64::INFINITY],
+    [53033.34391682274, 940.4302206968894, f64::INFINITY],
+    [16711.645610172567, 812.3435233938903, f64::INFINITY],
+    [8595.102966224431, 813.8286060344648, f64::INFINITY],
+    [10893.781069949955, 811.305737684629, f64::INFINITY],
+    [11554.574288999142, 10876.618500250894, f64::INFINITY],
+    [64973.82701519128, 8180.513186836141, f64::INFINITY],
+    [359326.17593072733, 683230.1251928225, f64::INFINITY],
 ];
 
 const NB_P_28: [[f64; 3]; 7] = [
-    [112206.82262233434, 934.7357915475367, f64::INFINITY],
-    [59446.82708101417, 806.3950644690232, f64::INFINITY],
-    [55693.657376760595, 934.0936783856317, f64::INFINITY],
-    [33592.34262447322, 932.8504703327324, f64::INFINITY],
-    [23116.382069865518, 937.7824907727804, f64::INFINITY],
-    [53992.249490088856, 53565.316044993146, f64::INFINITY],
-    [305014.437115688, 633967.7738584194, f64::INFINITY],
+    [112193.01951101949, 934.7357915475367, f64::INFINITY],
+    [30187.998559030042, 816.2064689770598, f64::INFINITY],
+    [11340.855964167784, 813.5041487294334, f64::INFINITY],
+    [11039.993478258943, 806.8512874129904, f64::INFINITY],
+    [11550.135497040717, 10866.35881977031, f64::INFINITY],
+    [68205.83708158709, 22046.283723113065, f64::INFINITY],
+    [385136.6771939541, 757508.6818248356, f64::INFINITY],
 ];
 
 const NB_P_30: [[f64; 3]; 7] = [
-    [159143.6493831909, 934.5843996130045, f64::INFINITY],
-    [130885.52546022803, 1150.1560763652906, f64::INFINITY],
-    [48072.66581956944, 944.2060156554818, f64::INFINITY],
-    [35310.26822328032, 935.7825602136428, f64::INFINITY],
-    [22991.685866851956, 929.1205519199325, f64::INFINITY],
-    [54067.290888299554, 53642.33305888177, f64::INFINITY],
-    [299448.58448154334, 593458.5268685588, f64::INFINITY],
+    [159147.59168457435, 934.5843996130045, f64::INFINITY],
+    [42342.502051721036, 806.4136655588123, f64::INFINITY],
+    [13573.757954229182, 813.0079950406392, f64::INFINITY],
+    [11189.345065731059, 808.4905688998481, f64::INFINITY],
+    [11598.331690376854, 10882.943535643286, f64::INFINITY],
+    [65012.39146501227, 8246.859038446091, f64::INFINITY],
+    [377094.79181235057, 658370.5562849846, f64::INFINITY],
 ];
