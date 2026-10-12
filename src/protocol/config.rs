@@ -234,7 +234,13 @@ pub enum RoundProof {
 
 pub enum NextRoundCommitment {
     Recursive(RecursiveCommitment), // if the next round is sumcheck
-    Simple(HorizontallyAlignedMatrix<RingElement>), // if the next round is simple or intermediate
+    Simple(HorizontallyAlignedMatrix<RingElement>), // if the next round is intermediate
+    /// If the next round is simple: the commitment past its last column, which the terminal
+    /// rebuilds from the fold and checks against the digest.
+    Terminal {
+        commitment: HorizontallyAlignedMatrix<RingElement>,
+        last_column_digest: [u8; 32],
+    },
 }
 
 pub trait SizeableProof {
@@ -369,6 +375,16 @@ impl SizeableProof for SumcheckRoundProof {
                     }
                     mat_size
                 }
+                NextRoundCommitment::Terminal {
+                    commitment,
+                    last_column_digest,
+                } => {
+                    let mut mat_size = 8 * last_column_digest.len();
+                    for el in &commitment.data {
+                        mat_size += el.compact_size_in_bits();
+                    }
+                    mat_size
+                }
             }
         } else {
             0
@@ -489,10 +505,8 @@ impl SizeableProof for IntermediateRoundProof {
 
         let next_round_size = if let Some(next_round_commitment) = &self.next_round_commitment {
             match next_round_commitment {
-                NextRoundCommitment::Recursive(_) => {
-                    unreachable!(
-                        "Intermediate round should not have recursive commitment for next round."
-                    )
+                NextRoundCommitment::Recursive(_) | NextRoundCommitment::Terminal { .. } => {
+                    unreachable!("an intermediate round is followed by an intermediate round")
                 }
                 NextRoundCommitment::Simple(mat) => {
                     let mut mat_size = 0;

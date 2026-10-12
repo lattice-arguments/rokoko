@@ -461,6 +461,16 @@ impl RingElement {
         &zero - self
     }
 
+    /// Every slot is a field, so a unit is an element with no zero slot.
+    pub fn is_unit(&self) -> bool {
+        let mut slots = self.clone();
+        slots.to_representation(Representation::HomogenizedFieldExtensions);
+        slots
+            .split_into_field_extensions()
+            .iter()
+            .all(|slot| *slot != FieldExtension::from_base(0))
+    }
+
     // 1 us
     pub fn inverse(&self) -> RingElement {
         assert_eq!(

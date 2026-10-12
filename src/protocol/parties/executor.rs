@@ -401,7 +401,7 @@ mod tests {
         structured_row::StructuredRow,
     };
     use crate::protocol::{
-        config::{RoundProof, SumcheckConfig, SumcheckRoundProof},
+        config::{NextRoundCommitment, RoundProof, SumcheckConfig, SumcheckRoundProof},
         crs::VerifierCRS,
         parties::verifier::verify_round,
         sumchecks::{
@@ -955,6 +955,45 @@ mod tests {
         assert!(
             rejected(config, &proved, &proof),
             "a tampered terminal projection image was accepted"
+        );
+    }
+
+    #[test]
+    fn tampered_terminal_commitment_is_rejected() {
+        init_common();
+        let generated = three_decomposition_chunks_config();
+        let crate::protocol::config::Config::Sumcheck(config) = &generated else {
+            panic!("expected a sumcheck config")
+        };
+        let proved = prove(config);
+        let decode = || wire::from_bytes(&proved.bytes).expect("the proof must deserialise");
+        assert!(!rejected(config, &proved, &decode()));
+
+        fn terminal(
+            proof: &mut SumcheckRoundProof,
+        ) -> (
+            &mut crate::common::matrix::HorizontallyAlignedMatrix<RingElement>,
+            &mut [u8; 32],
+        ) {
+            match proof.next_round_commitment.as_mut() {
+                Some(NextRoundCommitment::Terminal {
+                    commitment,
+                    last_column_digest,
+                }) => (commitment, last_column_digest),
+                _ => panic!("expected the terminal commitment"),
+            }
+        }
+        let mut proof = decode();
+        terminal(&mut proof).0[(0, 0)] += &RingElement::constant(1, Representation::IncompleteNTT);
+        assert!(
+            rejected(config, &proved, &proof),
+            "a tampered commitment column was accepted"
+        );
+        let mut proof = decode();
+        terminal(&mut proof).1[31] ^= 1;
+        assert!(
+            rejected(config, &proved, &proof),
+            "a tampered commitment digest was accepted"
         );
     }
 

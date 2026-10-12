@@ -1,10 +1,24 @@
 use crate::common::arithmetic::field_to_ring_element_into;
 use crate::common::config::{DEGREE, MOD_Q};
+use crate::common::matrix::HorizontallyAlignedMatrix;
 use crate::common::ring_arithmetic::*;
 use crate::common::short_challenge::sample_short_challenge_into;
 use crate::common::sumcheck_element::SumcheckElement;
 use crate::hexl::bindings::eltwise_reduce_mod;
 use blake3::Hasher;
+
+/// A 256-bit digest of `matrix`'s last column.
+pub fn last_column_digest(matrix: &HorizontallyAlignedMatrix<RingElement>) -> [u8; 32] {
+    let mut hasher = Hasher::new_derive_key("rokoko terminal commitment last column");
+    for row in 0..matrix.height {
+        let element = &matrix[(row, matrix.width - 1)];
+        debug_assert_eq!(element.representation, Representation::IncompleteNTT);
+        for v in &element.v {
+            hasher.update(&v.to_le_bytes());
+        }
+    }
+    *hasher.finalize().as_bytes()
+}
 
 /// Incremental transcript hash suitable for Fiat–Shamir style challenges.
 /// The transcript absorbs ring elements and can deterministically derive

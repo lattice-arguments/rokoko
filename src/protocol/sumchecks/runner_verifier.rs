@@ -216,6 +216,13 @@ pub fn sumcheck_verifier(
             NextRoundCommitment::Simple(basic_commitment) => {
                 hash_wrapper.update_with_ring_element_slice(&basic_commitment.data);
             }
+            NextRoundCommitment::Terminal {
+                commitment,
+                last_column_digest,
+            } => {
+                hash_wrapper.update_with_ring_element_slice(&commitment.data);
+                hash_wrapper.update_with_bytes(last_column_digest);
+            }
         }
     }
 

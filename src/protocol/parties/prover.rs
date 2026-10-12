@@ -2,7 +2,7 @@ use crate::{
     common::{
         config::NOF_BATCHES,
         decomposition::{decompose, decompose_chunks_into},
-        hash::HashWrapper,
+        hash::{last_column_digest, HashWrapper},
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
@@ -72,6 +72,7 @@ fn evaluation_point_pair(points: &[RingElement]) -> Vec<StructuredRow> {
 enum PendingNextCommitment {
     Recursive(RecursiveCommitmentWithAux),
     Basic(BasicCommitment),
+    Terminal(BasicCommitment, [u8; 32]),
 }
 
 pub fn prover_round(
@@ -397,7 +398,19 @@ pub(crate) fn prove_round(
                 );
                 PendingNextCommitment::Recursive(rc)
             }
-            _ => {
+            Config::Simple(_) => {
+                let mut commitment = basic_commitment;
+                commitment.truncate_rows(base.basic_commitment_rank());
+                let digest = last_column_digest(&commitment);
+                let last = commitment.width - 1;
+                for row in 0..commitment.height {
+                    commitment[(row, last)].set_zero();
+                }
+                hash_wrapper.update_with_ring_element_slice(&commitment.data);
+                hash_wrapper.update_with_bytes(&digest);
+                PendingNextCommitment::Terminal(commitment, digest)
+            }
+            Config::Intermediate(_) => {
                 let mut basic_commitment = basic_commitment;
                 basic_commitment.truncate_rows(base.basic_commitment_rank());
                 hash_wrapper.update_with_ring_element_slice(&basic_commitment.data);
@@ -521,7 +534,7 @@ pub(crate) fn prove_round(
         }
         (
             Some(Config::Simple(next_simple_config)),
-            Some(PendingNextCommitment::Basic(basic_commitment)),
+            Some(PendingNextCommitment::Terminal(commitment, last_column_digest)),
         ) => {
             assert!(
                 boundary.is_none(),
@@ -530,7 +543,7 @@ pub(crate) fn prove_round(
             let (points_outer, points_inner) =
                 evaluation_points.split_at(next_simple_config.witness_width.ilog2() as usize);
             let proof = prover_round_simple(
-                &basic_commitment,
+                &commitment,
                 &next_round_witness,
                 &evaluation_point_pair(points_inner),
                 &evaluation_point_pair(points_outer),
@@ -544,7 +557,10 @@ pub(crate) fn prove_round(
             );
             (
                 Some(RoundProof::Simple(proof)),
-                Some(NextRoundCommitment::Simple(basic_commitment)),
+                Some(NextRoundCommitment::Terminal {
+                    commitment,
+                    last_column_digest,
+                }),
             )
         }
         (
