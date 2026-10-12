@@ -245,17 +245,19 @@ pub struct SumcheckRoundProof {
     pub polys: Vec<Polynomial<FieldExtension>>,
     pub claim_over_witness: RingElement,
     pub claim_over_witness_conjugate: RingElement,
-    pub norm_claim: RingElement,
-    pub most_inner_norm_claim: RingElement,
+    /// `Σ_s CONSTANT_TERM_FACTORS[s] · slot_s(N)` for the norm claims `N`; part 0 is `ct(N)`.
+    pub norm_claim: FieldExtension,
+    pub most_inner_norm_claim: FieldExtension,
     /// Present exactly when the round's config asks for the exact projection-image norm.
-    pub projection_norm_claim: Option<RingElement>,
+    pub projection_norm_claim: Option<FieldExtension>,
     pub rc_opening_inner: Vec<RingElement>,
     pub rc_coarse_projection_inner: Option<Vec<RingElement>>,
     /// The constant-term leaf and, unless the opening tree carries it, the batched one.
     pub rc_fine_projection_inner: Option<(Vec<RingElement>, Option<Vec<RingElement>>)>,
-    pub constant_term_claims: Option<Vec<RingElement>>,
-    /// Present exactly when the round has binary leaves; its constant term is zero.
-    pub binariness_claim: Option<RingElement>,
+    /// The same form of the constant-term claims, with part 0, which the verifier knows, zero.
+    pub constant_term_claims: Option<Vec<FieldExtension>>,
+    /// Present exactly when the round has binary leaves; part 0 is zero.
+    pub binariness_claim: Option<FieldExtension>,
     pub next_round_commitment: Option<NextRoundCommitment>,
     pub terminal_projection_image: Option<VerticallyAlignedMatrix<RingElement>>,
     pub next: Option<Box<RoundProof>>,
@@ -276,17 +278,14 @@ impl SizeableProof for SumcheckRoundProof {
         tracing::debug!("Polys size: {} KB, ", to_kb(size));
 
         let mut claims_size = 0;
-        let mut claims = vec![
-            &self.claim_over_witness,
-            &self.claim_over_witness_conjugate,
-            &self.norm_claim,
-            &self.most_inner_norm_claim,
-        ];
-        if let Some(projection_norm_claim) = &self.projection_norm_claim {
-            claims.push(projection_norm_claim);
-        }
-        for claim in claims {
+        for claim in [&self.claim_over_witness, &self.claim_over_witness_conjugate] {
             claims_size += claim.compact_size_in_bits();
+        }
+        for claim in [&self.norm_claim, &self.most_inner_norm_claim]
+            .into_iter()
+            .chain(&self.projection_norm_claim)
+        {
+            claims_size += claim.size_in_bits();
         }
         size += claims_size;
         tracing::debug!("Claims size: {} KB, ", to_kb(claims_size));
@@ -334,7 +333,7 @@ impl SizeableProof for SumcheckRoundProof {
         if let Some(constant_term_claims) = &self.constant_term_claims {
             let mut constant_term_claims_size = 0;
             for el in constant_term_claims {
-                constant_term_claims_size += el.compact_size_in_bits();
+                constant_term_claims_size += el.size_in_bits();
             }
             size += constant_term_claims_size;
             tracing::debug!(
@@ -344,7 +343,7 @@ impl SizeableProof for SumcheckRoundProof {
         }
 
         if let Some(binariness_claim) = &self.binariness_claim {
-            let binariness_claim_size = binariness_claim.compact_size_in_bits();
+            let binariness_claim_size = binariness_claim.size_in_bits();
             size += binariness_claim_size;
             tracing::debug!("Binariness claim size: {} KB, ", to_kb(binariness_claim_size));
         }

@@ -1,3 +1,4 @@
+pub mod batching;
 pub mod builder;
 pub mod builder_verifier;
 pub mod context;

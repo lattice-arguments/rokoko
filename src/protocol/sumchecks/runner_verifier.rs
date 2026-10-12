@@ -1,7 +1,7 @@
 use crate::{
     common::{
         arithmetic::field_to_ring_element,
-        config::{MOD_Q, NOF_BATCHES, NUM_SLOTS},
+        config::{MOD_Q, NOF_BATCHES},
         hash::HashWrapper,
         norms::assert_norm_bounded,
         projection_matrix::ProjectionMatrix,
@@ -19,12 +19,15 @@ use crate::{
         },
         sumcheck_utils::common::EvaluationSumcheckData,
         sumchecks::{
-            builder::terminal_config, context_verifier::VerifierSumcheckContext,
+            batching::{sample_batching, slot_form, Batching, TraceTerms, TRACE_WEIGHTS},
+            builder::terminal_config,
+            context_verifier::VerifierSumcheckContext,
             loader_verifier::load_verifier_sumcheck_data,
         },
     },
 };
 
+/// The ring-claimed terms' share of the batched claim, in the combiner's output order.
 fn batch_claims(
     config: &SumcheckConfig,
     claims: &[RingElement],
@@ -32,11 +35,7 @@ fn batch_claims(
     rc_opening_inner: &[RingElement],
     rc_coarse_projection_inner: Option<&[RingElement]>,
     rc_fine_projection_inner: Option<(&[RingElement], Option<&[RingElement]>)>,
-    rcs_projection_1_constant_term_claims: Option<&[RingElement]>,
-    norm_claim: &RingElement,
-    most_inner_norm_claim: &RingElement,
-    projection_norm_claim: Option<&RingElement>,
-    binariness_claim: Option<&RingElement>,
+    trace_terms: &TraceTerms,
     combination: &[RingElement],
 ) -> RingElement {
     let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
@@ -62,12 +61,10 @@ fn batch_claims(
     }
 
     if rc_fine_projection_inner.is_some() {
-        // FineProj-consistency: zero claim (difference sumcheck) + consistence between ct comm and bp comm
+        // FineProj: zero claim (difference sumcheck), then the trace-claimed constant terms
         for i in 0..NOF_BATCHES {
             idx += 1;
-            let mut weighted = rcs_projection_1_constant_term_claims.as_ref().unwrap()[i].clone();
-            weighted *= &combination[idx];
-            batched_claim += &weighted;
+            debug_assert_eq!(Some(idx), trace_terms.constant_terms.map(|terms| terms[i]));
             idx += 1;
         }
     }
@@ -125,34 +122,10 @@ fn batch_claims(
         }
     }
 
-    // NormCheck: norm claim
-    let mut weighted_norm = norm_claim.clone();
-    weighted_norm *= &combination[idx];
-    batched_claim += &weighted_norm;
-    idx += 1;
-
-    let mut weighted_norm = most_inner_norm_claim.clone();
-    weighted_norm *= &combination[idx];
-    batched_claim += &weighted_norm;
-    idx += 1;
-
-    if let Some(projection_norm_claim) = projection_norm_claim {
-        let mut weighted_norm = projection_norm_claim.clone();
-        weighted_norm *= &combination[idx];
-        batched_claim += &weighted_norm;
-        idx += 1;
-    }
-
-    if let Some(binariness_claim) = binariness_claim {
-        let mut weighted = binariness_claim.clone();
-        weighted *= &combination[idx];
-        batched_claim += &weighted;
-        idx += 1;
-    }
-
+    // NormCheck: the trace-claimed norm terms close the combiner
     debug_assert_eq!(
         idx,
-        combination.len(),
+        trace_terms.norm,
         "batched claim walked {idx} of {} combiner outputs",
         combination.len()
     );
@@ -299,32 +272,57 @@ pub fn sumcheck_verifier(
         "binariness claim presence does not match the round's binary leaves"
     );
 
-    hash_wrapper.update_with_ring_element(&round_proof.norm_claim);
-    hash_wrapper.update_with_ring_element(&round_proof.most_inner_norm_claim);
+    hash_wrapper.update_with_field_extension_element(&round_proof.norm_claim);
+    hash_wrapper.update_with_field_extension_element(&round_proof.most_inner_norm_claim);
     if let Some(projection_norm_claim) = projection_norm_claim {
-        hash_wrapper.update_with_ring_element(projection_norm_claim);
+        hash_wrapper.update_with_field_extension_element(projection_norm_claim);
     }
     if let Some(binariness_claim) = binariness_claim {
-        hash_wrapper.update_with_ring_element(binariness_claim);
+        hash_wrapper.update_with_field_extension_element(binariness_claim);
     }
     if let Some(constant_term_claims) = &round_proof.constant_term_claims {
-        hash_wrapper.update_with_ring_element_slice(constant_term_claims);
+        hash_wrapper.update_with_field_extension_slice(constant_term_claims);
     }
 
-    // Sample random batching coefficients from Fiat-Shamir
+    // The trace-claimed terms' values, in the order of `TraceTerms::indices`.
+    let with_constant_term = |claim: &FieldExtension, constant_term: u64| {
+        assert_eq!(claim.coeffs[0], constant_term, "a trace claim with the wrong part 0");
+        *claim
+    };
+    let mut trace_claims = match (&round_proof.constant_term_claims, &challenges_3_1) {
+        (Some(claims), Some(_)) => {
+            assert_eq!(claims.len(), NOF_BATCHES, "constant-term claim count");
+            claims
+                .iter()
+                .enumerate()
+                .map(|(i, claim)| {
+                    with_constant_term(claim, terminal_constant_terms.map_or(0, |terms| terms[i]))
+                })
+                .collect()
+        }
+        (None, None) => vec![],
+        _ => panic!("constant-term claim presence does not match the round's config"),
+    };
+    trace_claims.extend([round_proof.norm_claim, round_proof.most_inner_norm_claim]);
+    trace_claims.extend(projection_norm_claim.copied());
+    trace_claims.extend(binariness_claim.map(|claim| with_constant_term(claim, 0)));
+
     let num_sumchecks = verifier_sumcheck_context
         .combiner_evaluation
         .borrow()
         .sumchecks_count();
-    let mut combination = vec![RingElement::zero(Representation::IncompleteNTT); num_sumchecks];
-    hash_wrapper.sample_ring_element_vec_into(&mut combination);
-
-    let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
-    hash_wrapper.sample_ring_element_into(&mut combination_to_field);
-    combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
-    let fe = combination_to_field.split_into_field_extensions();
-
-    // Batched claim must match the combiner's output order; see batch_claims.
+    let trace_terms = TraceTerms::new(config, num_sumchecks);
+    let field_terms = trace_terms
+        .indices()
+        .into_iter()
+        .map(|index| (index, &*TRACE_WEIGHTS))
+        .collect::<Vec<_>>();
+    debug_assert_eq!(field_terms.len(), trace_claims.len());
+    let Batching {
+        combination,
+        fe,
+        rho,
+    } = sample_batching(hash_wrapper, num_sumchecks, &field_terms);
 
     let batched_claim = batch_claims(
         config,
@@ -336,68 +334,36 @@ pub fn sumcheck_verifier(
             .rc_fine_projection_inner
             .as_ref()
             .map(|(a, b)| (a.as_slice(), b.as_deref())),
-        round_proof.constant_term_claims.as_deref(),
-        &round_proof.norm_claim,
-        &round_proof.most_inner_norm_claim,
-        projection_norm_claim,
-        binariness_claim,
+        &trace_terms,
         &combination,
     );
 
-    if let Some(constant_term_claims) = &round_proof.constant_term_claims {
-        for (i, ct_claim) in constant_term_claims.iter().enumerate() {
-            let ct = ct_claim.constant_term_from_incomplete_ntt();
-            assert_eq!(ct, terminal_constant_terms.map_or(0, |terms| terms[i]));
-        }
-    }
-
-    if let Some(binariness_claim) = binariness_claim {
-        assert_eq!(
-            binariness_claim.constant_term_from_incomplete_ntt(),
-            0,
-            "a binary leaf holds a coefficient other than 0 or 1"
-        );
-    }
-
-    let norm_ct = round_proof.norm_claim.constant_term_from_incomplete_ntt();
-    assert_norm_bounded(
-        "norm claim via inner-product",
-        (norm_ct as f64).sqrt(),
-        config.norm_bound,
-    );
-
-    let most_inner_norm_ct = round_proof
-        .most_inner_norm_claim
-        .constant_term_from_incomplete_ntt();
-    assert_norm_bounded(
-        "most inner norm claim via inner-product",
-        (most_inner_norm_ct as f64).sqrt(),
-        config.most_inner_norm_bound,
-    );
-
-    if let Some(projection_norm_claim) = projection_norm_claim {
-        let projection_norm_ct = projection_norm_claim.constant_term_from_incomplete_ntt();
-        assert_norm_bounded(
+    for (label, claim, bound) in [
+        (
+            "norm claim via inner-product",
+            Some(&round_proof.norm_claim),
+            config.norm_bound,
+        ),
+        (
+            "most inner norm claim via inner-product",
+            Some(&round_proof.most_inner_norm_claim),
+            config.most_inner_norm_bound,
+        ),
+        (
             "projection image norm claim via inner-product",
-            (projection_norm_ct as f64).sqrt(),
+            projection_norm_claim,
             config.projection_norm_bound,
-        );
+        ),
+    ] {
+        if let Some(claim) = claim {
+            assert_norm_bounded(label, (claim.coeffs[0] as f64).sqrt(), bound);
+        }
     }
 
-    let mut batched_claim_over_field = {
-        let batched_claim = {
-            let mut temp = batched_claim.clone();
-            temp.from_incomplete_ntt_to_homogenized_field_extensions();
-            temp
-        };
-        let mut temp = batched_claim.split_into_field_extensions();
-        let mut result = FieldExtension::from_base(0);
-        for i in 0..NUM_SLOTS {
-            temp[i] *= &fe[i];
-            result += &temp[i];
-        }
-        result
-    };
+    let mut batched_claim_over_field = slot_form(&fe, &batched_claim);
+    for (rho, claim) in rho.iter().zip(trace_claims.iter()) {
+        batched_claim_over_field += &(*rho * *claim);
+    }
 
     let mut num_vars = round_proof.polys.len();
 

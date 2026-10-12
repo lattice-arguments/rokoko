@@ -19,6 +19,9 @@ use crate::{
             polynomial::Polynomial,
             ring_to_field_combiner::ring_polynomial_to_field,
         },
+        sumchecks::batching::{
+            sample_batching, slot_form, Batching, TraceTerms, TRACE_WEIGHTS,
+        },
     },
 };
 
@@ -59,13 +62,13 @@ pub fn sumcheck(
 ) -> (
     RingElement,
     RingElement,
-    RingElement,
-    RingElement,
-    Option<RingElement>,
+    FieldExtension,
+    FieldExtension,
+    Option<FieldExtension>,
     Vec<Polynomial<FieldExtension>>,
     Vec<RingElement>,
-    Option<Vec<RingElement>>,
-    Option<RingElement>,
+    Option<Vec<FieldExtension>>,
+    Option<FieldExtension>,
 ) {
     let projection_matrix_flatter = match config.projection_recursion {
         Projection::Coarse(_) => {
@@ -103,8 +106,6 @@ pub fn sumcheck(
 
     let norm_claim = inner_product(&combined_witness, &conjugated_combined_witness);
 
-    hash_wrapper.update_with_ring_element(&norm_claim);
-
     // Load all data into the sumcheck context
     {
         let _s = tracing::info_span!("sumcheck::load_data").entered();
@@ -122,24 +123,17 @@ pub fn sumcheck(
         );
     }
 
-    let norm_inner_norm_claim = sumcheck_context
-        .norm_check_sumcheck
-        .output_2
-        .borrow_mut()
-        .claim();
-
-    let projection_norm_claim = sumcheck_context
-        .norm_check_sumcheck
+    let norm_check = &sumcheck_context.norm_check_sumcheck;
+    let norm_claim = slot_form(&TRACE_WEIGHTS, &norm_claim);
+    let most_inner_norm_claim = slot_form(&TRACE_WEIGHTS, &norm_check.output_2.borrow().claim());
+    let projection_norm_claim = norm_check
         .output_3
         .as_ref()
-        .map(|output_3| output_3.borrow_mut().claim());
-
-    let binariness_claim = sumcheck_context
-        .norm_check_sumcheck
+        .map(|output_3| slot_form(&TRACE_WEIGHTS, &output_3.borrow().claim()));
+    let binariness_claim = norm_check
         .binariness
         .as_ref()
-        .map(|binariness| binariness.output.borrow_mut().claim());
-
+        .map(|binariness| slot_form(&TRACE_WEIGHTS, &binariness.output.borrow().claim()));
     let constant_term_claims =
         sumcheck_context
             .fine_proj_sumchecks
@@ -148,32 +142,35 @@ pub fn sumcheck(
                 fine_proj_sumchecks
                     .sumchecks
                     .iter()
-                    .map(|fine_proj_sc| fine_proj_sc.output_2.borrow().claim())
+                    .map(|fine_proj_sc| {
+                        slot_form(&TRACE_WEIGHTS, &fine_proj_sc.output_2.borrow().claim())
+                    })
                     .collect::<Vec<_>>()
             });
 
     // All prover claims entering the batched combination must be bound by the
     // transcript before the batching challenges are sampled.
-    hash_wrapper.update_with_ring_element(&norm_inner_norm_claim);
+    hash_wrapper.update_with_field_extension_element(&norm_claim);
+    hash_wrapper.update_with_field_extension_element(&most_inner_norm_claim);
     if let Some(projection_norm_claim) = &projection_norm_claim {
-        hash_wrapper.update_with_ring_element(projection_norm_claim);
+        hash_wrapper.update_with_field_extension_element(projection_norm_claim);
     }
     if let Some(binariness_claim) = &binariness_claim {
-        hash_wrapper.update_with_ring_element(binariness_claim);
+        hash_wrapper.update_with_field_extension_element(binariness_claim);
     }
     if let Some(constant_term_claims) = &constant_term_claims {
-        hash_wrapper.update_with_ring_element_slice(constant_term_claims);
+        hash_wrapper.update_with_field_extension_slice(constant_term_claims);
     }
 
-    // Sample random batching coefficients from Fiat-Shamir
     let num_sumchecks = sumcheck_context.combiner.borrow().sumchecks_count();
-    let mut combination = vec![RingElement::zero(Representation::IncompleteNTT); num_sumchecks];
-    hash_wrapper.sample_ring_element_vec_into(&mut combination);
-
-    let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
-    hash_wrapper.sample_ring_element_into(&mut combination_to_field);
-    combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
-    let fe = combination_to_field.split_into_field_extensions();
+    let field_terms = TraceTerms::new(config, num_sumchecks)
+        .indices()
+        .into_iter()
+        .map(|index| (index, &*TRACE_WEIGHTS))
+        .collect::<Vec<_>>();
+    let Batching {
+        combination, fe, ..
+    } = sample_batching(hash_wrapper, num_sumchecks, &field_terms);
 
     sumcheck_context
         .combiner
@@ -264,7 +261,7 @@ pub fn sumcheck(
         claim_over_witness,
         claim_over_witness_conjugate,
         norm_claim,
-        norm_inner_norm_claim,
+        most_inner_norm_claim,
         projection_norm_claim,
         polys,
         evaluation_points,

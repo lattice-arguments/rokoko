@@ -30,9 +30,9 @@ const SCALE: u32 = 1 << SCALE_BITS;
 const RANS_LOW: u32 = 1 << 16;
 const LANES: usize = 8;
 const SYMBOLS: usize = 56;
-const ROLES: usize = 18;
+const ROLES: usize = 19;
 const MAX_ELEMENTS: usize = 1 << 20;
-const VERSION: u8 = 2;
+const VERSION: u8 = 3;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -55,6 +55,7 @@ enum Role {
     WitnessEval,
     Binariness,
     Digest,
+    TraceFree,
 }
 
 fn residue_bits() -> u32 {
@@ -540,6 +541,14 @@ impl Encoder {
         self.scratch = coded;
     }
 
+    /// Part 0 under `role`, the other parts under `TraceFree`.
+    fn trace_claim(&mut self, role: Role, claim: &FieldExtension) {
+        self.push(role, claim.coeffs[0]);
+        for v in &claim.coeffs[1..] {
+            self.push(Role::TraceFree, *v);
+        }
+    }
+
     fn ring(&mut self, role: Role, el: &RingElement) {
         self.ring_slice(role, std::slice::from_ref(el));
     }
@@ -548,13 +557,6 @@ impl Encoder {
         self.shape.put(el.is_some() as u64, 1);
         if let Some(el) = el {
             self.ring(role, el);
-        }
-    }
-
-    fn option_slice(&mut self, role: Role, els: &Option<Vec<RingElement>>) {
-        self.shape.put(els.is_some() as u64, 1);
-        if let Some(els) = els {
-            self.ring_slice(role, els);
         }
     }
 
@@ -633,9 +635,12 @@ impl Encoder {
         self.polys(&p.polys);
         self.ring(Role::Claim, &p.claim_over_witness);
         self.ring(Role::Conjugate, &p.claim_over_witness_conjugate);
-        self.ring(Role::Norm, &p.norm_claim);
-        self.ring(Role::InnerNorm, &p.most_inner_norm_claim);
-        self.option_ring(Role::ProjectionNorm, &p.projection_norm_claim);
+        self.trace_claim(Role::Norm, &p.norm_claim);
+        self.trace_claim(Role::InnerNorm, &p.most_inner_norm_claim);
+        self.shape.put(p.projection_norm_claim.is_some() as u64, 1);
+        if let Some(claim) = &p.projection_norm_claim {
+            self.trace_claim(Role::ProjectionNorm, claim);
+        }
         self.ring_slice_as(Role::Opening, Role::Digest, &p.rc_opening_inner);
         self.option_leaf(Role::CoarseProjection, &p.rc_coarse_projection_inner);
         self.shape
@@ -644,8 +649,17 @@ impl Encoder {
             self.ring_slice_as(Role::FineProjection, Role::Digest, left);
             self.option_leaf(Role::FineProjection, right);
         }
-        self.option_slice(Role::ConstantTerm, &p.constant_term_claims);
-        self.option_ring(Role::Binariness, &p.binariness_claim);
+        self.shape.put(p.constant_term_claims.is_some() as u64, 1);
+        if let Some(claims) = &p.constant_term_claims {
+            self.shape.put_varint(claims.len() as u64);
+            for claim in claims {
+                self.trace_claim(Role::ConstantTerm, claim);
+            }
+        }
+        self.shape.put(p.binariness_claim.is_some() as u64, 1);
+        if let Some(claim) = &p.binariness_claim {
+            self.trace_claim(Role::Binariness, claim);
+        }
         self.next_commitment(&p.next_round_commitment);
         self.option_matrix_v(Role::ProjectionCt, &p.terminal_projection_image);
         self.next(&p.next);
@@ -881,6 +895,17 @@ impl<'a> Decoder<'a> {
         Ok(els)
     }
 
+    fn trace_claim(&mut self, role: Role) -> Result<FieldExtension, WireError> {
+        let mut claim = FieldExtension::from_base(0);
+        self.body
+            .fill(&self.models[role as usize], &mut claim.coeffs[..1])?;
+        self.body.fill(
+            &self.models[Role::TraceFree as usize],
+            &mut claim.coeffs[1..],
+        )?;
+        Ok(claim)
+    }
+
     fn ring(&mut self, role: Role) -> Result<RingElement, WireError> {
         let mut els = self.ring_slice(role)?;
         if els.len() != 1 {
@@ -894,13 +919,6 @@ impl<'a> Decoder<'a> {
             return Ok(None);
         }
         Ok(Some(self.ring(role)?))
-    }
-
-    fn option_slice(&mut self, role: Role) -> Result<Option<Vec<RingElement>>, WireError> {
-        if self.shape.get(1)? == 0 {
-            return Ok(None);
-        }
-        Ok(Some(self.ring_slice(role)?))
     }
 
     fn option_leaf(&mut self, role: Role) -> Result<Option<Vec<RingElement>>, WireError> {
@@ -992,9 +1010,13 @@ impl<'a> Decoder<'a> {
         let polys = self.polys()?;
         let claim_over_witness = self.ring(Role::Claim)?;
         let claim_over_witness_conjugate = self.ring(Role::Conjugate)?;
-        let norm_claim = self.ring(Role::Norm)?;
-        let most_inner_norm_claim = self.ring(Role::InnerNorm)?;
-        let projection_norm_claim = self.option_ring(Role::ProjectionNorm)?;
+        let norm_claim = self.trace_claim(Role::Norm)?;
+        let most_inner_norm_claim = self.trace_claim(Role::InnerNorm)?;
+        let projection_norm_claim = if self.shape.get(1)? != 0 {
+            Some(self.trace_claim(Role::ProjectionNorm)?)
+        } else {
+            None
+        };
         let rc_opening_inner = self.ring_slice_as(Role::Opening, Role::Digest)?;
         let rc_coarse_projection_inner = self.option_leaf(Role::CoarseProjection)?;
         let rc_fine_projection_inner = if self.shape.get(1)? != 0 {
@@ -1005,8 +1027,21 @@ impl<'a> Decoder<'a> {
         } else {
             None
         };
-        let constant_term_claims = self.option_slice(Role::ConstantTerm)?;
-        let binariness_claim = self.option_ring(Role::Binariness)?;
+        let constant_term_claims = if self.shape.get(1)? != 0 {
+            let len = self.shape.get_len()?;
+            Some(
+                (0..len)
+                    .map(|_| self.trace_claim(Role::ConstantTerm))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )
+        } else {
+            None
+        };
+        let binariness_claim = if self.shape.get(1)? != 0 {
+            Some(self.trace_claim(Role::Binariness)?)
+        } else {
+            None
+        };
         let next_round_commitment = self.next_commitment()?;
         let terminal_projection_image = self.option_matrix_v(Role::ProjectionCt)?;
         Ok(SumcheckRoundProof {
@@ -1135,6 +1170,14 @@ mod tests {
         m
     }
 
+    fn field(constant: u64) -> FieldExtension {
+        let mut f = FieldExtension {
+            coeffs: std::array::from_fn(|k| uniform().v[k]),
+        };
+        f.coeffs[0] = constant;
+        f
+    }
+
     fn poly(num_coefficients: usize) -> Polynomial<FieldExtension> {
         let mut poly = Polynomial::<FieldExtension>::new(0);
         poly.num_coefficients = num_coefficients;
@@ -1172,15 +1215,15 @@ mod tests {
             polys: (2..=3).map(poly).collect(),
             claim_over_witness: uniform(),
             claim_over_witness_conjugate: uniform(),
-            norm_claim: short(1 << 28),
-            most_inner_norm_claim: short(1 << 19),
-            projection_norm_claim: full.then(|| short(1 << 24)),
+            norm_claim: field(1 << 28),
+            most_inner_norm_claim: field(1 << 19),
+            projection_norm_claim: full.then(|| field(1 << 24)),
             rc_opening_inner: vec![uniform(), uniform()],
             rc_coarse_projection_inner: full.then(|| vec![short(1 << 14)]),
             rc_fine_projection_inner: full
                 .then(|| (vec![uniform()], Some(vec![uniform(), uniform()]))),
-            constant_term_claims: full.then(|| vec![uniform()]),
-            binariness_claim: full.then(|| short(1 << 13)),
+            constant_term_claims: full.then(|| vec![field(0), field(0)]),
+            binariness_claim: full.then(|| field(0)),
             next_round_commitment: Some(NextRoundCommitment::Recursive(vec![uniform(); 3])),
             terminal_projection_image: full.then(|| vertical(2, 1, 1 << 13)),
             next,
@@ -1211,14 +1254,10 @@ mod tests {
         assert_eq!(bytes, to_bytes(&back));
 
         same_ring(&proof.rc_opening_inner, &back.rc_opening_inner);
-        same_ring(
-            std::slice::from_ref(&proof.norm_claim),
-            std::slice::from_ref(&back.norm_claim),
-        );
-        same_ring(
-            std::slice::from_ref(proof.binariness_claim.as_ref().unwrap()),
-            std::slice::from_ref(back.binariness_claim.as_ref().unwrap()),
-        );
+        assert_eq!(proof.norm_claim, back.norm_claim);
+        assert_eq!(proof.projection_norm_claim, back.projection_norm_claim);
+        assert_eq!(proof.constant_term_claims, back.constant_term_claims);
+        assert_eq!(proof.binariness_claim, back.binariness_claim);
         for (l, r) in proof.polys.iter().zip(&back.polys) {
             assert_eq!(l.num_coefficients, r.num_coefficients);
             assert_eq!(
