@@ -154,7 +154,7 @@ pub fn check_sumcheck_round(
     rc_commitment: &RecursiveCommitmentWithAux,
     rc_opening: &RecursiveCommitmentWithAux,
     rc_coarse_projection: Option<&RecursiveCommitmentWithAux>,
-    rc_fine_projection: Option<(&RecursiveCommitmentWithAux, &RecursiveCommitmentWithAux)>,
+    rc_fine_projection: Option<(&RecursiveCommitmentWithAux, Option<&RecursiveCommitmentWithAux>)>,
     _next_level_width: usize, // this seems not needed, but we keep it for now to avoid changing the function signature
 ) {
     // we run in on reference run used as a avg case and we put some slack 
@@ -183,7 +183,9 @@ pub fn check_sumcheck_round(
             (Some(rc_proj), _) => squared(&rc_proj.most_inner_commitment_with_aux().committed_data),
             (_, Some((rc_ct, rc_batched))) => {
                 squared(&rc_ct.most_inner_commitment_with_aux().committed_data)
-                    + squared(&rc_batched.most_inner_commitment_with_aux().committed_data)
+                    + rc_batched.map_or(0.0, |rc_batched| {
+                        squared(&rc_batched.most_inner_commitment_with_aux().committed_data)
+                    })
             }
             _ => 0.0,
         };
@@ -249,14 +251,18 @@ pub fn check_sumcheck_round(
             most_inner_commitment_data_ell_2,
             0,
         );
-        check_recursive_commitment(
-            rc_batched,
-            &projection_config.recursion_batched_projection,
-            "Fine Projection Batched",
-            recommited_ell_2_norm_rest,
-            most_inner_commitment_data_ell_2,
-            0,
-        );
+        if let (Some(rc_batched), Some(batched)) =
+            (rc_batched, &projection_config.recursion_batched_projection)
+        {
+            check_recursive_commitment(
+                rc_batched,
+                batched,
+                "Fine Projection Batched",
+                recommited_ell_2_norm_rest,
+                most_inner_commitment_data_ell_2,
+                0,
+            );
+        }
     }
     println!(
         "Next round data norms: L_inf = {}, bit_len = {}, L_2 = {}, MOD_Q = {}",

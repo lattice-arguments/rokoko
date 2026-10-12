@@ -54,7 +54,6 @@ pub fn chain(set: ParamSet) -> Option<Config> {
     p_5.basic_commitment_rank = 5;
     set_digits(&mut p_5.commitment_recursion, 9, 6);
     set_digits(&mut p_5.opening_recursion, 10, 5);
-    set_digits(batched_projection(p_5), 10, 5);
     let mut c = root.generate_config();
     assign_norm_bounds(&mut c, bounds);
     Some(c)
@@ -80,20 +79,9 @@ fn from_last(round: &mut AuxSumcheckConfig, k: usize) -> &mut AuxSumcheckConfig 
 
 fn constant_term(round: &mut AuxSumcheckConfig) -> &mut AuxRecursionConfig {
     match &mut round.projection_recursion {
-        AuxProjection::Fine {
+        AuxProjection::FineBatchedInOpening {
             recursion_constant_term,
-            ..
         } => recursion_constant_term,
-        _ => unreachable!("the rounds from P_2 on have fine projections"),
-    }
-}
-
-fn batched_projection(round: &mut AuxSumcheckConfig) -> &mut AuxRecursionConfig {
-    match &mut round.projection_recursion {
-        AuxProjection::Fine {
-            recursion_batched_projection,
-            ..
-        } => recursion_batched_projection,
         _ => unreachable!("the rounds from P_2 on have fine projections"),
     }
 }

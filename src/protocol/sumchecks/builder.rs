@@ -482,9 +482,8 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                 .borrow_mut()
                 .load_from(&[ONE.clone()]);
 
-            let recursion = &projection_recursion.recursion_batched_projection;
             let batched: [Recomposition; NOF_BATCHES] = std::array::from_fn(|i| {
-                let (placement, parts, part) = batch_piece(recursion, i);
+                let (recursion, placement, parts, part) = batch_piece(config, i);
                 leaves.recomposition(
                     placement,
                     recursion.decomposition_chunks,
@@ -662,10 +661,9 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                 &proj_config.recursion_constant_term,
                 &mut most_inner_commitments_selectors,
             );
-            push_most_inner(
-                &proj_config.recursion_batched_projection,
-                &mut most_inner_commitments_selectors,
-            );
+            if let Some(batched) = &proj_config.recursion_batched_projection {
+                push_most_inner(batched, &mut most_inner_commitments_selectors);
+            }
         }
         Projection::Skip => {
             // No com_verify sumcheck for projection
@@ -761,13 +759,15 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                 &recursion_config.recursion_constant_term,
                 &mut leaves,
             ));
-            com_verify_sumchecks.push(build_com_verify_sumcheck_context(
-                crs,
-                total_vars,
-                witness.clone(),
-                &recursion_config.recursion_batched_projection,
-                &mut leaves,
-            ));
+            if let Some(batched) = &recursion_config.recursion_batched_projection {
+                com_verify_sumchecks.push(build_com_verify_sumcheck_context(
+                    crs,
+                    total_vars,
+                    witness.clone(),
+                    batched,
+                    &mut leaves,
+                ));
+            }
         }
         Projection::Skip => {
             // No com_verify sumcheck for projection

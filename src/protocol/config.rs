@@ -16,7 +16,9 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct FineProjectionConfig {
     pub recursion_constant_term: RecursionConfig, // carries the norm claim
-    pub recursion_batched_projection: RecursionConfig, // carries the consistency checks
+    /// Carries the consistency checks; `None` when the batched projection is the opening tree's
+    /// rows after the openings, committed together with them after the batching challenges.
+    pub recursion_batched_projection: Option<RecursionConfig>,
 }
 
 pub type CoarseProjectionConfig = RecursionConfig;
@@ -98,6 +100,17 @@ impl SumcheckConfig {
             Projection::Fine(recursion) => Some(&recursion.recursion_constant_term),
             Projection::Skip => None,
         }
+    }
+
+    /// Whether the opening tree also commits the batched projection.
+    pub fn batched_projection_in_opening(&self) -> bool {
+        matches!(
+            &self.projection_recursion,
+            Projection::Fine(FineProjectionConfig {
+                recursion_batched_projection: None,
+                ..
+            })
+        )
     }
 }
 
@@ -220,7 +233,8 @@ pub struct SumcheckRoundProof {
     pub projection_norm_claim: Option<RingElement>,
     pub rc_opening_inner: Vec<RingElement>,
     pub rc_coarse_projection_inner: Option<Vec<RingElement>>,
-    pub rc_fine_projection_inner: Option<(Vec<RingElement>, Vec<RingElement>)>,
+    /// The constant-term leaf and, unless the opening tree carries it, the batched one.
+    pub rc_fine_projection_inner: Option<(Vec<RingElement>, Option<Vec<RingElement>>)>,
     pub constant_term_claims: Option<Vec<RingElement>>,
     pub next_round_commitment: Option<NextRoundCommitment>,
     pub terminal_projection_image: Option<VerticallyAlignedMatrix<RingElement>>,
@@ -287,7 +301,7 @@ impl SizeableProof for SumcheckRoundProof {
             for el in rcs_projection_1_inner_0 {
                 rcs_projection_1_inner_size += el.compact_size_in_bits();
             }
-            for el in rcs_projection_1_inner_1 {
+            for el in rcs_projection_1_inner_1.iter().flatten() {
                 rcs_projection_1_inner_size += el.compact_size_in_bits();
             }
             size += rcs_projection_1_inner_size;

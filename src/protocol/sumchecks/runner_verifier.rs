@@ -31,7 +31,7 @@ fn batch_claims(
     rc_commitment_inner: &[RingElement],
     rc_opening_inner: &[RingElement],
     rc_coarse_projection_inner: Option<&[RingElement]>,
-    rc_fine_projection_inner: Option<(&[RingElement], &[RingElement])>,
+    rc_fine_projection_inner: Option<(&[RingElement], Option<&[RingElement]>)>,
     rcs_projection_1_constant_term_claims: Option<&[RingElement]>,
     norm_claim: &RingElement,
     most_inner_norm_claim: &RingElement,
@@ -78,7 +78,7 @@ fn batch_claims(
         Some(rc_opening_inner),
         rc_coarse_projection_inner,
         rc_fine_projection_inner.map(|(rc_ct, _)| rc_ct),
-        rc_fine_projection_inner.map(|(_, rc_bp)| rc_bp),
+        rc_fine_projection_inner.and_then(|(_, rc_bp)| rc_bp),
     ]
     .iter()
     .enumerate()
@@ -100,7 +100,9 @@ fn batch_claims(
                 _ => unreachable!(),
             },
             4 => match &config.projection_recursion {
-                Projection::Fine(proj_config) => &proj_config.recursion_batched_projection,
+                Projection::Fine(proj_config) => {
+                    proj_config.recursion_batched_projection.as_ref().unwrap()
+                }
                 _ => unreachable!(),
             },
             _ => unreachable!(),
@@ -160,8 +162,16 @@ pub fn sumcheck_verifier(
     claims: &[RingElement],
     hash_wrapper: &mut HashWrapper,
 ) -> Vec<RingElement> {
+    assert_eq!(
+        round_proof.rc_fine_projection_inner.is_some(),
+        matches!(config.projection_recursion, Projection::Fine(_)),
+        "fine projection leaves do not match the round's config"
+    );
+    let batched_in_opening = config.batched_projection_in_opening();
     hash_wrapper.update_with_ring_element_slice(rc_commitment);
-    hash_wrapper.update_with_ring_element_slice(&round_proof.rc_opening_inner);
+    if !batched_in_opening {
+        hash_wrapper.update_with_ring_element_slice(&round_proof.rc_opening_inner);
+    }
     let mut projection_matrix =
         ProjectionMatrix::new(config.projection_ratio, config.projection_height);
 
@@ -180,7 +190,16 @@ pub fn sumcheck_verifier(
                 config.witness_height,
                 hash_wrapper,
             );
-        hash_wrapper.update_with_ring_element_slice(rcs_projection_1_batched);
+        match rcs_projection_1_batched {
+            Some(rcs_projection_1_batched) => {
+                assert!(!batched_in_opening, "a batched leaf the config does not commit");
+                hash_wrapper.update_with_ring_element_slice(rcs_projection_1_batched)
+            }
+            None => {
+                assert!(batched_in_opening, "the batched leaf is missing");
+                hash_wrapper.update_with_ring_element_slice(&round_proof.rc_opening_inner)
+            }
+        }
         Some(challenges_3_1)
     } else {
         None
@@ -298,7 +317,7 @@ pub fn sumcheck_verifier(
         round_proof
             .rc_fine_projection_inner
             .as_ref()
-            .map(|(a, b)| (a.as_slice(), b.as_slice())),
+            .map(|(a, b)| (a.as_slice(), b.as_deref())),
         round_proof.constant_term_claims.as_deref(),
         &round_proof.norm_claim,
         &round_proof.most_inner_norm_claim,

@@ -29,6 +29,10 @@ pub enum AuxProjection {
         recursion_constant_term: AuxRecursionConfig,
         recursion_batched_projection: AuxRecursionConfig,
     },
+    /// `Fine` with the batched projection as `NOF_BATCHES` more rows of the opening tree.
+    FineBatchedInOpening {
+        recursion_constant_term: AuxRecursionConfig,
+    },
     Skip,
 }
 
@@ -65,6 +69,15 @@ struct ComponentInfo {
 }
 
 impl AuxSumcheckConfig {
+    /// The rows of the opening tree: one per opening, then one per batch when the batched
+    /// projection rides along.
+    fn opening_rows(&self) -> usize {
+        match self.projection_recursion {
+            AuxProjection::FineBatchedInOpening { .. } => self.nof_openings + NOF_BATCHES,
+            _ => self.nof_openings,
+        }
+    }
+
     pub fn generate_config(&self) -> Config {
         self.generate_config_inner(0)
     }
@@ -249,7 +262,7 @@ impl AuxSumcheckConfig {
             self.witness_width,
             components,
             vec!["opening_recursion".to_string()],
-            self.nof_openings,
+            self.opening_rows(),
         );
 
         // Projection recursion
@@ -294,6 +307,21 @@ impl AuxSumcheckConfig {
                         "batched_projection".to_string(),
                     ],
                     rows,
+                );
+            }
+            AuxProjection::FineBatchedInOpening {
+                recursion_constant_term,
+            } => {
+                self.collect_recursion_components(
+                    recursion_constant_term,
+                    "projection_constant_term",
+                    self.witness_height * self.witness_width / self.projection_ratio,
+                    components,
+                    vec![
+                        "projection_recursion".to_string(),
+                        "constant_term".to_string(),
+                    ],
+                    1,
                 );
             }
             AuxProjection::Skip => {
@@ -384,7 +412,7 @@ impl AuxSumcheckConfig {
             &self.opening_recursion,
             assigned_prefixes,
             &["opening_recursion".to_string()],
-            self.nof_openings,
+            self.opening_rows(),
         );
 
         // Build projection recursion
@@ -421,9 +449,23 @@ impl AuxSumcheckConfig {
 
                 Projection::Fine(FineProjectionConfig {
                     recursion_constant_term: constant_term,
-                    recursion_batched_projection: batched_projection,
+                    recursion_batched_projection: Some(batched_projection),
                 })
             }
+            AuxProjection::FineBatchedInOpening {
+                recursion_constant_term,
+            } => Projection::Fine(FineProjectionConfig {
+                recursion_constant_term: self.build_recursion_config(
+                    recursion_constant_term,
+                    assigned_prefixes,
+                    &[
+                        "projection_recursion".to_string(),
+                        "constant_term".to_string(),
+                    ],
+                    1,
+                ),
+                recursion_batched_projection: None,
+            }),
             AuxProjection::Skip => Projection::Skip,
         };
 

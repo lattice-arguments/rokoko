@@ -626,7 +626,7 @@ impl Encoder {
             .put(p.rc_fine_projection_inner.is_some() as u64, 1);
         if let Some((left, right)) = &p.rc_fine_projection_inner {
             self.ring_slice(Role::FineProjection, left);
-            self.ring_slice(Role::FineProjection, right);
+            self.option_slice(Role::FineProjection, right);
         }
         self.option_slice(Role::ConstantTerm, &p.constant_term_claims);
         self.next_commitment(&p.next_round_commitment);
@@ -971,7 +971,7 @@ impl<'a> Decoder<'a> {
         let rc_fine_projection_inner = if self.shape.get(1)? != 0 {
             Some((
                 self.ring_slice(Role::FineProjection)?,
-                self.ring_slice(Role::FineProjection)?,
+                self.option_slice(Role::FineProjection)?,
             ))
         } else {
             None
@@ -1146,7 +1146,8 @@ mod tests {
             projection_norm_claim: full.then(|| short(1 << 24)),
             rc_opening_inner: vec![uniform(), uniform()],
             rc_coarse_projection_inner: full.then(|| vec![uniform()]),
-            rc_fine_projection_inner: full.then(|| (vec![uniform()], vec![uniform(), uniform()])),
+            rc_fine_projection_inner: full
+                .then(|| (vec![uniform()], Some(vec![uniform(), uniform()]))),
             constant_term_claims: full.then(|| vec![uniform()]),
             next_round_commitment: Some(NextRoundCommitment::Recursive(vec![uniform(); 3])),
             terminal_projection_image: full.then(|| vertical(2, 1, 1 << 13)),
