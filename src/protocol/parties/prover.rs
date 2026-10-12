@@ -16,7 +16,7 @@ use crate::{
         config::{
             config_base_from_config, paste_placement, paste_recursive_commitment, Config,
             IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, Projection,
-            RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof,
+            RoundProof, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof,
         },
         crs::CRS,
         fold::fold,
@@ -28,7 +28,7 @@ use crate::{
             open_at,
         },
         project_coarse::{prepare_i16_witness, project},
-        project_fine::{batch_projection_n_times, project_coefficients},
+        project_fine::{batch_projection_n_times, project_coefficients, project_terminal},
         sumcheck::{sumcheck, SumcheckContext},
         sumchecks::context::NextSumcheckContext,
     },
@@ -168,7 +168,7 @@ pub fn prover_round(
 
             let (projection_batched, fine_proj_batching_challenges) = {
                 let _s = tracing::info_span!("prover_round::batch_projection_n_times").entered();
-                batch_projection_n_times(&witness, &projection_matrix, &mut hash_wrapper, false)
+                batch_projection_n_times(&witness, &projection_matrix, &mut hash_wrapper)
             };
 
             let rc_projection_batched = {
@@ -348,6 +348,15 @@ pub fn prover_round(
         }
     });
 
+    let terminal_projection = match config.next.as_deref() {
+        Some(Config::Simple(next_simple_config)) => Some(project_terminal(
+            next_simple_config,
+            &next_round_witness.data,
+            &mut hash_wrapper,
+        )),
+        _ => None,
+    };
+
     drop(next_witness_span);
 
     let sumcheck_output = {
@@ -360,6 +369,7 @@ pub fn prover_round(
             &rc_fine_projection
                 .as_ref()
                 .map(|(_, _, challenges)| challenges),
+            terminal_projection.as_ref(),
             &opening,
             sumcheck_context,
             &mut hash_wrapper,
@@ -455,12 +465,17 @@ pub fn prover_round(
             let (points_outer, points_inner) =
                 evaluation_points.split_at(next_simple_config.witness_width.ilog2() as usize);
             let proof = prover_round_simple(
-                next_simple_config,
                 &basic_commitment,
                 &next_round_witness,
                 &evaluation_point_pair(points_inner),
                 &evaluation_point_pair(points_outer),
                 Some(hash_wrapper),
+            );
+            #[cfg(feature = "debug-hardness")]
+            crate::protocol::parties::debug_hardness::check_simple_round(
+                next_simple_config,
+                &proof.folded_witness.data,
+                &terminal_projection.as_ref().unwrap().image.data,
             );
             (
                 Some(RoundProof::Simple(proof)),
@@ -518,6 +533,7 @@ pub fn prover_round(
             )
         }),
         constant_term_claims,
+        terminal_projection_image: terminal_projection.map(|projection| projection.image),
         next: next_proof.map(Box::new),
     };
 
@@ -562,7 +578,7 @@ pub fn prover_round_intermediate(
     let projection_image_ct = project_coefficients(witness, &projection_matrix);
     hash_wrapper.update_with_ring_element_slice(&projection_image_ct.data);
     let (batched_projection_image, fine_proj_batching_challenges) =
-        batch_projection_n_times(witness, &projection_matrix, &mut hash_wrapper, false);
+        batch_projection_n_times(witness, &projection_matrix, &mut hash_wrapper);
 
     hash_wrapper.update_with_ring_element_slice(&batched_projection_image.data);
 
@@ -664,24 +680,8 @@ pub fn prover_round_intermediate(
                 );
                 RoundProof::Intermediate(proof)
             }
-            Config::Simple(next_simple_config) => {
-                let (new_evaluation_points_outer, new_evaluation_points_inner) =
-                    evaluation_points.split_at(next_simple_config.witness_width.ilog2() as usize);
-                let proof = prover_round_simple(
-                    next_simple_config,
-                    &next_round_commitment,
-                    &next_round_witness,
-                    &vec![
-                        evaluation_point_to_structured_row(new_evaluation_points_inner),
-                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_inner),
-                    ],
-                    &vec![
-                        evaluation_point_to_structured_row(new_evaluation_points_outer),
-                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
-                    ],
-                    Some(hash_wrapper),
-                );
-                RoundProof::Simple(proof)
+            Config::Simple(_) => {
+                unimplemented!("the terminal witness's projection is proven by a sumcheck round")
             }
         },
     };
@@ -702,7 +702,6 @@ pub fn prover_round_intermediate(
 // this is only for the last round
 #[tracing::instrument(skip_all, name = "prover_round_simple")]
 pub fn prover_round_simple(
-    config: &SimpleConfig,
     commitment: &BasicCommitment,
     witness: &VerticallyAlignedMatrix<RingElement>,
     evaluation_points_inner: &Vec<StructuredRow>,
@@ -731,45 +730,14 @@ pub fn prover_round_simple(
 
     hash_wrapper.update_with_ring_element_slice(&opening.rhs.data);
 
-    let mut projection_matrix =
-        ProjectionMatrix::new(config.projection_ratio, config.projection_height);
-
-    projection_matrix.sample(&mut hash_wrapper);
-
-    let projection_image_ct = project_coefficients(&witness, &projection_matrix);
-
-    hash_wrapper.update_with_ring_element_slice(&projection_image_ct.data);
-    // let projection_image = project(&witness, &projection_matrix);
-
-    let (batched_projection_image, _) = batch_projection_n_times(
-        // we don't need the challenges here
-        &witness,
-        &projection_matrix,
-        &mut hash_wrapper,
-        true,
-    );
-
-    // let projection_image = project(&witness, &projection_matrix);
-
-    hash_wrapper.update_with_ring_element_slice(&batched_projection_image.data);
-
     let mut fold_challenge = vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
 
     hash_wrapper.sample_low_op_norm_ring_vec_into(&mut fold_challenge);
 
     let folded_witness = fold(&witness, &fold_challenge);
 
-    #[cfg(feature = "debug-hardness")]
-    crate::protocol::parties::debug_hardness::check_simple_round(
-        config,
-        &folded_witness.data,
-        &projection_image_ct.data,
-    );
-
     SimpleRoundProof {
         folded_witness,
-        projection_image_ct,
-        batched_projection_image,
         opening_rhs: opening.rhs,
     }
 }

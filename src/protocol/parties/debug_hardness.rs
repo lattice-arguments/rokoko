@@ -471,6 +471,17 @@ pub fn check_simple_round(
     let extracted_witness_bound = folded_witness_l2_norm * T_OP_NORM_BOUND * EXTRACTION_SLACK * NORM_MARGIN;
 
     let argued_witness_bound = projection_l2_norm / JL_ALPHA_RP;
+
+    let bound = (argued_witness_bound * NORM_MARGIN).powi(2);
+    println!(
+        "Terminal projection bounds the witness by {} (squared {bound}, q / 2 = {})",
+        argued_witness_bound * NORM_MARGIN,
+        MOD_Q as f64 / 2f64
+    );
+    assert!(
+        bound < MOD_Q as f64 / 2f64,
+        "Witness bound too large for inner-product norm extraction! {bound} >= q / 2"
+    );
     let worse_bound = if extracted_witness_bound > argued_witness_bound {
         println!(
             "Using extracted witness bound {} for security estimation.",

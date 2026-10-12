@@ -29,8 +29,10 @@ use crate::{
             ComVerifyOutputLayerVerifierContext, ComVerifyVerifierContext,
             CommitmentFoldVerifierContext, FineProjVerifierContext, FineProjVerifierContextWrapper,
             InnerEvalFoldVerifierContext, NextVerifierSumcheckContext, NormCheckVerifierContext,
-            OuterEvalClaimVerifierContext, VerifierSumcheckContext,
+            OuterEvalClaimVerifierContext, TerminalProjectionVerifierContext,
+            VerifierSumcheckContext,
         },
+        sumchecks::builder::terminal_config,
         sumchecks::helpers::{
             batch_piece, block_recomposition_weights, row_committed_pieces, BlockWeights,
         },
@@ -326,6 +328,7 @@ fn build_com_verify_verifier_context(
 
 pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumcheckContext {
     let total_vars = config.composed_witness_length.ilog2() as usize;
+    let terminal = terminal_config(config);
 
     let combined_witness_evaluation =
         ElephantCell::new(FakeEvaluationLinearSumcheck::<RingElement>::new());
@@ -676,7 +679,42 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                         as ElephantCell<EvalData>),
                 ));
 
-                let output_consistency = ElephantCell::new(DiffSumcheckEvaluation::new(lhs, rhs));
+                let output_consistency =
+                    ElephantCell::new(DiffSumcheckEvaluation::new(lhs, rhs)) as ElephantCell<EvalData>;
+
+                let terminal = terminal.map(|next| {
+                    let chunk = next.projection_ratio * next.projection_height / DEGREE;
+                    let chunks = config.composed_witness_length / chunk;
+                    TerminalProjectionVerifierContext {
+                        c_0_evaluation_field: ElephantCell::new(
+                            StructuredRowEvaluationLinearSumcheck::<FieldExtension>::new_with_prefixed_sufixed_data(
+                                chunks,
+                                0,
+                                chunk.ilog2() as usize,
+                            ),
+                        ),
+                        j_batched_evaluation: basic_evaluation_linear(
+                            chunk,
+                            chunks.ilog2() as usize,
+                            0,
+                        ),
+                    }
+                });
+                let output_2 = match &terminal {
+                    Some(terminal) => ElephantCell::new(SumSumcheckEvaluation::new(
+                        output_consistency,
+                        ElephantCell::new(ProductSumcheckEvaluation::new(
+                            witness.clone(),
+                            ElephantCell::new(ProductSumcheckEvaluation::new(
+                                ElephantCell::new(RingToFieldWrapperEvaluation::new(
+                                    terminal.c_0_evaluation_field.clone(),
+                                )),
+                                terminal.j_batched_evaluation.clone(),
+                            )),
+                        )),
+                    )) as ElephantCell<EvalData>,
+                    None => output_consistency,
+                };
 
                 FineProjVerifierContext {
                     lhs_flatter_0_evaluation_field,
@@ -688,7 +726,8 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
                     rhs_consistency_flatter_evaluation_field,
                     rhs_consistency_flatter_evaluation,
                     rhs_scalar_consistency_evaluation,
-                    output_2: output_consistency,
+                    output_2,
+                    terminal,
                 }
             });
             Some(FineProjVerifierContextWrapper {

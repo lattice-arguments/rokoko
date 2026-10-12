@@ -161,6 +161,7 @@ impl ConfigBase for IntermediateConfig {
     }
 }
 
+/// The projection is of the witness read as one column, proven by the round committing to it.
 #[derive(Clone, Debug)]
 pub struct SimpleConfig {
     pub witness_height: usize,
@@ -222,6 +223,7 @@ pub struct SumcheckRoundProof {
     pub rc_fine_projection_inner: Option<(Vec<RingElement>, Vec<RingElement>)>,
     pub constant_term_claims: Option<Vec<RingElement>>,
     pub next_round_commitment: Option<NextRoundCommitment>,
+    pub terminal_projection_image: Option<VerticallyAlignedMatrix<RingElement>>,
     pub next: Option<Box<RoundProof>>,
 }
 
@@ -332,6 +334,12 @@ impl SizeableProof for SumcheckRoundProof {
             "Next round commitment size: {} KB, ",
             to_kb(next_round_size)
         );
+
+        if let Some(image) = &self.terminal_projection_image {
+            let image_size: usize = image.data.iter().map(|el| el.compact_size_in_bits()).sum();
+            size += image_size;
+            tracing::debug!("Terminal projection image size: {} KB, ", to_kb(image_size));
+        }
         tracing::debug!("Total sumcheck round proof size: {} KB \n\n\n", to_kb(size));
 
         size + if let Some(next) = &self.next {
@@ -348,8 +356,6 @@ impl SizeableProof for SumcheckRoundProof {
 
 pub struct SimpleRoundProof {
     pub folded_witness: VerticallyAlignedMatrix<RingElement>,
-    pub projection_image_ct: VerticallyAlignedMatrix<RingElement>, // cosntant term projection image embedded
-    pub batched_projection_image: HorizontallyAlignedMatrix<RingElement>,
     pub opening_rhs: HorizontallyAlignedMatrix<RingElement>,
 }
 
@@ -360,26 +366,6 @@ impl SizeableProof for SimpleRoundProof {
             size += el.compact_size_in_bits();
         }
         tracing::debug!("Folded witness size: {} KB, ", to_kb(size));
-
-        let mut projection_image_ct_size = 0;
-        for el in &self.projection_image_ct.data {
-            projection_image_ct_size += el.compact_size_in_bits();
-        }
-        size += projection_image_ct_size;
-        tracing::debug!(
-            "Projection image ct size: {} KB, ",
-            to_kb(projection_image_ct_size)
-        );
-
-        let mut batched_projection_image_size = 0;
-        for el in &self.batched_projection_image.data {
-            batched_projection_image_size += el.compact_size_in_bits();
-        }
-        size += batched_projection_image_size;
-        tracing::debug!(
-            "Batched projection image size: {} KB, ",
-            to_kb(batched_projection_image_size)
-        );
 
         let mut opening_rhs_size = 0;
         for el in &self.opening_rhs.data {

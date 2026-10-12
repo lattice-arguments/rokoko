@@ -1,9 +1,11 @@
 use crate::common::arithmetic::ONE;
 use crate::common::config::DEGREE;
-use crate::protocol::config::{Projection, SumcheckConfig};
+use crate::protocol::config::{Projection, SimpleConfig, SumcheckConfig};
 use crate::protocol::intermediate_sumchecks::builder::init_intermediate_sumcheck;
 use crate::protocol::sumcheck_utils::sum::SumSumcheck;
-use crate::protocol::sumchecks::context::{FineProjSumcheckContextWrapper, NextSumcheckContext};
+use crate::protocol::sumchecks::context::{
+    FineProjSumcheckContextWrapper, NextSumcheckContext, TerminalProjectionSumcheckContext,
+};
 use crate::{
     common::{config::NOF_BATCHES, ring_arithmetic::RingElement},
     protocol::{
@@ -183,6 +185,19 @@ fn build_com_verify_sumcheck_context(
     }
 }
 
+/// The terminal round's config when it follows `config`, whose fine-projection constant-term
+/// claims then also carry the terminal witness's projection.
+pub fn terminal_config(config: &SumcheckConfig) -> Option<&SimpleConfig> {
+    let Some(Config::Simple(next)) = config.next.as_deref() else {
+        return None;
+    };
+    assert!(
+        matches!(config.projection_recursion, Projection::Fine(_)),
+        "the round before the terminal one needs a fine projection"
+    );
+    Some(next)
+}
+
 /// Constructs all sumcheck gadgets for constraint verification:
 ///   - CommitmentFold: CK · folded_witness = commitment · fold_challenge
 ///   - InnerEvalFold: inner_eval · folded_witness = opening.rhs · fold_challenge
@@ -197,6 +212,7 @@ fn build_com_verify_sumcheck_context(
 /// offsets are preloaded to match commitment arithmetic.
 pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext {
     let total_vars = config.composed_witness_length.ilog2() as usize;
+    let terminal = terminal_config(config);
 
     // Every leaf built below is registered here and folded once per round.
     let mut leaves = FoldedLeaves::new();
@@ -561,7 +577,41 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                     ) as Data),
                 ));
 
-                let output_consistency = ElephantCell::new(DiffSumcheck::new(lhs, rhs));
+                let output_consistency = ElephantCell::new(DiffSumcheck::new(lhs, rhs)) as Data;
+
+                let terminal = terminal.map(|next| {
+                    let chunk = next.projection_ratio * next.projection_height / DEGREE;
+                    let chunks = config.composed_witness_length / chunk;
+                    TerminalProjectionSumcheckContext {
+                        c_0_sumcheck: ElephantCell::new(
+                            LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                                chunks,
+                                0,
+                                chunk.ilog2() as usize,
+                            ),
+                        ),
+                        j_batched_sumcheck: ElephantCell::new(
+                            LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(
+                                chunk,
+                                chunks.ilog2() as usize,
+                                0,
+                            ),
+                        ),
+                    }
+                });
+                let output_2 = match &terminal {
+                    Some(terminal) => ElephantCell::new(SumSumcheck::new(
+                        output_consistency,
+                        ElephantCell::new(ProductSumcheck::new(
+                            witness.clone(),
+                            ElephantCell::new(ProductSumcheck::new(
+                                terminal.c_0_sumcheck.clone(),
+                                terminal.j_batched_sumcheck.clone(),
+                            )),
+                        )),
+                    )) as Data,
+                    None => output_consistency,
+                };
 
                 FineProjSumcheckContext {
                     lhs_flatter_0_sumcheck,
@@ -570,7 +620,8 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
                     lhs_consistency_flatter_sumcheck,
                     rhs_scalar_consistency_sumcheck,
                     rhs_consistency_flatter_sumcheck,
-                    output_2: output_consistency,
+                    output_2,
+                    terminal,
                 }
             });
 

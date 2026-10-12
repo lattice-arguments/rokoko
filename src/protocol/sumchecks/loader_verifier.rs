@@ -7,7 +7,7 @@ use crate::{
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
-        project_fine::BatchedProjectionChallengesSuccinct,
+        project_fine::{BatchedProjectionChallengesSuccinct, TerminalProjectionChallenges},
         sumchecks::helpers::{projection_flatter_1_times_matrix, split_projection_flatter},
     },
 };
@@ -29,6 +29,7 @@ pub fn load_verifier_sumcheck_data(
     projection_matrix: &ProjectionMatrix,
     projection_matrix_flatter_structured: &Option<StructuredRow>, // Only needed for coarse projection
     challenges_3_1: &Option<[BatchedProjectionChallengesSuccinct; NOF_BATCHES]>,
+    terminal_projection: Option<&TerminalProjectionChallenges>,
     combination: &[RingElement],
     fe: &[FieldExtension; NUM_SLOTS],
 ) {
@@ -205,6 +206,26 @@ pub fn load_verifier_sumcheck_data(
                 .rhs_scalar_consistency_evaluation
                 .borrow_mut()
                 .load_from(&vec![e]);
+
+            if let Some(terminal) = &fine_proj_eval.sumchecks[batch_idx].terminal {
+                let projection =
+                    terminal_projection.expect("the terminal projection must be sampled");
+                let challenges = &projection.challenges[batch_idx];
+                terminal.c_0_evaluation_field.borrow_mut().load_scaled_from(
+                    StructuredRow {
+                        tensor_layers: challenges
+                            .c_0_layers
+                            .iter()
+                            .map(|&c| FieldExtension::from_base(c))
+                            .collect(),
+                    },
+                    FieldExtension::from_base(projection.weights[batch_idx]),
+                );
+                terminal
+                    .j_batched_evaluation
+                    .borrow_mut()
+                    .load_from(&challenges.j_batched);
+            }
         }
     }
     // Load combiner challenges

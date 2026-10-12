@@ -194,6 +194,10 @@ pub fn verifier_round(
                         next_simple_config,
                         commitment,
                         next_simple_round_proof,
+                        round_proof
+                            .terminal_projection_image
+                            .as_ref()
+                            .expect("the round before the terminal one sends its projection"),
                         &inner_rows,
                         &outer_rows,
                         &new_claims,
@@ -343,7 +347,8 @@ pub fn verifier_round_intermediate(
         hash_wrapper.update_with_ring_element_slice(&round_proof.projection_image_ct.data);
         verifier_sample_projection_challenges_collectively(
             &projection_matrix,
-            config,
+            config.witness_width,
+            config.witness_height,
             &mut hash_wrapper,
         )
     };
@@ -501,17 +506,8 @@ pub fn verifier_round_intermediate(
     ];
 
     match (next_round_proof.as_ref(), next_round_config.as_ref()) {
-        (RoundProof::Simple(simple_round_proof), Config::Simple(simple_config)) => {
-            verifier_round_simple(
-                crs,
-                simple_config,
-                next_round_commitment,
-                simple_round_proof,
-                &inner_rows,
-                &outer_rows,
-                &new_claims,
-                Some(hash_wrapper),
-            );
+        (RoundProof::Simple(_), Config::Simple(_)) => {
+            unimplemented!("the terminal witness's projection is proven by a sumcheck round")
         }
         (
             RoundProof::Intermediate(intermediate_round_proof),
@@ -539,6 +535,7 @@ pub fn verifier_round_simple(
     config: &SimpleConfig,
     commitment: &BasicCommitment,
     round_proof: &SimpleRoundProof,
+    projection_image: &VerticallyAlignedMatrix<RingElement>,
     evaluation_points_inner: &[StructuredRow],
     evaluation_points_outer: &[StructuredRow],
     claims: &[RingElement],
@@ -548,28 +545,6 @@ pub fn verifier_round_simple(
     assert_eq!(commitment.height, config.basic_commitment_rank);
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
     hash_wrapper.update_with_ring_element_slice(&round_proof.opening_rhs.data);
-
-    let mut projection_matrix =
-        ProjectionMatrix::new(config.projection_ratio, config.projection_height);
-
-    projection_matrix.sample(&mut hash_wrapper);
-
-    hash_wrapper.update_with_ring_element_slice(&round_proof.projection_image_ct.data);
-
-    let challenges: [BatchedProjectionChallengesSuccinct; NOF_BATCHES] =
-        verifier_sample_projection_challenges_collectively(
-            &projection_matrix,
-            config,
-            &mut hash_wrapper,
-        );
-
-    debug_assert_eq!(
-        challenges[0].c_0_layers.len(),
-        0,
-        "In simple verifier, projection challenges c_0_layers length must be zero. At least, this is unimplemented otherwise."
-    );
-
-    hash_wrapper.update_with_ring_element_slice(&round_proof.batched_projection_image.data);
 
     let mut folding_challenges =
         vec![RingElement::zero(Representation::IncompleteNTT); config.witness_width];
@@ -663,85 +638,6 @@ pub fn verifier_round_simple(
 
     assert_eq!(opening_to_folded_witness.rhs, folded_opening);
 
-    let mut batched_projection_of_folded_witness = VerticallyAlignedMatrix {
-        data: vec![
-            RingElement::zero(Representation::IncompleteNTT);
-            round_proof.batched_projection_image.height * 1
-        ],
-        width: 1,
-        height: round_proof.batched_projection_image.height,
-        used_cols: 1,
-    };
-
-    for i in 0..round_proof.batched_projection_image.height {
-        let j_batched = &challenges[i].j_batched;
-        for j in 0..j_batched.len() {
-            temp *= (&round_proof.folded_witness[(j, 0)], &j_batched[j]);
-            batched_projection_of_folded_witness[(i, 0)] += &temp;
-        }
-    }
-
-    let mut folded_batched_projection_image = VerticallyAlignedMatrix {
-        data: vec![
-            RingElement::zero(Representation::IncompleteNTT);
-            round_proof.batched_projection_image.height * 1
-        ],
-        width: 1,
-        height: round_proof.batched_projection_image.height,
-        used_cols: 1,
-    };
-
-    for i in 0..round_proof.batched_projection_image.height {
-        for j in 0..commitment.width {
-            temp *= (
-                &round_proof.batched_projection_image[(i, j)],
-                &folding_challenges[j],
-            );
-            folded_batched_projection_image[(i, 0)] += &temp;
-        }
-    }
-
-    assert_eq!(
-        batched_projection_of_folded_witness,
-        folded_batched_projection_image
-    );
-
-    // check constant terms
-    for i in 0..NOF_BATCHES {
-        let c_1_layers = &challenges[i].c_1_layers;
-        let c_1_values = precompute_structured_values_fast(&c_1_layers);
-
-        debug_assert_eq!(
-            c_1_values.len(),
-            round_proof.projection_image_ct.height * DEGREE,
-            "c_1_values length mismatch."
-        );
-
-        for k in 0..config.witness_width {
-            let mut expected_ct = 0;
-            for j in 0..c_1_values.len() / DEGREE {
-                unsafe {
-                    eltwise_mult_mod(
-                        temp.v.as_mut_ptr(),
-                        c_1_values.as_ptr().add(DEGREE * j),
-                        round_proof.projection_image_ct[(j, k)].v.as_ptr(),
-                        DEGREE as u64,
-                        MOD_Q,
-                    );
-                }
-                for l in 0..DEGREE {
-                    // TODO: vectorize
-                    expected_ct += temp.v[l];
-                }
-            }
-            expected_ct %= MOD_Q;
-
-            let ct =
-                round_proof.batched_projection_image[(i, k)].constant_term_from_incomplete_ntt();
-            assert_eq!(ct, expected_ct);
-        }
-    }
-
     let mut witness_strided =
         vec![RingElement::zero(Representation::IncompleteNTT); round_proof.folded_witness.height];
     witness_strided.clone_from_slice(&round_proof.folded_witness.data);
@@ -751,7 +647,7 @@ pub fn verifier_round_simple(
     }
 
     let l2_norm_witness = l2_norm_coeffs(&witness_strided);
-    let l2_norm_proj = l2_norm_coeffs(&round_proof.projection_image_ct.data);
+    let l2_norm_proj = l2_norm_coeffs(&projection_image.data);
 
     assert_norm_bounded(
         "folded witness in simple verifier",
