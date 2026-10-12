@@ -32,7 +32,7 @@ const LANES: usize = 8;
 const SYMBOLS: usize = 56;
 const ROLES: usize = 19;
 const MAX_ELEMENTS: usize = 1 << 20;
-const VERSION: u8 = 3;
+const VERSION: u8 = 4;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -580,6 +580,19 @@ impl Encoder {
         self.ring_slice(role, &m.data);
     }
 
+    fn matrix_h_past_last_column(
+        &mut self,
+        role: Role,
+        m: &HorizontallyAlignedMatrix<RingElement>,
+    ) {
+        self.shape.put_varint(m.width as u64);
+        self.shape.put_varint(m.height as u64);
+        let sent: Vec<RingElement> = (0..m.height)
+            .flat_map(|row| m.row(row)[..m.width - 1].iter().cloned())
+            .collect();
+        self.ring_slice(role, &sent);
+    }
+
     fn option_matrix_v(&mut self, role: Role, m: &Option<VerticallyAlignedMatrix<RingElement>>) {
         self.shape.put(m.is_some() as u64, 1);
         if let Some(m) = m {
@@ -604,13 +617,27 @@ impl Encoder {
         match commitment {
             None => {}
             Some(NextRoundCommitment::Recursive(rc)) => {
-                self.shape.put(0, 1);
+                self.shape.put(0, 2);
                 self.ring_slice_as(Role::Commitment, Role::Digest, rc);
             }
             Some(NextRoundCommitment::Simple(m)) => {
-                self.shape.put(1, 1);
+                self.shape.put(1, 2);
                 self.matrix_h(Role::Commitment, m);
             }
+            Some(NextRoundCommitment::Terminal {
+                commitment,
+                last_column_digest,
+            }) => {
+                self.shape.put(2, 2);
+                self.matrix_h_past_last_column(Role::Commitment, commitment);
+                self.digest(last_column_digest);
+            }
+        }
+    }
+
+    fn digest(&mut self, digest: &[u8; 32]) {
+        for byte in digest {
+            self.shape.put(*byte as u64, 8);
         }
     }
 
@@ -633,7 +660,7 @@ impl Encoder {
 
     fn sumcheck(&mut self, p: &SumcheckRoundProof) {
         self.polys(&p.polys);
-        self.ring(Role::Claim, &p.claim_over_witness);
+        self.option_ring(Role::Claim, &p.claim_over_witness);
         self.ring(Role::Conjugate, &p.claim_over_witness_conjugate);
         self.trace_claim(Role::Norm, &p.norm_claim);
         self.trace_claim(Role::InnerNorm, &p.most_inner_norm_claim);
@@ -955,6 +982,30 @@ impl<'a> Decoder<'a> {
         })
     }
 
+    fn matrix_h_past_last_column(
+        &mut self,
+        role: Role,
+    ) -> Result<HorizontallyAlignedMatrix<RingElement>, WireError> {
+        let width = self.shape.get_len()?;
+        let height = self.shape.get_len()?;
+        let sent_width = width.checked_sub(1).ok_or(WireError::Malformed)?;
+        let sent = self.ring_slice(role)?;
+        if sent.len() != height * sent_width {
+            return Err(WireError::Malformed);
+        }
+        let mut sent = sent.into_iter();
+        let mut data = Vec::with_capacity(height * width);
+        for _ in 0..height {
+            data.extend(sent.by_ref().take(sent_width));
+            data.push(RingElement::zero(Representation::IncompleteNTT));
+        }
+        Ok(HorizontallyAlignedMatrix {
+            data,
+            width,
+            height,
+        })
+    }
+
     fn option_matrix_v(
         &mut self,
         role: Role,
@@ -990,11 +1041,25 @@ impl<'a> Decoder<'a> {
         if self.shape.get(1)? == 0 {
             return Ok(None);
         }
-        Ok(Some(if self.shape.get(1)? == 0 {
-            NextRoundCommitment::Recursive(self.ring_slice_as(Role::Commitment, Role::Digest)?)
-        } else {
-            NextRoundCommitment::Simple(self.matrix_h(Role::Commitment)?)
+        Ok(Some(match self.shape.get(2)? {
+            0 => {
+                NextRoundCommitment::Recursive(self.ring_slice_as(Role::Commitment, Role::Digest)?)
+            }
+            1 => NextRoundCommitment::Simple(self.matrix_h(Role::Commitment)?),
+            2 => NextRoundCommitment::Terminal {
+                commitment: self.matrix_h_past_last_column(Role::Commitment)?,
+                last_column_digest: self.digest()?,
+            },
+            _ => return Err(WireError::Malformed),
         }))
+    }
+
+    fn digest(&mut self) -> Result<[u8; 32], WireError> {
+        let mut digest = [0u8; 32];
+        for byte in digest.iter_mut() {
+            *byte = self.shape.get(8)? as u8;
+        }
+        Ok(digest)
     }
 
     fn round(&mut self) -> Result<RoundProof, WireError> {
@@ -1008,7 +1073,7 @@ impl<'a> Decoder<'a> {
 
     fn sumcheck(&mut self) -> Result<SumcheckRoundProof, WireError> {
         let polys = self.polys()?;
-        let claim_over_witness = self.ring(Role::Claim)?;
+        let claim_over_witness = self.option_ring(Role::Claim)?;
         let claim_over_witness_conjugate = self.ring(Role::Conjugate)?;
         let norm_claim = self.trace_claim(Role::Norm)?;
         let most_inner_norm_claim = self.trace_claim(Role::InnerNorm)?;
@@ -1170,6 +1235,14 @@ mod tests {
         m
     }
 
+    fn opening(height: usize, width: usize) -> HorizontallyAlignedMatrix<RingElement> {
+        let mut m = horizontal(height, width);
+        for row in 0..height {
+            m[(row, width - 1)].set_zero();
+        }
+        m
+    }
+
     fn field(constant: u64) -> FieldExtension {
         let mut f = FieldExtension {
             coeffs: std::array::from_fn(|k| uniform().v[k]),
@@ -1213,7 +1286,7 @@ mod tests {
     fn sumcheck(next: Option<Box<RoundProof>>, full: bool) -> SumcheckRoundProof {
         SumcheckRoundProof {
             polys: (2..=3).map(poly).collect(),
-            claim_over_witness: uniform(),
+            claim_over_witness: full.then(uniform),
             claim_over_witness_conjugate: uniform(),
             norm_claim: field(1 << 28),
             most_inner_norm_claim: field(1 << 19),
@@ -1224,7 +1297,14 @@ mod tests {
                 .then(|| (vec![uniform()], Some(vec![uniform(), uniform()]))),
             constant_term_claims: full.then(|| vec![field(0), field(0)]),
             binariness_claim: full.then(|| field(0)),
-            next_round_commitment: Some(NextRoundCommitment::Recursive(vec![uniform(); 3])),
+            next_round_commitment: Some(if full {
+                NextRoundCommitment::Recursive(vec![uniform(); 3])
+            } else {
+                NextRoundCommitment::Terminal {
+                    commitment: opening(4, 3),
+                    last_column_digest: std::array::from_fn(|i| (11 * i + 3) as u8),
+                }
+            }),
             terminal_projection_image: full.then(|| vertical(2, 1, 1 << 13)),
             next,
         }
@@ -1271,6 +1351,24 @@ mod tests {
         ) else {
             panic!("the chain must survive the roundtrip")
         };
+        let (
+            Some(NextRoundCommitment::Terminal {
+                commitment,
+                last_column_digest,
+            }),
+            Some(NextRoundCommitment::Terminal {
+                commitment: commitment_back,
+                last_column_digest: last_column_digest_back,
+            }),
+        ) = (
+            &inner.next_round_commitment,
+            &inner_back.next_round_commitment,
+        )
+        else {
+            panic!("the terminal commitment must survive the roundtrip")
+        };
+        same_ring(&commitment.data, &commitment_back.data);
+        assert_eq!(last_column_digest, last_column_digest_back);
         let (RoundProof::Intermediate(mid), RoundProof::Intermediate(mid_back)) = (
             &**inner.next.as_ref().unwrap(),
             &**inner_back.next.as_ref().unwrap(),

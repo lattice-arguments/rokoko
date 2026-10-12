@@ -234,7 +234,13 @@ pub enum RoundProof {
 
 pub enum NextRoundCommitment {
     Recursive(RecursiveCommitment), // if the next round is sumcheck
-    Simple(HorizontallyAlignedMatrix<RingElement>), // if the next round is simple or intermediate
+    Simple(HorizontallyAlignedMatrix<RingElement>), // if the next round is intermediate
+    /// If the next round is simple: the commitment past its last column, which the terminal
+    /// rebuilds from the fold and checks against the digest.
+    Terminal {
+        commitment: HorizontallyAlignedMatrix<RingElement>,
+        last_column_digest: [u8; 32],
+    },
 }
 
 pub trait SizeableProof {
@@ -243,7 +249,8 @@ pub trait SizeableProof {
 
 pub struct SumcheckRoundProof {
     pub polys: Vec<Polynomial<FieldExtension>>,
-    pub claim_over_witness: RingElement,
+    /// Absent when the next round is a sumcheck round, which binds it through its batching.
+    pub claim_over_witness: Option<RingElement>,
     pub claim_over_witness_conjugate: RingElement,
     /// `Σ_s CONSTANT_TERM_FACTORS[s] · slot_s(N)` for the norm claims `N`; part 0 is `ct(N)`.
     pub norm_claim: FieldExtension,
@@ -278,7 +285,11 @@ impl SizeableProof for SumcheckRoundProof {
         tracing::debug!("Polys size: {} KB, ", to_kb(size));
 
         let mut claims_size = 0;
-        for claim in [&self.claim_over_witness, &self.claim_over_witness_conjugate] {
+        for claim in self
+            .claim_over_witness
+            .iter()
+            .chain([&self.claim_over_witness_conjugate])
+        {
             claims_size += claim.compact_size_in_bits();
         }
         for claim in [&self.norm_claim, &self.most_inner_norm_claim]
@@ -360,6 +371,16 @@ impl SizeableProof for SumcheckRoundProof {
                 NextRoundCommitment::Simple(mat) => {
                     let mut mat_size = 0;
                     for el in &mat.data {
+                        mat_size += el.compact_size_in_bits();
+                    }
+                    mat_size
+                }
+                NextRoundCommitment::Terminal {
+                    commitment,
+                    last_column_digest,
+                } => {
+                    let mut mat_size = 8 * last_column_digest.len();
+                    for el in &commitment.data {
                         mat_size += el.compact_size_in_bits();
                     }
                     mat_size
@@ -484,10 +505,8 @@ impl SizeableProof for IntermediateRoundProof {
 
         let next_round_size = if let Some(next_round_commitment) = &self.next_round_commitment {
             match next_round_commitment {
-                NextRoundCommitment::Recursive(_) => {
-                    unreachable!(
-                        "Intermediate round should not have recursive commitment for next round."
-                    )
+                NextRoundCommitment::Recursive(_) | NextRoundCommitment::Terminal { .. } => {
+                    unreachable!("an intermediate round is followed by an intermediate round")
                 }
                 NextRoundCommitment::Simple(mat) => {
                     let mut mat_size = 0;

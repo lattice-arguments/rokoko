@@ -2,7 +2,7 @@ use crate::{
     common::{
         config::NOF_BATCHES,
         decomposition::{decompose, decompose_chunks_into},
-        hash::HashWrapper,
+        hash::{last_column_digest, HashWrapper},
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{Representation, RingElement},
@@ -31,7 +31,7 @@ use crate::{
         project_coarse::{prepare_i16_witness, project},
         project_fine::{batch_projection_n_times, project_coefficients, project_terminal},
         sumcheck::{sumcheck, SumcheckContext},
-        sumchecks::context::NextSumcheckContext,
+        sumchecks::{batching::SlotWeights, context::NextSumcheckContext, runner::SumcheckOutput},
     },
 };
 
@@ -72,9 +72,9 @@ fn evaluation_point_pair(points: &[RingElement]) -> Vec<StructuredRow> {
 enum PendingNextCommitment {
     Recursive(RecursiveCommitmentWithAux),
     Basic(BasicCommitment),
+    Terminal(BasicCommitment, [u8; 32]),
 }
 
-#[tracing::instrument(skip_all, name = "prover_round")]
 pub fn prover_round(
     crs: &CRS,
     config: &SumcheckConfig,
@@ -84,6 +84,37 @@ pub fn prover_round(
     evaluation_points_outer: &Vec<StructuredRow>,
     sumcheck_context: &mut SumcheckContext,
     with_claims: bool,
+    hash_wrapper: Option<HashWrapper>,
+    boundary: Option<BoundaryCapture<'_, ProverBoundary>>,
+) -> (SumcheckRoundProof, Option<Vec<RingElement>>) {
+    prove_round(
+        crs,
+        config,
+        commitment_with_aux,
+        witness,
+        evaluation_points_inner,
+        evaluation_points_outer,
+        sumcheck_context,
+        with_claims,
+        None,
+        hash_wrapper,
+        boundary,
+    )
+}
+
+/// `prover_round` for a round whose first outer claim may be held only as
+/// `Σ_s λ_s · slot_s(claim)`, with `first_outer_weights = λ`.
+#[tracing::instrument(skip_all, name = "prover_round")]
+pub(crate) fn prove_round(
+    crs: &CRS,
+    config: &SumcheckConfig,
+    commitment_with_aux: &CommitmentWithAux,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    evaluation_points_inner: &Vec<StructuredRow>,
+    evaluation_points_outer: &Vec<StructuredRow>,
+    sumcheck_context: &mut SumcheckContext,
+    with_claims: bool,
+    first_outer_weights: Option<&SlotWeights>,
     hash_wrapper: Option<HashWrapper>,
     boundary: Option<BoundaryCapture<'_, ProverBoundary>>,
 ) -> (SumcheckRoundProof, Option<Vec<RingElement>>) {
@@ -367,7 +398,19 @@ pub fn prover_round(
                 );
                 PendingNextCommitment::Recursive(rc)
             }
-            _ => {
+            Config::Simple(_) => {
+                let mut commitment = basic_commitment;
+                commitment.truncate_rows(base.basic_commitment_rank());
+                let digest = last_column_digest(&commitment);
+                let last = commitment.width - 1;
+                for row in 0..commitment.height {
+                    commitment[(row, last)].set_zero();
+                }
+                hash_wrapper.update_with_ring_element_slice(&commitment.data);
+                hash_wrapper.update_with_bytes(&digest);
+                PendingNextCommitment::Terminal(commitment, digest)
+            }
+            Config::Intermediate(_) => {
                 let mut basic_commitment = basic_commitment;
                 basic_commitment.truncate_rows(base.basic_commitment_rank());
                 hash_wrapper.update_with_ring_element_slice(&basic_commitment.data);
@@ -387,6 +430,11 @@ pub fn prover_round(
 
     drop(next_witness_span);
 
+    let at_cut = boundary.as_ref().is_some_and(BoundaryCapture::is_at_cut);
+    // A next sumcheck round binds z_0 through its own batching, so z_0 is not sent.
+    let defer_witness_claim =
+        matches!(config.next.as_deref(), Some(Config::Sumcheck(_))) && !at_cut;
+
     let sumcheck_output = {
         let _s = tracing::info_span!("prover_round::sumcheck").entered();
         sumcheck(
@@ -399,25 +447,25 @@ pub fn prover_round(
                 .map(|(_, _, challenges, _)| challenges),
             terminal_projection.as_ref(),
             &opening,
+            first_outer_weights,
+            defer_witness_claim,
             sumcheck_context,
             &mut hash_wrapper,
         )
     };
 
-
-    let (
+    let SumcheckOutput {
         claim_over_witness,
         claim_over_witness_conjugate,
         norm_claim,
         most_inner_norm_claim,
         projection_norm_claim,
-        sumcheck_transcript,
+        polys: sumcheck_transcript,
         evaluation_points,
         constant_term_claims,
         binariness_claim,
-    ) = sumcheck_output;
-
-    let at_cut = boundary.as_ref().is_some_and(BoundaryCapture::is_at_cut);
+        next_outer_weights,
+    } = sumcheck_output;
 
     // Recurse: the sumcheck evaluation point splits into (outer, inner) =
     // (c_0, c_1), which become the next round's evaluation points.
@@ -464,7 +512,7 @@ pub fn prover_round(
                     Some(NextSumcheckContext::Simple(next_ctx)) => next_ctx,
                     _ => panic!("Expected NextSumcheckContext::Simple in sumcheck_context.next"),
                 };
-                let proof = prover_round(
+                let proof = prove_round(
                     &crs,
                     next_sumcheck_config,
                     &next_commitment_with_aux,
@@ -473,6 +521,7 @@ pub fn prover_round(
                     &evaluation_point_pair(points_outer),
                     next_context,
                     false,
+                    next_outer_weights.as_ref(),
                     Some(hash_wrapper),
                     boundary.and_then(BoundaryCapture::advance),
                 )
@@ -485,7 +534,7 @@ pub fn prover_round(
         }
         (
             Some(Config::Simple(next_simple_config)),
-            Some(PendingNextCommitment::Basic(basic_commitment)),
+            Some(PendingNextCommitment::Terminal(commitment, last_column_digest)),
         ) => {
             assert!(
                 boundary.is_none(),
@@ -494,7 +543,7 @@ pub fn prover_round(
             let (points_outer, points_inner) =
                 evaluation_points.split_at(next_simple_config.witness_width.ilog2() as usize);
             let proof = prover_round_simple(
-                &basic_commitment,
+                &commitment,
                 &next_round_witness,
                 &evaluation_point_pair(points_inner),
                 &evaluation_point_pair(points_outer),
@@ -508,7 +557,10 @@ pub fn prover_round(
             );
             (
                 Some(RoundProof::Simple(proof)),
-                Some(NextRoundCommitment::Simple(basic_commitment)),
+                Some(NextRoundCommitment::Terminal {
+                    commitment,
+                    last_column_digest,
+                }),
             )
         }
         (
@@ -545,7 +597,7 @@ pub fn prover_round(
 
     let rp = SumcheckRoundProof {
         polys: sumcheck_transcript,
-        claim_over_witness,
+        claim_over_witness: (!defer_witness_claim).then_some(claim_over_witness),
         claim_over_witness_conjugate,
         norm_claim,
         most_inner_norm_claim,

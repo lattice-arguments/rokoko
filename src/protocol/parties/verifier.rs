@@ -2,7 +2,7 @@ use crate::{
     common::{
         arithmetic::precompute_structured_values_fast,
         config::{DEGREE, MOD_Q, NOF_BATCHES},
-        hash::HashWrapper,
+        hash::{last_column_digest, HashWrapper},
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         norms::{assert_norm_bounded, l2_norm_coeffs},
         projection_matrix::ProjectionMatrix,
@@ -30,13 +30,13 @@ use crate::{
             verifier_sample_projection_challenges_collectively, BatchedProjectionChallengesSuccinct,
         },
         sumchecks::{
+            batching::OuterClaim,
             context_verifier::{NextVerifierSumcheckContext, VerifierSumcheckContext},
             runner_verifier::sumcheck_verifier,
         },
     },
 };
 
-#[tracing::instrument(skip_all, name = "verifier_round")]
 pub fn verifier_round(
     crs: &VerifierCRS,
     config: &SumcheckConfig,
@@ -49,20 +49,62 @@ pub fn verifier_round(
     hash_wrapper_verifier: Option<HashWrapper>,
     boundary: Option<BoundaryCapture<'_, VerifierBoundary>>,
 ) {
+    let claims = claims
+        .iter()
+        .map(|claim| OuterClaim::Ring(claim.clone()))
+        .collect::<Vec<_>>();
+    verify_round(
+        crs,
+        config,
+        rc_commitment,
+        round_proof,
+        evaluation_points_inner,
+        evaluation_points_outer,
+        &claims,
+        sumcheck_context_verifier,
+        hash_wrapper_verifier,
+        boundary,
+    )
+}
+
+/// `verifier_round` for outer claims some of which are held only as field claims.
+#[tracing::instrument(skip_all, name = "verifier_round")]
+pub(crate) fn verify_round(
+    crs: &VerifierCRS,
+    config: &SumcheckConfig,
+    rc_commitment: &[RingElement],
+    round_proof: &SumcheckRoundProof,
+    evaluation_points_inner: &[StructuredRow],
+    evaluation_points_outer: &[StructuredRow],
+    claims: &[OuterClaim],
+    sumcheck_context_verifier: &mut VerifierSumcheckContext,
+    hash_wrapper_verifier: Option<HashWrapper>,
+    boundary: Option<BoundaryCapture<'_, VerifierBoundary>>,
+) {
     let mut hash_wrapper_verifier = hash_wrapper_verifier.unwrap_or_else(HashWrapper::new);
 
-    let evaluation_points = sumcheck_verifier(
+    let at_cut = boundary.as_ref().is_some_and(BoundaryCapture::is_at_cut);
+    let defer_witness_claim =
+        matches!(config.next.as_deref(), Some(Config::Sumcheck(_))) && !at_cut;
+
+    let (evaluation_points, next_outer_claim) = sumcheck_verifier(
         &config,
         sumcheck_context_verifier,
         &rc_commitment,
         &round_proof,
         &evaluation_points_inner,
         &evaluation_points_outer,
-        &claims,
+        claims,
+        defer_witness_claim,
         &mut hash_wrapper_verifier,
     );
-
-    let at_cut = boundary.as_ref().is_some_and(BoundaryCapture::is_at_cut);
+    // Present exactly when the round sends z_0, as `sumcheck_verifier` checks.
+    let witness_claims = || {
+        [
+            round_proof.claim_over_witness.clone().unwrap(),
+            round_proof.claim_over_witness_conjugate.conjugate(),
+        ]
+    };
 
     if at_cut {
         let next_config = match config.next.as_deref() {
@@ -75,7 +117,7 @@ pub fn verifier_round(
             .expect("cut round must still carry the next-round commitment");
         let commitment_root = match next_round_commitment {
             NextRoundCommitment::Recursive(rc) => rc.clone(),
-            NextRoundCommitment::Simple(_) => {
+            NextRoundCommitment::Simple(_) | NextRoundCommitment::Terminal { .. } => {
                 panic!("round boundary cut requires a recursive next-round commitment")
             }
         };
@@ -83,10 +125,7 @@ pub fn verifier_round(
         *capture.slot = Some(VerifierBoundary {
             config: next_config,
             commitment_root,
-            claims: [
-                round_proof.claim_over_witness.clone(),
-                round_proof.claim_over_witness_conjugate.conjugate(),
-            ],
+            claims: witness_claims(),
             evaluation_points,
             transcript: hash_wrapper_verifier,
         });
@@ -133,11 +172,13 @@ pub fn verifier_round(
                         evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
                     ];
                     let new_claims = [
-                        round_proof.claim_over_witness.clone(),
-                        round_proof.claim_over_witness_conjugate.conjugate(),
+                        OuterClaim::Field(
+                            next_outer_claim.expect("a sumcheck round defers z_0 to the next"),
+                        ),
+                        OuterClaim::Ring(round_proof.claim_over_witness_conjugate.conjugate()),
                     ];
 
-                    verifier_round(
+                    verify_round(
                         crs,
                         &next_sumcheck_config,
                         next_round_commiments_recursive.as_slice(),
@@ -171,9 +212,12 @@ pub fn verifier_round(
                         evaluation_points
                             .split_at(next_simple_config.witness_width.ilog2() as usize);
 
-                    let commitment = match &next_round_commitment {
-                        NextRoundCommitment::Simple(basic_commitment) => basic_commitment,
-                        _ => panic!("Expected simple commitment for next round."),
+                    let (commitment, commitment_digest) = match &next_round_commitment {
+                        NextRoundCommitment::Terminal {
+                            commitment,
+                            last_column_digest,
+                        } => (commitment, last_column_digest),
+                        _ => panic!("Expected the terminal commitment for next round."),
                     };
 
                     let inner_rows = [
@@ -184,15 +228,13 @@ pub fn verifier_round(
                         evaluation_point_to_structured_row(new_evaluation_points_outer),
                         evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
                     ];
-                    let new_claims = [
-                        round_proof.claim_over_witness.clone(),
-                        round_proof.claim_over_witness_conjugate.conjugate(),
-                    ];
+                    let new_claims = witness_claims();
 
                     verifier_round_simple(
                         crs,
                         next_simple_config,
                         commitment,
+                        commitment_digest,
                         next_simple_round_proof,
                         round_proof
                             .terminal_projection_image
@@ -238,10 +280,7 @@ pub fn verifier_round(
                         evaluation_point_to_structured_row(new_evaluation_points_outer),
                         evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
                     ];
-                    let new_claims = [
-                        round_proof.claim_over_witness.clone(),
-                        round_proof.claim_over_witness_conjugate.conjugate(),
-                    ];
+                    let new_claims = witness_claims();
 
                     verifier_round_intermediate(
                         crs,
@@ -264,6 +303,10 @@ pub fn verifier_round(
             assert!(
                 boundary.is_none(),
                 "round boundary cut requested past the end of the round chain"
+            );
+            assert!(
+                config.next.is_none(),
+                "the proof ends before the round chain"
             );
         }
     }
@@ -534,6 +577,7 @@ pub fn verifier_round_simple(
     crs: &VerifierCRS,
     config: &SimpleConfig,
     commitment: &BasicCommitment,
+    commitment_digest: &[u8; 32],
     round_proof: &SimpleRoundProof,
     projection_image: &VerticallyAlignedMatrix<RingElement>,
     evaluation_points_inner: &[StructuredRow],
@@ -542,7 +586,10 @@ pub fn verifier_round_simple(
     hash_wrapper: Option<HashWrapper>,
 ) {
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
-    assert_eq!(commitment.height, config.basic_commitment_rank);
+    assert_eq!(
+        (commitment.height, commitment.width),
+        (config.basic_commitment_rank, config.witness_width)
+    );
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
     hash_wrapper.update_with_ring_element_slice(&round_proof.opening_rhs.data);
 
@@ -551,6 +598,18 @@ pub fn verifier_round_simple(
 
     hash_wrapper.sample_low_op_norm_ring_vec_into(&mut folding_challenges);
 
+    // `A z = Σ_j c_j t_j` defines the commitment's last column, and the digest sent before the
+    // fold challenges binds it.
+    let last = config.witness_width - 1;
+    assert!(
+        folding_challenges[last].is_unit(),
+        "the last fold challenge is not a unit"
+    );
+    let mut inverse_last = folding_challenges[last].clone();
+    inverse_last.to_representation(Representation::HomogenizedFieldExtensions);
+    let mut inverse_last = inverse_last.inverse();
+    inverse_last.to_representation(Representation::IncompleteNTT);
+
     debug_assert_eq!(crs.simple_ck.len(), config.basic_commitment_rank);
     let commitment_of_folded_witness = commit_basic_internal(
         &crs.simple_ck,
@@ -558,32 +617,22 @@ pub fn verifier_round_simple(
         config.basic_commitment_rank,
     );
 
-    let mut folded_commitment = HorizontallyAlignedMatrix {
-        data: vec![
-            RingElement::zero(Representation::IncompleteNTT);
-            config.basic_commitment_rank * 1
-        ],
-        width: 1,
-        height: config.basic_commitment_rank,
-    };
-
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
 
+    let mut rebuilt = commitment.clone();
     for i in 0..config.basic_commitment_rank {
-        for col in 0..commitment.width {
+        let mut column = commitment_of_folded_witness[(i, 0)].clone();
+        for col in 0..last {
             temp *= (&commitment[(i, col)], &folding_challenges[col]);
-            folded_commitment[(i, 0)] += &temp;
+            column -= &temp;
         }
+        rebuilt[(i, last)] *= (&column, &inverse_last);
     }
-
-    for i in 0..config.basic_commitment_rank {
-        assert_eq!(
-            commitment_of_folded_witness[(i, 0)],
-            folded_commitment[(i, 0)],
-            "Folded commitment at row {} does not match expected value.",
-            i
-        );
-    }
+    assert_eq!(
+        &last_column_digest(&rebuilt),
+        commitment_digest,
+        "the rebuilt last commitment column does not match its digest"
+    );
 
     let opening_to_folded_witness = open_at(
         &round_proof.folded_witness,
