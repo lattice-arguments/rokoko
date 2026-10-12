@@ -300,6 +300,7 @@ pub fn verifier_round_intermediate(
     hash_wrapper: Option<HashWrapper>,
 ) {
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
+    assert_eq!(commitment.height, config.basic_commitment_rank);
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
 
     hash_wrapper.update_with_ring_element_slice(&round_proof.opening_rhs.data);
@@ -544,6 +545,7 @@ pub fn verifier_round_simple(
     hash_wrapper: Option<HashWrapper>,
 ) {
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
+    assert_eq!(commitment.height, config.basic_commitment_rank);
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
     hash_wrapper.update_with_ring_element_slice(&round_proof.opening_rhs.data);
 

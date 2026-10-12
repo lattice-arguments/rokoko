@@ -340,6 +340,8 @@ pub fn prover_round(
                 PendingNextCommitment::Recursive(rc)
             }
             _ => {
+                let mut basic_commitment = basic_commitment;
+                basic_commitment.truncate_rows(base.basic_commitment_rank());
                 hash_wrapper.update_with_ring_element_slice(&basic_commitment.data);
                 PendingNextCommitment::Basic(basic_commitment)
             }
@@ -605,11 +607,10 @@ pub fn prover_round_intermediate(
         data: folded_witness_decomposed,
     };
 
-    let next_round_commitment: HorizontallyAlignedMatrix<RingElement> = commit_basic(
-        &crs,
-        &next_round_witness,
-        next_config_base.map(|c| c.basic_commitment_rank()).unwrap(),
-    );
+    let next_rank = next_config_base.map(|c| c.basic_commitment_rank()).unwrap();
+    let mut next_round_commitment: HorizontallyAlignedMatrix<RingElement> =
+        commit_basic(&crs, &next_round_witness, next_rank);
+    next_round_commitment.truncate_rows(next_rank);
     hash_wrapper.update_with_ring_element_slice(&next_round_commitment.data);
 
     tracing::debug!(
