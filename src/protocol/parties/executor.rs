@@ -8,7 +8,7 @@ use crate::{
         crs::{VerifierCRS, CRS},
         evaluation_point_sampler::{sample_initial_evaluation_points, InitialEvaluationPoints},
         open::claim,
-        params::{witness_sampler, Instantiation},
+        params::{decompose_witness, witness_sampler, Instantiation},
         parties::{commiter::commit, prover::prover_round, verifier::verifier_round},
         sumcheck::init_sumcheck,
         sumchecks::builder_verifier::init_verifier,
@@ -47,7 +47,7 @@ fn run(
     tracing::debug!("Generating CRS...");
 
     let crs_start = std::time::Instant::now();
-    let crs = CRS::gen_prover_crs(&config, witness_config);
+    let crs = CRS::gen_prover_crs(&config);
     let verifier_crs = CRS::gen_verifier_crs(&config);
     let crs_duration = crs_start.elapsed().as_nanos();
     println!("TOTAL CRS gen time: {:?} ns", crs_duration);
@@ -59,32 +59,8 @@ fn run(
     let start = std::time::Instant::now();
 
     let commit_span = tracing::info_span!("commit").entered();
-    #[cfg(not(feature = "crt-commitment"))]
-    let (witness_decomposed, commitment_with_aux, rc_commitment) = {
-        let witness_decomposed =
-            crate::protocol::params::decompose_witness(&witness, witness_config);
-        let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness_decomposed, None);
-        (witness_decomposed, commitment_with_aux, rc_commitment)
-    };
-    #[cfg(feature = "crt-commitment")]
-    let (witness_decomposed, commitment_with_aux, rc_commitment) = {
-        // Handing the digits over beats re-deriving them, but only while the array is small
-        // enough to allocate cheaply; past that the commitment narrows a column tile at a time.
-        const DIGIT_BUDGET: usize = 2 << 30;
-        let wanted = witness.data.len()
-            * witness_config.decomposition_chunks
-            * std::mem::size_of::<crate::protocol::project_coarse::Signed16RingElement>()
-            <= DIGIT_BUDGET;
-        let mut sink = Vec::new();
-        let (witness_decomposed, digits) = crate::protocol::params::decompose_witness_with_digits(
-            &witness,
-            witness_config,
-            wanted.then_some(&mut sink),
-        );
-        let (commitment_with_aux, rc_commitment) =
-            commit(&crs, &config, &witness_decomposed, digits.as_ref());
-        (witness_decomposed, commitment_with_aux, rc_commitment)
-    };
+    let witness_decomposed = decompose_witness(&witness, witness_config);
+    let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness_decomposed);
     drop(commit_span);
 
     let commit_duration = start.elapsed().as_nanos();
@@ -236,7 +212,7 @@ pub fn execute_snark(inst: &Instantiation) {
     let config = inst.root();
 
     tracing::debug!("Generating CRS...");
-    let crs = CRS::gen_prover_crs(&config, &inst.witness);
+    let crs = CRS::gen_prover_crs(&config);
     let verifier_crs = CRS::gen_verifier_crs(&config);
 
     let mut sumcheck_context = init_sumcheck(&crs, &config);
@@ -255,7 +231,7 @@ pub fn execute_snark(inst: &Instantiation) {
 
     let start = std::time::Instant::now();
     let _commit_span = tracing::info_span!("commit").entered();
-    let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness, None);
+    let (commitment_with_aux, rc_commitment) = commit(&crs, &config, &witness);
     drop(_commit_span);
     println!("TOTAL Commit time: {:?} ns", start.elapsed().as_nanos());
 
@@ -408,7 +384,6 @@ mod tests {
         use crate::protocol::{
             crs::CRS,
             evaluation_point_sampler::sample_initial_evaluation_points,
-            params::InitialWitnessParams,
             parties::{commiter::commit, prover::prover_round, verifier::verifier_round},
             sumcheck::init_sumcheck,
             sumchecks::builder_verifier::init_verifier,
@@ -418,15 +393,8 @@ mod tests {
         let base_log = 15;
         let height = config.witness_height / input_chunks;
         let width = config.witness_width;
-        let witness_params = InitialWitnessParams {
-            height,
-            width,
-            decomposition_base_log: base_log,
-            decomposition_chunks: input_chunks,
-            initial_norm_log: 13,
-        };
 
-        let crs = CRS::gen_prover_crs(config, &witness_params);
+        let crs = CRS::gen_prover_crs(config);
         let verifier_crs = CRS::gen_verifier_crs(config);
         let mut sumcheck_context = init_sumcheck(&crs, config);
         let mut sumcheck_context_verifier = init_verifier(&verifier_crs, config);
@@ -452,7 +420,7 @@ mod tests {
             data: decompose(&raw, base_log as u64, input_chunks),
         };
 
-        let (commitment_with_aux, rc_commitment) = commit(&crs, config, &witness, None);
+        let (commitment_with_aux, rc_commitment) = commit(&crs, config, &witness);
 
         let (proof, claims) = prover_round(
             &crs,

@@ -1,5 +1,6 @@
 use crate::{
     common::{
+        decomposition::decompose,
         matrix::VerticallyAlignedMatrix,
         ring_arithmetic::{Representation, RingElement},
         sampling::sample_random_short_vector,
@@ -66,12 +67,6 @@ pub struct InitialWitnessParams {
     pub initial_norm_log: usize,
 }
 
-impl InitialWitnessParams {
-    pub fn digit_bound(&self) -> u64 {
-        1u64 << (self.decomposition_base_log - 1)
-    }
-}
-
 pub fn witness_sampler(params: &InitialWitnessParams) -> VerticallyAlignedMatrix<RingElement> {
     VerticallyAlignedMatrix {
         height: params.height,
@@ -90,46 +85,17 @@ pub fn decompose_witness(
     witness: &VerticallyAlignedMatrix<RingElement>,
     params: &InitialWitnessParams,
 ) -> VerticallyAlignedMatrix<RingElement> {
-    decompose_witness_with_digits(witness, params, None).0
-}
-
-/// The decomposition and, when asked, the same digits narrowed to `i16` in the coefficient
-/// domain, which is the form the CRT commitment consumes.
-#[tracing::instrument(skip_all, name = "commit::decompose_witness")]
-pub fn decompose_witness_with_digits(
-    witness: &VerticallyAlignedMatrix<RingElement>,
-    params: &InitialWitnessParams,
-    digits: Option<&mut Vec<crate::protocol::project_coarse::Signed16RingElement>>,
-) -> (
-    VerticallyAlignedMatrix<RingElement>,
-    Option<VerticallyAlignedMatrix<crate::protocol::project_coarse::Signed16RingElement>>,
-) {
-    let height = witness.height * params.decomposition_chunks;
-    let wanted = digits.is_some();
-    let mut sink = digits;
-    if let Some(sink) = sink.as_deref_mut() {
-        sink.clear();
-        sink.reserve(height * witness.width);
-    }
-    let decomposed_data = crate::common::decomposition::decompose_into(
+    let decomposed_data = decompose(
         &witness.data,
         params.decomposition_base_log as u64,
         params.decomposition_chunks,
-        sink.as_deref_mut(),
     );
-    let decomposed = VerticallyAlignedMatrix {
-        height,
+    VerticallyAlignedMatrix {
+        height: witness.height * params.decomposition_chunks,
         width: witness.width,
         data: decomposed_data,
         used_cols: witness.width,
-    };
-    let narrowed = wanted.then(|| VerticallyAlignedMatrix {
-        height,
-        width: witness.width,
-        data: std::mem::take(sink.unwrap()),
-        used_cols: witness.width,
-    });
-    (decomposed, narrowed)
+    }
 }
 
 /// Sizing rule for targets between parameter sets: keep the set's height and drop column bits

@@ -126,9 +126,8 @@ fn validate_ring(spec: &RingSpec) -> Result<(), String> {
     let (n, q) = (spec.degree, spec.mod_q);
     if !n.is_power_of_two() || !(MIN_DEGREE..=MAX_DEGREE).contains(&n) {
         return Err(format!(
-            "degree {n} must be a power of two in [{MIN_DEGREE}, {MAX_DEGREE}]: the CRT \
-             commitment kernel works on 128-coefficient panels and the challenge sampler draws \
-             indices as bytes"
+            "degree {n} must be a power of two in [{MIN_DEGREE}, {MAX_DEGREE}]: the challenge \
+             sampler draws indices as bytes"
         ));
     }
     if !(1 << Q_MIN_BITS < q && q < 1 << Q_MAX_BITS) {
