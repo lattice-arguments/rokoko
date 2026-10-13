@@ -28,7 +28,7 @@ static TRUE_TRUE: (bool, bool) = (true, true);
 /// column index).  The byte at position `row * width + (col / 8)` encodes
 /// columns `col..col+8` for that row.
 ///
-/// Sampled masks are AES-128-CTR keystreams, block `i` of mask `m` (0 `pos`, 1 `non_zero`)
+/// Sampled masks are AES-256-CTR keystreams, block `i` of mask `m` (0 `pos`, 1 `non_zero`)
 /// encrypting `i ‖ m` as little-endian `u64`s, materialised on first use.
 ///
 /// # Dimensions
@@ -62,7 +62,7 @@ pub struct ProjectionMatrix {
     /// Number of bitmask bytes per row (`projection_width / 8`).
     pub width: usize,
 
-    key: Option<[u8; 16]>,
+    key: Option<[u8; 32]>,
     masks: OnceLock<[HorizontallyAlignedMatrix<u8>; 2]>,
 }
 
@@ -106,7 +106,7 @@ impl ProjectionMatrix {
             std::array::from_fn(|mask| {
                 let mut data = vec![0u8; self.projection_height * self.width];
                 if let Some(key) = self.key {
-                    fill_keystream(key, mask as u64, &mut data);
+                    fill_keystream(key, mask as u64, 0, &mut data);
                 }
                 HorizontallyAlignedMatrix {
                     data,
@@ -141,10 +141,10 @@ impl ProjectionMatrix {
         )
     }
 
-    /// Draws the AES key of both masks from the transcript (label `"projection-plan-key"`): every
-    /// entry is independently +1, −1 or 0 with probabilities ¼, ¼, ½.
+    /// Draws the AES-256 key of both masks from the transcript (label `"projection-plan-key"`):
+    /// every entry is independently +1, −1 or 0 with probabilities ¼, ¼, ½.
     pub fn sample(&mut self, hash_wrapper: &mut HashWrapper) {
-        let mut key = [0u8; 16];
+        let mut key = [0u8; 32];
         hash_wrapper.fill_from_xof(b"projection-plan-key", &mut key);
         self.key = Some(key);
         self.masks = OnceLock::new();
@@ -360,6 +360,18 @@ impl ProjectionMatrix {
     }
 }
 
+/// AES-256: 14 rounds.
+#[cfg(any(
+    all(
+        target_arch = "x86_64",
+        target_feature = "avx512f",
+        target_feature = "aes",
+        target_feature = "vaes"
+    ),
+    all(target_arch = "aarch64", target_feature = "aes")
+))]
+const ROUND_KEYS: usize = 15;
+
 /// Chunk held by qword `at` of [`transpose_tiles`]'s output.
 #[cfg(all(
     target_arch = "x86_64",
@@ -431,7 +443,7 @@ unsafe fn transpose_tiles(
 ))]
 #[inline(always)]
 unsafe fn keystream_rows(
-    round_keys: &[std::arch::x86_64::__m512i; 11],
+    round_keys: &[std::arch::x86_64::__m512i; ROUND_KEYS],
     first_block: impl Fn(usize) -> usize,
 ) -> [std::arch::x86_64::__m512i; 16] {
     encrypt(
@@ -462,15 +474,15 @@ unsafe fn counters(mask: u64, first: u64) -> std::arch::x86_64::__m512i {
 ))]
 #[inline(always)]
 unsafe fn encrypt<const N: usize>(
-    round_keys: &[std::arch::x86_64::__m512i; 11],
+    round_keys: &[std::arch::x86_64::__m512i; ROUND_KEYS],
     blocks: [std::arch::x86_64::__m512i; N],
 ) -> [std::arch::x86_64::__m512i; N] {
     use std::arch::x86_64::*;
     let mut blocks = blocks.map(|x| _mm512_xor_si512(x, round_keys[0]));
-    for round_key in &round_keys[1..10] {
+    for round_key in &round_keys[1..ROUND_KEYS - 1] {
         blocks = blocks.map(|x| _mm512_aesenc_epi128(x, *round_key));
     }
-    blocks.map(|x| _mm512_aesenclast_epi128(x, round_keys[10]))
+    blocks.map(|x| _mm512_aesenclast_epi128(x, round_keys[ROUND_KEYS - 1]))
 }
 
 #[cfg(all(
@@ -479,29 +491,35 @@ unsafe fn encrypt<const N: usize>(
     target_feature = "aes",
     target_feature = "vaes"
 ))]
-unsafe fn expand_key(key: [u8; 16]) -> [std::arch::x86_64::__m128i; 11] {
+unsafe fn expand_key(key: [u8; 32]) -> [std::arch::x86_64::__m128i; ROUND_KEYS] {
     use std::arch::x86_64::*;
+    // Word-wise prefix XOR of round key `i - 2`, plus the last word of round key `i - 1` through
+    // RotWord, SubWord and the round constant (shuffle 0xff) or through SubWord alone (0xaa).
     macro_rules! next {
-        ($k:expr, $rcon:literal) => {{
-            let k = $k;
-            let t = _mm_shuffle_epi32::<0xff>(_mm_aeskeygenassist_si128::<$rcon>(k));
+        ($k:ident, $i:literal, $shuffle:literal, $rcon:literal) => {{
+            let t = _mm_shuffle_epi32::<$shuffle>(_mm_aeskeygenassist_si128::<$rcon>($k[$i - 1]));
+            let k = $k[$i - 2];
             let k = _mm_xor_si128(k, _mm_slli_si128::<4>(k));
             let k = _mm_xor_si128(k, _mm_slli_si128::<4>(k));
             let k = _mm_xor_si128(k, _mm_slli_si128::<4>(k));
-            _mm_xor_si128(k, t)
+            $k[$i] = _mm_xor_si128(k, t);
         }};
     }
-    let mut k = [_mm_loadu_si128(key.as_ptr() as *const __m128i); 11];
-    k[1] = next!(k[0], 0x01);
-    k[2] = next!(k[1], 0x02);
-    k[3] = next!(k[2], 0x04);
-    k[4] = next!(k[3], 0x08);
-    k[5] = next!(k[4], 0x10);
-    k[6] = next!(k[5], 0x20);
-    k[7] = next!(k[6], 0x40);
-    k[8] = next!(k[7], 0x80);
-    k[9] = next!(k[8], 0x1b);
-    k[10] = next!(k[9], 0x36);
+    let mut k = [_mm_loadu_si128(key.as_ptr() as *const __m128i); ROUND_KEYS];
+    k[1] = _mm_loadu_si128(key[16..].as_ptr() as *const __m128i);
+    next!(k, 2, 0xff, 0x01);
+    next!(k, 3, 0xaa, 0x00);
+    next!(k, 4, 0xff, 0x02);
+    next!(k, 5, 0xaa, 0x00);
+    next!(k, 6, 0xff, 0x04);
+    next!(k, 7, 0xaa, 0x00);
+    next!(k, 8, 0xff, 0x08);
+    next!(k, 9, 0xaa, 0x00);
+    next!(k, 10, 0xff, 0x10);
+    next!(k, 11, 0xaa, 0x00);
+    next!(k, 12, 0xff, 0x20);
+    next!(k, 13, 0xaa, 0x00);
+    next!(k, 14, 0xff, 0x40);
     k
 }
 
@@ -511,14 +529,14 @@ unsafe fn expand_key(key: [u8; 16]) -> [std::arch::x86_64::__m128i; 11] {
     target_feature = "aes",
     target_feature = "vaes"
 ))]
-fn fill_keystream(key: [u8; 16], mask: u64, out: &mut [u8]) {
+fn fill_keystream(key: [u8; 32], mask: u64, first_block: u64, out: &mut [u8]) {
     use std::arch::x86_64::*;
     unsafe {
         let round_keys = expand_key(key).map(|k| _mm512_broadcast_i32x4(k));
         for (n, out) in out.chunks_mut(1024).enumerate() {
             let blocks: [__m512i; 16] = encrypt(
                 &round_keys,
-                std::array::from_fn(|z| counters(mask, (64 * n + 4 * z) as u64)),
+                std::array::from_fn(|z| counters(mask, first_block + (64 * n + 4 * z) as u64)),
             );
             let mut bytes = [0u8; 1024];
             for (z, block) in blocks.iter().enumerate() {
@@ -530,24 +548,23 @@ fn fill_keystream(key: [u8; 16], mask: u64, out: &mut [u8]) {
 }
 
 #[cfg(all(target_arch = "aarch64", target_feature = "aes"))]
-fn fill_keystream(key: [u8; 16], mask: u64, out: &mut [u8]) {
+fn fill_keystream(key: [u8; 32], mask: u64, first_block: u64, out: &mut [u8]) {
     use std::arch::aarch64::*;
     unsafe {
         let round_keys = expand_key(key);
         for (n, out) in out.chunks_mut(128).enumerate() {
-            let mut blocks: [uint8x16_t; 8] = std::array::from_fn(|b| {
-                let mut block = [0u8; 16];
-                block[..8].copy_from_slice(&((8 * n + b) as u64).to_le_bytes());
-                block[8..].copy_from_slice(&mask.to_le_bytes());
-                vld1q_u8(block.as_ptr())
-            });
-            for round_key in &round_keys[..9] {
-                blocks = blocks.map(|x| vaesmcq_u8(vaeseq_u8(x, *round_key)));
-            }
+            let blocks: [uint8x16_t; 8] = encrypt(
+                &round_keys,
+                std::array::from_fn(|b| {
+                    let mut block = [0u8; 16];
+                    block[..8].copy_from_slice(&(first_block + (8 * n + b) as u64).to_le_bytes());
+                    block[8..].copy_from_slice(&mask.to_le_bytes());
+                    vld1q_u8(block.as_ptr())
+                }),
+            );
             let mut bytes = [0u8; 128];
             for (b, block) in blocks.iter().enumerate() {
-                let block = veorq_u8(vaeseq_u8(*block, round_keys[9]), round_keys[10]);
-                vst1q_u8(bytes.as_mut_ptr().add(16 * b), block);
+                vst1q_u8(bytes.as_mut_ptr().add(16 * b), *block);
             }
             out.copy_from_slice(&bytes[..out.len()]);
         }
@@ -555,22 +572,43 @@ fn fill_keystream(key: [u8; 16], mask: u64, out: &mut [u8]) {
 }
 
 #[cfg(all(target_arch = "aarch64", target_feature = "aes"))]
-unsafe fn expand_key(key: [u8; 16]) -> [std::arch::aarch64::uint8x16_t; 11] {
+#[inline(always)]
+unsafe fn encrypt<const N: usize>(
+    round_keys: &[std::arch::aarch64::uint8x16_t; ROUND_KEYS],
+    blocks: [std::arch::aarch64::uint8x16_t; N],
+) -> [std::arch::aarch64::uint8x16_t; N] {
     use std::arch::aarch64::*;
-    const RCON: [u32; 10] = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36];
-    let mut w = [0u32; 44];
+    let mut blocks = blocks;
+    for round_key in &round_keys[..ROUND_KEYS - 2] {
+        blocks = blocks.map(|x| vaesmcq_u8(vaeseq_u8(x, *round_key)));
+    }
+    blocks.map(|x| {
+        veorq_u8(
+            vaeseq_u8(x, round_keys[ROUND_KEYS - 2]),
+            round_keys[ROUND_KEYS - 1],
+        )
+    })
+}
+
+#[cfg(all(target_arch = "aarch64", target_feature = "aes"))]
+unsafe fn expand_key(key: [u8; 32]) -> [std::arch::aarch64::uint8x16_t; ROUND_KEYS] {
+    use std::arch::aarch64::*;
+    const RCON: [u32; 7] = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40];
+    let mut w = [0u32; 4 * ROUND_KEYS];
     for (i, word) in key.chunks_exact(4).enumerate() {
         w[i] = u32::from_le_bytes(word.try_into().unwrap());
     }
-    for i in 4..44 {
+    for i in 8..4 * ROUND_KEYS {
         let mut t = w[i - 1];
         if i % 4 == 0 {
             // AESE with a zero key and four equal columns is SubBytes alone.
             let column = vreinterpretq_u8_u32(vdupq_n_u32(t));
-            let sub = vgetq_lane_u32::<0>(vreinterpretq_u32_u8(vaeseq_u8(column, vdupq_n_u8(0))));
-            t = sub.rotate_right(8) ^ RCON[i / 4 - 1];
+            t = vgetq_lane_u32::<0>(vreinterpretq_u32_u8(vaeseq_u8(column, vdupq_n_u8(0))));
+            if i % 8 == 0 {
+                t = t.rotate_right(8) ^ RCON[i / 8 - 1];
+            }
         }
-        w[i] = w[i - 4] ^ t;
+        w[i] = w[i - 8] ^ t;
     }
     std::array::from_fn(|r| vreinterpretq_u8_u32(vld1q_u32(w[4 * r..].as_ptr())))
 }
@@ -584,8 +622,8 @@ unsafe fn expand_key(key: [u8; 16]) -> [std::arch::aarch64::uint8x16_t; 11] {
     ),
     all(target_arch = "aarch64", target_feature = "aes")
 )))]
-fn fill_keystream(key: [u8; 16], mask: u64, out: &mut [u8]) {
-    fill_keystream_portable(key, mask, out)
+fn fill_keystream(key: [u8; 32], mask: u64, first_block: u64, out: &mut [u8]) {
+    fill_keystream_portable(key, mask, first_block, out)
 }
 
 #[cfg_attr(
@@ -600,9 +638,9 @@ fn fill_keystream(key: [u8; 16], mask: u64, out: &mut [u8]) {
     ),
     allow(dead_code)
 )]
-fn fill_keystream_portable(key: [u8; 16], mask: u64, out: &mut [u8]) {
+fn fill_keystream_portable(key: [u8; 32], mask: u64, first_block: u64, out: &mut [u8]) {
     use aes::cipher::{BlockEncrypt, KeyInit};
-    let mut blocks: Vec<aes::Block> = (0..out.len().div_ceil(16) as u64)
+    let mut blocks: Vec<aes::Block> = (first_block..first_block + out.len().div_ceil(16) as u64)
         .map(|i| {
             let mut block = aes::Block::default();
             block[..8].copy_from_slice(&i.to_le_bytes());
@@ -610,7 +648,7 @@ fn fill_keystream_portable(key: [u8; 16], mask: u64, out: &mut [u8]) {
             block
         })
         .collect();
-    aes::Aes128::new(&key.into()).encrypt_blocks(&mut blocks);
+    aes::Aes256::new(&key.into()).encrypt_blocks(&mut blocks);
     for (out, byte) in out.iter_mut().zip(blocks.iter().flatten()) {
         *out = *byte;
     }
@@ -669,24 +707,34 @@ mod tests {
         hasher.update(&projection_matrix.non_zero_masks().data);
         assert_eq!(
             hasher.finalize().to_hex().as_str(),
-            "7b662518b53fd006ff7861e3f7f5d21f98dc8ea23a10dc02db090d48a2a9e9ec"
+            "5ffac3ceae0164148a47d29644eaa1603f2d4678927df34a651b896fbb70ef28"
         );
     }
 
     #[test]
-    fn keystream_is_aes_128_ctr() {
+    fn keystream_is_aes_256_ctr() {
         let mut block = [0u8; 16];
-        fill_keystream([0; 16], 0, &mut block);
-        assert_eq!(block, 0x66e94bd4ef8a2c3b884cfa59ca342b2eu128.to_be_bytes());
+        let key = std::array::from_fn(|i| i as u8);
+        fill_keystream(key, 0xffeeddccbbaa9988, 0x7766554433221100, &mut block);
+        assert_eq!(block, 0x8ea2b7ca516745bfeafc49904b496089u128.to_be_bytes());
 
         let mut hash_wrapper = HashWrapper::new();
-        for (len, mask) in [(16, 1), (100, 0), (1024, 1), (5000, 0), (65536 + 48, 1)] {
-            let mut key = [0u8; 16];
+        for (len, mask, first_block) in [
+            (16, 1, 0),
+            (100, 0, 5),
+            (1024, 1, 0),
+            (5000, 0, 1 << 40),
+            (65536 + 48, 1, 0),
+        ] {
+            let mut key = [0u8; 32];
             hash_wrapper.fill_from_xof(b"key", &mut key);
             let (mut fast, mut portable) = (vec![0u8; len], vec![0u8; len]);
-            fill_keystream(key, mask, &mut fast);
-            fill_keystream_portable(key, mask, &mut portable);
-            assert_eq!(fast, portable, "length {len}, mask {mask}");
+            fill_keystream(key, mask, first_block, &mut fast);
+            fill_keystream_portable(key, mask, first_block, &mut portable);
+            assert_eq!(
+                fast, portable,
+                "length {len}, mask {mask}, first block {first_block}"
+            );
         }
     }
 
