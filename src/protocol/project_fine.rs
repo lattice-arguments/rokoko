@@ -296,15 +296,54 @@ pub fn compute_j_batched_collectively(
     }
     for bp in j_batched.iter_mut() {
         for el in bp.iter_mut() {
-            unsafe {
-                eltwise_reduce_mod(el.v.as_mut_ptr(), el.v.as_mut_ptr(), DEGREE as u64, MOD_Q);
-            }
-            el.to_representation(Representation::IncompleteNTT);
-            el.conjugate_in_place();
+            reduce_conjugate_to_incomplete_ntt(el);
         }
     }
 
     j_batched
+}
+
+/// The conjugate of `el mod q` in incomplete-NTT form, for `el` biased by `HALF_WAY_MOD_Q`.
+fn reduce_conjugate_to_incomplete_ntt(el: &mut RingElement) {
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    unsafe {
+        use crate::common::{arithmetic::HALF_WAY_MOD_Q, config::SLOT_DEGREE};
+        use std::arch::x86_64::*;
+        const Z: usize = DEGREE / 8;
+        let v = el.v.as_mut_ptr() as *mut __m512i;
+        let x: [__m512i; Z] = std::array::from_fn(|z| _mm512_load_si512(v.add(z)));
+        let bias = _mm512_set1_epi64((2 * *HALF_WAY_MOD_Q) as i64);
+        let reversed = _mm512_setr_epi64(8, 7, 6, 5, 4, 3, 2, 1);
+        let mut y: [__m512i; Z] = std::array::from_fn(|z| {
+            let pair = _mm512_permutex2var_epi64(x[Z - 1 - z], reversed, x[(Z - z) % Z]);
+            _mm512_sub_epi64(bias, pair)
+        });
+        y[0] = _mm512_mask_blend_epi64(1, y[0], x[0]);
+        let evens = _mm512_setr_epi64(0, 2, 4, 6, 8, 10, 12, 14);
+        let odds = _mm512_setr_epi64(1, 3, 5, 7, 9, 11, 13, 15);
+        for _ in 0..SLOT_DEGREE.ilog2() {
+            let interleaved = y;
+            for z in 0..Z / 2 {
+                let (a, b) = (interleaved[2 * z], interleaved[2 * z + 1]);
+                y[z] = _mm512_permutex2var_epi64(a, evens, b);
+                y[Z / 2 + z] = _mm512_permutex2var_epi64(a, odds, b);
+            }
+        }
+        for z in 0..Z {
+            _mm512_store_si512(v.add(z), y[z]);
+        }
+        eltwise_reduce_mod(el.v.as_mut_ptr(), el.v.as_mut_ptr(), DEGREE as u64, MOD_Q);
+        el.representation = Representation::StridedCoefficients;
+        el.from_strided_coefficients_to_incomplete_ntt_representation();
+    }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+    {
+        unsafe {
+            eltwise_reduce_mod(el.v.as_mut_ptr(), el.v.as_mut_ptr(), DEGREE as u64, MOD_Q);
+        }
+        el.to_representation(Representation::IncompleteNTT);
+        el.conjugate_in_place();
+    }
 }
 
 /// Four-Russians over rows: a column's 4-bit (+1)- and (−1)-patterns index the 16 subset sums of
@@ -1200,6 +1239,38 @@ mod tests {
                     "ratio {ratio}, top {top}, batch {b}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn reduce_conjugate_matches_ntt_then_conjugate() {
+        use crate::common::arithmetic::HALF_WAY_MOD_Q;
+        crate::common::init_common();
+        let mut hash_wrapper = HashWrapper::new();
+        let spread = 1u64 << 58;
+        for case in 0..64 {
+            let mut el = RingElement::zero(Representation::Coefficients);
+            for (j, x) in el.v.iter_mut().enumerate() {
+                *x = match (case + j) % 5 {
+                    0 => *HALF_WAY_MOD_Q,
+                    1 => *HALF_WAY_MOD_Q - spread,
+                    2 => *HALF_WAY_MOD_Q + spread,
+                    _ => *HALF_WAY_MOD_Q - spread + hash_wrapper.sample_u64() % (2 * spread),
+                };
+            }
+            let mut expected = el.clone();
+            unsafe {
+                eltwise_reduce_mod(
+                    expected.v.as_mut_ptr(),
+                    expected.v.as_ptr(),
+                    DEGREE as u64,
+                    MOD_Q,
+                );
+            }
+            expected.to_representation(Representation::IncompleteNTT);
+            expected.conjugate_in_place();
+            reduce_conjugate_to_incomplete_ntt(&mut el);
+            assert_eq!(el, expected, "case {case}");
         }
     }
 
