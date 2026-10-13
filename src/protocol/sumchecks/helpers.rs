@@ -526,6 +526,10 @@ unsafe fn flatter_1_times_matrix_by_subset_sums(
 
     let height = projection_matrix.projection_height;
     let inner_width = projection_matrix.projection_ratio * height;
+    if inner_width != projection_matrix.projection_width {
+        return None;
+    }
+    let chunks = inner_width / 8;
     let slot_zero: Vec<FieldExtension> = projection_flatter_1.preprocessed_row[..height]
         .iter()
         .map(|w| w.slot_zero())
@@ -533,16 +537,17 @@ unsafe fn flatter_1_times_matrix_by_subset_sums(
     let weights: [Vec<u64>; SLOT_DEGREE] =
         std::array::from_fn(|k| slot_zero.iter().map(|w| w.coeffs[k]).collect());
 
-    let mut acc = vec![_mm512_set1_epi64(*HALF_WAY_MOD_Q as i64); SLOT_DEGREE * inner_width / 8];
+    let mut acc = vec![_mm512_set1_epi64(*HALF_WAY_MOD_Q as i64); SLOT_DEGREE * chunks];
     let at = acc.as_mut_ptr();
     if !projection_matrix.accumulate_signed_sums::<SLOT_DEGREE>(
         std::array::from_fn(|k| &weights[k][..]),
+        chunks,
         |k, chunk| at.add(SLOT_DEGREE * chunk + k),
     ) {
         return None;
     }
 
-    let mut result_field = vec![FieldExtension::zero(); inner_width];
+    let mut result_field = vec![FieldExtension::zero(); 8 * chunks];
     let out = result_field.as_mut_ptr() as *mut __m512i;
     let low = _mm512_setr_epi64(0, 8, 1, 9, 2, 10, 3, 11);
     let high = _mm512_setr_epi64(4, 12, 5, 13, 6, 14, 7, 15);
@@ -561,7 +566,7 @@ unsafe fn flatter_1_times_matrix_by_subset_sums(
     }
 
     let flat = result_field.as_mut_ptr() as *mut u64;
-    eltwise_reduce_mod(flat, flat, (SLOT_DEGREE * inner_width) as u64, MOD_Q);
+    eltwise_reduce_mod(flat, flat, (SLOT_DEGREE * result_field.len()) as u64, MOD_Q);
     Some(result_field)
 }
 
@@ -659,7 +664,16 @@ mod tests {
     #[test]
     fn projection_flatter_1_times_matrix_matches_the_reference() {
         init_common();
-        for (ratio, height) in [(2, 16), (4, 64), (8, 3), (5, 8), (1, 256), (32, 256)] {
+        for (ratio, height) in [
+            (2, 16),
+            (4, 64),
+            (8, 3),
+            (5, 8),
+            (16, 16),
+            (8, 144),
+            (1, 256),
+            (32, 256),
+        ] {
             let mut projection_matrix = ProjectionMatrix::new(ratio, height);
             projection_matrix.sample(&mut HashWrapper::new());
             for top in [false, true] {

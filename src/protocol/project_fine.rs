@@ -176,6 +176,7 @@ pub fn compute_j_batched_collectively(
             std::array::from_fn(|b| j_batched[b].as_mut_ptr());
         projection_matrix.accumulate_signed_sums::<NOF_BATCHES>(
             std::array::from_fn(|b| &c_1_values[b][..]),
+            inner_width_ring * CHUNKS,
             |b, chunk| {
                 (*rings[b].add(chunk / CHUNKS))
                     .v
@@ -333,44 +334,44 @@ pub fn compute_j_batched_collectively(
 /// The conjugate of `el mod q` in incomplete-NTT form, for `el` biased by `HALF_WAY_MOD_Q`.
 fn reduce_conjugate_to_incomplete_ntt(el: &mut RingElement) {
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    unsafe {
-        use crate::common::{arithmetic::HALF_WAY_MOD_Q, config::SLOT_DEGREE};
-        use std::arch::x86_64::*;
-        const Z: usize = DEGREE / 8;
-        let v = el.v.as_mut_ptr() as *mut __m512i;
-        let x: [__m512i; Z] = std::array::from_fn(|z| _mm512_load_si512(v.add(z)));
-        let bias = _mm512_set1_epi64((2 * *HALF_WAY_MOD_Q) as i64);
-        let reversed = _mm512_setr_epi64(8, 7, 6, 5, 4, 3, 2, 1);
-        let mut y: [__m512i; Z] = std::array::from_fn(|z| {
-            let pair = _mm512_permutex2var_epi64(x[Z - 1 - z], reversed, x[(Z - z) % Z]);
-            _mm512_sub_epi64(bias, pair)
-        });
-        y[0] = _mm512_mask_blend_epi64(1, y[0], x[0]);
-        let evens = _mm512_setr_epi64(0, 2, 4, 6, 8, 10, 12, 14);
-        let odds = _mm512_setr_epi64(1, 3, 5, 7, 9, 11, 13, 15);
-        for _ in 0..SLOT_DEGREE.ilog2() {
-            let interleaved = y;
-            for z in 0..Z / 2 {
-                let (a, b) = (interleaved[2 * z], interleaved[2 * z + 1]);
-                y[z] = _mm512_permutex2var_epi64(a, evens, b);
-                y[Z / 2 + z] = _mm512_permutex2var_epi64(a, odds, b);
-            }
-        }
-        for z in 0..Z {
-            _mm512_store_si512(v.add(z), y[z]);
-        }
-        eltwise_reduce_mod(el.v.as_mut_ptr(), el.v.as_mut_ptr(), DEGREE as u64, MOD_Q);
-        el.representation = Representation::StridedCoefficients;
-        el.from_strided_coefficients_to_incomplete_ntt_representation();
-    }
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
-    {
+    if el.representation == Representation::Coefficients {
         unsafe {
+            use crate::common::{arithmetic::HALF_WAY_MOD_Q, config::SLOT_DEGREE};
+            use std::arch::x86_64::*;
+            const Z: usize = DEGREE / 8;
+            let v = el.v.as_mut_ptr() as *mut __m512i;
+            let x: [__m512i; Z] = std::array::from_fn(|z| _mm512_load_si512(v.add(z)));
+            let bias = _mm512_set1_epi64((2 * *HALF_WAY_MOD_Q) as i64);
+            let reversed = _mm512_setr_epi64(8, 7, 6, 5, 4, 3, 2, 1);
+            let mut y: [__m512i; Z] = std::array::from_fn(|z| {
+                let pair = _mm512_permutex2var_epi64(x[Z - 1 - z], reversed, x[(Z - z) % Z]);
+                _mm512_sub_epi64(bias, pair)
+            });
+            y[0] = _mm512_mask_blend_epi64(1, y[0], x[0]);
+            let evens = _mm512_setr_epi64(0, 2, 4, 6, 8, 10, 12, 14);
+            let odds = _mm512_setr_epi64(1, 3, 5, 7, 9, 11, 13, 15);
+            for _ in 0..SLOT_DEGREE.ilog2() {
+                let interleaved = y;
+                for z in 0..Z / 2 {
+                    let (a, b) = (interleaved[2 * z], interleaved[2 * z + 1]);
+                    y[z] = _mm512_permutex2var_epi64(a, evens, b);
+                    y[Z / 2 + z] = _mm512_permutex2var_epi64(a, odds, b);
+                }
+            }
+            for z in 0..Z {
+                _mm512_store_si512(v.add(z), y[z]);
+            }
             eltwise_reduce_mod(el.v.as_mut_ptr(), el.v.as_mut_ptr(), DEGREE as u64, MOD_Q);
+            el.representation = Representation::StridedCoefficients;
+            el.from_strided_coefficients_to_incomplete_ntt_representation();
         }
-        el.to_representation(Representation::IncompleteNTT);
-        el.conjugate_in_place();
+        return;
     }
+    unsafe {
+        eltwise_reduce_mod(el.v.as_mut_ptr(), el.v.as_mut_ptr(), DEGREE as u64, MOD_Q);
+    }
+    el.to_representation(Representation::IncompleteNTT);
+    el.conjugate_in_place();
 }
 
 /// Computes the coefficient-wise projection: `V = (I_d ⊗ J) · coeff(W)`.
@@ -1092,6 +1093,29 @@ mod tests {
                     j_batched[b],
                     compute_j_batched(&projection_matrix, &c_1_values[b]),
                     "ratio {ratio}, top {top}, batch {b}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn j_batched_collectively_matches_on_heights_off_the_ring_degree() {
+        crate::common::init_common();
+        let mut hash_wrapper = HashWrapper::new();
+        for (ratio, height) in [(16, 16), (8, 16), (8, 144), (2, 192), (4, 128 + 32)] {
+            let mut projection_matrix = ProjectionMatrix::new(ratio, height);
+            projection_matrix.sample(&mut hash_wrapper);
+            let c_1_values: [Vec<u64>; NOF_BATCHES] = std::array::from_fn(|_| {
+                (0..height)
+                    .map(|_| hash_wrapper.sample_u64_mod_q())
+                    .collect()
+            });
+            let j_batched = compute_j_batched_collectively(&projection_matrix, &c_1_values);
+            for b in 0..NOF_BATCHES {
+                assert_eq!(
+                    j_batched[b],
+                    compute_j_batched(&projection_matrix, &c_1_values[b]),
+                    "ratio {ratio}, height {height}, batch {b}"
                 );
             }
         }

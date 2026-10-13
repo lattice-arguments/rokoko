@@ -243,11 +243,15 @@ impl ProjectionMatrix {
 ))]
 impl ProjectionMatrix {
     /// `acc(w, chunk) += Σ_row weights[w][row] · J[row, 8 chunk + l]` in lane `l`, or false unless
-    /// `J` is sampled and `16 | height, width`. Four-Russians over rows: 4-bit (+1)- and (−1)-column
-    /// patterns index the 16 subset sums of four weights.
+    /// `J` is sampled, `16 | height, width` and `weights`, `capacity` cover `J`. Four-Russians over
+    /// rows: 4-bit (+1)- and (−1)-column patterns index the 16 subset sums of four weights.
+    ///
+    /// # Safety
+    /// `acc(w, chunk)` for `w < W`, `chunk < capacity` are distinct, aligned, writable vectors.
     pub(crate) unsafe fn accumulate_signed_sums<const W: usize>(
         &self,
         weights: [&[u64]; W],
+        capacity: usize,
         acc: impl Fn(usize, usize) -> *mut std::arch::x86_64::__m512i,
     ) -> bool {
         use std::arch::x86_64::*;
@@ -256,7 +260,12 @@ impl ProjectionMatrix {
             return false;
         };
         let width = self.width;
-        if self.projection_height % 16 != 0 || width % 16 != 0 {
+        if self.projection_height % 16 != 0
+            || width % 16 != 0
+            || self.projection_width != 8 * width
+            || width > capacity
+            || weights.iter().any(|w| w.len() < self.projection_height)
+        {
             return false;
         }
         let round_keys = expand_key(key).map(|k| _mm512_broadcast_i32x4(k));
@@ -718,7 +727,8 @@ mod tests {
             let mut acc = vec![unsafe { _mm512_setzero_si512() }; projection_matrix.width];
             let at = acc.as_mut_ptr();
             assert!(unsafe {
-                projection_matrix.accumulate_signed_sums::<1>([&weights], |_, chunk| at.add(chunk))
+                projection_matrix
+                    .accumulate_signed_sums::<1>([&weights], acc.len(), |_, chunk| at.add(chunk))
             });
             let lanes = acc
                 .iter()
@@ -735,6 +745,41 @@ mod tests {
                     "ratio {ratio}, height {height}, column {col}"
                 );
             }
+        }
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "avx512bw",
+        target_feature = "gfni",
+        target_feature = "aes",
+        target_feature = "vaes"
+    ))]
+    #[test]
+    fn lookup_kernel_declines_what_it_does_not_cover() {
+        let mut hash_wrapper = HashWrapper::new();
+        let untouched = |_: usize, _: usize| -> *mut std::arch::x86_64::__m512i {
+            panic!("accumulator touched")
+        };
+        let weights = vec![1u64; 256];
+        let unsampled = ProjectionMatrix::new(2, 256);
+        assert!(!unsafe { unsampled.accumulate_signed_sums::<1>([&weights[..]], 64, untouched) });
+        for (ratio, height, capacity, rows) in [
+            (2, 256, 63, 256),
+            (2, 256, 64, 255),
+            (16, 16, 0, 16),
+            (3, 40, 15, 40),
+            (1, 24, 3, 24),
+        ] {
+            let mut projection_matrix = ProjectionMatrix::new(ratio, height);
+            projection_matrix.sample(&mut hash_wrapper);
+            assert!(!unsafe {
+                projection_matrix.accumulate_signed_sums::<1>(
+                    [&weights[..rows]],
+                    capacity,
+                    untouched,
+                )
+            });
         }
     }
 
