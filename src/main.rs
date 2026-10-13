@@ -90,18 +90,10 @@ fn main() {
     // Trigger CPU feature detection and print the detected features
     incomplete_rexl::cpu_features::print_features();
 
-    #[cfg(feature = "crt-commitment")]
-    {
-        println!("Using CRT commitment...");
-    }
-
-    #[cfg(not(feature = "crt-commitment"))]
-    {
-        println!(
-            "Using {}-bits commitment...",
-            rokoko::common::config::MOD_Q.ilog2() + 1
-        );
-    }
+    println!(
+        "Using {}-bits commitment...",
+        rokoko::common::config::MOD_Q.ilog2() + 1
+    );
 
     #[cfg(feature = "parallel")]
     {

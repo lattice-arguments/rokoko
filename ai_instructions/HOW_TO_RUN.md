@@ -20,9 +20,7 @@ Features are defined in `Cargo.toml`; the defaults already include:
 - `unsafe-sumcheck` — turns on unsafe sumcheck optimizations
 
 Other useful features: `snark` (exact-norm SNARK mode), `calibration` (prints the measured norms
-as a paste-ready `NB_*` table, e.g. `cargo run --release --features calibration -- p-26`), `profile`,
-`crt-commitment` (the root commitment over a CRT basis of 16-bit primes instead of the IFMA slot
-kernel over q; no faster on Tiger Lake, kept for comparison).
+as a paste-ready `NB_*` table, e.g. `cargo run --release --features calibration -- p-26`), `profile`.
 
 ## The ring
 

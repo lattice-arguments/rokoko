@@ -16,8 +16,6 @@ debug-decomp = []
 debug-fs = []
 events = []
 parallel = ["dep:rayon"]
-# Route the root basic commitment through protocol::commitment_crt.
-crt-commitment = []
 profile = ["dep:sysinfo", "dep:time"]
 snark = []
 

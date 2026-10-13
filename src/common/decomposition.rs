@@ -1,7 +1,5 @@
-use crate::protocol::project_coarse::Signed16RingElement;
-
 use crate::common::{
-    arithmetic::{centered_i16_from_u64_mod_q, pow_mod},
+    arithmetic::pow_mod,
     config::{DEGREE, MOD_Q},
     ring_arithmetic::{Representation, RingElement},
 };
@@ -26,23 +24,11 @@ impl RingElement {
 // which then leaves the range but still recomposes to x (see `carried_digit`); the norm checks, not this function,
 // are what bound the digits.
 pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<RingElement> {
-    decompose_into(input, base_log, radix, None)
-}
-
-/// The digits are short in the coefficient domain before they are transformed back, so a caller
-/// that wants them narrowed takes them here instead of inverting the transform later.
-pub fn decompose_into(
-    input: &[RingElement],
-    base_log: u64,
-    radix: usize,
-    narrowed: Option<&mut Vec<crate::protocol::project_coarse::Signed16RingElement>>,
-) -> Vec<RingElement> {
     if base_log == 1 {
         assert_eq!(
             radix, 1,
             "balanced base-2 decomposition is not supported; use decompose_bits"
         );
-        assert!(narrowed.is_none(), "base-2 decomposition narrows nothing");
         return input.to_vec();
     }
 
@@ -59,25 +45,13 @@ pub fn decompose_into(
     #[cfg(feature = "debug-decomp")]
     let call_max = std::sync::atomic::AtomicI64::new(0);
 
-    let total = input.len() * radix;
-    let mut decomposed: Vec<RingElement> = Vec::with_capacity(total);
+    let mut decomposed: Vec<RingElement> = Vec::with_capacity(input.len() * radix);
     let slots = decomposed.spare_capacity_mut();
-    let mut spare = narrowed.map(|narrowed| {
-        narrowed.clear();
-        narrowed.reserve(total);
-        narrowed
-    });
-    let digits: Option<&mut [std::mem::MaybeUninit<Signed16RingElement>]> = spare
-        .as_deref_mut()
-        .map(|narrowed| &mut narrowed.spare_capacity_mut()[..total]);
 
-    let run = |slots: &mut [std::mem::MaybeUninit<RingElement>],
-               digits: Option<&mut [std::mem::MaybeUninit<Signed16RingElement>]>,
-               input: &[RingElement]| {
-        let mut digits = digits;
+    let run = |slots: &mut [std::mem::MaybeUninit<RingElement>], input: &[RingElement]| {
         let mut temp = RingElement::all(0, Representation::StridedCoefficients);
         let mut digit = RingElement::new(Representation::StridedCoefficients);
-        for (index, (el, slots)) in input.iter().zip(slots.chunks_exact_mut(radix)).enumerate() {
+        for (el, slots) in input.iter().zip(slots.chunks_exact_mut(radix)) {
             temp.set_from(el);
             temp.to_representation(Representation::StridedCoefficients);
             #[cfg(feature = "debug-decomp")]
@@ -116,11 +90,6 @@ pub fn decompose_into(
                     }
                 }
                 digit.representation = Representation::StridedCoefficients;
-                if let Some(digits) = digits.as_deref_mut() {
-                    let mut narrow = Signed16RingElement([0i16; DEGREE]);
-                    centered_i16_from_u64_mod_q(&mut narrow.0, &digit.v);
-                    digits[index * radix + i].write(narrow);
-                }
                 digit.to_representation(Representation::IncompleteNTT);
                 slot.write(digit.clone());
             }
@@ -133,27 +102,15 @@ pub fn decompose_into(
         // A thread takes whole input elements, so the digits it writes are its own slice of the
         // output and the page faults for that slice are its own too.
         const GRAIN: usize = 256;
-        match digits {
-            Some(digits) => slots
-                .par_chunks_mut(GRAIN * radix)
-                .zip(digits.par_chunks_mut(GRAIN * radix))
-                .zip(input.par_chunks(GRAIN))
-                .for_each(|((slots, digits), input)| run(slots, Some(digits), input)),
-            None => slots
-                .par_chunks_mut(GRAIN * radix)
-                .zip(input.par_chunks(GRAIN))
-                .for_each(|(slots, input)| run(slots, None, input)),
-        }
+        slots
+            .par_chunks_mut(GRAIN * radix)
+            .zip(input.par_chunks(GRAIN))
+            .for_each(|(slots, input)| run(slots, input));
     }
     #[cfg(not(feature = "parallel"))]
-    run(slots, digits, input);
+    run(slots, input);
 
-    unsafe {
-        decomposed.set_len(total);
-        if let Some(narrowed) = spare {
-            narrowed.set_len(total);
-        }
-    }
+    unsafe { decomposed.set_len(input.len() * radix) };
 
     #[cfg(feature = "debug-decomp")]
     let call_max = call_max.load(std::sync::atomic::Ordering::Relaxed);

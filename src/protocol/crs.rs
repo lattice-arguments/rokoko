@@ -4,10 +4,7 @@ use crate::common::{
     sampling::{sample_public_vector_from_seed, PUBLIC_CRS_SEED},
     structured_row::{PreprocessedRow, StructuredRow},
 };
-use crate::protocol::{
-    config::{Config, SimpleConfig, SumcheckConfig},
-    params::InitialWitnessParams,
-};
+use crate::protocol::config::{Config, SimpleConfig, SumcheckConfig};
 
 pub type CK = Vec<PreprocessedRow>;
 pub type SCK = Vec<StructuredRow>;
@@ -16,13 +13,6 @@ pub type SCK = Vec<StructuredRow>;
 pub struct CRS {
     pub cks: Vec<CK>,             // Commitment keys for each witness length
     pub structured_cks: Vec<SCK>, // Structured commitment keys for each witness length
-    /// The root key in the CRT basis, planned from the witness schedule rather than from a
-    /// witness, so that the transform of the key never sits on the commitment's critical path.
-    #[cfg(feature = "crt-commitment")]
-    pub crt_root: Option<(
-        crate::protocol::commitment_crt::Plan,
-        crate::protocol::commitment_crt::CrtKey,
-    )>,
 }
 
 /// Only the structured keys; the expanded rows are prover-side preprocessing.
@@ -109,34 +99,17 @@ impl CRS {
             .collect();
 
         CRS {
-            #[cfg(feature = "crt-commitment")]
-            crt_root: None,
             cks,
             structured_cks,
         }
     }
 
     /// Two rows of headroom over the basic rank cover the inner rounds.
-    #[cfg_attr(not(feature = "crt-commitment"), allow(unused_variables))]
-    pub fn gen_prover_crs(config: &SumcheckConfig, witness: &InitialWitnessParams) -> CRS {
-        #[allow(unused_mut)]
-        let mut crs = CRS::gen_crs(
+    pub fn gen_prover_crs(config: &SumcheckConfig) -> CRS {
+        CRS::gen_crs(
             config.composed_witness_length,
             config.basic_commitment_rank + 2,
-        );
-        #[cfg(feature = "crt-commitment")]
-        {
-            use crate::protocol::commitment_crt::{CrtKey, Plan};
-            let rows = config.witness_height;
-            let plan = Plan::for_shape(rows, witness.digit_bound(), config.basic_commitment_rank);
-            let key = CrtKey::preprocess(
-                crs.ck_for_wit_dim(rows),
-                config.basic_commitment_rank,
-                &plan,
-            );
-            crs.crt_root = Some((plan, key));
-        }
-        crs
+        )
     }
 
     pub fn gen_verifier_crs(config: &SumcheckConfig) -> VerifierCRS {

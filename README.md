@@ -239,7 +239,7 @@ tau = 22
 op_norm_bound = 9.8
 ```
 
-`rings/default.toml` holds these values and is used unless the environment variable `ROKOKO_RING` names another spec; a relative path is resolved against this crate's root, e.g. `ROKOKO_RING=rings/n256.toml cargo build --release`. The build fails with a message unless N is a power of two in [128, 256], q is a prime in (2^15, 2^50), q - 1 has 2-adic valuation exactly log2(N) (so X^N + 1 splits into irreducible quadratics), and 1 <= tau <= N; every prime of the CRT commitment must also be 1 mod N.
+`rings/default.toml` holds these values and is used unless the environment variable `ROKOKO_RING` names another spec; a relative path is resolved against this crate's root, e.g. `ROKOKO_RING=rings/n256.toml cargo build --release`. The build fails with a message unless N is a power of two in [128, 256], q is a prime in (2^15, 2^50), q - 1 has 2-adic valuation exactly log2(N) (so X^N + 1 splits into irreducible quadratics), and 1 <= tau <= N.
 
 A crate depending on `rokoko` sets the ring in its own `.cargo/config.toml`; cargo passes `[env]` to the build scripts of dependencies as well, and `relative = true` resolves the path against the directory holding `.cargo`:
 
@@ -256,7 +256,6 @@ ROKOKO_RING = { value = "rings/mine.toml", relative = true }
 * `unsafe-sumcheck`: enables zero-cost borrow checking by using `UnsafeCell` instead of `RefCell` in sumcheck subprotocols
 * `debug-hardness`: verifies the hardness of underlying SIS instances (requires [Lattice Estimator](https://github.com/malb/lattice-estimator) cloned as a submodule and [SageMath](https://www.sagemath.org/) installed)
 * `debug-decomp`: additional checks for decomposition and overflows in type 0 projections
-* `crt-commitment`: computes the root commitment over a CRT basis of 16-bit NTT primes with VNNI instead of over q with the IFMA slot kernels; off by default, since on the Tiger Lake reference machine the ring kernels commit at least as fast
 
 ## License
 
