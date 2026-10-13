@@ -1,6 +1,6 @@
 use crate::{
     common::{
-        arithmetic::ONE_FE,
+        arithmetic::{ONE, ONE_FE},
         config::{DEGREE, NOF_BATCHES},
         ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::StructuredRow,
@@ -21,7 +21,6 @@ use crate::{
             },
             product::ProductSumcheckEvaluation,
             ring_to_field_combiner::RingToFieldCombinerEvaluation,
-            selector_eq::SelectorEqEvaluation,
             sum::SumSumcheckEvaluation,
         },
         sumchecks::context_verifier::{
@@ -39,15 +38,82 @@ use crate::{
 
 type EvalData = dyn EvaluationSumcheckData<Element = RingElement>;
 
-fn selector_evaluation_from_prefix(
-    prefix: &Prefix,
+/// A block selector on the top `prefix.length` variables times the multilinear extension of
+/// `weights` on the `weights.len().ilog2()` variables above `suffix`.
+struct FieldBlock {
+    prefix: Prefix,
+    weights: Vec<FieldExtension>,
+    suffix: usize,
+}
+
+/// A sum of `FieldBlock`s over the slot field. Every coordinate of a verifier point is one field
+/// element repeated in all slots and selectors and radix weights are scalars, so the sum is a
+/// field element too.
+struct FieldBlocksEvaluation {
+    blocks: Vec<FieldBlock>,
     total_vars: usize,
-) -> ElephantCell<SelectorEqEvaluation> {
-    ElephantCell::new(SelectorEqEvaluation::new(
-        prefix.prefix,
-        prefix.length,
+    result: FieldExtension,
+    evaluated: bool,
+}
+
+impl EvaluationSumcheckData for FieldBlocksEvaluation {
+    type Element = FieldExtension;
+
+    fn evaluate(&mut self, point: &Vec<FieldExtension>) -> &FieldExtension {
+        if self.evaluated {
+            return &self.result;
+        }
+        assert_eq!(point.len(), self.total_vars);
+        for block in &mut self.blocks {
+            let mut len = block.weights.len();
+            for r in point[block.suffix..block.suffix + len.ilog2() as usize]
+                .iter()
+                .rev()
+            {
+                len /= 2;
+                let (low, high) = block.weights.split_at_mut(len);
+                for (l, h) in low.iter_mut().zip(high.iter()) {
+                    let mut step = *h;
+                    step -= &*l;
+                    *l += &(step * *r);
+                }
+            }
+            let mut term = block.weights[0];
+            let top = self.total_vars - block.prefix.length;
+            for (bit, r) in point[top..].iter().enumerate() {
+                if (block.prefix.prefix >> bit) & 1 == 1 {
+                    term *= r;
+                } else {
+                    term -= &(term * *r);
+                }
+            }
+            self.result += &term;
+        }
+        self.evaluated = true;
+        &self.result
+    }
+}
+
+fn field_blocks_evaluation(blocks: Vec<FieldBlock>, total_vars: usize) -> ElephantCell<EvalData> {
+    let field = ElephantCell::new(FieldBlocksEvaluation {
+        blocks,
         total_vars,
-    ))
+        result: FieldExtension::from_base(0),
+        evaluated: false,
+    });
+    ElephantCell::new(RingToFieldWrapperEvaluation::new(field)) as ElephantCell<EvalData>
+}
+
+fn selector_block(prefix: &Prefix, total_vars: usize) -> FieldBlock {
+    FieldBlock {
+        prefix: *prefix,
+        weights: vec![*ONE_FE],
+        suffix: total_vars - prefix.length,
+    }
+}
+
+fn selector_evaluation_from_prefix(prefix: &Prefix, total_vars: usize) -> ElephantCell<EvalData> {
+    field_blocks_evaluation(vec![selector_block(prefix, total_vars)], total_vars)
 }
 
 fn sum_of_evaluations(terms: Vec<ElephantCell<EvalData>>) -> ElephantCell<EvalData> {
@@ -86,7 +152,7 @@ fn recomposition_evaluation(
     parts: usize,
     part: usize,
 ) -> RecompositionEvaluation {
-    let terms = block_recomposition_weights(placement, chunks, base_log, total_vars, parts, part)
+    let blocks = block_recomposition_weights(placement, chunks, base_log, total_vars, parts, part)
         .into_iter()
         .map(|block_weights| {
             let BlockWeights {
@@ -94,18 +160,27 @@ fn recomposition_evaluation(
                 weights,
                 suffix,
             } = block_weights;
-            let block = selector_evaluation_from_prefix(&prefix, total_vars);
-            let weights_evaluation = basic_evaluation_linear(weights.len(), prefix.length, suffix);
-            weights_evaluation.borrow_mut().load_from(&weights);
-
-            ElephantCell::new(ProductSumcheckEvaluation::new(block, weights_evaluation))
-                as ElephantCell<EvalData>
+            FieldBlock {
+                prefix,
+                weights: weights.iter().map(scalar_as_field).collect(),
+                suffix,
+            }
         })
         .collect();
 
     RecompositionEvaluation {
-        factor: sum_of_evaluations(terms),
+        factor: field_blocks_evaluation(blocks, total_vars),
     }
+}
+
+/// The field element a scalar repeats in every slot.
+fn scalar_as_field(scalar: &RingElement) -> FieldExtension {
+    let field = scalar.slot_zero();
+    debug_assert_eq!(
+        *scalar,
+        RingElement::constant(field.coeffs[0], Representation::IncompleteNTT)
+    );
+    field
 }
 
 pub fn basic_evaluation_linear(
@@ -162,40 +237,160 @@ pub fn structured_row_ck_evaluation(
     eval
 }
 
+/// Running products `prod_{k < m} eq(layer_k, r_k)` of LS-first tensor rows on the low
+/// variables. A key row restricted to a dyadic slice is a scaled tensor row over a prefix of the
+/// row's LS-first layers, and smaller witnesses' keys are tails of the longest key's rows, so
+/// every key-row evaluation of a round reads one of these products.
+struct KeyRowProducts {
+    rows: Vec<KeyRow>,
+    evaluated: bool,
+}
+
+struct KeyRow {
+    /// LS-first.
+    layers: Vec<RingElement>,
+    lengths: Vec<usize>,
+    products: Vec<RingElement>,
+}
+
+impl KeyRowProducts {
+    /// Registers the tensor row with MS-first `layers` and returns the index of the row whose
+    /// running product covers it.
+    fn register(&mut self, layers: &[RingElement]) -> usize {
+        let ls_first = || layers.iter().rev();
+        let row = self
+            .rows
+            .iter()
+            .position(|row| row.layers.iter().zip(ls_first()).all(|(a, b)| a == b));
+        let row = row.unwrap_or_else(|| {
+            self.rows.push(KeyRow {
+                layers: Vec::new(),
+                lengths: Vec::new(),
+                products: Vec::new(),
+            });
+            self.rows.len() - 1
+        });
+        let entry = &mut self.rows[row];
+        if layers.len() > entry.layers.len() {
+            entry.layers = ls_first().cloned().collect();
+        }
+        if let Err(at) = entry.lengths.binary_search(&layers.len()) {
+            entry.lengths.insert(at, layers.len());
+        }
+        row
+    }
+
+    fn product(&self, row: usize, len: usize) -> &RingElement {
+        let row = &self.rows[row];
+        &row.products[row.lengths.binary_search(&len).unwrap()]
+    }
+
+    fn evaluate(&mut self, point: &[RingElement]) {
+        if self.evaluated {
+            return;
+        }
+        let depth = self
+            .rows
+            .iter()
+            .map(|row| row.layers.len())
+            .max()
+            .unwrap_or(0);
+        // eq(layer, r) = (1 - r) + layer (2r - 1)
+        let factors: Vec<(RingElement, RingElement)> = point[..depth]
+            .iter()
+            .map(|r| {
+                let mut constant = RingElement::one(Representation::IncompleteNTT);
+                constant -= r;
+                let mut slope = r.clone();
+                slope += r;
+                slope -= &*ONE;
+                (constant, slope)
+            })
+            .collect();
+        let mut eq = RingElement::zero(Representation::IncompleteNTT);
+        let mut running = RingElement::one(Representation::IncompleteNTT);
+        for row in &mut self.rows {
+            row.products = Vec::with_capacity(row.lengths.len());
+            let mut lengths = row.lengths.iter().peekable();
+            for (k, (layer, (constant, slope))) in row.layers.iter().zip(&factors).enumerate() {
+                while lengths.next_if_eq(&&k).is_some() {
+                    row.products.push(running.clone());
+                }
+                eq *= (layer, slope);
+                eq += constant;
+                if k == 0 {
+                    running.set_from(&eq);
+                } else {
+                    running *= &eq;
+                }
+            }
+            if lengths.next().is_some() {
+                row.products.push(running.clone());
+            }
+            running.set_from(&ONE);
+        }
+        self.evaluated = true;
+    }
+}
+
+/// A key row slice read off `KeyRowProducts`, times the constant its fixed leading layers
+/// contribute.
+struct KeyRowEvaluation {
+    products: ElephantCell<KeyRowProducts>,
+    row: usize,
+    len: usize,
+    scale: Option<RingElement>,
+    result: RingElement,
+    evaluated: bool,
+}
+
+impl EvaluationSumcheckData for KeyRowEvaluation {
+    type Element = RingElement;
+
+    fn evaluate(&mut self, point: &Vec<RingElement>) -> &RingElement {
+        if !self.evaluated {
+            self.products.borrow_mut().evaluate(point);
+            let products = self.products.borrow();
+            let product = products.product(self.row, self.len);
+            match &self.scale {
+                Some(scale) => self.result *= (product, scale),
+                None => self.result.set_from(product),
+            }
+            self.evaluated = true;
+        }
+        &self.result
+    }
+}
+
 /// The `segment`-th of `segments` equal dyadic slices of the `i`-th commitment key row, the
 /// verifier's counterpart to `ck_segment_sumcheck`. Layers are MS-first, so the leading
 /// `log2(segments)` of them pick the segment: what they contribute at this index is a constant,
-/// and the slice is still a tensor row over the layers below. `segments == 1` reproduces
-/// `structured_row_ck_evaluation` exactly.
-pub fn structured_row_ck_segment_evaluation(
+/// and the slice is still a tensor row over the layers below.
+fn key_row_segment_evaluation(
+    key_rows: &ElephantCell<KeyRowProducts>,
     crs: &VerifierCRS,
-    total_vars: usize,
     wit_dim: usize,
     i: usize,
     segments: usize,
     segment: usize,
-) -> ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>> {
-    let segment_len = wit_dim / segments;
+) -> ElephantCell<EvalData> {
     let fixed = segments.ilog2() as usize;
-    let row = crs.structured_ck_for_wit_dim(wit_dim)[i].clone();
-
-    let scale = StructuredRow {
-        tensor_layers: row.tensor_layers[..fixed].to_vec(),
-    }
-    .at(segment);
-    let sliced = StructuredRow {
-        tensor_layers: row.tensor_layers[fixed..].to_vec(),
-    };
-
-    let eval = ElephantCell::new(
-        StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
-            segment_len,
-            total_vars - segment_len.ilog2() as usize,
-            0,
-        ),
-    );
-    eval.borrow_mut().load_scaled_from(sliced, scale);
-    eval
+    let row = &crs.structured_ck_for_wit_dim(wit_dim)[i];
+    let scale = (fixed > 0).then(|| {
+        StructuredRow {
+            tensor_layers: row.tensor_layers[..fixed].to_vec(),
+        }
+        .at(segment)
+    });
+    let sliced = &row.tensor_layers[fixed..];
+    ElephantCell::new(KeyRowEvaluation {
+        products: key_rows.clone(),
+        row: key_rows.borrow_mut().register(sliced),
+        len: sliced.len(),
+        scale,
+        result: RingElement::zero(Representation::IncompleteNTT),
+        evaluated: false,
+    })
 }
 
 /// Verifier dual of `InputPiece`.
@@ -229,20 +424,20 @@ fn selected_input_piece_evaluations(
 
 fn ck_over_pieces_evaluation(
     crs: &VerifierCRS,
-    total_vars: usize,
+    key_rows: &ElephantCell<KeyRowProducts>,
     config: &commitment::RecursionConfig,
     i: usize,
     data_selected: &[Vec<InputPieceEvaluation>],
-    ck_evals: &mut Vec<ElephantCell<StructuredRowEvaluationLinearSumcheck<RingElement>>>,
+    ck_evals: &mut Vec<ElephantCell<EvalData>>,
 ) -> ElephantCell<EvalData> {
     let committed_len = config.committed_len();
     let mut terms: Vec<ElephantCell<EvalData>> = Vec::new();
 
     for pieces in data_selected {
         for piece in pieces {
-            let ck = structured_row_ck_segment_evaluation(
+            let ck = key_row_segment_evaluation(
+                key_rows,
                 crs,
-                total_vars,
                 committed_len,
                 i,
                 piece.ck_slices,
@@ -261,6 +456,7 @@ fn ck_over_pieces_evaluation(
 
 fn build_com_verify_verifier_context(
     crs: &VerifierCRS,
+    key_rows: &ElephantCell<KeyRowProducts>,
     total_vars: usize,
     combined_witness_eval: ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
     config: &commitment::RecursionConfig,
@@ -277,7 +473,7 @@ fn build_com_verify_verifier_context(
             .map(|i| {
                 let ck_with_data = ck_over_pieces_evaluation(
                     crs,
-                    total_vars,
+                    key_rows,
                     current,
                     i,
                     &data_selected,
@@ -311,7 +507,7 @@ fn build_com_verify_verifier_context(
     let mut ck_evals = Vec::new();
     let outputs = (0..current.rank)
         .map(|i| {
-            ck_over_pieces_evaluation(crs, total_vars, current, i, &data_selected, &mut ck_evals)
+            ck_over_pieces_evaluation(crs, key_rows, current, i, &data_selected, &mut ck_evals)
         })
         .collect::<Vec<_>>();
 
@@ -351,8 +547,12 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
         folding_challenges_evaluation.clone(),
     )) as ElephantCell<EvalData>;
 
+    let key_rows = ElephantCell::new(KeyRowProducts {
+        rows: Vec::new(),
+        evaluated: false,
+    });
     let commitment_key_rows_evaluation = (0..config.basic_commitment_rank)
-        .map(|i| structured_row_ck_evaluation(crs, total_vars, config.witness_height, i, 0))
+        .map(|i| key_row_segment_evaluation(&key_rows, crs, config.witness_height, i, 1, 0))
         .collect::<Vec<_>>();
 
     let commitment_fold_evaluations = (0..config.basic_commitment_rank)
@@ -704,12 +904,14 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
     let mut com_verify_evaluations = vec![
         build_com_verify_verifier_context(
             crs,
+            &key_rows,
             total_vars,
             combined_witness_evaluation.clone(),
             &config.commitment_recursion,
         ),
         build_com_verify_verifier_context(
             crs,
+            &key_rows,
             total_vars,
             combined_witness_evaluation.clone(),
             &config.opening_recursion,
@@ -720,6 +922,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
         Projection::Coarse(proj_config) => {
             com_verify_evaluations.push(build_com_verify_verifier_context(
                 crs,
+                &key_rows,
                 total_vars,
                 combined_witness_evaluation.clone(),
                 &proj_config,
@@ -728,6 +931,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
         Projection::Fine(proj_config) => {
             com_verify_evaluations.push(build_com_verify_verifier_context(
                 crs,
+                &key_rows,
                 total_vars,
                 combined_witness_evaluation.clone(),
                 &proj_config.recursion_constant_term,
@@ -735,6 +939,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
 
             com_verify_evaluations.push(build_com_verify_verifier_context(
                 crs,
+                &key_rows,
                 total_vars,
                 combined_witness_evaluation.clone(),
                 &proj_config.recursion_batched_projection,
@@ -747,12 +952,11 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
     let conjugated_combined_witness_evaluation =
         ElephantCell::new(FakeEvaluationLinearSumcheck::<RingElement>::new());
 
-    let mut most_inner_commitments_selectors: Vec<ElephantCell<SelectorEqEvaluation>> = vec![];
-    let push_most_inner = |recursion: &commitment::RecursionConfig,
-                               out: &mut Vec<ElephantCell<SelectorEqEvaluation>>| {
+    let mut most_inner_commitments_selectors: Vec<FieldBlock> = vec![];
+    let push_most_inner = |recursion: &commitment::RecursionConfig, out: &mut Vec<FieldBlock>| {
         for placement in &recursion.most_inner_config().placements {
             for block in &placement.blocks {
-                out.push(selector_evaluation_from_prefix(block, total_vars));
+                out.push(selector_block(block, total_vars));
             }
         }
     };
@@ -785,15 +989,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
         }
     }
 
-    let mut sum_of_selectors: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
-        most_inner_commitments_selectors[0].clone();
-
-    for selector in most_inner_commitments_selectors.iter().skip(1) {
-        sum_of_selectors = ElephantCell::new(SumSumcheckEvaluation::new(
-            sum_of_selectors.clone(),
-            selector.clone(),
-        ));
-    }
+    let sum_of_selectors = field_blocks_evaluation(most_inner_commitments_selectors, total_vars);
 
     let output = ElephantCell::new(ProductSumcheckEvaluation::new(
         combined_witness_evaluation.clone(),
@@ -824,7 +1020,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
     let norm_check_evaluation = NormCheckVerifierContext {
         conjugated_combined_witness_evaluation: conjugated_combined_witness_evaluation.clone(),
         output,
-        selectors: most_inner_commitments_selectors,
+        selectors: sum_of_selectors,
         output_2,
         output_3,
     };
@@ -897,5 +1093,108 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
             },
             None => None,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        common::arithmetic::field_to_ring_element,
+        protocol::sumcheck_utils::selector_eq::SelectorEqEvaluation,
+    };
+
+    fn broadcast_point(len: usize) -> Vec<RingElement> {
+        (0..len)
+            .map(|_| {
+                let random = RingElement::random(Representation::IncompleteNTT);
+                let mut r = field_to_ring_element(&random.slot_zero());
+                r.from_homogenized_field_extensions_to_incomplete_ntt();
+                r
+            })
+            .collect()
+    }
+
+    #[test]
+    fn field_blocks_match_ring_selectors_times_weights() {
+        let total_vars = 9;
+        let shapes = [
+            (0b101, 3, 2, 4),
+            (0b1, 1, 3, 5),
+            (0, 0, 2, 7),
+            (0b0110, 4, 0, 5),
+        ];
+        let point = broadcast_point(total_vars);
+        let mut expected = RingElement::zero(Representation::IncompleteNTT);
+        let mut blocks = Vec::new();
+        for (prefix, length, weights_log, suffix) in shapes {
+            let weights: Vec<RingElement> = (0..1u64 << weights_log)
+                .map(|w| RingElement::constant(3 * w + 1 << w, Representation::IncompleteNTT))
+                .collect();
+            let selector = ElephantCell::new(SelectorEqEvaluation::new(prefix, length, total_vars));
+            let weights_evaluation = basic_evaluation_linear(weights.len(), length, suffix);
+            weights_evaluation.borrow_mut().load_from(&weights);
+            let mut term = ProductSumcheckEvaluation::new(selector, weights_evaluation);
+            expected += term.evaluate(&point);
+            blocks.push(FieldBlock {
+                prefix: Prefix { prefix, length },
+                weights: weights.iter().map(scalar_as_field).collect(),
+                suffix,
+            });
+        }
+        let field = field_blocks_evaluation(blocks, total_vars);
+        assert_eq!(field.borrow_mut().evaluate(&point), &expected);
+    }
+
+    #[test]
+    fn key_row_products_match_structured_rows() {
+        let total_vars = 8;
+        let random_layers = |n| -> Vec<RingElement> {
+            (0..n)
+                .map(|_| RingElement::random(Representation::IncompleteNTT))
+                .collect()
+        };
+        let (longest, other, point) = (random_layers(7), random_layers(5), random_layers(8));
+        let key_rows = ElephantCell::new(KeyRowProducts {
+            rows: Vec::new(),
+            evaluated: false,
+        });
+        let mut cases = Vec::new();
+        for row in [&longest[3..], &other[..], &longest[..], &longest[7..]] {
+            for fixed in 0..=row.len() {
+                for segment in [0, (1 << fixed) - 1] {
+                    let scale = StructuredRow {
+                        tensor_layers: row[..fixed].to_vec(),
+                    }
+                    .at(segment);
+                    let sliced = &row[fixed..];
+                    let mut expected =
+                        StructuredRowEvaluationLinearSumcheck::new_with_prefixed_sufixed_data(
+                            1 << sliced.len(),
+                            total_vars - sliced.len(),
+                            0,
+                        );
+                    expected.load_scaled_from(
+                        StructuredRow {
+                            tensor_layers: sliced.to_vec(),
+                        },
+                        scale.clone(),
+                    );
+                    let evaluation = KeyRowEvaluation {
+                        products: key_rows.clone(),
+                        row: key_rows.borrow_mut().register(sliced),
+                        len: sliced.len(),
+                        scale: (fixed > 0).then_some(scale),
+                        result: RingElement::zero(Representation::IncompleteNTT),
+                        evaluated: false,
+                    };
+                    cases.push((evaluation, expected.evaluate(&point).clone()));
+                }
+            }
+        }
+        assert_eq!(key_rows.borrow().rows.len(), 2);
+        for (mut evaluation, expected) in cases {
+            assert_eq!(evaluation.evaluate(&point), &expected);
+        }
     }
 }

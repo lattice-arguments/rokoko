@@ -202,6 +202,7 @@ pub struct DiffSumcheckEvaluation {
     lhs_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
     rhs_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
     result: RingElement,
+    evaluated: bool,
 }
 
 impl DiffSumcheckEvaluation {
@@ -213,6 +214,7 @@ impl DiffSumcheckEvaluation {
             lhs_evaluation,
             rhs_evaluation,
             result: RingElement::zero(Representation::IncompleteNTT),
+            evaluated: false,
         }
     }
 }
@@ -221,10 +223,13 @@ impl EvaluationSumcheckData for DiffSumcheckEvaluation {
     type Element = RingElement;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
-        self.result -= (
-            self.lhs_evaluation.borrow_mut().evaluate(&point),
-            self.rhs_evaluation.borrow_mut().evaluate(&point),
-        );
+        if !self.evaluated {
+            self.result -= (
+                self.lhs_evaluation.borrow_mut().evaluate(&point),
+                self.rhs_evaluation.borrow_mut().evaluate(&point),
+            );
+            self.evaluated = true;
+        }
         &self.result
     }
 }

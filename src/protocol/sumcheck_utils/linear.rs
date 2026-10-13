@@ -668,6 +668,9 @@ impl EvaluationSumcheckData for RingToFieldWrapperEvaluation {
     type Element = RingElement;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
+        if self.evaluated {
+            return &self.result;
+        }
         let point_field: Vec<FieldExtension> = point.iter().map(|r| r.slot_zero()).collect();
 
         // Evaluate the field evaluation at the converted point
@@ -689,9 +692,11 @@ pub struct StructuredRowEvaluationLinearSumcheck<E: SumcheckElement = RingElemen
     prefix: usize,
     /// Constant the tensor product is multiplied by. Restricting a tensor row to a dyadic slice
     /// fixes its leading layers, and what they contribute is exactly this scalar.
-    scale: E,
+    scale: Option<E>,
     result: E,
     scratch: E,
+    slope: E,
+    evaluated: bool,
 }
 
 impl<E: SumcheckElement> StructuredRowEvaluationLinearSumcheck<E> {
@@ -709,17 +714,23 @@ impl<E: SumcheckElement> StructuredRowEvaluationLinearSumcheck<E> {
             variable_count: count.ilog2() as usize + prefix_size + suffix_size,
             suffix: suffix_size,
             prefix: prefix_size,
-            scale: E::one(),
+            scale: None,
             result: E::one(),
             scratch: E::zero(),
+            slope: E::zero(),
+            evaluated: false,
         }
     }
 
     pub fn load_from(&mut self, src: StructuredRow<E>) {
-        self.load_scaled_from(src, E::one());
+        self.load_normalized(src, None);
     }
 
     pub fn load_scaled_from(&mut self, src: StructuredRow<E>, scale: E) {
+        self.load_normalized(src, Some(scale));
+    }
+
+    fn load_normalized(&mut self, src: StructuredRow<E>, scale: Option<E>) {
         debug_assert!(src.tensor_layers.len() == self.variable_count - self.suffix - self.prefix);
         // Normalize once to LS-first so evaluate() can zip directly with LS-first challenges.
         let mut normalized = src;
@@ -735,7 +746,9 @@ impl<E: SumcheckElement + 'static> EvaluationSumcheckData
     type Element = E;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
-        self.result.set_from(&self.scale);
+        if self.evaluated {
+            return &self.result;
+        }
         if point.len() != self.variable_count {
             panic!(
                 "Point has incorrect number of variables, expected {}, got {}",
@@ -755,18 +768,28 @@ impl<E: SumcheckElement + 'static> EvaluationSumcheckData
 
         // tensor_layers were normalized to LS-first in load_from(),
         // so layer[k] pairs directly with data_point[k].
+        let mut first = true;
         for (layer, r) in data.tensor_layers.iter().zip(data_point.iter()) {
-            // Compute: (1-layer)*(1-r) + layer*r = 1 - layer - r + 2*layer*r
-            self.scratch.set_from(layer);
-            self.scratch *= r; // layer*r
-            self.scratch *= &*E::two_ref(); // 2*layer*r
-            self.scratch -= layer; // 2*layer*r - layer
-            self.scratch -= r; // 2*layer*r - layer - r
-            self.scratch += &*E::one_ref(); // 1 - layer - r + 2*layer*r
+            // (1 - layer)(1 - r) + layer r = (1 - r) + layer (2r - 1)
+            self.slope += (r, r);
+            self.slope -= E::one_ref();
+            self.scratch *= (layer, &self.slope);
+            self.scratch += E::one_ref();
+            self.scratch -= r;
 
-            self.result *= &self.scratch;
+            match (first, &self.scale) {
+                (true, Some(scale)) => self.result *= (scale, &self.scratch),
+                (true, None) => self.result.set_from(&self.scratch),
+                (false, _) => self.result *= &self.scratch,
+            }
+            first = false;
+        }
+        if first {
+            self.result
+                .set_from(self.scale.as_ref().unwrap_or(E::one_ref()));
         }
 
+        self.evaluated = true;
         &self.result
     }
 }

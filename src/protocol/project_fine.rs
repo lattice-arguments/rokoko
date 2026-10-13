@@ -67,8 +67,12 @@ pub fn compute_j_batched(
                     // `pos_masks`:      bit=1 ⇒ entry is +1;  bit=0 ⇒ entry is −1 (when non-zero).
                     // `non_zero_masks`: bit=1 ⇒ entry is ±1;  bit=0 ⇒ entry is 0.
                     let row_base = k * projection_matrix.width;
-                    let kpos_row = projection_matrix.pos_masks.data.as_ptr().add(row_base);
-                    let kinc_row = projection_matrix.non_zero_masks.data.as_ptr().add(row_base);
+                    let kpos_row = projection_matrix.pos_masks().data.as_ptr().add(row_base);
+                    let kinc_row = projection_matrix
+                        .non_zero_masks()
+                        .data
+                        .as_ptr()
+                        .add(row_base);
 
                     // Each bitmask byte covers 8 columns.  `base_chunk` is the byte
                     // index of the first column for ring element `i`.
@@ -158,8 +162,41 @@ pub fn compute_j_batched_collectively(
         }
     }
 
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "avx512f",
+        target_feature = "avx512bw",
+        target_feature = "gfni",
+        target_feature = "aes",
+        target_feature = "vaes"
+    ))]
+    let accumulated = unsafe {
+        const CHUNKS: usize = DEGREE / 8;
+        let rings: [*mut RingElement; NOF_BATCHES] =
+            std::array::from_fn(|b| j_batched[b].as_mut_ptr());
+        projection_matrix.accumulate_signed_sums::<NOF_BATCHES>(
+            std::array::from_fn(|b| &c_1_values[b][..]),
+            inner_width_ring * CHUNKS,
+            |b, chunk| {
+                (*rings[b].add(chunk / CHUNKS))
+                    .v
+                    .as_mut_ptr()
+                    .add(8 * (chunk % CHUNKS)) as _
+            },
+        )
+    };
+    #[cfg(not(all(
+        target_arch = "x86_64",
+        target_feature = "avx512f",
+        target_feature = "avx512bw",
+        target_feature = "gfni",
+        target_feature = "aes",
+        target_feature = "vaes"
+    )))]
+    let accumulated = false;
+
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    {
+    if !accumulated {
         use std::arch::x86_64::*;
 
         const DEGREE_BLOCKS: usize = DEGREE / 8;
@@ -175,8 +212,12 @@ pub fn compute_j_batched_collectively(
             for k in 0..projection_matrix.projection_height {
                 unsafe {
                     let row_base = k * projection_matrix.width;
-                    let kpos_row = projection_matrix.pos_masks.data.as_ptr().add(row_base);
-                    let kinc_row = projection_matrix.non_zero_masks.data.as_ptr().add(row_base);
+                    let kpos_row = projection_matrix.pos_masks().data.as_ptr().add(row_base);
+                    let kinc_row = projection_matrix
+                        .non_zero_masks()
+                        .data
+                        .as_ptr()
+                        .add(row_base);
                     let base_chunk = base_index >> 3;
 
                     let coeff_vecs: [__m512i; NOF_BATCHES] =
@@ -217,7 +258,7 @@ pub fn compute_j_batched_collectively(
     }
 
     #[cfg(target_arch = "aarch64")]
-    {
+    if !accumulated {
         use std::arch::aarch64::*;
 
         for i in 0..inner_width_ring {
@@ -258,7 +299,7 @@ pub fn compute_j_batched_collectively(
         all(target_arch = "x86_64", target_feature = "avx512f"),
         target_arch = "aarch64"
     )))]
-    {
+    if !accumulated {
         for i in 0..inner_width_ring {
             let base_index = i * DEGREE;
             for k in 0..projection_matrix.projection_height {
@@ -283,15 +324,54 @@ pub fn compute_j_batched_collectively(
     }
     for bp in j_batched.iter_mut() {
         for el in bp.iter_mut() {
-            unsafe {
-                eltwise_reduce_mod(el.v.as_mut_ptr(), el.v.as_mut_ptr(), DEGREE as u64, MOD_Q);
-            }
-            el.to_representation(Representation::IncompleteNTT);
-            el.conjugate_in_place();
+            reduce_conjugate_to_incomplete_ntt(el);
         }
     }
 
     j_batched
+}
+
+/// The conjugate of `el mod q` in incomplete-NTT form, for `el` biased by `HALF_WAY_MOD_Q`.
+fn reduce_conjugate_to_incomplete_ntt(el: &mut RingElement) {
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    if el.representation == Representation::Coefficients {
+        unsafe {
+            use crate::common::{arithmetic::HALF_WAY_MOD_Q, config::SLOT_DEGREE};
+            use std::arch::x86_64::*;
+            const Z: usize = DEGREE / 8;
+            let v = el.v.as_mut_ptr() as *mut __m512i;
+            let x: [__m512i; Z] = std::array::from_fn(|z| _mm512_load_si512(v.add(z)));
+            let bias = _mm512_set1_epi64((2 * *HALF_WAY_MOD_Q) as i64);
+            let reversed = _mm512_setr_epi64(8, 7, 6, 5, 4, 3, 2, 1);
+            let mut y: [__m512i; Z] = std::array::from_fn(|z| {
+                let pair = _mm512_permutex2var_epi64(x[Z - 1 - z], reversed, x[(Z - z) % Z]);
+                _mm512_sub_epi64(bias, pair)
+            });
+            y[0] = _mm512_mask_blend_epi64(1, y[0], x[0]);
+            let evens = _mm512_setr_epi64(0, 2, 4, 6, 8, 10, 12, 14);
+            let odds = _mm512_setr_epi64(1, 3, 5, 7, 9, 11, 13, 15);
+            for _ in 0..SLOT_DEGREE.ilog2() {
+                let interleaved = y;
+                for z in 0..Z / 2 {
+                    let (a, b) = (interleaved[2 * z], interleaved[2 * z + 1]);
+                    y[z] = _mm512_permutex2var_epi64(a, evens, b);
+                    y[Z / 2 + z] = _mm512_permutex2var_epi64(a, odds, b);
+                }
+            }
+            for z in 0..Z {
+                _mm512_store_si512(v.add(z), y[z]);
+            }
+            eltwise_reduce_mod(el.v.as_mut_ptr(), el.v.as_mut_ptr(), DEGREE as u64, MOD_Q);
+            el.representation = Representation::StridedCoefficients;
+            el.from_strided_coefficients_to_incomplete_ntt_representation();
+        }
+        return;
+    }
+    unsafe {
+        eltwise_reduce_mod(el.v.as_mut_ptr(), el.v.as_mut_ptr(), DEGREE as u64, MOD_Q);
+    }
+    el.to_representation(Representation::IncompleteNTT);
+    el.conjugate_in_place();
 }
 
 /// Computes the coefficient-wise projection: `V = (I_d ⊗ J) · coeff(W)`.
@@ -427,8 +507,12 @@ pub fn project_coefficients(
 
                     unsafe {
                         let row_base = inner_row * width;
-                        let kpos_row = projection_matrix.pos_masks.data.as_ptr().add(row_base);
-                        let kinc_row = projection_matrix.non_zero_masks.data.as_ptr().add(row_base);
+                        let kpos_row = projection_matrix.pos_masks().data.as_ptr().add(row_base);
+                        let kinc_row = projection_matrix
+                            .non_zero_masks()
+                            .data
+                            .as_ptr()
+                            .add(row_base);
 
                         // Two independent accumulators for ILP (instruction-level parallelism).
                         // Each holds a running sum of ±witness coefficients for this output coeff.
@@ -517,8 +601,12 @@ pub fn project_coefficients(
 
                     unsafe {
                         let row_base = inner_row * width;
-                        let kpos_row = projection_matrix.pos_masks.data.as_ptr().add(row_base);
-                        let knz_row = projection_matrix.non_zero_masks.data.as_ptr().add(row_base);
+                        let kpos_row = projection_matrix.pos_masks().data.as_ptr().add(row_base);
+                        let knz_row = projection_matrix
+                            .non_zero_masks()
+                            .data
+                            .as_ptr()
+                            .add(row_base);
 
                         // Four 2-lane accumulators for ILP, mirroring the AVX-512 path's two.
                         let mut acc0 = vdupq_n_s64(0);
@@ -981,6 +1069,87 @@ mod tests {
                 "batch_projection column {} should produce the same result as computing project_coefficients followed by batching",
                 col
             );
+        }
+    }
+
+    #[test]
+    fn j_batched_collectively_matches_the_single_batch_kernel() {
+        crate::common::init_common();
+        let mut hash_wrapper = HashWrapper::new();
+        for (ratio, top) in [(1, false), (2, false), (4, true), (32, false), (32, true)] {
+            let mut projection_matrix = ProjectionMatrix::new(ratio, 256);
+            projection_matrix.sample(&mut hash_wrapper);
+            let c_1_values: [Vec<u64>; NOF_BATCHES] = std::array::from_fn(|_| {
+                (0..256)
+                    .map(|_| match top {
+                        false => hash_wrapper.sample_u64_mod_q(),
+                        true => MOD_Q - 1,
+                    })
+                    .collect()
+            });
+            let j_batched = compute_j_batched_collectively(&projection_matrix, &c_1_values);
+            for b in 0..NOF_BATCHES {
+                assert_eq!(
+                    j_batched[b],
+                    compute_j_batched(&projection_matrix, &c_1_values[b]),
+                    "ratio {ratio}, top {top}, batch {b}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn j_batched_collectively_matches_on_heights_off_the_ring_degree() {
+        crate::common::init_common();
+        let mut hash_wrapper = HashWrapper::new();
+        for (ratio, height) in [(16, 16), (8, 16), (8, 144), (2, 192), (4, 128 + 32)] {
+            let mut projection_matrix = ProjectionMatrix::new(ratio, height);
+            projection_matrix.sample(&mut hash_wrapper);
+            let c_1_values: [Vec<u64>; NOF_BATCHES] = std::array::from_fn(|_| {
+                (0..height)
+                    .map(|_| hash_wrapper.sample_u64_mod_q())
+                    .collect()
+            });
+            let j_batched = compute_j_batched_collectively(&projection_matrix, &c_1_values);
+            for b in 0..NOF_BATCHES {
+                assert_eq!(
+                    j_batched[b],
+                    compute_j_batched(&projection_matrix, &c_1_values[b]),
+                    "ratio {ratio}, height {height}, batch {b}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn reduce_conjugate_matches_ntt_then_conjugate() {
+        use crate::common::arithmetic::HALF_WAY_MOD_Q;
+        crate::common::init_common();
+        let mut hash_wrapper = HashWrapper::new();
+        let spread = 1u64 << 58;
+        for case in 0..64 {
+            let mut el = RingElement::zero(Representation::Coefficients);
+            for (j, x) in el.v.iter_mut().enumerate() {
+                *x = match (case + j) % 5 {
+                    0 => *HALF_WAY_MOD_Q,
+                    1 => *HALF_WAY_MOD_Q - spread,
+                    2 => *HALF_WAY_MOD_Q + spread,
+                    _ => *HALF_WAY_MOD_Q - spread + hash_wrapper.sample_u64() % (2 * spread),
+                };
+            }
+            let mut expected = el.clone();
+            unsafe {
+                eltwise_reduce_mod(
+                    expected.v.as_mut_ptr(),
+                    expected.v.as_ptr(),
+                    DEGREE as u64,
+                    MOD_Q,
+                );
+            }
+            expected.to_representation(Representation::IncompleteNTT);
+            expected.conjugate_in_place();
+            reduce_conjugate_to_incomplete_ntt(&mut el);
+            assert_eq!(el, expected, "case {case}");
         }
     }
 
