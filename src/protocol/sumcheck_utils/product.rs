@@ -593,6 +593,7 @@ pub struct ProductSumcheckEvaluation {
     lhs_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
     rhs_evaluation: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
     result: RingElement,
+    evaluated: bool,
 }
 
 impl ProductSumcheckEvaluation {
@@ -604,6 +605,7 @@ impl ProductSumcheckEvaluation {
             lhs_evaluation,
             rhs_evaluation,
             result: RingElement::constant(0, Representation::IncompleteNTT),
+            evaluated: false,
         }
     }
 }
@@ -612,9 +614,13 @@ impl EvaluationSumcheckData for ProductSumcheckEvaluation {
     type Element = RingElement;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
-        self.result
-            .set_from(self.lhs_evaluation.borrow_mut().evaluate(point));
-        self.result *= self.rhs_evaluation.borrow_mut().evaluate(point);
+        if !self.evaluated {
+            self.result *= (
+                self.lhs_evaluation.borrow_mut().evaluate(point),
+                self.rhs_evaluation.borrow_mut().evaluate(point),
+            );
+            self.evaluated = true;
+        }
         &self.result
     }
 }

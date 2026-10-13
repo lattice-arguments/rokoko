@@ -668,6 +668,9 @@ impl EvaluationSumcheckData for RingToFieldWrapperEvaluation {
     type Element = RingElement;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
+        if self.evaluated {
+            return &self.result;
+        }
         let point_field: Vec<FieldExtension> = point.iter().map(|r| r.slot_zero()).collect();
 
         // Evaluate the field evaluation at the converted point
@@ -692,6 +695,7 @@ pub struct StructuredRowEvaluationLinearSumcheck<E: SumcheckElement = RingElemen
     scale: E,
     result: E,
     scratch: E,
+    evaluated: bool,
 }
 
 impl<E: SumcheckElement> StructuredRowEvaluationLinearSumcheck<E> {
@@ -712,6 +716,7 @@ impl<E: SumcheckElement> StructuredRowEvaluationLinearSumcheck<E> {
             scale: E::one(),
             result: E::one(),
             scratch: E::zero(),
+            evaluated: false,
         }
     }
 
@@ -735,6 +740,9 @@ impl<E: SumcheckElement + 'static> EvaluationSumcheckData
     type Element = E;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
+        if self.evaluated {
+            return &self.result;
+        }
         self.result.set_from(&self.scale);
         if point.len() != self.variable_count {
             panic!(
@@ -767,6 +775,7 @@ impl<E: SumcheckElement + 'static> EvaluationSumcheckData
             self.result *= &self.scratch;
         }
 
+        self.evaluated = true;
         &self.result
     }
 }

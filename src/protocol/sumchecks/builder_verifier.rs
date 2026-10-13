@@ -21,7 +21,6 @@ use crate::{
             },
             product::ProductSumcheckEvaluation,
             ring_to_field_combiner::RingToFieldCombinerEvaluation,
-            selector_eq::SelectorEqEvaluation,
             sum::SumSumcheckEvaluation,
         },
         sumchecks::context_verifier::{
@@ -39,15 +38,82 @@ use crate::{
 
 type EvalData = dyn EvaluationSumcheckData<Element = RingElement>;
 
-fn selector_evaluation_from_prefix(
-    prefix: &Prefix,
+/// A block selector on the top `prefix.length` variables times the multilinear extension of
+/// `weights` on the `weights.len().ilog2()` variables above `suffix`.
+struct FieldBlock {
+    prefix: Prefix,
+    weights: Vec<FieldExtension>,
+    suffix: usize,
+}
+
+/// A sum of `FieldBlock`s over the slot field. Every coordinate of a verifier point is one field
+/// element repeated in all slots and selectors and radix weights are scalars, so the sum is a
+/// field element too.
+struct FieldBlocksEvaluation {
+    blocks: Vec<FieldBlock>,
     total_vars: usize,
-) -> ElephantCell<SelectorEqEvaluation> {
-    ElephantCell::new(SelectorEqEvaluation::new(
-        prefix.prefix,
-        prefix.length,
+    result: FieldExtension,
+    evaluated: bool,
+}
+
+impl EvaluationSumcheckData for FieldBlocksEvaluation {
+    type Element = FieldExtension;
+
+    fn evaluate(&mut self, point: &Vec<FieldExtension>) -> &FieldExtension {
+        if self.evaluated {
+            return &self.result;
+        }
+        assert_eq!(point.len(), self.total_vars);
+        for block in &mut self.blocks {
+            let mut len = block.weights.len();
+            for r in point[block.suffix..block.suffix + len.ilog2() as usize]
+                .iter()
+                .rev()
+            {
+                len /= 2;
+                let (low, high) = block.weights.split_at_mut(len);
+                for (l, h) in low.iter_mut().zip(high.iter()) {
+                    let mut step = *h;
+                    step -= &*l;
+                    *l += &(step * *r);
+                }
+            }
+            let mut term = block.weights[0];
+            let top = self.total_vars - block.prefix.length;
+            for (bit, r) in point[top..].iter().enumerate() {
+                if (block.prefix.prefix >> bit) & 1 == 1 {
+                    term *= r;
+                } else {
+                    term -= &(term * *r);
+                }
+            }
+            self.result += &term;
+        }
+        self.evaluated = true;
+        &self.result
+    }
+}
+
+fn field_blocks_evaluation(blocks: Vec<FieldBlock>, total_vars: usize) -> ElephantCell<EvalData> {
+    let field = ElephantCell::new(FieldBlocksEvaluation {
+        blocks,
         total_vars,
-    ))
+        result: FieldExtension::from_base(0),
+        evaluated: false,
+    });
+    ElephantCell::new(RingToFieldWrapperEvaluation::new(field)) as ElephantCell<EvalData>
+}
+
+fn selector_block(prefix: &Prefix, total_vars: usize) -> FieldBlock {
+    FieldBlock {
+        prefix: *prefix,
+        weights: vec![*ONE_FE],
+        suffix: total_vars - prefix.length,
+    }
+}
+
+fn selector_evaluation_from_prefix(prefix: &Prefix, total_vars: usize) -> ElephantCell<EvalData> {
+    field_blocks_evaluation(vec![selector_block(prefix, total_vars)], total_vars)
 }
 
 fn sum_of_evaluations(terms: Vec<ElephantCell<EvalData>>) -> ElephantCell<EvalData> {
@@ -86,7 +152,7 @@ fn recomposition_evaluation(
     parts: usize,
     part: usize,
 ) -> RecompositionEvaluation {
-    let terms = block_recomposition_weights(placement, chunks, base_log, total_vars, parts, part)
+    let blocks = block_recomposition_weights(placement, chunks, base_log, total_vars, parts, part)
         .into_iter()
         .map(|block_weights| {
             let BlockWeights {
@@ -94,18 +160,27 @@ fn recomposition_evaluation(
                 weights,
                 suffix,
             } = block_weights;
-            let block = selector_evaluation_from_prefix(&prefix, total_vars);
-            let weights_evaluation = basic_evaluation_linear(weights.len(), prefix.length, suffix);
-            weights_evaluation.borrow_mut().load_from(&weights);
-
-            ElephantCell::new(ProductSumcheckEvaluation::new(block, weights_evaluation))
-                as ElephantCell<EvalData>
+            FieldBlock {
+                prefix,
+                weights: weights.iter().map(scalar_as_field).collect(),
+                suffix,
+            }
         })
         .collect();
 
     RecompositionEvaluation {
-        factor: sum_of_evaluations(terms),
+        factor: field_blocks_evaluation(blocks, total_vars),
     }
+}
+
+/// The field element a scalar repeats in every slot.
+fn scalar_as_field(scalar: &RingElement) -> FieldExtension {
+    let field = scalar.slot_zero();
+    debug_assert_eq!(
+        *scalar,
+        RingElement::constant(field.coeffs[0], Representation::IncompleteNTT)
+    );
+    field
 }
 
 pub fn basic_evaluation_linear(
@@ -747,12 +822,11 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
     let conjugated_combined_witness_evaluation =
         ElephantCell::new(FakeEvaluationLinearSumcheck::<RingElement>::new());
 
-    let mut most_inner_commitments_selectors: Vec<ElephantCell<SelectorEqEvaluation>> = vec![];
-    let push_most_inner = |recursion: &commitment::RecursionConfig,
-                               out: &mut Vec<ElephantCell<SelectorEqEvaluation>>| {
+    let mut most_inner_commitments_selectors: Vec<FieldBlock> = vec![];
+    let push_most_inner = |recursion: &commitment::RecursionConfig, out: &mut Vec<FieldBlock>| {
         for placement in &recursion.most_inner_config().placements {
             for block in &placement.blocks {
-                out.push(selector_evaluation_from_prefix(block, total_vars));
+                out.push(selector_block(block, total_vars));
             }
         }
     };
@@ -785,15 +859,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
         }
     }
 
-    let mut sum_of_selectors: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>> =
-        most_inner_commitments_selectors[0].clone();
-
-    for selector in most_inner_commitments_selectors.iter().skip(1) {
-        sum_of_selectors = ElephantCell::new(SumSumcheckEvaluation::new(
-            sum_of_selectors.clone(),
-            selector.clone(),
-        ));
-    }
+    let sum_of_selectors = field_blocks_evaluation(most_inner_commitments_selectors, total_vars);
 
     let output = ElephantCell::new(ProductSumcheckEvaluation::new(
         combined_witness_evaluation.clone(),
@@ -824,7 +890,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
     let norm_check_evaluation = NormCheckVerifierContext {
         conjugated_combined_witness_evaluation: conjugated_combined_witness_evaluation.clone(),
         output,
-        selectors: most_inner_commitments_selectors,
+        selectors: sum_of_selectors,
         output_2,
         output_3,
     };
@@ -897,5 +963,56 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
             },
             None => None,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        common::arithmetic::field_to_ring_element,
+        protocol::sumcheck_utils::selector_eq::SelectorEqEvaluation,
+    };
+
+    fn broadcast_point(len: usize) -> Vec<RingElement> {
+        (0..len)
+            .map(|_| {
+                let random = RingElement::random(Representation::IncompleteNTT);
+                let mut r = field_to_ring_element(&random.slot_zero());
+                r.from_homogenized_field_extensions_to_incomplete_ntt();
+                r
+            })
+            .collect()
+    }
+
+    #[test]
+    fn field_blocks_match_ring_selectors_times_weights() {
+        let total_vars = 9;
+        let shapes = [
+            (0b101, 3, 2, 4),
+            (0b1, 1, 3, 5),
+            (0, 0, 2, 7),
+            (0b0110, 4, 0, 5),
+        ];
+        let point = broadcast_point(total_vars);
+        let mut expected = RingElement::zero(Representation::IncompleteNTT);
+        let mut blocks = Vec::new();
+        for (prefix, length, weights_log, suffix) in shapes {
+            let weights: Vec<RingElement> = (0..1u64 << weights_log)
+                .map(|w| RingElement::constant(3 * w + 1 << w, Representation::IncompleteNTT))
+                .collect();
+            let selector = ElephantCell::new(SelectorEqEvaluation::new(prefix, length, total_vars));
+            let weights_evaluation = basic_evaluation_linear(weights.len(), length, suffix);
+            weights_evaluation.borrow_mut().load_from(&weights);
+            let mut term = ProductSumcheckEvaluation::new(selector, weights_evaluation);
+            expected += term.evaluate(&point);
+            blocks.push(FieldBlock {
+                prefix: Prefix { prefix, length },
+                weights: weights.iter().map(scalar_as_field).collect(),
+                suffix,
+            });
+        }
+        let field = field_blocks_evaluation(blocks, total_vars);
+        assert_eq!(field.borrow_mut().evaluate(&point), &expected);
     }
 }

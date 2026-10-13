@@ -16,7 +16,6 @@ use crate::{
             },
             product::ProductSumcheckEvaluation,
             ring_to_field_combiner::RingToFieldCombinerEvaluation,
-            selector_eq::SelectorEqEvaluation,
         },
     },
 };
@@ -133,7 +132,7 @@ pub struct NormCheckVerifierContext {
         ElephantCell<FakeEvaluationLinearSumcheck<RingElement>>,
     pub output: ElephantCell<ProductSumcheckEvaluation>,
 
-    pub selectors: Vec<ElephantCell<SelectorEqEvaluation>>,
+    pub selectors: ElephantCell<dyn EvaluationSumcheckData<Element = RingElement>>,
     pub output_2: ElephantCell<ProductSumcheckEvaluation>,
 
     pub output_3: Option<ElephantCell<ProductSumcheckEvaluation>>,
