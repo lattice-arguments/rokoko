@@ -439,13 +439,16 @@ pub fn projection_flatter_1_times_matrix(
     }
     #[cfg(all(
         target_arch = "x86_64",
+        target_feature = "avx512f",
         target_feature = "avx512bw",
-        target_feature = "gfni"
+        target_feature = "gfni",
+        target_feature = "aes",
+        target_feature = "vaes"
     ))]
-    if projection_matrix.projection_height % 16 == 0 {
-        return unsafe {
-            flatter_1_times_matrix_by_subset_sums(projection_matrix, projection_flatter_1)
-        };
+    if let Some(result) =
+        unsafe { flatter_1_times_matrix_by_subset_sums(projection_matrix, projection_flatter_1) }
+    {
+        return result;
     }
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     {
@@ -509,13 +512,16 @@ pub fn projection_flatter_1_times_matrix(
 
 #[cfg(all(
     target_arch = "x86_64",
+    target_feature = "avx512f",
     target_feature = "avx512bw",
-    target_feature = "gfni"
+    target_feature = "gfni",
+    target_feature = "aes",
+    target_feature = "vaes"
 ))]
 unsafe fn flatter_1_times_matrix_by_subset_sums(
     projection_matrix: &ProjectionMatrix,
     projection_flatter_1: &PreprocessedRow,
-) -> Vec<FieldExtension> {
+) -> Option<Vec<FieldExtension>> {
     use std::arch::x86_64::*;
 
     let height = projection_matrix.projection_height;
@@ -529,10 +535,12 @@ unsafe fn flatter_1_times_matrix_by_subset_sums(
 
     let mut acc = vec![_mm512_set1_epi64(*HALF_WAY_MOD_Q as i64); SLOT_DEGREE * inner_width / 8];
     let at = acc.as_mut_ptr();
-    projection_matrix.accumulate_signed_sums::<SLOT_DEGREE>(
+    if !projection_matrix.accumulate_signed_sums::<SLOT_DEGREE>(
         std::array::from_fn(|k| &weights[k][..]),
         |k, chunk| at.add(SLOT_DEGREE * chunk + k),
-    );
+    ) {
+        return None;
+    }
 
     let mut result_field = vec![FieldExtension::zero(); inner_width];
     let out = result_field.as_mut_ptr() as *mut __m512i;
@@ -554,7 +562,7 @@ unsafe fn flatter_1_times_matrix_by_subset_sums(
 
     let flat = result_field.as_mut_ptr() as *mut u64;
     eltwise_reduce_mod(flat, flat, (SLOT_DEGREE * inner_width) as u64, MOD_Q);
-    result_field
+    Some(result_field)
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
@@ -571,8 +579,8 @@ unsafe fn columns_times_matrix<const G: usize>(
 ) {
     use std::arch::x86_64::*;
 
-    let pos = projection_matrix.pos_masks.data.as_ptr();
-    let inc = projection_matrix.non_zero_masks.data.as_ptr();
+    let pos = projection_matrix.pos_masks().data.as_ptr();
+    let inc = projection_matrix.non_zero_masks().data.as_ptr();
     let mask_width = projection_matrix.width;
     let mut acc = [_mm512_set1_epi64(*HALF_WAY_MOD_Q as i64); 16];
     for row in 0..projection_matrix.projection_height {

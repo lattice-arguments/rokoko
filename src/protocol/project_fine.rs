@@ -67,8 +67,12 @@ pub fn compute_j_batched(
                     // `pos_masks`:      bit=1 ⇒ entry is +1;  bit=0 ⇒ entry is −1 (when non-zero).
                     // `non_zero_masks`: bit=1 ⇒ entry is ±1;  bit=0 ⇒ entry is 0.
                     let row_base = k * projection_matrix.width;
-                    let kpos_row = projection_matrix.pos_masks.data.as_ptr().add(row_base);
-                    let kinc_row = projection_matrix.non_zero_masks.data.as_ptr().add(row_base);
+                    let kpos_row = projection_matrix.pos_masks().data.as_ptr().add(row_base);
+                    let kinc_row = projection_matrix
+                        .non_zero_masks()
+                        .data
+                        .as_ptr()
+                        .add(row_base);
 
                     // Each bitmask byte covers 8 columns.  `base_chunk` is the byte
                     // index of the first column for ring element `i`.
@@ -160,10 +164,13 @@ pub fn compute_j_batched_collectively(
 
     #[cfg(all(
         target_arch = "x86_64",
+        target_feature = "avx512f",
         target_feature = "avx512bw",
-        target_feature = "gfni"
+        target_feature = "gfni",
+        target_feature = "aes",
+        target_feature = "vaes"
     ))]
-    unsafe {
+    let accumulated = unsafe {
         const CHUNKS: usize = DEGREE / 8;
         let rings: [*mut RingElement; NOF_BATCHES] =
             std::array::from_fn(|b| j_batched[b].as_mut_ptr());
@@ -175,15 +182,20 @@ pub fn compute_j_batched_collectively(
                     .as_mut_ptr()
                     .add(8 * (chunk % CHUNKS)) as _
             },
-        );
-    }
-
-    #[cfg(all(
+        )
+    };
+    #[cfg(not(all(
         target_arch = "x86_64",
         target_feature = "avx512f",
-        not(all(target_feature = "avx512bw", target_feature = "gfni"))
-    ))]
-    {
+        target_feature = "avx512bw",
+        target_feature = "gfni",
+        target_feature = "aes",
+        target_feature = "vaes"
+    )))]
+    let accumulated = false;
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    if !accumulated {
         use std::arch::x86_64::*;
 
         const DEGREE_BLOCKS: usize = DEGREE / 8;
@@ -199,8 +211,12 @@ pub fn compute_j_batched_collectively(
             for k in 0..projection_matrix.projection_height {
                 unsafe {
                     let row_base = k * projection_matrix.width;
-                    let kpos_row = projection_matrix.pos_masks.data.as_ptr().add(row_base);
-                    let kinc_row = projection_matrix.non_zero_masks.data.as_ptr().add(row_base);
+                    let kpos_row = projection_matrix.pos_masks().data.as_ptr().add(row_base);
+                    let kinc_row = projection_matrix
+                        .non_zero_masks()
+                        .data
+                        .as_ptr()
+                        .add(row_base);
                     let base_chunk = base_index >> 3;
 
                     let coeff_vecs: [__m512i; NOF_BATCHES] =
@@ -241,7 +257,7 @@ pub fn compute_j_batched_collectively(
     }
 
     #[cfg(target_arch = "aarch64")]
-    {
+    if !accumulated {
         use std::arch::aarch64::*;
 
         for i in 0..inner_width_ring {
@@ -282,7 +298,7 @@ pub fn compute_j_batched_collectively(
         all(target_arch = "x86_64", target_feature = "avx512f"),
         target_arch = "aarch64"
     )))]
-    {
+    if !accumulated {
         for i in 0..inner_width_ring {
             let base_index = i * DEGREE;
             for k in 0..projection_matrix.projection_height {
@@ -490,8 +506,12 @@ pub fn project_coefficients(
 
                     unsafe {
                         let row_base = inner_row * width;
-                        let kpos_row = projection_matrix.pos_masks.data.as_ptr().add(row_base);
-                        let kinc_row = projection_matrix.non_zero_masks.data.as_ptr().add(row_base);
+                        let kpos_row = projection_matrix.pos_masks().data.as_ptr().add(row_base);
+                        let kinc_row = projection_matrix
+                            .non_zero_masks()
+                            .data
+                            .as_ptr()
+                            .add(row_base);
 
                         // Two independent accumulators for ILP (instruction-level parallelism).
                         // Each holds a running sum of ±witness coefficients for this output coeff.
@@ -580,8 +600,12 @@ pub fn project_coefficients(
 
                     unsafe {
                         let row_base = inner_row * width;
-                        let kpos_row = projection_matrix.pos_masks.data.as_ptr().add(row_base);
-                        let knz_row = projection_matrix.non_zero_masks.data.as_ptr().add(row_base);
+                        let kpos_row = projection_matrix.pos_masks().data.as_ptr().add(row_base);
+                        let knz_row = projection_matrix
+                            .non_zero_masks()
+                            .data
+                            .as_ptr()
+                            .add(row_base);
 
                         // Four 2-lane accumulators for ILP, mirroring the AVX-512 path's two.
                         let mut acc0 = vdupq_n_s64(0);
