@@ -227,6 +227,178 @@ impl ProjectionMatrix {
     }
 }
 
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512bw",
+    target_feature = "gfni"
+))]
+impl ProjectionMatrix {
+    /// `acc(w, chunk) += Σ_row weights[w][row] · J[row, 8 chunk + l]` in lane `l`. Four-Russians
+    /// over rows: a column's 4-bit (+1)- and (−1)-patterns index the 16 subset sums of four weights.
+    pub(crate) unsafe fn accumulate_signed_sums<const W: usize>(
+        &self,
+        weights: [&[u64]; W],
+        acc: impl Fn(usize, usize) -> *mut std::arch::x86_64::__m512i,
+    ) {
+        use std::arch::x86_64::*;
+
+        debug_assert_eq!(self.projection_height % 16, 0);
+        let width = self.width;
+
+        let subset_sums: [Vec<[__m512i; 2]>; W] = std::array::from_fn(|w| {
+            weights[w]
+                .chunks_exact(4)
+                .map(|c| {
+                    let zero = _mm512_setzero_si512();
+                    let c: [__m512i; 4] = std::array::from_fn(|t| _mm512_set1_epi64(c[t] as i64));
+                    let lo = _mm512_mask_add_epi64(zero, 0b1010_1010, zero, c[0]);
+                    let lo = _mm512_mask_add_epi64(lo, 0b1100_1100, lo, c[1]);
+                    let lo = _mm512_mask_add_epi64(lo, 0b1111_0000, lo, c[2]);
+                    [lo, _mm512_add_epi64(lo, c[3])]
+                })
+                .collect()
+        });
+        let low_nibbles = _mm512_setr_epi64(0, 8, 16, 24, 32, 40, 48, 56);
+        let high_nibbles = _mm512_setr_epi64(4, 12, 20, 28, 36, 44, 52, 60);
+
+        let mut tiles = [[_mm512_setzero_si512(); 8]; 4];
+        let mut accumulators = [[std::ptr::null_mut::<__m512i>(); W]; 64];
+        for start in (0..width).step_by(64) {
+            let chunks = (width - start).min(64);
+            let in_range = if chunks == 64 {
+                !0
+            } else {
+                (1u64 << chunks) - 1
+            };
+            let mut slots = 0;
+            for at in 0..64 {
+                if TILE_CHUNK[at] < chunks {
+                    accumulators[slots] = std::array::from_fn(|w| acc(w, start + TILE_CHUNK[at]));
+                    slots += 1;
+                }
+            }
+
+            for group in 0..self.projection_height / 16 {
+                for half in 0..2 {
+                    let mut plus = [_mm512_setzero_si512(); 8];
+                    let mut minus = [_mm512_setzero_si512(); 8];
+                    for r in 0..8 {
+                        let at = (16 * group + 8 * half + r) * width + start;
+                        let pos = self.pos_masks.data.as_ptr().add(at);
+                        let non_zero = self.non_zero_masks.data.as_ptr().add(at);
+                        let pos = _mm512_maskz_loadu_epi8(in_range, pos as *const i8);
+                        let non_zero = _mm512_maskz_loadu_epi8(in_range, non_zero as *const i8);
+                        plus[r] = _mm512_and_si512(pos, non_zero);
+                        minus[r] = _mm512_andnot_si512(pos, non_zero);
+                    }
+                    tiles[2 * half] = transpose_tiles(plus);
+                    tiles[2 * half + 1] = transpose_tiles(minus);
+                }
+                let tile = tiles.as_ptr() as *const i64;
+                let sums: [[__m512i; 8]; W] = std::array::from_fn(|w| {
+                    let s = &subset_sums[w][4 * group..4 * group + 4];
+                    [
+                        s[0][0], s[0][1], s[1][0], s[1][1], s[2][0], s[2][1], s[3][0], s[3][1],
+                    ]
+                });
+                let mut slot = 0;
+                for at in 0..64 {
+                    if TILE_CHUNK[at] >= chunks {
+                        continue;
+                    }
+                    let nibbles = |first: i64, second: i64| {
+                        let (first, second) = (_mm512_set1_epi64(first), _mm512_set1_epi64(second));
+                        [
+                            _mm512_srlv_epi64(first, low_nibbles),
+                            _mm512_srlv_epi64(first, high_nibbles),
+                            _mm512_srlv_epi64(second, low_nibbles),
+                            _mm512_srlv_epi64(second, high_nibbles),
+                        ]
+                    };
+                    let plus = nibbles(*tile.add(at), *tile.add(128 + at));
+                    let minus = nibbles(*tile.add(64 + at), *tile.add(192 + at));
+                    for w in 0..W {
+                        let s = &sums[w];
+                        let look_up = |i: [__m512i; 4]| {
+                            _mm512_add_epi64(
+                                _mm512_add_epi64(
+                                    _mm512_permutex2var_epi64(s[0], i[0], s[1]),
+                                    _mm512_permutex2var_epi64(s[2], i[1], s[3]),
+                                ),
+                                _mm512_add_epi64(
+                                    _mm512_permutex2var_epi64(s[4], i[2], s[5]),
+                                    _mm512_permutex2var_epi64(s[6], i[3], s[7]),
+                                ),
+                            )
+                        };
+                        let acc = accumulators[slot][w];
+                        let sum = _mm512_add_epi64(_mm512_load_si512(acc), look_up(plus));
+                        _mm512_store_si512(acc, _mm512_sub_epi64(sum, look_up(minus)));
+                    }
+                    slot += 1;
+                }
+            }
+        }
+    }
+}
+
+/// Chunk held by qword `at` of [`transpose_tiles`]'s output.
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512bw",
+    target_feature = "gfni"
+))]
+const TILE_CHUNK: [usize; 64] = {
+    let mut chunk = [0; 64];
+    let mut at = 0;
+    while at < 64 {
+        chunk[at] = 16 * (at % 8 / 2) + 2 * (at / 8) + at % 2;
+        at += 1;
+    }
+    chunk
+};
+
+/// Bit `r` of byte `j` of a chunk's tile: row `r`, column `j`.
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512bw",
+    target_feature = "gfni"
+))]
+#[inline(always)]
+unsafe fn transpose_tiles(
+    rows: [std::arch::x86_64::__m512i; 8],
+) -> [std::arch::x86_64::__m512i; 8] {
+    use std::arch::x86_64::*;
+    let words = [
+        _mm512_unpacklo_epi8(rows[7], rows[6]),
+        _mm512_unpackhi_epi8(rows[7], rows[6]),
+        _mm512_unpacklo_epi8(rows[5], rows[4]),
+        _mm512_unpackhi_epi8(rows[5], rows[4]),
+        _mm512_unpacklo_epi8(rows[3], rows[2]),
+        _mm512_unpackhi_epi8(rows[3], rows[2]),
+        _mm512_unpacklo_epi8(rows[1], rows[0]),
+        _mm512_unpackhi_epi8(rows[1], rows[0]),
+    ];
+    let dwords: [[__m512i; 4]; 2] = std::array::from_fn(|h| {
+        let (lo, hi) = (4 * h, 4 * h + 2);
+        [
+            _mm512_unpacklo_epi16(words[lo], words[hi]),
+            _mm512_unpackhi_epi16(words[lo], words[hi]),
+            _mm512_unpacklo_epi16(words[lo + 1], words[hi + 1]),
+            _mm512_unpackhi_epi16(words[lo + 1], words[hi + 1]),
+        ]
+    });
+    let unit = _mm512_set1_epi64(0x8040_2010_0804_0201u64 as i64);
+    std::array::from_fn(|k| {
+        let rows_of_chunk = if k % 2 == 0 {
+            _mm512_unpacklo_epi32(dwords[0][k / 2], dwords[1][k / 2])
+        } else {
+            _mm512_unpackhi_epi32(dwords[0][k / 2], dwords[1][k / 2])
+        };
+        _mm512_gf2p8affine_epi64_epi8::<0>(unit, rows_of_chunk)
+    })
+}
+
 /// Element-wise access: `matrix[(row, col)]` returns `(is_positive, is_non_zero)`.
 ///
 /// - `(true, true)`   → entry is +1

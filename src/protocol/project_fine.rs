@@ -164,7 +164,18 @@ pub fn compute_j_batched_collectively(
         target_feature = "gfni"
     ))]
     unsafe {
-        accumulate_by_subset_sums(projection_matrix, c_1_values, &mut j_batched);
+        const CHUNKS: usize = DEGREE / 8;
+        let rings: [*mut RingElement; NOF_BATCHES] =
+            std::array::from_fn(|b| j_batched[b].as_mut_ptr());
+        projection_matrix.accumulate_signed_sums::<NOF_BATCHES>(
+            std::array::from_fn(|b| &c_1_values[b][..]),
+            |b, chunk| {
+                (*rings[b].add(chunk / CHUNKS))
+                    .v
+                    .as_mut_ptr()
+                    .add(8 * (chunk % CHUNKS)) as _
+            },
+        );
     }
 
     #[cfg(all(
@@ -344,186 +355,6 @@ fn reduce_conjugate_to_incomplete_ntt(el: &mut RingElement) {
         el.to_representation(Representation::IncompleteNTT);
         el.conjugate_in_place();
     }
-}
-
-/// Four-Russians over rows: a column's 4-bit (+1)- and (−1)-patterns index the 16 subset sums of
-/// four `c_1` values.
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "avx512bw",
-    target_feature = "gfni"
-))]
-unsafe fn accumulate_by_subset_sums(
-    projection_matrix: &ProjectionMatrix,
-    c_1_values: &[Vec<u64>; NOF_BATCHES],
-    j_batched: &mut [Vec<RingElement>; NOF_BATCHES],
-) {
-    use std::arch::x86_64::*;
-
-    const CHUNKS: usize = DEGREE / 8;
-    let width = projection_matrix.width;
-    let height = projection_matrix.projection_height;
-    debug_assert_eq!(height % 16, 0);
-
-    let subset_sums: [Vec<[__m512i; 2]>; NOF_BATCHES] = std::array::from_fn(|b| {
-        c_1_values[b]
-            .chunks_exact(4)
-            .map(|c| {
-                let zero = _mm512_setzero_si512();
-                let lo =
-                    _mm512_mask_add_epi64(zero, 0b1010_1010, zero, _mm512_set1_epi64(c[0] as i64));
-                let lo = _mm512_mask_add_epi64(lo, 0b1100_1100, lo, _mm512_set1_epi64(c[1] as i64));
-                let lo = _mm512_mask_add_epi64(lo, 0b1111_0000, lo, _mm512_set1_epi64(c[2] as i64));
-                [lo, _mm512_add_epi64(lo, _mm512_set1_epi64(c[3] as i64))]
-            })
-            .collect()
-    });
-    let low_nibbles = _mm512_setr_epi64(0, 8, 16, 24, 32, 40, 48, 56);
-    let high_nibbles = _mm512_setr_epi64(4, 12, 20, 28, 36, 44, 52, 60);
-
-    let mut tiles = [[_mm512_setzero_si512(); 8]; 4];
-    let mut accumulators = [[std::ptr::null_mut::<__m512i>(); NOF_BATCHES]; 64];
-    for start in (0..width).step_by(64) {
-        let chunks = (width - start).min(64);
-        let in_range = if chunks == 64 {
-            !0
-        } else {
-            (1u64 << chunks) - 1
-        };
-        let mut slots = 0;
-        for at in 0..64 {
-            let chunk = TILE_CHUNK[at];
-            if chunk < chunks {
-                let (ring, offset) = ((start + chunk) / CHUNKS, 8 * ((start + chunk) % CHUNKS));
-                accumulators[slots] = std::array::from_fn(|b| {
-                    j_batched[b]
-                        .get_unchecked_mut(ring)
-                        .v
-                        .as_mut_ptr()
-                        .add(offset) as *mut __m512i
-                });
-                slots += 1;
-            }
-        }
-
-        for group in 0..height / 16 {
-            for half in 0..2 {
-                let mut plus = [_mm512_setzero_si512(); 8];
-                let mut minus = [_mm512_setzero_si512(); 8];
-                for r in 0..8 {
-                    let at = (16 * group + 8 * half + r) * width + start;
-                    let pos = projection_matrix.pos_masks.data.as_ptr().add(at);
-                    let non_zero = projection_matrix.non_zero_masks.data.as_ptr().add(at);
-                    let pos = _mm512_maskz_loadu_epi8(in_range, pos as *const i8);
-                    let non_zero = _mm512_maskz_loadu_epi8(in_range, non_zero as *const i8);
-                    plus[r] = _mm512_and_si512(pos, non_zero);
-                    minus[r] = _mm512_andnot_si512(pos, non_zero);
-                }
-                tiles[2 * half] = transpose_tiles(plus);
-                tiles[2 * half + 1] = transpose_tiles(minus);
-            }
-            let tile = tiles.as_ptr() as *const i64;
-            let sums: [[__m512i; 8]; NOF_BATCHES] = std::array::from_fn(|b| {
-                let s = &subset_sums[b][4 * group..4 * group + 4];
-                [
-                    s[0][0], s[0][1], s[1][0], s[1][1], s[2][0], s[2][1], s[3][0], s[3][1],
-                ]
-            });
-            let mut slot = 0;
-            for at in 0..64 {
-                if TILE_CHUNK[at] >= chunks {
-                    continue;
-                }
-                let nibbles = |first: i64, second: i64| {
-                    let (first, second) = (_mm512_set1_epi64(first), _mm512_set1_epi64(second));
-                    [
-                        _mm512_srlv_epi64(first, low_nibbles),
-                        _mm512_srlv_epi64(first, high_nibbles),
-                        _mm512_srlv_epi64(second, low_nibbles),
-                        _mm512_srlv_epi64(second, high_nibbles),
-                    ]
-                };
-                let plus = nibbles(*tile.add(at), *tile.add(128 + at));
-                let minus = nibbles(*tile.add(64 + at), *tile.add(192 + at));
-                for b in 0..NOF_BATCHES {
-                    let s = &sums[b];
-                    let look_up = |i: [__m512i; 4]| {
-                        _mm512_add_epi64(
-                            _mm512_add_epi64(
-                                _mm512_permutex2var_epi64(s[0], i[0], s[1]),
-                                _mm512_permutex2var_epi64(s[2], i[1], s[3]),
-                            ),
-                            _mm512_add_epi64(
-                                _mm512_permutex2var_epi64(s[4], i[2], s[5]),
-                                _mm512_permutex2var_epi64(s[6], i[3], s[7]),
-                            ),
-                        )
-                    };
-                    let acc = accumulators[slot][b];
-                    let sum = _mm512_add_epi64(_mm512_load_si512(acc), look_up(plus));
-                    _mm512_store_si512(acc, _mm512_sub_epi64(sum, look_up(minus)));
-                }
-                slot += 1;
-            }
-        }
-    }
-}
-
-/// Chunk held by qword `at` of [`transpose_tiles`]'s output.
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "avx512bw",
-    target_feature = "gfni"
-))]
-const TILE_CHUNK: [usize; 64] = {
-    let mut chunk = [0; 64];
-    let mut at = 0;
-    while at < 64 {
-        chunk[at] = 16 * (at % 8 / 2) + 2 * (at / 8) + at % 2;
-        at += 1;
-    }
-    chunk
-};
-
-/// Bit `r` of byte `j` of a chunk's tile: row `r`, column `j`.
-#[cfg(all(
-    target_arch = "x86_64",
-    target_feature = "avx512bw",
-    target_feature = "gfni"
-))]
-#[inline(always)]
-unsafe fn transpose_tiles(
-    rows: [std::arch::x86_64::__m512i; 8],
-) -> [std::arch::x86_64::__m512i; 8] {
-    use std::arch::x86_64::*;
-    let words = [
-        _mm512_unpacklo_epi8(rows[7], rows[6]),
-        _mm512_unpackhi_epi8(rows[7], rows[6]),
-        _mm512_unpacklo_epi8(rows[5], rows[4]),
-        _mm512_unpackhi_epi8(rows[5], rows[4]),
-        _mm512_unpacklo_epi8(rows[3], rows[2]),
-        _mm512_unpackhi_epi8(rows[3], rows[2]),
-        _mm512_unpacklo_epi8(rows[1], rows[0]),
-        _mm512_unpackhi_epi8(rows[1], rows[0]),
-    ];
-    let dwords: [[__m512i; 4]; 2] = std::array::from_fn(|h| {
-        let (lo, hi) = (4 * h, 4 * h + 2);
-        [
-            _mm512_unpacklo_epi16(words[lo], words[hi]),
-            _mm512_unpackhi_epi16(words[lo], words[hi]),
-            _mm512_unpacklo_epi16(words[lo + 1], words[hi + 1]),
-            _mm512_unpackhi_epi16(words[lo + 1], words[hi + 1]),
-        ]
-    });
-    let unit = _mm512_set1_epi64(0x8040_2010_0804_0201u64 as i64);
-    std::array::from_fn(|k| {
-        let rows_of_chunk = if k % 2 == 0 {
-            _mm512_unpacklo_epi32(dwords[0][k / 2], dwords[1][k / 2])
-        } else {
-            _mm512_unpackhi_epi32(dwords[0][k / 2], dwords[1][k / 2])
-        };
-        _mm512_gf2p8affine_epi64_epi8::<0>(unit, rows_of_chunk)
-    })
 }
 
 /// Computes the coefficient-wise projection: `V = (I_d ⊗ J) · coeff(W)`.
