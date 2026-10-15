@@ -137,7 +137,7 @@ fn batch_claims(
         idx += 1;
     }
 
-    debug_assert_eq!(
+    assert_eq!(
         idx,
         combination.len(),
         "batched claim walked {idx} of {} combiner outputs",
