@@ -377,6 +377,13 @@ mod tests {
     /// two element-major chunks, which is the top-level hypercube and independent of the round's
     /// own `witness_decomposition_chunks`.
     fn round_trip(config: &crate::protocol::config::SumcheckConfig) {
+        round_trip_with(config, |_| {});
+    }
+
+    fn round_trip_with(
+        config: &crate::protocol::config::SumcheckConfig,
+        tamper: impl FnOnce(&mut crate::protocol::config::SumcheckRoundProof),
+    ) {
         use crate::common::{
             decomposition::decompose, matrix::VerticallyAlignedMatrix,
             ring_arithmetic::Representation, sampling::sample_random_short_vector,
@@ -422,7 +429,7 @@ mod tests {
 
         let (commitment_with_aux, rc_commitment) = commit(&crs, config, &witness);
 
-        let (proof, claims) = prover_round(
+        let (mut proof, claims) = prover_round(
             &crs,
             config,
             &commitment_with_aux,
@@ -436,6 +443,7 @@ mod tests {
         );
         let claims = claims.expect("prover must return claims");
         assert_eq!(claims.len(), config.nof_openings);
+        tamper(&mut proof);
 
         verifier_round(
             &verifier_crs,
@@ -455,14 +463,41 @@ mod tests {
     /// four rows, three of which are placed, one placement each.
     #[test]
     fn three_openings_round_trip() {
+        init_common();
+
+        let generated = three_openings_aux().generate_config();
+        let config = match &generated {
+            crate::protocol::config::Config::Sumcheck(config) => config,
+            _ => panic!("expected a sumcheck config"),
+        };
+
+        assert_eq!(config.opening_recursion.placements.len(), 3);
+        assert_eq!(config.opening_recursion.segments(), 4);
+
+        round_trip(config);
+    }
+
+    #[test]
+    #[should_panic(expected = "proof ends before the configured round chain")]
+    fn a_proof_cut_before_the_last_round_is_rejected() {
+        init_common();
+
+        let generated = three_openings_aux().generate_config();
+        let config = match &generated {
+            crate::protocol::config::Config::Sumcheck(config) => config,
+            _ => panic!("expected a sumcheck config"),
+        };
+
+        round_trip_with(config, |proof| proof.next = None);
+    }
+
+    fn three_openings_aux() -> crate::protocol::config_generator::AuxSumcheckConfig {
         use crate::protocol::config::SimpleConfig;
         use crate::protocol::config_generator::{
             AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig,
         };
 
-        init_common();
-
-        let aux = AuxSumcheckConfig {
+        AuxSumcheckConfig {
             exact_projection_norm: false,
             witness_height: 1024,
             witness_width: 16,
@@ -512,18 +547,7 @@ mod tests {
                 witness_norm_bound: f64::INFINITY,
                 projection_norm_bound: f64::INFINITY,
             }))),
-        };
-
-        let generated = aux.generate_config();
-        let config = match &generated {
-            crate::protocol::config::Config::Sumcheck(config) => config,
-            _ => panic!("expected a sumcheck config"),
-        };
-
-        assert_eq!(config.opening_recursion.placements.len(), 3);
-        assert_eq!(config.opening_recursion.segments(), 4);
-
-        round_trip(config);
+        }
     }
 
     /// A round whose folded witness is decomposed into three digit planes: the component is two

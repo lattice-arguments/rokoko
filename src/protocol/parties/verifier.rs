@@ -261,6 +261,10 @@ pub fn verifier_round(
                 boundary.is_none(),
                 "round boundary cut requested past the end of the round chain"
             );
+            assert!(
+                config.next.is_none(),
+                "proof ends before the configured round chain"
+            );
         }
     }
 }
