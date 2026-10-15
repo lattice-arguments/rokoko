@@ -677,33 +677,77 @@ pub static CONJUGATION_NTT_TRANSFORM: LazyLock<ConjugationTransform> =
 pub struct ConjugationTransform {
     pub permutation: [[usize; NUM_SLOTS]; SLOT_DEGREE],
     pub factors: [[u64; NUM_SLOTS]; SLOT_DEGREE],
+    source: [usize; DEGREE],
+    scale: [u64; DEGREE],
+    reversed: bool,
+    fixed_first_part: bool,
+}
+
+impl ConjugationTransform {
+    fn new(
+        permutation: [[usize; NUM_SLOTS]; SLOT_DEGREE],
+        factors: [[u64; NUM_SLOTS]; SLOT_DEGREE],
+    ) -> ConjugationTransform {
+        let mut source = [0usize; DEGREE];
+        let mut scale = [0u64; DEGREE];
+        for part in 0..SLOT_DEGREE {
+            let target = (SLOT_DEGREE - part) % SLOT_DEGREE * NUM_SLOTS;
+            for i in 0..NUM_SLOTS {
+                source[target + permutation[part][i]] = part * NUM_SLOTS + i;
+                scale[target + permutation[part][i]] = factors[part][i];
+            }
+        }
+        let reversed = permutation
+            .iter()
+            .all(|p| p.iter().enumerate().all(|(i, &j)| j == NUM_SLOTS - 1 - i));
+        let fixed_first_part = scale[..NUM_SLOTS].iter().all(|&f| f == 1);
+        ConjugationTransform {
+            permutation,
+            factors,
+            source,
+            scale,
+            reversed,
+            fixed_first_part,
+        }
+    }
 }
 
 /// Conjugates the IncompleteNTT element at `source` into `result`, reading all of `source`
 /// before writing, so the two may alias.
 #[inline(always)]
 unsafe fn conjugate_slots(source: *const u64, result: *mut u64) {
-    let transform = &*CONJUGATION_NTT_TRANSFORM;
+    conjugate_with(&CONJUGATION_NTT_TRANSFORM, source, result);
+}
+
+#[inline(always)]
+unsafe fn conjugate_with(transform: &ConjugationTransform, source: *const u64, result: *mut u64) {
     let mut temp = [0u64; DEGREE];
-    for i in 0..NUM_SLOTS {
-        temp[transform.permutation[0][i]] = *source.add(i);
-    }
-    for part in 1..SLOT_DEGREE {
-        eltwise_mult_mod(
-            temp.as_mut_ptr().add((SLOT_DEGREE - part) * NUM_SLOTS),
-            source.add(part * NUM_SLOTS),
-            transform.factors[part].as_ptr(),
-            NUM_SLOTS as u64,
-            MOD_Q,
-        );
-    }
-    std::ptr::copy_nonoverlapping(temp.as_ptr(), result, NUM_SLOTS);
-    for part in 1..SLOT_DEGREE {
-        let at = (SLOT_DEGREE - part) * NUM_SLOTS;
-        for i in 0..NUM_SLOTS {
-            *result.add(at + transform.permutation[part][i]) = temp[at + i];
+    if transform.reversed {
+        let parts = std::iter::once(0).chain((1..SLOT_DEGREE).rev());
+        for (out, part) in temp.chunks_exact_mut(NUM_SLOTS).zip(parts) {
+            let from = std::slice::from_raw_parts(source.add(part * NUM_SLOTS), NUM_SLOTS);
+            out.iter_mut()
+                .zip(from.iter().rev())
+                .for_each(|(t, &s)| *t = s);
+        }
+    } else {
+        for (t, &k) in temp.iter_mut().zip(&transform.source) {
+            *t = *source.add(k);
         }
     }
+    let skip = if transform.fixed_first_part {
+        NUM_SLOTS
+    } else {
+        0
+    };
+    std::ptr::copy_nonoverlapping(temp.as_ptr(), result, skip);
+    eltwise_mult_mod(
+        result.add(skip),
+        temp.as_ptr().add(skip),
+        transform.scale.as_ptr().add(skip),
+        (DEGREE - skip) as u64,
+        MOD_Q,
+    );
 }
 
 /// Empirically derive the conjugation transformation in NTT domain
@@ -750,10 +794,7 @@ fn derive_conjugation_transform() -> ConjugationTransform {
         }
     }
 
-    ConjugationTransform {
-        permutation,
-        factors,
-    }
+    ConjugationTransform::new(permutation, factors)
 }
 
 ///// Helpers
@@ -1804,6 +1845,31 @@ mod tests {
         a_conj.conjugate_in_place();
         a_conj_ref.conjugate_in_place_ref();
         debug_assert_eq!(a_conj.v, a_conj_ref.v);
+    }
+
+    #[test]
+    fn test_conjugation_matches_the_coefficient_reference_on_both_paths() {
+        init_common();
+        let fast = CONJUGATION_NTT_TRANSFORM.clone();
+        let gathered = ConjugationTransform {
+            reversed: false,
+            fixed_first_part: false,
+            ..fast.clone()
+        };
+        for _ in 0..16 {
+            let a = RingElement::random(Representation::IncompleteNTT);
+            let mut want = a.clone();
+            want.conjugate_in_place_ref();
+            for transform in [&fast, &gathered] {
+                let mut got = RingElement::new(Representation::IncompleteNTT);
+                unsafe { conjugate_with(transform, a.v.as_ptr(), got.v.as_mut_ptr()) };
+                assert_eq!(got.v, want.v);
+                let mut aliased = a.clone();
+                let v = aliased.v.as_mut_ptr();
+                unsafe { conjugate_with(transform, v, v) };
+                assert_eq!(aliased.v, want.v);
+            }
+        }
     }
 
     #[test]
