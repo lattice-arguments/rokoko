@@ -33,6 +33,14 @@ const SYMBOLS: usize = 56;
 const ROLES: usize = 16;
 const MAX_ELEMENTS: usize = 1 << 20;
 const VERSION: u8 = 1;
+/// Rounds a proof may chain, the first included. Decoding recurses once per round, and a chain
+/// is a handful of rounds deep.
+const MAX_ROUNDS: usize = 32;
+/// Coefficients a proof may declare per byte of input. A zero in a role where zeros dominate codes
+/// into next to nothing, so the length of the input alone does not bound what a proof declares;
+/// this cap does, at half a bit per coefficient against the few bytes an honest proof spends on
+/// each. Declared lengths are charged before anything is allocated.
+const CELLS_PER_BYTE: usize = 16;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -774,6 +782,8 @@ struct Decoder<'a> {
     shape: BitReader<'a>,
     body: Body<'a>,
     models: Vec<Model>,
+    rounds: usize,
+    cells: usize,
 }
 
 impl<'a> Decoder<'a> {
@@ -817,7 +827,15 @@ impl<'a> Decoder<'a> {
                 index: 0,
             },
             models,
+            rounds: 1,
+            cells: CELLS_PER_BYTE * bytes.len(),
         })
+    }
+
+    /// Spends `cells` of what the input can carry; see `CELLS_PER_BYTE`.
+    fn charge(&mut self, cells: usize) -> Result<(), WireError> {
+        self.cells = self.cells.checked_sub(cells).ok_or(WireError::Malformed)?;
+        Ok(())
     }
 
     fn ring_slice(&mut self, role: Role) -> Result<Vec<RingElement>, WireError> {
@@ -825,6 +843,7 @@ impl<'a> Decoder<'a> {
         if len == 0 {
             return Ok(Vec::new());
         }
+        self.charge(len * DEGREE)?;
         let uniform = self.shape.get(1)? != 0;
         let mut representations = Vec::with_capacity(len);
         if uniform {
@@ -880,6 +899,9 @@ impl<'a> Decoder<'a> {
         let height = self.shape.get_len()?;
         let used_cols = self.shape.get_len()?;
         let data = self.ring_slice(role)?;
+        if width.checked_mul(height) != Some(data.len()) || used_cols > width {
+            return Err(WireError::Malformed);
+        }
         Ok(VerticallyAlignedMatrix {
             data,
             width,
@@ -895,6 +917,9 @@ impl<'a> Decoder<'a> {
         let width = self.shape.get_len()?;
         let height = self.shape.get_len()?;
         let data = self.ring_slice(role)?;
+        if width.checked_mul(height) != Some(data.len()) {
+            return Err(WireError::Malformed);
+        }
         Ok(HorizontallyAlignedMatrix {
             data,
             width,
@@ -904,7 +929,8 @@ impl<'a> Decoder<'a> {
 
     fn polys(&mut self) -> Result<Vec<Polynomial<FieldExtension>>, WireError> {
         let len = self.shape.get_len()?;
-        let mut polys = Vec::with_capacity(len.min(4096));
+        self.charge(len * 4 * SLOT_DEGREE)?;
+        let mut polys = Vec::with_capacity(len);
         for _ in 0..len {
             let num_coefficients = self.shape.get(3)? as usize;
             if num_coefficients > 4 {
@@ -1012,6 +1038,10 @@ impl<'a> Decoder<'a> {
     fn next(&mut self) -> Result<Option<Box<RoundProof>>, WireError> {
         if self.shape.get(1)? == 0 {
             return Ok(None);
+        }
+        self.rounds += 1;
+        if self.rounds > MAX_ROUNDS {
+            return Err(WireError::Malformed);
         }
         Ok(Some(Box::new(self.round()?)))
     }
@@ -1206,5 +1236,77 @@ mod tests {
         let bytes = to_bytes(&sumcheck(None, false));
         assert!(from_bytes(&bytes[..bytes.len() - 8]).is_err());
         assert!(from_bytes(&bytes[..12]).is_err());
+    }
+
+    /// Decoding recurses once per round, so a chain is refused past `MAX_ROUNDS` rather than
+    /// overflowing the stack.
+    #[test]
+    fn wire_refuses_a_chain_past_max_rounds() {
+        init_common();
+        let chain = |rounds: usize| {
+            let mut proof = sumcheck(None, false);
+            for _ in 1..rounds {
+                proof = sumcheck(Some(Box::new(RoundProof::Sumcheck(proof))), false);
+            }
+            to_bytes(&proof)
+        };
+        assert!(from_bytes(&chain(MAX_ROUNDS)).is_ok());
+        assert_eq!(
+            from_bytes(&chain(MAX_ROUNDS + 1)).err(),
+            Some(WireError::Malformed)
+        );
+        let deep = std::thread::Builder::new()
+            .stack_size(1 << 28)
+            .spawn(move || chain(1000))
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(from_bytes(&deep).err(), Some(WireError::Malformed));
+    }
+
+    /// A zero coefficient in a role where zeros dominate codes into next to nothing, so a proof
+    /// could declare far more ring elements than it carries; the decoder refuses one before
+    /// allocating them.
+    #[test]
+    fn wire_refuses_more_coefficients_than_the_input_carries() {
+        init_common();
+        let mut proof = sumcheck(None, false);
+        proof.rc_opening_inner.extend(
+            std::iter::repeat_with(|| RingElement::zero(Representation::IncompleteNTT))
+                .take(1 << 16),
+        );
+        let bytes = to_bytes(&proof);
+        assert!(bytes.len() * CELLS_PER_BYTE < proof.rc_opening_inner.len() * DEGREE);
+        assert_eq!(from_bytes(&bytes).err(), Some(WireError::Malformed));
+
+        let claims = ClaimsProof {
+            polys: vec![Polynomial::new(0); 1 << 16],
+            witness_eval: uniform(),
+            conj_witness_eval: None,
+        };
+        let bytes = initial_to_bytes(&claims);
+        assert_eq!(initial_from_bytes(&bytes).err(), Some(WireError::Malformed));
+    }
+
+    /// A matrix travels with its shape, which must describe its entries.
+    #[test]
+    fn wire_refuses_a_matrix_shape_that_disagrees_with_its_entries() {
+        init_common();
+        let tampered: [fn(&mut SimpleRoundProof); 3] = [
+            |p| p.batched_projection_image.height = 0,
+            |p| p.folded_witness.width += 1,
+            |p| p.projection_image_ct.used_cols = p.projection_image_ct.width + 1,
+        ];
+        for tamper in tampered {
+            let mut proof = sumcheck(Some(Box::new(simple())), false);
+            let Some(RoundProof::Simple(last)) = proof.next.as_deref_mut() else {
+                unreachable!()
+            };
+            tamper(last);
+            assert_eq!(
+                from_bytes(&to_bytes(&proof)).err(),
+                Some(WireError::Malformed)
+            );
+        }
     }
 }
