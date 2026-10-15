@@ -13,8 +13,8 @@ mod number_theory;
 mod util;
 
 pub use eltwise::{
-    eltwise_add_mod, eltwise_fma_mod, eltwise_mult_mod, eltwise_reduce_mod, eltwise_sub_mod,
-    fused_incomplete_ntt_mult_inner,
+    eltwise_add_mod, eltwise_fma_mod, eltwise_mult_mod, eltwise_mult_mod_shoup, eltwise_reduce_mod,
+    eltwise_sub_mod, fused_incomplete_ntt_mult_inner, shoup_quotient,
 };
 pub use number_theory::{add_uint_mod, inverse_mod, multiply_mod, pow_mod, sub_uint_mod};
 

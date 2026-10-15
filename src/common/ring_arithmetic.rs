@@ -679,6 +679,7 @@ pub struct ConjugationTransform {
     pub factors: [[u64; NUM_SLOTS]; SLOT_DEGREE],
     source: [usize; DEGREE],
     scale: [u64; DEGREE],
+    quotients: [u64; DEGREE],
     reversed: bool,
     fixed_first_part: bool,
 }
@@ -706,6 +707,7 @@ impl ConjugationTransform {
             factors,
             source,
             scale,
+            quotients: scale.map(|f| shoup_quotient(f, MOD_Q)),
             reversed,
             fixed_first_part,
         }
@@ -741,10 +743,11 @@ unsafe fn conjugate_with(transform: &ConjugationTransform, source: *const u64, r
         0
     };
     std::ptr::copy_nonoverlapping(temp.as_ptr(), result, skip);
-    eltwise_mult_mod(
+    eltwise_mult_mod_shoup(
         result.add(skip),
         temp.as_ptr().add(skip),
         transform.scale.as_ptr().add(skip),
+        transform.quotients.as_ptr().add(skip),
         (DEGREE - skip) as u64,
         MOD_Q,
     );
