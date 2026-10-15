@@ -910,6 +910,59 @@ mod tests {
     }
 
     #[test]
+    fn test_zero_heavy_ring_combination_roundtrip() {
+        init_common();
+        let mut layout = WitnessBuilder::new(64, 4);
+        let region = layout.push(&short(128, 100));
+        layout.push(&short(128, 100));
+        let w = layout.finish();
+        let (left, right) = region.vars().split_at(4);
+        let sparse: Vec<u64> = (0..16u64).map(|i| (i & 3 == 1) as u64 * (i + 3)).collect();
+        let rings: Vec<RingElement> = (0..8)
+            .map(|i| {
+                if [0, 3, 6].contains(&i) {
+                    zero()
+                } else {
+                    short(1, 50).remove(0)
+                }
+            })
+            .collect();
+        let fields: Vec<FieldExtension> = (0..8u64)
+            .map(|i| FieldExtension {
+                coeffs: std::array::from_fn(|k| (i != 2) as u64 * (i + 1 + 3 * k as u64)),
+            })
+            .collect();
+        let make = |t: &mut Transcript| {
+            let mut gamma = zero();
+            t.sample_ring_element_into(&mut gamma);
+            let parts = vec![
+                (
+                    one(),
+                    vec![
+                        table(sparse.clone()).on(left),
+                        table(rings.clone()).on(right),
+                    ],
+                ),
+                (gamma.clone(), vec![table(rings.clone()).on(right)]),
+                (
+                    one(),
+                    vec![
+                        table(fields.clone()).on(right),
+                        table(sparse.clone()).on(left),
+                    ],
+                ),
+                (gamma, vec![table(sparse.clone()).on(left)]),
+            ];
+            let value = (combination(parts.clone()).on(region.vars()) * witness_in(region)).sum(&w);
+            vec![Claim::sums_to(
+                combination(parts).on(region.vars()) * witness_in(region),
+                value,
+            )]
+        };
+        roundtrip(&w, make);
+    }
+
+    #[test]
     fn test_norm_claim_roundtrip() {
         init_common();
         let w = WitnessBuilder {

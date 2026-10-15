@@ -117,6 +117,16 @@ impl SubTable<'_> {
         }
     }
 
+    fn is_zero(&self, i: usize) -> bool {
+        match self {
+            SubTable::Scalar(v) => v[i] == 0,
+            SubTable::Field(v) => v[i].coeffs.iter().all(|&c| c == 0),
+            SubTable::FieldOwned(v) => v[i].coeffs.iter().all(|&c| c == 0),
+            SubTable::Ring(v) => v[i].v.iter().all(|&c| c == 0),
+            SubTable::RingOwned(v) => v[i].v.iter().all(|&c| c == 0),
+        }
+    }
+
     fn ring_at(&self, i: usize, out: &mut RingElement) {
         match self {
             SubTable::Scalar(v) => {
@@ -266,6 +276,9 @@ fn expand_combination(
                 cs[a] = c;
             }
             for (c, comp) in cs.iter().zip(&scalar_components) {
+                if *c == 0 {
+                    continue;
+                }
                 let addend = m.v;
                 unsafe {
                     eltwise_fma_mod(
@@ -284,13 +297,48 @@ fn expand_combination(
     let mut value = RingElement::zero(Representation::IncompleteNTT);
     let mut sub_value = RingElement::zero(Representation::IncompleteNTT);
     for comp in &general_components {
-        for (i, m) in merged.iter_mut().enumerate() {
-            value.set_from(comp.gamma);
-            for (shift, mask, tab) in &comp.subs {
-                tab.ring_at((i >> shift) & mask, &mut sub_value);
-                value *= &sub_value;
+        let (scalars, rings): (Vec<_>, Vec<_>) = comp
+            .subs
+            .iter()
+            .partition(|(_, _, t)| matches!(t, SubTable::Scalar(_)));
+        let unit = is_unit(comp.gamma);
+        'entries: for (i, m) in merged.iter_mut().enumerate() {
+            let mut c: u64 = 1;
+            for (shift, mask, tab) in &scalars {
+                let SubTable::Scalar(v) = tab else {
+                    unreachable!()
+                };
+                c = unsafe { multiply_mod(c, v[(i >> shift) & mask], MOD_Q) };
             }
-            *m += &value;
+            if c == 0 {
+                continue;
+            }
+            if !unit {
+                value.set_from(comp.gamma);
+            }
+            for (k, (shift, mask, tab)) in rings.iter().enumerate() {
+                let at = (i >> shift) & mask;
+                if tab.is_zero(at) {
+                    continue 'entries;
+                }
+                if unit && k == 0 {
+                    tab.ring_at(at, &mut value);
+                } else {
+                    tab.ring_at(at, &mut sub_value);
+                    value *= &sub_value;
+                }
+            }
+            let addend = m.v;
+            unsafe {
+                eltwise_fma_mod(
+                    m.v.as_mut_ptr(),
+                    value.v.as_ptr(),
+                    c,
+                    addend.as_ptr(),
+                    DEGREE as u64,
+                    MOD_Q,
+                )
+            };
         }
     }
     merged
