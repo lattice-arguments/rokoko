@@ -146,20 +146,42 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
     }
 
     pub fn partial_evaluate_with_mapped(&mut self, mapped: &mut Self, value: &E) -> bool {
-        let (Some(own), Some(other)) = (&self.borrowed, &mapped.borrowed) else {
+        let (other, map) = match &mapped.borrowed {
+            Some(Borrowed {
+                data,
+                map: Some(map),
+            }) => (*data, *map),
+            _ => return false,
+        };
+        let Some(values) = self.values() else {
             return false;
         };
-        let Some(map) = other.map else {
-            return false;
-        };
-        let shared = own.map.is_none()
-            && std::ptr::eq(own.data, other.data)
+        let shared = std::ptr::eq(values, other)
             && self.non_zero_end == mapped.non_zero_end
             && self.suffix == 0
             && mapped.suffix == 0;
-        if !shared || own.data.len() < 2 {
+        if !shared || values.len() < 2 {
             return false;
         }
+        let mut image = E::zero();
+        map(value, &mut image);
+        if image == *value && values.len() / 2 >= BORROW_MIN_LEN {
+            mapped.borrowed = None;
+            self.partial_evaluate(value);
+            let folded = self.values().unwrap();
+            mapped.borrowed = Some(Borrowed {
+                data: unsafe { std::mem::transmute::<&[E], &'static [E]>(folded) },
+                map: Some(map),
+            });
+            mapped.non_zero_end = self.non_zero_end;
+            mapped.variable_count -= 1;
+            return true;
+        }
+        let Some(own) = &self.borrowed else {
+            mapped.partial_evaluate(value);
+            self.partial_evaluate(value);
+            return true;
+        };
         let half = own.data.len() / 2;
         let fold_end = ((self.non_zero_end + 1) / 2).min(half);
         let (mut first, mut second) = (Vec::with_capacity(half), Vec::with_capacity(half));
@@ -882,6 +904,47 @@ mod tests {
         let (mut a, mut b) = (table(None, n, 0, 0), table(None, n, 0, 0));
         assert!(!a.partial_evaluate_with_mapped(&mut b, &challenges[0]));
         assert!(a.borrowed.is_some() && b.borrowed.is_some());
+    }
+
+    #[test]
+    fn test_a_conjugate_view_folds_with_its_witness_under_fixed_challenges() {
+        crate::common::init_common();
+        let n = 8 * BORROW_MIN_LEN;
+        let data = crate::common::sampling::sample_random_short_vector(n, 60, Representation::IncompleteNTT);
+        let fixed = |x: &RingElement| x + &x.conjugate();
+        let challenges: Vec<RingElement> =
+            crate::common::sampling::sample_random_short_vector(14, 1 << 20, Representation::IncompleteNTT)
+                .iter()
+                .enumerate()
+                .map(|(k, x)| if k == 3 { x.clone() } else { fixed(x) })
+                .collect();
+        assert!(challenges[3].conjugate() != challenges[3]);
+        let map: fn(&RingElement, &mut RingElement) = conjugate;
+        for (end, rounds) in [(n, [true, true, true, false, false]), (n - 5, [true, true, false, false, false])] {
+            let mut a = unsafe { LinearSumcheck::from_borrowed(&data, end, None) };
+            let mut b = unsafe { LinearSumcheck::from_borrowed(&data, end, Some(map)) };
+            let mut c = unsafe { LinearSumcheck::from_borrowed(&data, end, None) };
+            let mut d = unsafe { LinearSumcheck::from_borrowed(&data, end, Some(map)) };
+            let rs = if end == n {
+                challenges[..13].to_vec()
+            } else {
+                [&challenges[..2], &challenges[3..]].concat()
+            };
+            for (k, r) in rs.iter().enumerate() {
+                let fused = a.partial_evaluate_with_mapped(&mut b, r);
+                if !fused {
+                    a.partial_evaluate(r);
+                    b.partial_evaluate(r);
+                }
+                c.partial_evaluate(r);
+                d.partial_evaluate(r);
+                assert_eq!(b.borrowed.is_some(), rounds.get(k).copied().unwrap_or(false), "round {k}");
+                assert_eq!(snapshot(&a), snapshot(&c));
+                assert_eq!(snapshot(&b), snapshot(&d));
+            }
+            assert_eq!(a.final_evaluations(), c.final_evaluations());
+            assert_eq!(b.final_evaluations(), d.final_evaluations());
+        }
     }
 
     #[test]
