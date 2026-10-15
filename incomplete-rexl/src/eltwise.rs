@@ -1831,6 +1831,55 @@ macro_rules! load {
     };
 }
 
+pub fn shoup_quotient(factor: u64, modulus: u64) -> u64 {
+    MultiplyFactor::new(factor, 52, modulus).barrett_factor()
+}
+
+pub fn eltwise_mult_mod_shoup(
+    result: &mut [u64],
+    operand: &[u64],
+    factors: &[u64],
+    quotients: &[u64],
+    modulus: u64,
+) {
+    let n = result.len();
+    assert!(operand.len() == n && factors.len() == n && quotients.len() == n);
+    #[cfg(target_arch = "x86_64")]
+    if *HAS_AVX512IFMA && modulus < (1u64 << 50) && n.is_multiple_of(8) {
+        unsafe { eltwise_mult_mod_shoup_avx512_ifma(result, operand, factors, quotients, modulus) };
+        return;
+    }
+    for ((r, &x), &w) in result.iter_mut().zip(operand).zip(factors) {
+        *r = crate::number_theory::multiply_mod(x, w, modulus);
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512ifma")]
+unsafe fn eltwise_mult_mod_shoup_avx512_ifma(
+    result: &mut [u64],
+    operand: &[u64],
+    factors: &[u64],
+    quotients: &[u64],
+    modulus: u64,
+) {
+    let zero = _mm512_setzero_si512();
+    let p = _mm512_set1_epi64(modulus as i64);
+    let mask = _mm512_set1_epi64(((1u64 << 52) - 1) as i64);
+    for i in (0..result.len()).step_by(8) {
+        let x = load!(operand.as_ptr().add(i));
+        let w = load!(factors.as_ptr().add(i));
+        let q = _mm512_madd52hi_epu64(zero, x, load!(quotients.as_ptr().add(i)));
+        let d = _mm512_sub_epi64(
+            _mm512_madd52lo_epu64(zero, x, w),
+            _mm512_madd52lo_epu64(zero, q, p),
+        );
+        let d = _mm512_and_si512(d, mask);
+        let r = _mm512_min_epu64(d, _mm512_sub_epi64(d, p));
+        _mm512_storeu_si512(result.as_mut_ptr().add(i) as *mut __m512i, r);
+    }
+}
+
 /// `d_0..d_6` for `D = 4`; `a_0 b_0, (a_0 + a_1)(b_0 + b_1), a_1 b_1` for `D = 2`.
 const fn slot_cells(d: usize) -> usize {
     2 * d - 1
@@ -2658,6 +2707,32 @@ mod slot_tests {
             .iter()
             .map(|&z| MultiplyFactor::new(z, 52, modulus).barrett_factor())
             .collect()
+    }
+
+    #[test]
+    fn test_shoup_mult_matches_multiply_mod() {
+        for modulus in IFMA_MODULI {
+            for (case, values) in [xorshift_vec(64, modulus, 7), edge_vec(64, modulus, 9)]
+                .into_iter()
+                .enumerate()
+            {
+                let factors = [xorshift_vec(64, modulus, 11), edge_vec(64, modulus, 13)];
+                for factors in factors {
+                    let quotients: Vec<u64> = factors
+                        .iter()
+                        .map(|&w| shoup_quotient(w, modulus))
+                        .collect();
+                    let mut got = vec![0u64; 64];
+                    eltwise_mult_mod_shoup(&mut got, &values, &factors, &quotients, modulus);
+                    let want: Vec<u64> = values
+                        .iter()
+                        .zip(&factors)
+                        .map(|(&x, &w)| multiply_mod(x, w, modulus))
+                        .collect();
+                    assert!(got == want, "m={modulus} case={case}");
+                }
+            }
+        }
     }
 
     #[cfg(target_arch = "x86_64")]

@@ -51,6 +51,26 @@ pub unsafe fn eltwise_mult_mod(
 }
 
 #[inline(always)]
+pub unsafe fn eltwise_mult_mod_shoup(
+    result: *mut u64,
+    operand: *const u64,
+    factors: *const u64,
+    quotients: *const u64,
+    n: u64,
+    modulus: u64,
+) {
+    let result = slice_from_raw_mut(result, n);
+    let operand = slice_from_raw(operand, n);
+    let factors = slice_from_raw(factors, n);
+    let quotients = slice_from_raw(quotients, n);
+    hexl::eltwise_mult_mod_shoup(result, operand, factors, quotients, modulus);
+}
+
+pub fn shoup_quotient(factor: u64, modulus: u64) -> u64 {
+    hexl::shoup_quotient(factor, modulus)
+}
+
+#[inline(always)]
 pub unsafe fn get_roots(n: u64, modulus: u64) -> *const u64 {
     hexl::get_roots(n as usize, modulus)
 }
