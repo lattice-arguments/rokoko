@@ -52,6 +52,11 @@ pub fn intermediate_sumcheck_verifier(
     fine_proj_batching_challenges: &[BatchedProjectionChallengesSuccinct; NOF_BATCHES],
     hash_wrapper: &mut HashWrapper,
 ) -> Vec<RingElement> {
+    assert!(
+        !std::mem::replace(&mut verifier_sumcheck_context.spent, true),
+        "a sumcheck context serves one proof; build a fresh one with init_verifier"
+    );
+
     assert_eq!(
         folded_commitment.len(),
         config.basic_commitment_rank,

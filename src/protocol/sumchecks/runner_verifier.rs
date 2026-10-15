@@ -157,6 +157,11 @@ pub fn sumcheck_verifier(
     claims: &[RingElement],
     hash_wrapper: &mut HashWrapper,
 ) -> Vec<RingElement> {
+    assert!(
+        !std::mem::replace(&mut verifier_sumcheck_context.spent, true),
+        "a sumcheck context serves one proof; build a fresh one with init_verifier"
+    );
+
     hash_wrapper.update_with_ring_element_slice(rc_commitment);
     hash_wrapper.update_with_ring_element_slice(&round_proof.rc_opening_inner);
     let mut projection_matrix =

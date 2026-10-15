@@ -48,6 +48,9 @@ pub struct IntermediateVerifierSumcheckContext {
     pub combiner_evaluation: ElephantCell<CombinerEvaluation<RingElement>>,
     pub field_combiner_evaluation: ElephantCell<RingToFieldCombinerEvaluation>,
     pub next: Option<Box<IntermediateVerifierSumcheckContext>>,
+    /// Set once a proof has been checked against the context: its evaluations fold their tables
+    /// and cache their results in place, so a context serves one proof.
+    pub(crate) spent: bool,
 }
 
 impl IntermediateVerifierSumcheckContext {

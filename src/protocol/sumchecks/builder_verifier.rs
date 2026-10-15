@@ -1093,6 +1093,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
             },
             None => None,
         },
+        spent: false,
     }
 }
 

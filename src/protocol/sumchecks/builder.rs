@@ -795,5 +795,6 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
             },
             None => None,
         },
+        spent: false,
     }
 }

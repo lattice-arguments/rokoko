@@ -170,5 +170,6 @@ pub fn init_intermediate_sumcheck(
             }
             _ => None,
         },
+        spent: false,
     }
 }

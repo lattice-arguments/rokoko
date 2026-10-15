@@ -379,8 +379,11 @@ mod tests {
         Config, IntermediateRoundProof, RoundProof, SimpleRoundProof, SumcheckConfig,
         SumcheckRoundProof,
     };
-    use crate::protocol::crs::VerifierCRS;
-    use crate::protocol::sumchecks::builder_verifier::init_verifier;
+    use crate::protocol::crs::{VerifierCRS, CRS};
+    use crate::protocol::sumcheck::{init_sumcheck, SumcheckContext};
+    use crate::protocol::sumchecks::{
+        builder_verifier::init_verifier, context_verifier::VerifierSumcheckContext,
+    };
     use crate::protocol::wire;
 
     /// An honest proof of one round of `config`, with the statement a verifier checks it against.
@@ -398,24 +401,28 @@ mod tests {
 
     impl Honest {
         fn prove(config: &SumcheckConfig) -> Honest {
+            let crs = CRS::gen_prover_crs(config);
+            Honest::prove_in(config, &crs, &mut init_sumcheck(&crs, config))
+        }
+
+        fn prove_in(
+            config: &SumcheckConfig,
+            crs: &CRS,
+            sumcheck_context: &mut SumcheckContext,
+        ) -> Honest {
             use crate::common::{
                 decomposition::decompose, matrix::VerticallyAlignedMatrix,
                 ring_arithmetic::Representation, sampling::sample_random_short_vector,
             };
             use crate::protocol::{
-                crs::CRS,
                 evaluation_point_sampler::sample_initial_evaluation_points,
                 parties::{commiter::commit, prover::prover_round},
-                sumcheck::init_sumcheck,
             };
 
             let input_chunks = 2;
             let base_log = 15;
             let height = config.witness_height / input_chunks;
             let width = config.witness_width;
-
-            let crs = CRS::gen_prover_crs(config);
-            let mut sumcheck_context = init_sumcheck(&crs, config);
 
             let sampled = (0..config.nof_openings)
                 .map(|_| sample_initial_evaluation_points(height, width, base_log, input_chunks))
@@ -441,16 +448,16 @@ mod tests {
                 data: decompose(&raw, base_log as u64, input_chunks),
             };
 
-            let (commitment_with_aux, rc_commitment) = commit(&crs, config, &witness);
+            let (commitment_with_aux, rc_commitment) = commit(crs, config, &witness);
 
             let (proof, claims) = prover_round(
-                &crs,
+                crs,
                 config,
                 &commitment_with_aux,
                 &witness,
                 &inner,
                 &outer,
-                &mut sumcheck_context,
+                sumcheck_context,
                 true,
                 None,
                 None,
@@ -475,11 +482,17 @@ mod tests {
         }
 
         fn verify(&self, proof: &SumcheckRoundProof) {
-            self.verify_statement(&self.rc_commitment, &self.claims, proof);
+            self.verify_in(
+                &mut init_verifier(&self.crs, &self.config),
+                &self.rc_commitment,
+                &self.claims,
+                proof,
+            );
         }
 
-        fn verify_statement(
+        fn verify_in(
             &self,
+            sumcheck_context: &mut VerifierSumcheckContext,
             rc_commitment: &[RingElement],
             claims: &[RingElement],
             proof: &SumcheckRoundProof,
@@ -494,7 +507,7 @@ mod tests {
                 &self.inner,
                 &self.outer,
                 claims,
-                &mut init_verifier(&self.crs, &self.config),
+                sumcheck_context,
                 None,
                 None,
             );
@@ -741,7 +754,14 @@ mod tests {
             ),
             ("no commitment root", &[][..], &honest.claims[..]),
         ] {
-            let refusal = refusal(|| honest.verify_statement(rc_commitment, claims, &proof));
+            let refusal = refusal(|| {
+                honest.verify_in(
+                    &mut init_verifier(&honest.crs, &honest.config),
+                    rc_commitment,
+                    claims,
+                    &proof,
+                )
+            });
             assert!(refusal.starts_with("proof shape"), "{case}: {refusal}");
         }
     }
@@ -803,6 +823,46 @@ mod tests {
                 projection_norm_bound: f64::INFINITY,
             }))),
         }
+    }
+
+    /// A context serves one proof: its tables fold and its evaluations cache in place, so a
+    /// second proof through the same context is refused outright rather than run against what the
+    /// first one left behind.
+    #[test]
+    fn a_context_serves_one_proof() {
+        init_common();
+        let config = sumcheck_config(three_openings_aux());
+        let crs = CRS::gen_prover_crs(&config);
+        let mut prover_context = init_sumcheck(&crs, &config);
+        let first = Honest::prove_in(&config, &crs, &mut prover_context);
+        let refusal_to_prove =
+            refusal(|| drop(Honest::prove_in(&config, &crs, &mut prover_context)));
+        assert!(
+            refusal_to_prove.starts_with("a sumcheck context serves one proof"),
+            "{refusal_to_prove}"
+        );
+
+        let second = Honest::prove(&config);
+        let mut verifier_context = init_verifier(&first.crs, &config);
+        first.verify_in(
+            &mut verifier_context,
+            &first.rc_commitment,
+            &first.claims,
+            &first.proof,
+        );
+        let refusal_to_verify = refusal(|| {
+            second.verify_in(
+                &mut verifier_context,
+                &second.rc_commitment,
+                &second.claims,
+                &second.proof,
+            )
+        });
+        assert!(
+            refusal_to_verify.starts_with("a sumcheck context serves one proof"),
+            "{refusal_to_verify}"
+        );
+        second.verify(&second.proof);
     }
 
     /// `three_openings_aux` with an intermediate round before the last one, whose basic
