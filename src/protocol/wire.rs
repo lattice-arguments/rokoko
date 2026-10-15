@@ -63,6 +63,18 @@ enum Role {
     WitnessEval,
 }
 
+impl Role {
+    /// The representation the protocol holds the role's ring elements in. The label the format
+    /// carries is not read by the transcript or the arithmetic, so it is accepted only when it is
+    /// this one.
+    fn representation(self) -> Representation {
+        match self {
+            Role::ProjectionCt => Representation::Coefficients,
+            _ => Representation::IncompleteNTT,
+        }
+    }
+}
+
 fn residue_bits() -> u32 {
     u64::BITS - (MOD_Q - 1).leading_zeros()
 }
@@ -570,11 +582,17 @@ impl Encoder {
         self.ring_slice(role, &m.data);
     }
 
+    /// A round polynomial is written without its leading zero coefficients, which neither its
+    /// evaluations nor the transcript see.
     fn polys(&mut self, polys: &[Polynomial<FieldExtension>]) {
         self.shape.put_varint(polys.len() as u64);
         for poly in polys {
-            self.shape.put(poly.num_coefficients as u64, 3);
-            for coeff in &poly.coefficients[..poly.num_coefficients] {
+            let len = poly.coefficients[..poly.num_coefficients]
+                .iter()
+                .rposition(|coeff| coeff.coeffs.iter().any(|&v| v != 0))
+                .map_or(0, |top| top + 1);
+            self.shape.put(len as u64, 3);
+            for coeff in &poly.coefficients[..len] {
                 for v in &coeff.coeffs {
                     self.push(Role::Poly, *v);
                 }
@@ -854,6 +872,9 @@ impl<'a> Decoder<'a> {
                 representations.push(representation(self.shape.get(2)?)?);
             }
         }
+        if representations.iter().any(|r| *r != role.representation()) {
+            return Err(WireError::Malformed);
+        }
         let flip = self.shape.get(1)? != 0;
 
         let mut els = Vec::with_capacity(len.min(4096));
@@ -1065,13 +1086,16 @@ pub fn initial_to_bytes(proof: &ClaimsProof) -> Vec<u8> {
     encoder.finish()
 }
 
+/// Like `from_bytes`, for the claims proof.
 pub fn initial_from_bytes(bytes: &[u8]) -> Result<ClaimsProof, WireError> {
     let mut decoder = Decoder::new(bytes)?;
-    Ok(ClaimsProof {
+    let proof = ClaimsProof {
         polys: decoder.polys()?,
         witness_eval: decoder.ring(Role::WitnessEval)?,
         conj_witness_eval: decoder.option_ring(Role::WitnessEval)?,
-    })
+    };
+    canonical(bytes, initial_to_bytes(&proof))?;
+    Ok(proof)
 }
 
 pub fn to_bytes(proof: &SumcheckRoundProof) -> Vec<u8> {
@@ -1080,8 +1104,20 @@ pub fn to_bytes(proof: &SumcheckRoundProof) -> Vec<u8> {
     encoder.finish()
 }
 
+/// Accepts exactly the bytes `to_bytes` writes for the proof they decode to, so an accepted proof
+/// has one encoding: the coding choices the format leaves open (the histograms, which elements
+/// are coded as coefficients, the padding of each section) are the encoder's, never the sender's.
 pub fn from_bytes(bytes: &[u8]) -> Result<SumcheckRoundProof, WireError> {
-    Decoder::new(bytes)?.sumcheck()
+    let proof = Decoder::new(bytes)?.sumcheck()?;
+    canonical(bytes, to_bytes(&proof))?;
+    Ok(proof)
+}
+
+fn canonical(bytes: &[u8], encoded: Vec<u8>) -> Result<(), WireError> {
+    if encoded != bytes {
+        return Err(WireError::Malformed);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1109,6 +1145,15 @@ mod tests {
         m
     }
 
+    /// A projection image, which the protocol holds as coefficients.
+    fn image(height: usize, width: usize, bound: u64) -> VerticallyAlignedMatrix<RingElement> {
+        let mut m = vertical(height, width, bound);
+        for slot in m.data.iter_mut() {
+            slot.to_representation(Representation::Coefficients);
+        }
+        m
+    }
+
     fn horizontal(height: usize, width: usize) -> HorizontallyAlignedMatrix<RingElement> {
         let mut m = HorizontallyAlignedMatrix::new_zero(height, width, &uniform());
         for slot in m.data.iter_mut() {
@@ -1132,7 +1177,7 @@ mod tests {
     fn simple() -> RoundProof {
         RoundProof::Simple(SimpleRoundProof {
             folded_witness: vertical(4, 3, 1 << 11),
-            projection_image_ct: vertical(2, 2, 1 << 5),
+            projection_image_ct: image(2, 2, 1 << 5),
             batched_projection_image: horizontal(2, 2),
             opening_rhs: horizontal(2, 2),
         })
@@ -1146,7 +1191,7 @@ mod tests {
             claim_over_witness_conjugate: uniform(),
             norm_claim: short(1 << 28),
             next_round_commitment: Some(NextRoundCommitment::Simple(horizontal(2, 1))),
-            projection_image_ct: vertical(2, 1, 1 << 5),
+            projection_image_ct: image(2, 1, 1 << 5),
             batched_projection_image: horizontal(1, 2),
             next: Some(Box::new(simple())),
         })
@@ -1286,6 +1331,90 @@ mod tests {
         };
         let bytes = initial_to_bytes(&claims);
         assert_eq!(initial_from_bytes(&bytes).err(), Some(WireError::Malformed));
+    }
+
+    /// The decoder accepts only the bytes the encoder writes: a change to a coding choice (a
+    /// histogram, a section's padding, which elements travel as coefficients, a rANS state) or
+    /// to the length is refused unless it changes the proof, and what decodes encodes back to
+    /// the bytes it came from.
+    #[test]
+    fn wire_accepts_only_the_bytes_it_writes() {
+        init_common();
+        let proof = sumcheck(
+            Some(Box::new(RoundProof::Sumcheck(sumcheck(
+                Some(Box::new(intermediate())),
+                false,
+            )))),
+            true,
+        );
+        let bytes = to_bytes(&proof);
+        let section =
+            |i: usize| u32::from_le_bytes(bytes[1 + 4 * i..5 + 4 * i].try_into().unwrap()) as usize;
+        let choices = 13 + section(0) + section(1) + 4 * LANES;
+        for bit in 0..8 * choices {
+            let mut flipped = bytes.clone();
+            flipped[bit / 8] ^= 1 << (bit % 8);
+            if let Ok(decoded) = from_bytes(&flipped) {
+                assert_eq!(to_bytes(&decoded), flipped, "bit {bit}");
+            }
+        }
+        let mut longer = bytes.clone();
+        longer.push(0);
+        assert!(from_bytes(&longer).is_err());
+    }
+
+    /// The transcript and the arithmetic read a ring element's coefficients and not its label, so
+    /// a relabelled element would be a second encoding of the same proof; the decoder accepts
+    /// only the representation the protocol holds each role in.
+    #[test]
+    fn wire_refuses_a_relabelled_ring_element() {
+        init_common();
+        let relabelled: [fn(&mut SumcheckRoundProof); 3] = [
+            |p| p.claim_over_witness.representation = Representation::Coefficients,
+            |p| p.norm_claim.representation = Representation::Coefficients,
+            |p| {
+                let Some(RoundProof::Simple(last)) = p.next.as_deref_mut() else {
+                    unreachable!()
+                };
+                last.projection_image_ct.data[0].representation = Representation::IncompleteNTT;
+            },
+        ];
+        for relabel in relabelled {
+            let mut proof = sumcheck(Some(Box::new(simple())), false);
+            assert!(from_bytes(&to_bytes(&proof)).is_ok());
+            relabel(&mut proof);
+            assert_eq!(
+                from_bytes(&to_bytes(&proof)).err(),
+                Some(WireError::Malformed)
+            );
+        }
+
+        let mut claims = ClaimsProof {
+            polys: (2..=3).map(poly).collect(),
+            witness_eval: uniform(),
+            conj_witness_eval: Some(uniform()),
+        };
+        assert!(initial_from_bytes(&initial_to_bytes(&claims)).is_ok());
+        claims.witness_eval.representation = Representation::Coefficients;
+        assert_eq!(
+            initial_from_bytes(&initial_to_bytes(&claims)).err(),
+            Some(WireError::Malformed)
+        );
+    }
+
+    /// A round polynomial is written at its degree, so one held with a zero leading coefficient
+    /// has the same single encoding.
+    #[test]
+    fn wire_writes_a_round_polynomial_at_its_degree() {
+        init_common();
+        let proof = sumcheck(None, false);
+        let mut padded = from_bytes(&to_bytes(&proof)).unwrap();
+        padded.polys[0].num_coefficients += 1;
+        assert_eq!(to_bytes(&padded), to_bytes(&proof));
+        assert_eq!(
+            from_bytes(&to_bytes(&padded)).unwrap().polys[0].num_coefficients,
+            proof.polys[0].num_coefficients
+        );
     }
 
     /// A matrix travels with its shape, which must describe its entries.
