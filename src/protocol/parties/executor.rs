@@ -990,15 +990,14 @@ mod tests {
         };
         let context = init_sumcheck(&crs, &config);
         let witness = short_witness(config.composed_witness_length);
+        let held = std::cell::Cell::new(false);
         let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _borrows = borrow_caller_data(&context, &config, &witness);
-            assert_eq!(
-                borrowing(&context).contains(&true),
-                cfg!(feature = "unsafe-sumcheck")
-            );
+            let _borrows = unsafe { borrow_caller_data(&context, &config, &witness) };
+            held.set(borrowing(&context).contains(&true));
             panic!("the sumcheck panics while it borrows the witness");
         }));
         assert!(caught.is_err());
+        assert_eq!(held.get(), cfg!(feature = "unsafe-sumcheck"));
         assert!(!borrowing(&context).contains(&true));
         drop(witness);
         let mut proved = init_sumcheck(&crs, &config);

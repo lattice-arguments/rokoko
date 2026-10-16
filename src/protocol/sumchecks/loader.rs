@@ -33,7 +33,7 @@ impl Drop for Borrows<'_> {
     }
 }
 
-pub(crate) fn borrow_caller_data<'a>(
+pub(crate) unsafe fn borrow_caller_data<'a>(
     sumcheck_context: &SumcheckContext,
     config: &SumcheckConfig,
     combined_witness: &'a [RingElement],

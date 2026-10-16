@@ -124,7 +124,7 @@ pub fn sumcheck(
             projection_matrix,
             &projection_matrix_flatter,
         );
-        borrow_caller_data(sumcheck_context, config, combined_witness)
+        unsafe { borrow_caller_data(sumcheck_context, config, combined_witness) }
     };
 
     let norm_inner_norm_claim = sumcheck_context
