@@ -974,6 +974,37 @@ mod tests {
         second.verify(&second.proof);
     }
 
+    #[test]
+    fn a_context_holds_no_caller_borrow_once_its_sumcheck_panics_or_ends() {
+        use crate::protocol::sumchecks::loader::borrow_caller_data;
+        init_common();
+        let config = sumcheck_config(three_openings_aux());
+        let crs = CRS::gen_prover_crs(&config);
+        let borrowing = |context: &SumcheckContext| {
+            let witness = &context.combined_witness_sumcheck;
+            let conjugate = &context.norm_check_sumcheck.conjugated_combined_witness;
+            [witness, conjugate]
+                .into_iter()
+                .map(|table| table.borrow().borrows_caller_data())
+                .collect::<Vec<bool>>()
+        };
+        let context = init_sumcheck(&crs, &config);
+        let witness = short_witness(config.composed_witness_length);
+        let held = std::cell::Cell::new(false);
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _borrows = unsafe { borrow_caller_data(&context, &config, &witness) };
+            held.set(borrowing(&context).contains(&true));
+            panic!("the sumcheck panics while it borrows the witness");
+        }));
+        assert!(caught.is_err());
+        assert_eq!(held.get(), cfg!(feature = "unsafe-sumcheck"));
+        assert!(!borrowing(&context).contains(&true));
+        drop(witness);
+        let mut proved = init_sumcheck(&crs, &config);
+        drop(Honest::prove_in(&config, &crs, &mut proved, short_witness));
+        assert!(!borrowing(&proved).contains(&true));
+    }
+
     /// `three_openings_aux` with an intermediate round before the last one, whose basic
     /// commitment has a rank that is not a power of two and so a zero padding row.
     fn intermediate_aux() -> crate::protocol::config_generator::AuxSumcheckConfig {
