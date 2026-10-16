@@ -672,4 +672,48 @@ mod tests {
             }
         }
     }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+    #[test]
+    fn grouped_lanes_match_the_definition_on_extreme_digits_or_decline() {
+        use crate::common::arithmetic::project_lanes_grouped;
+        use std::arch::x86_64::__m512i;
+        crate::common::init_common();
+        let width = 256 * 32;
+        let rows = extreme_rows(width);
+        let projection_matrix = ProjectionMatrix::from_i8(rows.clone());
+        let offsets = ternary_group_offsets(&projection_matrix);
+        for (name, digits) in extreme_digits(width, 32) {
+            let lanes: Vec<__m512i> = digits
+                .chunks(32)
+                .map(|c| unsafe {
+                    std::mem::transmute::<[i16; 32], __m512i>(c.try_into().unwrap())
+                })
+                .collect();
+            let sums = project_lanes_grouped(&lanes, &offsets, rows.len());
+            let fits = digits.iter().all(|&x| x.unsigned_abs() < 2048);
+            assert_eq!(sums.is_some(), fits, "{name}");
+            let Some(sums) = sums else {
+                continue;
+            };
+            let sums: Vec<i32> = sums
+                .into_iter()
+                .flat_map(|x| unsafe { std::mem::transmute::<__m512i, [i32; 16]>(x) })
+                .collect();
+            for (row, entries) in rows.iter().enumerate() {
+                for c in 0..32 {
+                    let sum: i64 = entries
+                        .iter()
+                        .zip(digits.chunks(32))
+                        .map(|(&j, lane)| j as i64 * lane[c] as i64)
+                        .sum();
+                    assert_eq!(
+                        sums[32 * row + c] as i64,
+                        sum,
+                        "{name}, row {row}, lane {c}"
+                    );
+                }
+            }
+        }
+    }
 }
