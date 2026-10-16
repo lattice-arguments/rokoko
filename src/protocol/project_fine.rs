@@ -13,6 +13,11 @@ use crate::{
     protocol::config::{ConfigBase, SimpleConfig},
 };
 
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+use crate::{
+    common::arithmetic::project_lanes_grouped, protocol::project_coarse::ternary_group_offsets,
+};
+
 /// Computes J_batched = c'_1^T * J_embedded
 ///
 /// J_embedded applies dual embedding: each coefficient j ∈ {-1,0,1} becomes a polynomial
@@ -374,6 +379,50 @@ fn reduce_conjugate_to_incomplete_ntt(el: &mut RingElement) {
     el.conjugate_in_place();
 }
 
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+const LANES: usize = 32;
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+fn project_chunks_grouped(
+    inputs: &[RingElement],
+    in_len: usize,
+    offsets: &[u64],
+    projection_matrix: &ProjectionMatrix,
+    outputs: &mut [RingElement],
+) -> bool {
+    use std::arch::x86_64::_mm512_setzero_si512;
+    assert!(inputs.len() <= LANES * in_len);
+    let mut lanes = vec![unsafe { _mm512_setzero_si512() }; in_len * DEGREE];
+    let entries = lanes.as_mut_ptr() as *mut i16;
+    for (c, chunk) in inputs.chunks(in_len).enumerate() {
+        for (e, element) in chunk.iter().enumerate() {
+            for (t, &x) in element.v.iter().enumerate() {
+                let centered = if x > MOD_Q / 2 {
+                    x as i64 - MOD_Q as i64
+                } else {
+                    x as i64
+                };
+                if centered.unsigned_abs() > i16::MAX as u64 {
+                    return false;
+                }
+                unsafe { *entries.add((e * DEGREE + t) * LANES + c) = centered as i16 };
+            }
+        }
+    }
+    let h = projection_matrix.projection_height;
+    let Some(sums) = project_lanes_grouped(&lanes, offsets, h) else {
+        return false;
+    };
+    let sums = unsafe { std::slice::from_raw_parts(sums.as_ptr() as *const i32, h * LANES) };
+    for (c, out) in outputs.chunks_mut(h / DEGREE).enumerate() {
+        let rows = sums.chunks_exact(LANES).map(|row| row[c] as i64);
+        for (x, sum) in out.iter_mut().flat_map(|out| out.v.iter_mut()).zip(rows) {
+            *x = x.wrapping_add_signed(sum);
+        }
+    }
+    true
+}
+
 /// Computes the coefficient-wise projection: `V = (I_d ⊗ J) · coeff(W)`.
 ///
 /// This function projects the witness `W` through a structured projection matrix `J`.
@@ -459,31 +508,14 @@ pub fn project_coefficients(
         witness.height
     );
 
-    // Process each column independently (no interaction between columns)
-    for col in 0..witness.used_cols {
-        // Process the projection in chunks
-        // Each chunk processes (PROJECTION_HEIGHT / DEGREE) ring elements of the output
-        // which corresponds to PROJECTION_HEIGHT coefficients in the result
-        for rows_chunk in 0..image_ct.height / (projection_matrix.projection_height / DEGREE) {
-            // Extract the corresponding slice of witness coefficients for this chunk
-            // This is the input to one application of the projection matrix J
-            let subwitness = witness_coeff.col_slice(
-                col,
-                rows_chunk
-                    * projection_matrix.projection_ratio
-                    * (projection_matrix.projection_height / DEGREE),
-                (rows_chunk + 1)
-                    * projection_matrix.projection_ratio
-                    * (projection_matrix.projection_height / DEGREE),
-            );
-
-            // Get mutable slice of the output for this chunk
-            let projection_subimage = image_ct.col_slice_mut(
-                col,
-                rows_chunk * (projection_matrix.projection_height / DEGREE),
-                (rows_chunk + 1) * (projection_matrix.projection_height / DEGREE),
-            );
-
+    let out_len = projection_matrix.projection_height / DEGREE;
+    let in_len = projection_matrix.projection_ratio * out_len;
+    assert!(image_ct.height.is_multiple_of(out_len));
+    let chunks = witness.used_cols * (image_ct.height / out_len);
+    let masked = |inputs: &[RingElement], outputs: &mut [RingElement]| {
+        for (subwitness, projection_subimage) in
+            inputs.chunks(in_len).zip(outputs.chunks_mut(out_len))
+        {
             // Apply projection matrix J to this chunk
             // J has PROJECTION_HEIGHT rows (output coefficients)
             for inner_row in 0..projection_matrix.projection_height {
@@ -684,7 +716,23 @@ pub fn project_coefficients(
                 }
             }
         }
+    };
+    let inputs = &witness_coeff.data[..chunks * in_len];
+    let outputs = &mut image_ct.data[..chunks * out_len];
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+    {
+        let offsets = ternary_group_offsets(projection_matrix);
+        for (outputs, inputs) in outputs
+            .chunks_mut(LANES * out_len)
+            .zip(inputs.chunks(LANES * in_len))
+        {
+            if !project_chunks_grouped(inputs, in_len, &offsets, projection_matrix, outputs) {
+                masked(inputs, outputs);
+            }
+        }
     }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512bw")))]
+    masked(inputs, outputs);
     for el in image_ct.data.iter_mut() {
         unsafe {
             eltwise_reduce_mod(el.v.as_mut_ptr(), el.v.as_mut_ptr(), DEGREE as u64, MOD_Q);
@@ -1069,6 +1117,70 @@ mod tests {
                 "batch_projection column {} should produce the same result as computing project_coefficients followed by batching",
                 col
             );
+        }
+    }
+
+    #[test]
+    fn coefficients_project_as_defined_in_batches_and_alone() {
+        crate::common::init_common();
+        let (ratio, rows) = (32, 256);
+        let mut projection_matrix = ProjectionMatrix::new(ratio, rows);
+        projection_matrix.sample(&mut HashWrapper::new());
+        let out_len = rows / DEGREE;
+        let in_len = ratio * out_len;
+        let (height, width, used_cols) = (in_len * 40, 3, 2);
+        for bound in [Some(2048), None] {
+            let mut data: Vec<RingElement> = (0..height * width)
+                .map(|_| match bound {
+                    Some(bound) => {
+                        RingElement::random_bounded(Representation::IncompleteNTT, bound)
+                    }
+                    None => RingElement::random(Representation::IncompleteNTT),
+                })
+                .collect();
+            for x in data[used_cols * height..].iter_mut() {
+                *x = RingElement::zero(Representation::IncompleteNTT);
+            }
+            let witness = VerticallyAlignedMatrix {
+                data,
+                width,
+                height,
+                used_cols,
+            };
+            let image = project_coefficients(&witness, &projection_matrix);
+            for col in 0..width {
+                for chunk in 0..height / in_len {
+                    let coefficients: Vec<i128> = witness
+                        .col_slice(col, in_len * chunk, in_len * (chunk + 1))
+                        .iter()
+                        .flat_map(|x| {
+                            let mut x = x.clone();
+                            x.from_incomplete_ntt_to_strided_coefficients();
+                            x.from_strided_coefficients_to_coefficients();
+                            x.v.map(|c| c as i128)
+                        })
+                        .collect();
+                    let projected: Vec<u64> = image
+                        .col_slice(col, out_len * chunk, out_len * (chunk + 1))
+                        .iter()
+                        .flat_map(|x| x.v)
+                        .collect();
+                    for row in 0..rows {
+                        let sum: i128 = (0..ratio * rows)
+                            .map(|i| match projection_matrix[(row, i)] {
+                                (_, false) => 0,
+                                (true, true) => coefficients[i],
+                                (false, true) => -coefficients[i],
+                            })
+                            .sum();
+                        assert_eq!(
+                            projected[row] as i128,
+                            sum.rem_euclid(MOD_Q as i128),
+                            "{bound:?}, column {col}, chunk {chunk}, row {row}"
+                        );
+                    }
+                }
+            }
         }
     }
 

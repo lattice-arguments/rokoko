@@ -322,6 +322,26 @@ unsafe fn project_rows_in_blocks<const DEGREE: usize>(
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+pub(crate) fn project_lanes_grouped(
+    lanes: &[__m512i],
+    offsets: &[u64],
+    h: usize,
+) -> Option<Vec<__m512i>> {
+    let blocks = lanes.len() / BLOCK;
+    if blocks * BLOCK != lanes.len() {
+        return None;
+    }
+    let mut sums = vec![unsafe { _mm512_setzero_si512() }; 2 * h];
+    let lines = Lines {
+        base: lanes.as_ptr() as *const u8,
+        stride: 64,
+        len: lanes.len(),
+        slices: 1,
+    };
+    unsafe { ternary_rows(lines, offsets, h, |_, wide| sums.copy_from_slice(wide)) }.then_some(sums)
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
 struct Lines {
     base: *const u8,
     stride: usize,
