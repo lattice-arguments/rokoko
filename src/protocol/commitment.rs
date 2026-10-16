@@ -88,7 +88,7 @@ fn commit_basic_internal_with(
     for start in (0..witness.height).step_by(chunk) {
         for col in 0..witness.used_cols {
             let column = &witness.col(col)[start..];
-            for (i, row) in ck.iter().take(rank).enumerate() {
+            for (i, row) in ck[..rank].iter().enumerate() {
                 let key = row.preprocessed_row.get(start..).unwrap_or(&[]);
                 let count = chunk.min(key.len()).min(column.len());
                 incomplete_ntt_dot_into(commitment.index_mut((i, col)), key, 1, column, 1, count);
