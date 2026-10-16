@@ -7,7 +7,7 @@ use crate::{
         hash::HashWrapper,
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{Representation, RingElement},
+        ring_arithmetic::{incomplete_ntt_dot_into, Representation, RingElement},
     },
     hexl::bindings::{add_mod, eltwise_reduce_mod, multiply_mod},
     protocol::config::{ConfigBase, SimpleConfig},
@@ -862,11 +862,18 @@ fn batch_projection_into(
             let mut chunk_result = RingElement::zero(Representation::IncompleteNTT);
 
             // Inner product of j_batched with the corresponding chunk of witness column
-            for i in 0..inner_width_ring {
-                let mut temp = RingElement::zero(Representation::IncompleteNTT);
-                temp *= (&witness[(chunk * inner_width_ring + i, col)], &j_batched[i]);
-                chunk_result += &temp;
-            }
+            incomplete_ntt_dot_into(
+                &mut chunk_result,
+                witness.col_slice(
+                    col,
+                    chunk * inner_width_ring,
+                    (chunk + 1) * inner_width_ring,
+                ),
+                1,
+                &j_batched,
+                1,
+                inner_width_ring,
+            );
 
             // Multiply by c_0 coefficient and accumulate
             for deg in 0..DEGREE {
