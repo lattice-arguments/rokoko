@@ -27,7 +27,7 @@ use super::{
         OuterEvalClaimSumcheckContext, SumcheckContext,
     },
     helpers::{
-        batch_piece, ck_segment_sumcheck, ck_sumcheck, row_committed_pieces, sum_of,
+        batch_piece, row_committed_pieces, sum_of,
         sumcheck_from_prefix, FoldedLeaves, Recomposition,
     },
 };
@@ -91,13 +91,14 @@ fn ck_over_pieces(
     i: usize,
     data_selected: &[Vec<InputPiece>],
     ck_sumchecks: &mut Vec<ElephantCell<LinearSumcheck<RingElement>>>,
+    leaves: &mut FoldedLeaves,
 ) -> Data {
     let committed_len = config.committed_len();
     let mut terms: Vec<Data> = Vec::new();
 
     for pieces in data_selected {
         for piece in pieces {
-            let ck = ck_segment_sumcheck(
+            let ck = leaves.key_row(
                 crs,
                 total_vars,
                 committed_len,
@@ -138,6 +139,7 @@ fn build_com_verify_sumcheck_context(
                     i,
                     &data_selected,
                     &mut ck_sumchecks,
+                    leaves,
                 );
 
                 // The child level's input is this level's commitment; element i of it is
@@ -171,7 +173,17 @@ fn build_com_verify_sumcheck_context(
     let mut ck_sumchecks =
         Vec::with_capacity(current.rank * data_selected.iter().map(Vec::len).sum::<usize>());
     let outputs = (0..current.rank)
-        .map(|i| ck_over_pieces(crs, total_vars, current, i, &data_selected, &mut ck_sumchecks))
+        .map(|i| {
+            ck_over_pieces(
+                crs,
+                total_vars,
+                current,
+                i,
+                &data_selected,
+                &mut ck_sumchecks,
+                leaves,
+            )
+        })
         .collect::<Vec<_>>();
 
     ComVerifySumcheckContext {
@@ -203,6 +215,8 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
 
     let combined_witness_sumcheck = ElephantCell::new(LinearSumcheck::<RingElement>::unloaded(
         config.composed_witness_length,
+        0,
+        0,
     ));
     let witness = combined_witness_sumcheck.clone() as Data;
 
@@ -216,7 +230,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     );
 
     let commitment_key_rows_sumcheck = (0..config.basic_commitment_rank)
-        .map(|i| ck_sumcheck(crs, total_vars, config.witness_height, i, 0))
+        .map(|i| leaves.key_row(crs, total_vars, config.witness_height, i, 1, 0))
         .collect::<Vec<ElephantCell<LinearSumcheck<RingElement>>>>();
 
     let folding_challenges_sumcheck = ElephantCell::new(
@@ -584,7 +598,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     };
 
     let conjugated_combined_witness_sumcheck = ElephantCell::new(
-        LinearSumcheck::<RingElement>::unloaded(config.composed_witness_length),
+        LinearSumcheck::<RingElement>::unloaded(config.composed_witness_length, 0, 0),
     );
 
     // The norm claim covers the most inner commitment of every recursion tree: all blocks of
@@ -769,6 +783,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         combined_witness_sumcheck: combined_witness_sumcheck.clone(),
         selectors: leaves.selectors,
         recomposition_weights: leaves.weights,
+        key_rows: leaves.key_rows,
         folding_challenges_sumcheck,
         commitment_key_rows_sumcheck,
         commitment_fold_sumchecks,

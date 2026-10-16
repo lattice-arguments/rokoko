@@ -115,18 +115,46 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
             viewed: false,
         }
     }
-    /// A table of `count` entries whose data is installed later with `install`.
-    pub fn unloaded(count: usize) -> Self {
+    /// A table of `count` entries, padded like `new_with_prefixed_sufixed_data`, whose data is
+    /// installed later with `install` or `install_borrowed`.
+    pub fn unloaded(count: usize, prefix_size: usize, suffix_size: usize) -> Self {
         LinearSumcheck {
             data: Vec::new(),
             borrowed: None,
-            variable_count: count.ilog2() as usize,
+            variable_count: count.ilog2() as usize + prefix_size + suffix_size,
             index_mask: count - 1,
             poly_scratch: RefCell::new(Polynomial::new(2)),
-            suffix: 0,
+            suffix: suffix_size,
             non_zero_end: 0,
             viewed: false,
         }
+    }
+
+    /// Loads an unloaded table with `data`, borrowed while the table is unfolded.
+    ///
+    /// # Safety
+    /// `data` must outlive every use of the table before its first data fold.
+    pub unsafe fn install_borrowed(&mut self, data: &[E]) {
+        assert!(
+            self.data.is_empty() && self.borrowed.is_none(),
+            "only an unloaded table is installed"
+        );
+        assert_eq!(
+            data.len(),
+            self.index_mask + 1,
+            "the installed data has another length"
+        );
+        self.non_zero_end = data.len();
+        #[cfg(feature = "unsafe-sumcheck")]
+        if data.len() >= BORROW_MIN_LEN {
+            self.borrowed = Some(Borrowed {
+                data: unsafe { std::mem::transmute::<&[E], &'static [E]>(data) },
+                map: None,
+                conjugate: false,
+            });
+            return;
+        }
+        self.data = data.to_vec();
     }
 
     /// Replaces an unloaded table by `table`, which must have its shape.
@@ -936,11 +964,11 @@ mod tests {
         let witness: Vec<RingElement> = (0..2048)
             .map(|_| RingElement::random(Representation::IncompleteNTT))
             .collect();
-        let mut table = LinearSumcheck::<RingElement>::unloaded(2048);
+        let mut table = LinearSumcheck::<RingElement>::unloaded(2048, 0, 0);
         table.install(witness_oracle(&witness, 2000));
         let (_, _, end, entries) = snapshot(&table);
         assert_eq!((end, &entries[..]), (2000, &witness[..]));
-        let mut conjugate = LinearSumcheck::<RingElement>::unloaded(2048);
+        let mut conjugate = LinearSumcheck::<RingElement>::unloaded(2048, 0, 0);
         conjugate.install(conjugated_oracle(&witness, 2000));
         let conjugates: Vec<RingElement> = witness.iter().map(RingElement::conjugate).collect();
         assert_eq!(snapshot(&conjugate).3, conjugates);
@@ -949,9 +977,33 @@ mod tests {
         }));
         assert!(again.is_err());
         let other = std::panic::catch_unwind(|| {
-            LinearSumcheck::<RingElement>::unloaded(1024).install(witness_oracle(&witness, 2000))
+            LinearSumcheck::<RingElement>::unloaded(1024, 0, 0)
+                .install(witness_oracle(&witness, 2000))
         });
         assert!(other.is_err());
+    }
+
+    #[test]
+    fn a_table_installed_from_borrowed_data_folds_like_a_loaded_one() {
+        crate::common::init_common();
+        let data: Vec<RingElement> = (0..2048)
+            .map(|_| RingElement::random(Representation::IncompleteNTT))
+            .collect();
+        for (prefix, suffix) in [(0, 0), (3, 0), (2, 1)] {
+            let mut loaded =
+                LinearSumcheck::<RingElement>::new_with_prefixed_sufixed_data(2048, prefix, suffix);
+            loaded.load_from(&data);
+            let mut installed = LinearSumcheck::<RingElement>::unloaded(2048, prefix, suffix);
+            unsafe { installed.install_borrowed(&data) };
+            assert!(installed.borrowed.is_some() == cfg!(feature = "unsafe-sumcheck"));
+            assert_eq!(snapshot(&installed), snapshot(&loaded));
+            for _ in 0..loaded.variable_count {
+                let r = RingElement::random(Representation::IncompleteNTT);
+                loaded.partial_evaluate(&r);
+                installed.partial_evaluate(&r);
+                assert_eq!(snapshot(&installed), snapshot(&loaded));
+            }
+        }
     }
 
     #[test]

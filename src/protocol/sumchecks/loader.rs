@@ -8,6 +8,7 @@ use crate::{
     },
     protocol::{
         config::SumcheckConfig,
+        crs::CRS,
         open::Opening,
         project_fine::BatchedProjectionChallenges,
         sumcheck_utils::linear::{conjugated_oracle, witness_oracle},
@@ -36,6 +37,7 @@ pub fn used_length(config: &SumcheckConfig, combined_witness: &[RingElement]) ->
 pub fn load_sumcheck_data(
     sumcheck_context: &mut SumcheckContext,
     config: &SumcheckConfig,
+    crs: &CRS,
     combined_witness: &[RingElement],
     folding_challenges: &Vec<RingElement>,
     fine_proj_batching_challenges: &Option<&[BatchedProjectionChallenges; NOF_BATCHES]>,
@@ -59,6 +61,10 @@ pub fn load_sumcheck_data(
         .conjugated_combined_witness
         .borrow_mut()
         .install(conjugated_oracle(combined_witness, non_zero_end));
+
+    for key_row in &sumcheck_context.key_rows {
+        unsafe { key_row.load(crs) };
+    }
 
     // Load folding challenges
     sumcheck_context
