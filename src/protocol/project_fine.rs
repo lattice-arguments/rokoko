@@ -429,7 +429,7 @@ fn project_chunks_grouped(
     for (c, out) in outputs.chunks_mut(h / DEGREE).enumerate() {
         let rows = sums.chunks_exact(LANES).map(|row| row[c] as i64);
         for (x, sum) in out.iter_mut().flat_map(|out| out.v.iter_mut()).zip(rows) {
-            *x = (sum + if sum < 0 { MOD_Q as i64 } else { 0 }) as u64;
+            *x = x.wrapping_add_signed(sum);
         }
     }
     true
