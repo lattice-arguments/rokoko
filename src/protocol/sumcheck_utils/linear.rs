@@ -247,9 +247,12 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
         if !shared || values.len() < 2 {
             return false;
         }
-        let mut image = E::zero();
-        map(value, &mut image);
-        if conjugate && image == *value && values.len() / 2 >= BORROW_MIN_LEN {
+        let fixed = conjugate && {
+            let mut image = E::zero();
+            map(value, &mut image);
+            image == *value
+        };
+        if fixed && values.len() / 2 >= BORROW_MIN_LEN {
             mapped.borrowed = None;
             self.own_shared();
             self.viewed = false;
@@ -1084,6 +1087,30 @@ mod tests {
         let mut b = unsafe { LinearSumcheck::from_borrowed(&data, data.len(), Some(map)) };
         assert!(a.partial_evaluate_with_mapped(&mut b, &r));
         assert!(a.borrowed.is_none() && b.borrowed.is_none() && !a.viewed);
+    }
+
+    #[test]
+    fn test_an_arbitrary_map_never_sees_the_challenge() {
+        crate::common::init_common();
+        let data: Vec<RingElement> = (0..4 * BORROW_MIN_LEN as u64)
+            .map(|i| RingElement::constant(i & 1, Representation::IncompleteNTT))
+            .collect();
+        let negate: fn(&RingElement, &mut RingElement) = |x, out| {
+            let one = RingElement::constant(1, Representation::IncompleteNTT);
+            let zero = RingElement::zero(Representation::IncompleteNTT);
+            assert!(*x == zero || *x == one, "the map is defined on bits only");
+            out.set_from(&(&one - x));
+        };
+        let r = RingElement::constant(3, Representation::IncompleteNTT);
+        let mut a = unsafe { LinearSumcheck::from_borrowed(&data, data.len(), None) };
+        let mut b = unsafe { LinearSumcheck::from_borrowed(&data, data.len(), Some(negate)) };
+        let mut c = unsafe { LinearSumcheck::from_borrowed(&data, data.len(), None) };
+        let mut d = unsafe { LinearSumcheck::from_borrowed(&data, data.len(), Some(negate)) };
+        assert!(a.partial_evaluate_with_mapped(&mut b, &r));
+        c.partial_evaluate(&r);
+        d.partial_evaluate(&r);
+        assert_eq!(snapshot(&a), snapshot(&c));
+        assert_eq!(snapshot(&b), snapshot(&d));
     }
 
     #[test]
