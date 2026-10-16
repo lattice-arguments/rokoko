@@ -408,8 +408,9 @@ impl RansEncoder {
         let freq = model.freq[symbol] as u32;
         debug_assert!(freq > 0);
         let mut x = self.state[lane];
-        let ceiling = ((RANS_LOW >> SCALE_BITS) << 16) * freq;
-        if x >= ceiling {
+        // 2^32 for a one-symbol model, whose symbol costs nothing and never renormalises.
+        let ceiling = (((RANS_LOW >> SCALE_BITS) << 16) as u64) * freq as u64;
+        if x as u64 >= ceiling {
             self.words.push(x as u16);
             x >>= 16;
         }
@@ -1415,6 +1416,35 @@ mod tests {
             from_bytes(&to_bytes(&padded)).unwrap().polys[0].num_coefficients,
             proof.polys[0].num_coefficients
         );
+    }
+
+    /// A role whose coefficients all fall in one octave, as an all-zero one does, has a model of
+    /// one symbol, which costs no bits. Its renormalisation bound overflowed and left the lanes
+    /// it shares with the other roles out of step, so such a proof did not decode.
+    #[test]
+    fn wire_roundtrips_a_role_of_one_octave() {
+        init_common();
+        let zeroed: [fn(&mut SumcheckRoundProof); 2] = [
+            |p| {
+                for e in p.rc_opening_inner.iter_mut() {
+                    e.set_zero();
+                }
+            },
+            |p| {
+                let Some(RoundProof::Simple(last)) = p.next.as_deref_mut() else {
+                    unreachable!()
+                };
+                for e in last.folded_witness.data.iter_mut() {
+                    e.set_zero();
+                }
+            },
+        ];
+        for zero in zeroed {
+            let mut proof = sumcheck(Some(Box::new(simple())), true);
+            zero(&mut proof);
+            let bytes = to_bytes(&proof);
+            assert_eq!(to_bytes(&from_bytes(&bytes).unwrap()), bytes);
+        }
     }
 
     /// A matrix travels with its shape, which must describe its entries.

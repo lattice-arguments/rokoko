@@ -401,19 +401,25 @@ mod tests {
 
     impl Honest {
         fn prove(config: &SumcheckConfig) -> Honest {
+            Honest::prove_witness(config, short_witness)
+        }
+
+        /// A proof whose input witness, before its decomposition, is `raw(len)`.
+        fn prove_witness(
+            config: &SumcheckConfig,
+            raw: impl FnOnce(usize) -> Vec<RingElement>,
+        ) -> Honest {
             let crs = CRS::gen_prover_crs(config);
-            Honest::prove_in(config, &crs, &mut init_sumcheck(&crs, config))
+            Honest::prove_in(config, &crs, &mut init_sumcheck(&crs, config), raw)
         }
 
         fn prove_in(
             config: &SumcheckConfig,
             crs: &CRS,
             sumcheck_context: &mut SumcheckContext,
+            raw: impl FnOnce(usize) -> Vec<RingElement>,
         ) -> Honest {
-            use crate::common::{
-                decomposition::decompose, matrix::VerticallyAlignedMatrix,
-                ring_arithmetic::Representation, sampling::sample_random_short_vector,
-            };
+            use crate::common::{decomposition::decompose, matrix::VerticallyAlignedMatrix};
             use crate::protocol::{
                 evaluation_point_sampler::sample_initial_evaluation_points,
                 parties::{commiter::commit, prover::prover_round},
@@ -436,11 +442,7 @@ mod tests {
                 .flat_map(|points| points.outer.iter().cloned())
                 .collect::<Vec<_>>();
 
-            let raw = sample_random_short_vector(
-                height * width,
-                1u64 << 12,
-                Representation::IncompleteNTT,
-            );
+            let raw = raw(height * width);
             let witness = VerticallyAlignedMatrix {
                 height: config.witness_height,
                 width,
@@ -512,6 +514,14 @@ mod tests {
                 None,
             );
         }
+    }
+
+    fn short_witness(len: usize) -> Vec<RingElement> {
+        use crate::common::{
+            ring_arithmetic::Representation, sampling::sample_random_short_vector,
+        };
+
+        sample_random_short_vector(len, 1u64 << 12, Representation::IncompleteNTT)
     }
 
     /// Prove and verify one round of `config` end to end.
@@ -825,6 +835,31 @@ mod tests {
         }
     }
 
+    /// An honest proof decodes and verifies whatever the witness, including one that is all
+    /// zero or zero but for one entry, whose proofs carry roles of a single octave.
+    #[test]
+    fn honest_proofs_of_sparse_witnesses_decode_and_verify() {
+        use crate::common::ring_arithmetic::Representation;
+
+        fn zero(len: usize) -> Vec<RingElement> {
+            vec![RingElement::zero(Representation::IncompleteNTT); len]
+        }
+        fn one_entry(len: usize) -> Vec<RingElement> {
+            let mut witness = zero(len);
+            witness[len / 3] = RingElement::constant(5, Representation::IncompleteNTT);
+            witness
+        }
+
+        for aux in [three_openings_aux(), intermediate_aux()] {
+            let config = sumcheck_config(aux);
+            for witness in [zero, one_entry] {
+                init_common();
+                let honest = Honest::prove_witness(&config, witness);
+                honest.verify(&honest.copy());
+            }
+        }
+    }
+
     /// A context serves one proof: its tables fold and its evaluations cache in place, so a
     /// second proof through the same context is refused outright rather than run against what the
     /// first one left behind.
@@ -834,9 +869,15 @@ mod tests {
         let config = sumcheck_config(three_openings_aux());
         let crs = CRS::gen_prover_crs(&config);
         let mut prover_context = init_sumcheck(&crs, &config);
-        let first = Honest::prove_in(&config, &crs, &mut prover_context);
-        let refusal_to_prove =
-            refusal(|| drop(Honest::prove_in(&config, &crs, &mut prover_context)));
+        let first = Honest::prove_in(&config, &crs, &mut prover_context, short_witness);
+        let refusal_to_prove = refusal(|| {
+            drop(Honest::prove_in(
+                &config,
+                &crs,
+                &mut prover_context,
+                short_witness,
+            ))
+        });
         assert!(
             refusal_to_prove.starts_with("a sumcheck context serves one proof"),
             "{refusal_to_prove}"
