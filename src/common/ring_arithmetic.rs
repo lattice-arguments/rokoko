@@ -723,29 +723,30 @@ unsafe fn conjugate_slots(source: *const u64, result: *mut u64) {
 
 #[inline(always)]
 unsafe fn conjugate_with(transform: &ConjugationTransform, source: *const u64, result: *mut u64) {
-    let mut temp = [0u64; DEGREE];
+    let mut temp = [std::mem::MaybeUninit::<u64>::uninit(); DEGREE];
     if transform.reversed {
         let parts = std::iter::once(0).chain((1..SLOT_DEGREE).rev());
         for (out, part) in temp.chunks_exact_mut(NUM_SLOTS).zip(parts) {
             let from = std::slice::from_raw_parts(source.add(part * NUM_SLOTS), NUM_SLOTS);
-            out.iter_mut()
-                .zip(from.iter().rev())
-                .for_each(|(t, &s)| *t = s);
+            out.iter_mut().zip(from.iter().rev()).for_each(|(t, &s)| {
+                t.write(s);
+            });
         }
     } else {
         for (t, &k) in temp.iter_mut().zip(&transform.source) {
-            *t = *source.add(k);
+            t.write(*source.add(k));
         }
     }
+    let temp = temp.as_ptr() as *const u64;
     let skip = if transform.fixed_first_part {
         NUM_SLOTS
     } else {
         0
     };
-    std::ptr::copy_nonoverlapping(temp.as_ptr(), result, skip);
+    std::ptr::copy_nonoverlapping(temp, result, skip);
     eltwise_mult_mod_shoup(
         result.add(skip),
-        temp.as_ptr().add(skip),
+        temp.add(skip),
         transform.scale.as_ptr().add(skip),
         transform.quotients.as_ptr().add(skip),
         (DEGREE - skip) as u64,
