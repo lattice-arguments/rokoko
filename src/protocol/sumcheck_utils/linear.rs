@@ -263,6 +263,22 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
         }
     }
 
+    pub(crate) fn borrows_caller_data(&self) -> bool {
+        matches!(
+            self.borrowed,
+            Some(Borrowed {
+                data: Source::Caller(_),
+                ..
+            })
+        )
+    }
+
+    pub(crate) fn release_caller_data(&mut self) {
+        if self.borrows_caller_data() {
+            self.borrowed = None;
+        }
+    }
+
     fn own_shared(&mut self) {
         match self.borrowed.take() {
             Some(Borrowed {

@@ -24,7 +24,7 @@ use crate::{
     },
 };
 
-use super::loader::{load_sumcheck_data, used_length};
+use super::loader::{borrow_caller_data, load_sumcheck_data, used_length};
 
 type Cell = ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>;
 
@@ -135,20 +135,18 @@ pub fn sumcheck(
     hash_wrapper.update_with_ring_element(&norm_claim);
 
     // Load all data into the sumcheck context
-    {
+    let _borrows = {
         let _s = tracing::info_span!("sumcheck::load_data").entered();
         load_sumcheck_data(
             sumcheck_context,
-            config,
-            crs,
-            combined_witness,
             folding_challenges,
             fine_proj_batching_challenges,
             opening,
             projection_matrix,
             &projection_matrix_flatter,
         );
-    }
+        borrow_caller_data(sumcheck_context, config, crs, combined_witness)
+    };
 
     let total_vars = sumcheck_context.combiner.borrow().variable_count();
     let norm_inner_norm_claim = claim(

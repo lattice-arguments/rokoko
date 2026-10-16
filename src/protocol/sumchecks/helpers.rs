@@ -200,6 +200,10 @@ impl KeyRow {
         &row[self.segment * len..(self.segment + 1) * len]
     }
 
+    pub(crate) fn table(&self) -> &ElephantCell<LinearSumcheck<RingElement>> {
+        &self.table
+    }
+
     pub(crate) unsafe fn load(&self, crs: &CRS) {
         unsafe { self.table.borrow_mut().install_borrowed(self.slice(crs)) };
     }

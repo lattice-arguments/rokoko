@@ -11,7 +11,10 @@ use crate::{
         crs::CRS,
         open::Opening,
         project_fine::BatchedProjectionChallenges,
-        sumcheck_utils::linear::{conjugated_oracle, witness_oracle},
+        sumcheck_utils::{
+            elephant_cell::ElephantCell,
+            linear::{conjugated_oracle, witness_oracle, LinearSumcheck},
+        },
         sumchecks::helpers::{
             projection_flatter_1_times_matrix, split_projection_flatter, tensor_product_u64,
         },
@@ -19,6 +22,53 @@ use crate::{
 };
 
 use super::context::SumcheckContext;
+
+pub(crate) struct Borrows<'a> {
+    tables: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
+    lifetime: std::marker::PhantomData<&'a [RingElement]>,
+}
+
+impl Drop for Borrows<'_> {
+    fn drop(&mut self) {
+        for table in &self.tables {
+            table.borrow_mut().release_caller_data();
+        }
+    }
+}
+
+pub(crate) fn borrow_caller_data<'a>(
+    sumcheck_context: &SumcheckContext,
+    config: &SumcheckConfig,
+    crs: &'a CRS,
+    combined_witness: &'a [RingElement],
+) -> Borrows<'a> {
+    let witness = &sumcheck_context.combined_witness_sumcheck;
+    let conjugate = &sumcheck_context
+        .norm_check_sumcheck
+        .conjugated_combined_witness;
+    let keys = sumcheck_context
+        .key_rows
+        .iter()
+        .map(|key_row| key_row.table().clone());
+    let borrows = Borrows {
+        tables: [witness.clone(), conjugate.clone()]
+            .into_iter()
+            .chain(keys)
+            .collect(),
+        lifetime: std::marker::PhantomData,
+    };
+    let non_zero_end = used_length(config, combined_witness);
+    witness
+        .borrow_mut()
+        .install(witness_oracle(combined_witness, non_zero_end));
+    conjugate
+        .borrow_mut()
+        .install(conjugated_oracle(combined_witness, non_zero_end));
+    for key_row in &sumcheck_context.key_rows {
+        unsafe { key_row.load(crs) };
+    }
+    borrows
+}
 
 pub(crate) fn used_length(config: &SumcheckConfig, combined_witness: &[RingElement]) -> usize {
     let used_columns =
@@ -35,42 +85,17 @@ pub(crate) fn used_length(config: &SumcheckConfig, combined_witness: &[RingEleme
 /// data preparation from the main sumcheck execution flow.
 pub(crate) fn load_sumcheck_data(
     sumcheck_context: &mut SumcheckContext,
-    config: &SumcheckConfig,
-    crs: &CRS,
-    combined_witness: &[RingElement],
     folding_challenges: &Vec<RingElement>,
     fine_proj_batching_challenges: &Option<&[BatchedProjectionChallenges; NOF_BATCHES]>,
     opening: &Opening,
     projection_matrix: &ProjectionMatrix,
     projection_matrix_flatter: &Option<(PreprocessedRow, StructuredRow)>,
 ) {
-    // The witness vector is padded to composed_witness_length (a power of 2),
-    // but only a fraction is actually used. Passing the non-zero boundary
-    // lets LinearSumcheck skip zero-tail work in partial_evaluate and
-    // Karatsuba inner products.
-    let non_zero_end = used_length(config, combined_witness);
-
-    // Load combined witness
-    sumcheck_context
-        .combined_witness_sumcheck
-        .borrow_mut()
-        .install(witness_oracle(combined_witness, non_zero_end));
-
     // Load folding challenges
     sumcheck_context
         .folding_challenges_sumcheck
         .borrow_mut()
         .load_from(&folding_challenges);
-
-    sumcheck_context
-        .norm_check_sumcheck
-        .conjugated_combined_witness
-        .borrow_mut()
-        .install(conjugated_oracle(combined_witness, non_zero_end));
-
-    for key_row in &sumcheck_context.key_rows {
-        unsafe { key_row.load(crs) };
-    }
 
     // Load inner evaluation points (inner_eval_fold)
     for (inner_eval_fold_sc, eval_point) in sumcheck_context
