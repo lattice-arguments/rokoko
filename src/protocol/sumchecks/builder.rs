@@ -201,7 +201,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     // Every leaf built below is registered here and folded once per round.
     let mut leaves = FoldedLeaves::new();
 
-    let combined_witness_sumcheck = ElephantCell::new(LinearSumcheck::<RingElement>::new(
+    let combined_witness_sumcheck = ElephantCell::new(LinearSumcheck::<RingElement>::unloaded(
         config.composed_witness_length,
     ));
     let witness = combined_witness_sumcheck.clone() as Data;
@@ -584,7 +584,7 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
     };
 
     let conjugated_combined_witness_sumcheck = ElephantCell::new(
-        LinearSumcheck::<RingElement>::new(config.composed_witness_length),
+        LinearSumcheck::<RingElement>::unloaded(config.composed_witness_length),
     );
 
     // The norm claim covers the most inner commitment of every recursion tree: all blocks of
