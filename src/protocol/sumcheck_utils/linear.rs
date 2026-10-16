@@ -21,9 +21,24 @@ use crate::common::{config::MOD_Q, structured_row::PreprocessedRow};
 struct Borrowed<E: 'static> {
     data: &'static [E],
     map: Option<fn(&E, &mut E)>,
+    conjugate: bool,
 }
 
 const BORROW_MIN_LEN: usize = 1024;
+
+fn ring_conjugate(x: &RingElement, out: &mut RingElement) {
+    x.conjugate_into(out)
+}
+
+impl LinearSumcheck<RingElement> {
+    pub unsafe fn conjugate_of(data: &[RingElement], non_zero_end: usize) -> Self {
+        let mut table = unsafe { Self::from_borrowed(data, non_zero_end, Some(ring_conjugate)) };
+        if let Some(borrowed) = &mut table.borrowed {
+            borrowed.conjugate = true;
+        }
+        table
+    }
+}
 
 /// Standard linear sumcheck over a vector that represents a multilinear extension.
 pub struct LinearSumcheck<E: SumcheckElement = RingElement> {
@@ -37,6 +52,7 @@ pub struct LinearSumcheck<E: SumcheckElement = RingElement> {
     // data[non_zero_end..] is guaranteed zero. Used to skip work in
     // partial_evaluate, non_zero_range, and batched Karatsuba.
     non_zero_end: usize,
+    viewed: bool,
 }
 
 impl<E: SumcheckElement> LinearSumcheck<E> {
@@ -67,6 +83,7 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
             poly_scratch: RefCell::new(Polynomial::new(2)),
             suffix: suffix_size,
             non_zero_end: count,
+            viewed: false,
         }
     }
     pub fn from_data(data: Vec<E>) -> Self {
@@ -87,6 +104,7 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
             poly_scratch: RefCell::new(Polynomial::new(2)),
             suffix: suffix_size,
             non_zero_end: count,
+            viewed: false,
         }
     }
 
@@ -121,12 +139,14 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
             borrowed: Some(Borrowed {
                 data: unsafe { std::mem::transmute::<&[E], &'static [E]>(data) },
                 map,
+                conjugate: false,
             }),
             variable_count: count.ilog2() as usize,
             index_mask: count - 1,
             poly_scratch: RefCell::new(Polynomial::new(2)),
             suffix: 0,
             non_zero_end: non_zero_end.min(count),
+            viewed: false,
         }
     }
 
@@ -140,17 +160,20 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
     pub(crate) fn values(&self) -> Option<&[E]> {
         match &self.borrowed {
             None => Some(self.data.as_slice()),
-            Some(Borrowed { data, map: None }) => Some(data),
+            Some(Borrowed {
+                data, map: None, ..
+            }) => Some(data),
             Some(_) => None,
         }
     }
 
     pub fn partial_evaluate_with_mapped(&mut self, mapped: &mut Self, value: &E) -> bool {
-        let (other, map) = match &mapped.borrowed {
+        let (other, map, conjugate) = match &mapped.borrowed {
             Some(Borrowed {
                 data,
                 map: Some(map),
-            }) => (*data, *map),
+                conjugate,
+            }) => (*data, *map, *conjugate),
             _ => return false,
         };
         let Some(values) = self.values() else {
@@ -165,20 +188,24 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
         }
         let mut image = E::zero();
         map(value, &mut image);
-        if image == *value && values.len() / 2 >= BORROW_MIN_LEN {
+        if conjugate && image == *value && values.len() / 2 >= BORROW_MIN_LEN {
             mapped.borrowed = None;
+            self.viewed = false;
             self.partial_evaluate(value);
             let folded = self.values().unwrap();
             mapped.borrowed = Some(Borrowed {
                 data: unsafe { std::mem::transmute::<&[E], &'static [E]>(folded) },
                 map: Some(map),
+                conjugate,
             });
             mapped.non_zero_end = self.non_zero_end;
             mapped.variable_count -= 1;
+            self.viewed = true;
             return true;
         }
         let Some(own) = &self.borrowed else {
             mapped.partial_evaluate(value);
+            self.viewed = false;
             self.partial_evaluate(value);
             return true;
         };
@@ -232,6 +259,7 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
             Some(Borrowed {
                 data,
                 map: Some(map),
+                ..
             }) => map(&data[index], out),
             _ => out.set_from(&self.values().unwrap()[index]),
         }
@@ -539,6 +567,10 @@ impl<E: SumcheckElement> SumcheckBaseData for LinearSumcheck<E> {
         let pair_nz = (self.non_zero_end + 1) / 2; // ceil(non_zero_end / 2)
         let fold_end = pair_nz.min(half);
 
+        assert!(
+            !self.viewed,
+            "a table viewed through its conjugate folds only with the view"
+        );
         if let Some(borrowed) = self.borrowed.take() {
             let mut folded = Vec::with_capacity(half);
             match borrowed.map {
@@ -922,7 +954,7 @@ mod tests {
         let map: fn(&RingElement, &mut RingElement) = conjugate;
         for (end, rounds) in [(n, [true, true, true, false, false]), (n - 5, [true, true, false, false, false])] {
             let mut a = unsafe { LinearSumcheck::from_borrowed(&data, end, None) };
-            let mut b = unsafe { LinearSumcheck::from_borrowed(&data, end, Some(map)) };
+            let mut b = unsafe { LinearSumcheck::conjugate_of(&data, end) };
             let mut c = unsafe { LinearSumcheck::from_borrowed(&data, end, None) };
             let mut d = unsafe { LinearSumcheck::from_borrowed(&data, end, Some(map)) };
             let rs = if end == n {
@@ -945,6 +977,45 @@ mod tests {
             assert_eq!(a.final_evaluations(), c.final_evaluations());
             assert_eq!(b.final_evaluations(), d.final_evaluations());
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "a table viewed through its conjugate folds only with the view")]
+    fn test_a_viewed_table_refuses_a_fold_without_its_view() {
+        crate::common::init_common();
+        let data = crate::common::sampling::sample_random_short_vector(
+            4 * BORROW_MIN_LEN,
+            60,
+            Representation::IncompleteNTT,
+        );
+        let x = crate::common::sampling::sample_random_short_vector(
+            1,
+            1 << 20,
+            Representation::IncompleteNTT,
+        )
+        .remove(0);
+        let r = &x + &x.conjugate();
+        let mut a = unsafe { LinearSumcheck::from_borrowed(&data, data.len(), None) };
+        let mut b = unsafe { LinearSumcheck::conjugate_of(&data, data.len()) };
+        assert!(a.partial_evaluate_with_mapped(&mut b, &r));
+        assert!(b.borrowed.is_some());
+        a.partial_evaluate(&r);
+    }
+
+    #[test]
+    fn test_an_arbitrary_map_never_becomes_a_view() {
+        crate::common::init_common();
+        let data = crate::common::sampling::sample_random_short_vector(
+            4 * BORROW_MIN_LEN,
+            60,
+            Representation::IncompleteNTT,
+        );
+        let r = RingElement::constant(3, Representation::IncompleteNTT);
+        let map: fn(&RingElement, &mut RingElement) = conjugate;
+        let mut a = unsafe { LinearSumcheck::from_borrowed(&data, data.len(), None) };
+        let mut b = unsafe { LinearSumcheck::from_borrowed(&data, data.len(), Some(map)) };
+        assert!(a.partial_evaluate_with_mapped(&mut b, &r));
+        assert!(a.borrowed.is_none() && b.borrowed.is_none() && !a.viewed);
     }
 
     #[test]
