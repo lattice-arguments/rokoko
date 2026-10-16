@@ -11,6 +11,7 @@ use crate::common::{
 /// Implemented by `RingElement` and `FieldExtension`.
 pub trait SumcheckElement:
     Clone
+    + PartialEq
     + 'static
     + for<'a> AddAssign<&'a Self>
     + for<'a> SubAssign<&'a Self>

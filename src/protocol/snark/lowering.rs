@@ -773,18 +773,13 @@ impl<'a> ProverAssembler<'a> {
 }
 
 #[cfg(feature = "unsafe-sumcheck")]
-fn conjugate_entry(x: &RingElement, out: &mut RingElement) {
-    x.conjugate_into(out)
-}
-
-#[cfg(feature = "unsafe-sumcheck")]
 fn witness_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck<RingElement> {
     unsafe { LinearSumcheck::from_borrowed(witness, used, None) }
 }
 
 #[cfg(feature = "unsafe-sumcheck")]
 fn conjugated_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck<RingElement> {
-    unsafe { LinearSumcheck::from_borrowed(witness, used, Some(conjugate_entry)) }
+    unsafe { LinearSumcheck::conjugate_of(witness, used) }
 }
 
 #[cfg(not(feature = "unsafe-sumcheck"))]
