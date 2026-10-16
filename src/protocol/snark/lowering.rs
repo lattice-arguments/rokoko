@@ -693,16 +693,16 @@ impl<'a> ProverAssembler<'a> {
         match factor {
             ClaimFactor::Witness => {
                 let (data, used) = (self.witness, self.used);
-                let cell = self.witness_pool.next(FULL_WITNESS_KEY, move || unsafe {
-                    witness_oracle(data, used)
-                });
+                let cell = self
+                    .witness_pool
+                    .next(FULL_WITNESS_KEY, move || witness_oracle(data, used));
                 cell as _
             }
             ClaimFactor::ConjWitness => {
                 let (data, used) = (self.witness, self.used);
-                let cell = self.conj_pool.next(FULL_WITNESS_KEY, move || unsafe {
-                    conjugated_oracle(data, used)
-                });
+                let cell = self
+                    .conj_pool
+                    .next(FULL_WITNESS_KEY, move || conjugated_oracle(data, used));
                 cell as _
             }
             ClaimFactor::WitnessSegment(_) | ClaimFactor::ConjWitnessSegment(_) => {
@@ -790,22 +790,22 @@ impl<'a> ProverAssembler<'a> {
 }
 
 #[cfg(feature = "unsafe-sumcheck")]
-pub(crate) unsafe fn witness_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck {
-    LinearSumcheck::from_borrowed(witness, used, None)
+fn witness_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck<RingElement> {
+    unsafe { LinearSumcheck::from_borrowed(witness, used, None) }
 }
 
 #[cfg(feature = "unsafe-sumcheck")]
-pub(crate) unsafe fn conjugated_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck {
-    LinearSumcheck::conjugate_of(witness, used)
+fn conjugated_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck<RingElement> {
+    unsafe { LinearSumcheck::conjugate_of(witness, used) }
 }
 
 #[cfg(not(feature = "unsafe-sumcheck"))]
-pub(crate) unsafe fn witness_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck {
+fn witness_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck<RingElement> {
     LinearSumcheck::from_data_with_non_zero_end(witness.to_vec(), used)
 }
 
 #[cfg(not(feature = "unsafe-sumcheck"))]
-pub(crate) unsafe fn conjugated_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck {
+fn conjugated_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck<RingElement> {
     let conjugated = witness.iter().map(RingElement::conjugate).collect();
     LinearSumcheck::from_data_with_non_zero_end(conjugated, used)
 }
@@ -1247,9 +1247,8 @@ fn prove_claims_with(
     // ensure the full-witness oracle exists: z_0 always seeds the chain
     if asm.witness_pool.first_cell(&FULL_WITNESS_KEY).is_none() {
         let (data, used) = (asm.witness, asm.used);
-        asm.witness_pool.next(FULL_WITNESS_KEY, move || unsafe {
-            witness_oracle(data, used)
-        });
+        asm.witness_pool
+            .next(FULL_WITNESS_KEY, move || witness_oracle(data, used));
     }
     let pooled: Vec<ElephantCell<LinearSumcheck<RingElement>>> = asm
         .witness_pool
@@ -1336,7 +1335,7 @@ fn prove_claims_with(
         None
     } else if asm.conj_pool.first_cell(&FULL_WITNESS_KEY).is_none() {
         // no conjugate oracle was used: evaluate one on demand at the final point
-        let mut ls = unsafe { conjugated_oracle(asm.witness, asm.used) };
+        let mut ls = conjugated_oracle(asm.witness, asm.used);
         for r in &evaluation_points {
             ls.partial_evaluate(r);
         }
