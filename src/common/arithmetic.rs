@@ -23,9 +23,10 @@ pub static HALF_WAY_MOD_Q_RING_CF: LazyLock<RingElement> =
 use std::arch::x86_64::{
     __m128i, __m512i, _mm512_abs_epi16, _mm512_add_epi16, _mm512_add_epi32, _mm512_castsi512_si256,
     _mm512_cmpgt_epu64_mask, _mm512_cvtepi16_epi32, _mm512_cvtepi32_epi64, _mm512_cvtepi64_epi16,
-    _mm512_extracti64x4_epi64, _mm512_load_si512, _mm512_mask_add_epi64, _mm512_mask_sub_epi64,
-    _mm512_max_epu16, _mm512_movepi64_mask, _mm512_set1_epi64, _mm512_setzero_si512,
-    _mm512_store_si512, _mm512_storeu_si512, _mm512_sub_epi16, _mm_store_si128,
+    _mm512_cvtepu16_epi32, _mm512_extracti64x4_epi64, _mm512_load_si512, _mm512_mask_add_epi64,
+    _mm512_mask_sub_epi64, _mm512_max_epu16, _mm512_max_epu32, _mm512_movepi64_mask,
+    _mm512_reduce_max_epu32, _mm512_set1_epi64, _mm512_setzero_si512, _mm512_store_si512,
+    _mm512_storeu_si512, _mm512_sub_epi16, _mm_prefetch, _mm_store_si128, _MM_HINT_T0,
 };
 
 #[inline(always)]
@@ -267,6 +268,182 @@ pub fn project_rows_sparse_tiled<const DEGREE: usize>(
                 convert_i32x16_to_u64_mod_q(dst, _mm512_load_si512(acc));
                 convert_i32x16_to_u64_mod_q(dst.add(16), _mm512_load_si512(acc.add(1)));
             }
+        }
+    }
+}
+
+pub const GROUP: usize = 4;
+pub const GROUP_SUMS: usize = 81;
+pub const PASS: usize = 4;
+const BLOCK: usize = PASS * GROUP;
+
+// Computes what `project_rows_sparse_tiled` computes by the method of four Russians. Per
+// coefficient slice, the witness block is cut into groups of `GROUP` consecutive elements, the
+// `GROUP_SUMS` signed sums `sum_c t_c w_c`, `t in {-1, 0, 1}^GROUP`, of a group are tabulated once,
+// and every row adds the one its entries of `J` select: a row costs one add per group instead of
+// one per non-zero entry. Rows take `PASS` groups per visit; `offsets` holds their selections as
+// byte offsets into the tables (see `ternary_group_offsets`). A row's i16 partial is widened into
+// its i32 sum before the digits it has taken in could leave i16, which the tables measure as they
+// are built; a block whose digits are too large for an i16 partial at all is handed to
+// `project_rows_sparse_tiled`.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+pub fn project_rows_grouped<const DEGREE: usize>(
+    subwitness_i16: &[Signed16RingElement],
+    offsets: &[u16],
+    lists: (&[u32], &[usize], &[u32], &[usize]),
+    out: &mut [RingElement],
+) {
+    let blocks = subwitness_i16.len() / BLOCK;
+    if blocks * BLOCK != subwitness_i16.len()
+        || !unsafe { project_rows_in_blocks::<DEGREE>(subwitness_i16, offsets, out) }
+    {
+        let (pos, pos_bounds, neg, neg_bounds) = lists;
+        project_rows_sparse_tiled::<DEGREE>(subwitness_i16, pos, pos_bounds, neg, neg_bounds, out);
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+unsafe fn project_rows_in_blocks<const DEGREE: usize>(
+    subwitness_i16: &[Signed16RingElement],
+    offsets: &[u16],
+    out: &mut [RingElement],
+) -> bool {
+    let h = out.len();
+    let row_len = subwitness_i16.len();
+    let blocks = row_len / BLOCK;
+    assert_eq!(offsets.len(), blocks * h * PASS);
+    assert!(row_len * (i16::MAX as usize / BLOCK) <= i32::MAX as usize);
+
+    let mut tables = vec![_mm512_setzero_si512(); PASS * GROUP_SUMS];
+    let mut scratch = vec![_mm512_setzero_si512(); h];
+    let mut wide = vec![_mm512_setzero_si512(); 2 * h];
+    let table = tables.as_mut_ptr();
+    let sums = Sums {
+        tables: table as *const u8,
+        scratch: scratch.as_mut_ptr(),
+        wide: wide.as_mut_ptr(),
+        rows: h,
+    };
+    let base = subwitness_i16.as_ptr() as *const u8;
+    let elem_bytes = core::mem::size_of::<Signed16RingElement>();
+
+    for k in 0..DEGREE / 32 {
+        let chunk = base.add(k * 64);
+        wide.fill(_mm512_setzero_si512());
+        let mut budget = 0;
+        for block in 0..blocks {
+            if block + 1 < blocks {
+                let next = chunk.add((block + 1) * BLOCK * elem_bytes);
+                for e in 0..BLOCK {
+                    _mm_prefetch::<_MM_HINT_T0>(next.add(e * elem_bytes) as *const i8);
+                }
+            }
+            let mut largest = _mm512_setzero_si512();
+            for group in 0..PASS {
+                let first = chunk.add((block * PASS + group) * GROUP * elem_bytes);
+                let w: [__m512i; GROUP] = std::array::from_fn(|c| {
+                    let line = _mm512_load_si512(first.add(c * elem_bytes) as *const __m512i);
+                    largest = _mm512_max_epu16(largest, _mm512_abs_epi16(line));
+                    line
+                });
+                ternary_sums(table.add(group * GROUP_SUMS), w);
+            }
+            let bound = BLOCK * largest_lane(largest);
+            if bound > i16::MAX as usize {
+                return false;
+            }
+            if budget + bound > i16::MAX as usize {
+                sums.widen();
+                budget = 0;
+            }
+            let selections = offsets.as_ptr().add(block * h * PASS) as *const u64;
+            if budget == 0 {
+                sums.add::<true>(selections);
+            } else {
+                sums.add::<false>(selections);
+            }
+            budget += bound;
+        }
+        sums.widen();
+        for (row, out) in out.iter_mut().enumerate() {
+            let dst = out.v.as_mut_ptr().add(k * 32);
+            convert_i32x16_to_u64_mod_q(dst, wide[2 * row]);
+            convert_i32x16_to_u64_mod_q(dst.add(16), wide[2 * row + 1]);
+        }
+    }
+    true
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+struct Sums {
+    tables: *const u8,
+    scratch: *mut __m512i,
+    wide: *mut __m512i,
+    rows: usize,
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+impl Sums {
+    #[inline(always)]
+    unsafe fn add<const OPENS: bool>(&self, selections: *const u64) {
+        const _: () = assert!(PASS == 4);
+        for row in 0..self.rows {
+            let s = *selections.add(row);
+            let sum = |group: usize| {
+                let offset = (s >> (16 * group)) as u16 as usize;
+                _mm512_load_si512(
+                    self.tables.add(group * GROUP_SUMS * 64 + offset) as *const __m512i
+                )
+            };
+            let mut partial = _mm512_add_epi16(
+                _mm512_add_epi16(sum(0), sum(1)),
+                _mm512_add_epi16(sum(2), sum(3)),
+            );
+            if !OPENS {
+                partial = _mm512_add_epi16(partial, _mm512_load_si512(self.scratch.add(row)));
+            }
+            _mm512_store_si512(self.scratch.add(row), partial);
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn widen(&self) {
+        for row in 0..self.rows {
+            widen_into(self.wide.add(2 * row) as *mut i32, *self.scratch.add(row));
+        }
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[inline(always)]
+unsafe fn largest_lane(x: __m512i) -> usize {
+    let low = _mm512_cvtepu16_epi32(_mm512_castsi512_si256(x));
+    let high = _mm512_cvtepu16_epi32(_mm512_extracti64x4_epi64::<1>(x));
+    _mm512_reduce_max_epu32(_mm512_max_epu32(low, high)) as usize
+}
+
+/// `table[sum_c 3^c d_c] = sum_c (d_c - 1) w_c` over `d in {0, 1, 2}^GROUP`.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[inline(always)]
+unsafe fn ternary_sums(table: *mut __m512i, [w0, w1, w2, w3]: [__m512i; GROUP]) {
+    let signed = |s: __m512i, d: usize, w: __m512i| match d {
+        0 => _mm512_sub_epi16(s, w),
+        1 => s,
+        _ => _mm512_add_epi16(s, w),
+    };
+    let first = [
+        signed(_mm512_setzero_si512(), 0, w0),
+        _mm512_setzero_si512(),
+        w0,
+    ];
+    let second: [__m512i; 9] = std::array::from_fn(|i| signed(first[i % 3], i / 3, w1));
+    for d in 0..3 {
+        for (i, &s) in second.iter().enumerate() {
+            let s = signed(s, d, w2);
+            let at = table.add(9 * d + i);
+            _mm512_store_si512(at, _mm512_sub_epi16(s, w3));
+            _mm512_store_si512(at.add(27), s);
+            _mm512_store_si512(at.add(54), _mm512_add_epi16(s, w3));
         }
     }
 }
