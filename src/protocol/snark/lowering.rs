@@ -1643,6 +1643,7 @@ mod tests {
         let bytes = crate::protocol::wire::initial_to_bytes(&proof);
         let decoded = crate::protocol::wire::initial_from_bytes_for((height, width), &bytes)
             .expect("an honest claims proof decodes");
+        assert_eq!(crate::protocol::wire::initial_to_bytes(&decoded), bytes);
         let chain_verifier =
             verify_claims((height, width), &claims, &decoded, &mut HashWrapper::new());
         assert_eq!(chain_prover.claims, chain_verifier.claims);
