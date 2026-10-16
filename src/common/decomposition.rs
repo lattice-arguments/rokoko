@@ -32,15 +32,7 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
         return input.to_vec();
     }
 
-    let small_shift_val = 1u64 << (base_log - 1);
-    let mut big_shift_val: u64 = 0;
-    for i in 0..radix {
-        big_shift_val += small_shift_val << (i as u64 * base_log);
-    }
-    let big_shift = RingElement::all(big_shift_val, Representation::StridedCoefficients);
-    let mask = (1u64 << base_log) - 1;
-    // A shifted coefficient at or past 2^window_bits is outside the window.
-    let window_bits = base_log * radix as u64;
+    let digits = Digits::new(base_log, radix);
 
     #[cfg(feature = "debug-decomp")]
     let call_max = std::sync::atomic::AtomicI64::new(0);
@@ -49,14 +41,13 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
     let slots = decomposed.spare_capacity_mut();
 
     let run = |slots: &mut [std::mem::MaybeUninit<RingElement>], input: &[RingElement]| {
-        let mut temp = RingElement::all(0, Representation::StridedCoefficients);
-        let mut digit = RingElement::new(Representation::StridedCoefficients);
+        let mut scratch = digits.scratch();
         for (el, slots) in input.iter().zip(slots.chunks_exact_mut(radix)) {
-            temp.set_from(el);
-            temp.to_representation(Representation::StridedCoefficients);
             #[cfg(feature = "debug-decomp")]
             {
                 let q = crate::common::config::MOD_Q;
+                let mut temp = el.clone();
+                temp.to_representation(Representation::StridedCoefficients);
                 let mut local = 0i64;
                 for &c in temp.v.iter() {
                     let s = if c > q / 2 {
@@ -68,31 +59,9 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
                 }
                 call_max.fetch_max(local, std::sync::atomic::Ordering::Relaxed);
             }
-            temp += &big_shift;
-            let outside = window_bits < 64
-                && temp.v.iter().fold(0, |acc, &coefficient| acc | coefficient) >> window_bits != 0;
-
-            for (i, slot) in slots.iter_mut().enumerate() {
-                let from = i as u64 * base_log;
-                for (out, coefficient) in digit.v.iter_mut().zip(temp.v.iter()) {
-                    let value = (coefficient >> from) & mask;
-                    *out = if value >= small_shift_val {
-                        value - small_shift_val
-                    } else {
-                        value + MOD_Q - small_shift_val
-                    };
-                }
-                if outside {
-                    for (out, &coefficient) in digit.v.iter_mut().zip(temp.v.iter()) {
-                        if coefficient >> window_bits != 0 {
-                            *out = carried_digit(coefficient, big_shift_val, base_log, radix, i);
-                        }
-                    }
-                }
-                digit.representation = Representation::StridedCoefficients;
-                digit.to_representation(Representation::IncompleteNTT);
-                slot.write(digit.clone());
-            }
+            digits.of(el, &mut scratch, |i, digit| {
+                slots[i].write(digit.clone());
+            });
         }
     };
 
@@ -116,8 +85,8 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
     let call_max = call_max.load(std::sync::atomic::Ordering::Relaxed);
     #[cfg(feature = "debug-decomp")]
     {
-        let capacity_neg = (big_shift_val as i64).min(1 << 62);
-        let capacity_pos = ((1u64 << (base_log * radix as u64)).wrapping_sub(big_shift_val))
+        let capacity_neg = (digits.big_shift_val as i64).min(1 << 62);
+        let capacity_pos = ((1u64 << (base_log * radix as u64)).wrapping_sub(digits.big_shift_val))
             .min(1 << 62) as i64
             - 1;
         tracing::debug!(
@@ -132,6 +101,93 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
     }
 
     decomposed
+}
+
+/// The balanced base-`2^{base_log}` digits of an element, `radix` of them.
+struct Digits {
+    base_log: u64,
+    radix: usize,
+    small_shift_val: u64,
+    big_shift_val: u64,
+    big_shift: RingElement,
+    mask: u64,
+    window_bits: u64,
+}
+
+struct DigitScratch {
+    temp: RingElement,
+    digit: RingElement,
+}
+
+impl Digits {
+    fn new(base_log: u64, radix: usize) -> Self {
+        let small_shift_val = 1u64 << (base_log - 1);
+        let mut big_shift_val: u64 = 0;
+        for i in 0..radix {
+            big_shift_val += small_shift_val << (i as u64 * base_log);
+        }
+        Digits {
+            base_log,
+            radix,
+            small_shift_val,
+            big_shift_val,
+            big_shift: RingElement::all(big_shift_val, Representation::StridedCoefficients),
+            mask: (1u64 << base_log) - 1,
+            // A shifted coefficient at or past 2^window_bits is outside the window.
+            window_bits: base_log * radix as u64,
+        }
+    }
+
+    fn scratch(&self) -> DigitScratch {
+        DigitScratch {
+            temp: RingElement::all(0, Representation::StridedCoefficients),
+            digit: RingElement::new(Representation::StridedCoefficients),
+        }
+    }
+
+    /// Hands digit `i` of `el`, in IncompleteNTT form, to `emit(i, digit)` for every `i`.
+    fn of(
+        &self,
+        el: &RingElement,
+        scratch: &mut DigitScratch,
+        mut emit: impl FnMut(usize, &RingElement),
+    ) {
+        let DigitScratch { temp, digit } = scratch;
+        temp.set_from(el);
+        temp.to_representation(Representation::StridedCoefficients);
+        *temp += &self.big_shift;
+        let outside = self.window_bits < 64
+            && temp.v.iter().fold(0, |acc, &coefficient| acc | coefficient) >> self.window_bits
+                != 0;
+
+        for i in 0..self.radix {
+            let from = i as u64 * self.base_log;
+            for (out, coefficient) in digit.v.iter_mut().zip(temp.v.iter()) {
+                let value = (coefficient >> from) & self.mask;
+                *out = if value >= self.small_shift_val {
+                    value - self.small_shift_val
+                } else {
+                    value + MOD_Q - self.small_shift_val
+                };
+            }
+            if outside {
+                for (out, &coefficient) in digit.v.iter_mut().zip(temp.v.iter()) {
+                    if coefficient >> self.window_bits != 0 {
+                        *out = carried_digit(
+                            coefficient,
+                            self.big_shift_val,
+                            self.base_log,
+                            self.radix,
+                            i,
+                        );
+                    }
+                }
+            }
+            digit.representation = Representation::StridedCoefficients;
+            digit.to_representation(Representation::IncompleteNTT);
+            emit(i, digit);
+        }
+    }
 }
 
 /// Digit `i` of a coefficient whose shifted value `t = x + k mod q` is past the window. The
@@ -214,12 +270,30 @@ pub fn decompose_chunks_into(
     base_log: u64,
     radix: usize,
 ) {
-    let mut flat = decompose(input, base_log, radix);
     let n = input.len();
-    for index in 0..n {
-        for i in 0..radix {
-            std::mem::swap(&mut output[i * n + index], &mut flat[index * radix + i]);
-        }
+    assert_eq!(
+        output.len(),
+        n * radix,
+        "one digit plane of the input per chunk"
+    );
+    if base_log == 1 {
+        assert_eq!(
+            radix, 1,
+            "balanced base-2 decomposition is not supported; use decompose_bits"
+        );
+        output.clone_from_slice(input);
+        return;
+    }
+    if n == 0 {
+        return;
+    }
+    let digits = Digits::new(base_log, radix);
+    let mut scratch = digits.scratch();
+    let mut planes: Vec<&mut [RingElement]> = output.chunks_mut(n).collect();
+    for (index, el) in input.iter().enumerate() {
+        digits.of(el, &mut scratch, |i, digit| {
+            planes[i][index].set_from(digit)
+        });
     }
 }
 
@@ -516,4 +590,26 @@ fn test_decompose_bits_preserves_input() {
     let _ = decompose_bits(&input, 64);
 
     debug_assert_eq!(input, before);
+}
+
+#[test]
+fn chunked_digits_are_the_digits_interleaved_by_plane() {
+    crate::common::init_common();
+    let input: Vec<RingElement> = (0..700)
+        .map(|k| match k % 3 {
+            0 => RingElement::random(Representation::IncompleteNTT),
+            _ => RingElement::random_bounded(Representation::IncompleteNTT, 1 << 14),
+        })
+        .collect();
+    for (base_log, radix) in [(8u64, 2usize), (7, 8), (1, 1)] {
+        let digits = decompose(&input, base_log, radix);
+        let n = input.len();
+        let mut chunked = vec![RingElement::zero(Representation::IncompleteNTT); n * radix];
+        decompose_chunks_into(&mut chunked, &input, base_log, radix);
+        for (index, element) in digits.chunks(radix).enumerate() {
+            for (i, digit) in element.iter().enumerate() {
+                assert_eq!(&chunked[i * n + index], digit, "base 2^{base_log}");
+            }
+        }
+    }
 }
