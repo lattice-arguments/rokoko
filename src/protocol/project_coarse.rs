@@ -14,7 +14,7 @@ use crate::common::{
 #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
 use crate::common::arithmetic::project_one_row_i16_to_u64;
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-use crate::common::arithmetic::project_rows_sparse_tiled;
+use crate::common::arithmetic::{project_rows_grouped, GROUP, GROUP_SUMS, PASS};
 
 #[derive(Clone, Copy)]
 #[repr(align(64))]
@@ -112,6 +112,7 @@ pub fn project(
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     {
         let (pos, pos_bounds, neg, neg_bounds) = signed_offset_lists(projection_matrix);
+        let offsets = ternary_group_offsets(projection_matrix);
 
         for col in 0..witness_16.used_cols {
             for rows_chunk in 0..projection_image.height / projection_matrix.projection_height {
@@ -124,12 +125,10 @@ pub fn project(
                     (rows_chunk + 1) * projection_matrix.projection_height,
                 );
 
-                project_rows_sparse_tiled::<DEGREE>(
+                project_rows_grouped::<DEGREE>(
                     subwitness_i16,
-                    &pos,
-                    &pos_bounds,
-                    &neg,
-                    &neg_bounds,
+                    &offsets,
+                    (&pos, &pos_bounds, &neg, &neg_bounds),
                     projection_subimage,
                 );
             }
@@ -272,6 +271,34 @@ pub fn signed_offset_lists(
     (pos, pos_bounds, neg, neg_bounds)
 }
 
+/// For every row of `J` and every group of `GROUP` consecutive columns, the byte offset of the
+/// signed sum the group's entries select in the group's table of `project_rows_grouped`, laid out
+/// `[block][row][group]` over blocks of `PASS` consecutive groups.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+pub fn ternary_group_offsets(projection_matrix: &ProjectionMatrix) -> Vec<u16> {
+    const _: () = assert!(GROUP == 4 && GROUP_SUMS == 81);
+    let h = projection_matrix.projection_height;
+    let blocks = projection_matrix.projection_width / (GROUP * PASS);
+    let digits: [u16; 256] = std::array::from_fn(|masks| {
+        (0..GROUP).rev().fold(0, |index, c| {
+            let (pos, non_zero) = ((masks >> c) & 1, (masks >> (GROUP + c)) & 1);
+            3 * index + if non_zero == 0 { 1 } else { 2 * pos as u16 }
+        })
+    });
+    let mut offsets = vec![0u16; blocks * h * PASS];
+    for row in 0..h {
+        let (pos_row, nz_row) = projection_matrix.row_chunks(row);
+        for group in 0..blocks * PASS {
+            let shift = GROUP * (group & 1);
+            let pos = (pos_row[group / 2] >> shift) & 15;
+            let non_zero = (nz_row[group / 2] >> shift) & 15;
+            let index = digits[(pos | non_zero << GROUP) as usize];
+            offsets[((group / PASS) * h + row) * PASS + group % PASS] = index * 64;
+        }
+    }
+    offsets
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,6 +368,32 @@ mod tests {
 
         let image = project(&prepare_i16_witness(&witness), &projection_matrix);
         assert_eq!(image.data, reference.data);
+    }
+
+    /// Digits below 2^11 project through the group tables, a block reaching 2^11 through the
+    /// offset lists; both agree with ring arithmetic.
+    #[test]
+    fn grouped_projection_is_exact_on_both_sides_of_its_bound() {
+        crate::common::init_common();
+        let mut projection_matrix = ProjectionMatrix::new(32, 256);
+        projection_matrix.sample(&mut HashWrapper::new());
+        let height = 2 * 8192;
+        for bound in [1, 129, 2048, 2049] {
+            let witness = VerticallyAlignedMatrix {
+                data: (0..2 * height)
+                    .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, bound))
+                    .collect(),
+                width: 2,
+                height,
+                used_cols: 2,
+            };
+            let image = project(&prepare_i16_witness(&witness), &projection_matrix);
+            assert_eq!(
+                image.data,
+                project_ring(&witness, &projection_matrix).data,
+                "{bound}"
+            );
+        }
     }
 
     /// A digit at `i16::MIN` leaves i16 as soon as a row subtracts it.
