@@ -13,6 +13,11 @@ use crate::{
     protocol::config::{ConfigBase, SimpleConfig},
 };
 
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+use crate::{
+    common::arithmetic::project_lanes_grouped, protocol::project_coarse::ternary_group_offsets,
+};
+
 /// Computes J_batched = c'_1^T * J_embedded
 ///
 /// J_embedded applies dual embedding: each coefficient j ∈ {-1,0,1} becomes a polynomial
@@ -374,6 +379,53 @@ fn reduce_conjugate_to_incomplete_ntt(el: &mut RingElement) {
     el.conjugate_in_place();
 }
 
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+const LANES: usize = 32;
+
+/// `project_coefficients` of up to `LANES` consecutive chunks at once through
+/// `project_lanes_grouped`, the coefficients of chunk `c` in lane `c`. False, with `outputs`
+/// untouched, when some coefficient is too large for it.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+fn project_chunks_grouped(
+    inputs: &[RingElement],
+    in_len: usize,
+    offsets: &[u16],
+    projection_matrix: &ProjectionMatrix,
+    outputs: &mut [RingElement],
+) -> bool {
+    use std::arch::x86_64::_mm512_setzero_si512;
+    let mut lanes = vec![unsafe { _mm512_setzero_si512() }; in_len * DEGREE];
+    let entries = lanes.as_mut_ptr() as *mut i16;
+    for (c, chunk) in inputs.chunks(in_len).enumerate() {
+        for (e, element) in chunk.iter().enumerate() {
+            for (t, &x) in element.v.iter().enumerate() {
+                let centered = if x > MOD_Q / 2 {
+                    x as i64 - MOD_Q as i64
+                } else {
+                    x as i64
+                };
+                if centered.unsigned_abs() > i16::MAX as u64 {
+                    return false;
+                }
+                unsafe { *entries.add((e * DEGREE + t) * LANES + c) = centered as i16 };
+            }
+        }
+    }
+    let h = projection_matrix.projection_height;
+    let Some(sums) = project_lanes_grouped(&lanes, offsets, h) else {
+        return false;
+    };
+    let sums = unsafe { std::slice::from_raw_parts(sums.as_ptr() as *const i32, h * LANES) };
+    for (c, out) in outputs.chunks_mut(h / DEGREE).enumerate() {
+        for row in 0..h {
+            let sum = sums[row * LANES + c] as i64;
+            out[row / DEGREE].v[row % DEGREE] =
+                (sum + if sum < 0 { MOD_Q as i64 } else { 0 }) as u64;
+        }
+    }
+    true
+}
+
 /// Computes the coefficient-wise projection: `V = (I_d ⊗ J) · coeff(W)`.
 ///
 /// This function projects the witness `W` through a structured projection matrix `J`.
@@ -457,231 +509,227 @@ pub fn project_coefficients(
         witness.height
     );
 
-    // Process each column independently (no interaction between columns)
-    for col in 0..witness.used_cols {
-        // Process the projection in chunks
-        // Each chunk processes (PROJECTION_HEIGHT / DEGREE) ring elements of the output
-        // which corresponds to PROJECTION_HEIGHT coefficients in the result
-        for rows_chunk in 0..image_ct.height / (projection_matrix.projection_height / DEGREE) {
-            // Extract the corresponding slice of witness coefficients for this chunk
-            // This is the input to one application of the projection matrix J
-            let subwitness = witness_coeff.col_slice(
-                col,
-                rows_chunk
-                    * projection_matrix.projection_ratio
-                    * (projection_matrix.projection_height / DEGREE),
-                (rows_chunk + 1)
-                    * projection_matrix.projection_ratio
-                    * (projection_matrix.projection_height / DEGREE),
-            );
+    let out_len = projection_matrix.projection_height / DEGREE;
+    let in_len = projection_matrix.projection_ratio * out_len;
+    let chunks = witness.used_cols * (image_ct.height / out_len);
+    let chunk = |subwitness: &[RingElement], projection_subimage: &mut [RingElement]| {
+        for inner_row in 0..projection_matrix.projection_height {
+            // Map this output coefficient to its position in a ring element
+            let current_projection_row = inner_row / DEGREE; // Which ring element
+            let current_projection_coeff_index = inner_row % DEGREE; // Which coeff in that element
 
-            // Get mutable slice of the output for this chunk
-            let projection_subimage = image_ct.col_slice_mut(
-                col,
-                rows_chunk * (projection_matrix.projection_height / DEGREE),
-                (rows_chunk + 1) * (projection_matrix.projection_height / DEGREE),
-            );
+            let target =
+                &mut projection_subimage[current_projection_row].v[current_projection_coeff_index];
+            // Compute the inner product: projection_subimage[inner_row] = J[inner_row, :] · subwitness
+            // J has (projection_ratio * PROJECTION_HEIGHT) columns
 
-            // Apply projection matrix J to this chunk
-            // J has PROJECTION_HEIGHT rows (output coefficients)
-            for inner_row in 0..projection_matrix.projection_height {
-                // Map this output coefficient to its position in a ring element
-                let current_projection_row = inner_row / DEGREE; // Which ring element
-                let current_projection_coeff_index = inner_row % DEGREE; // Which coeff in that element
+            #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+            {
+                use std::arch::x86_64::*;
 
-                let target = &mut projection_subimage[current_projection_row].v
-                    [current_projection_coeff_index];
-                // Compute the inner product: projection_subimage[inner_row] = J[inner_row, :] · subwitness
-                // J has (projection_ratio * PROJECTION_HEIGHT) columns
+                let total_cols = projection_matrix.projection_width;
+                debug_assert!(total_cols % 8 == 0);
+                let width = projection_matrix.width;
+                let blocks_per_ring = DEGREE / 8;
 
-                #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-                {
-                    use std::arch::x86_64::*;
+                unsafe {
+                    let row_base = inner_row * width;
+                    let kpos_row = projection_matrix.pos_masks().data.as_ptr().add(row_base);
+                    let kinc_row = projection_matrix
+                        .non_zero_masks()
+                        .data
+                        .as_ptr()
+                        .add(row_base);
 
-                    let total_cols = projection_matrix.projection_width;
-                    debug_assert!(total_cols % 8 == 0);
-                    let width = projection_matrix.width;
-                    let blocks_per_ring = DEGREE / 8;
+                    // Two independent accumulators for ILP (instruction-level parallelism).
+                    // Each holds a running sum of ±witness coefficients for this output coeff.
+                    let mut acc0 = _mm512_setzero_si512();
+                    let mut acc1 = _mm512_setzero_si512();
 
-                    unsafe {
-                        let row_base = inner_row * width;
-                        let kpos_row = projection_matrix.pos_masks().data.as_ptr().add(row_base);
-                        let kinc_row = projection_matrix
-                            .non_zero_masks()
-                            .data
-                            .as_ptr()
-                            .add(row_base);
+                    let mut chunk_idx = 0usize;
 
-                        // Two independent accumulators for ILP (instruction-level parallelism).
-                        // Each holds a running sum of ±witness coefficients for this output coeff.
-                        let mut acc0 = _mm512_setzero_si512();
-                        let mut acc1 = _mm512_setzero_si512();
+                    // 2× unrolled: each chunk covers 8 u64 witness coefficients (one __m512i).
+                    while chunk_idx + 1 < width {
+                        // Load the bitmask byte: bit k is set iff column (chunk*8+k) is non-zero / positive.
+                        let k_pos0 = *kpos_row.add(chunk_idx);
+                        let k_inc0 = *kinc_row.add(chunk_idx);
 
-                        let mut chunk_idx = 0usize;
+                        // Split into positive-add and negative-subtract masks.
+                        let add0: __mmask8 = (k_inc0 & k_pos0) as __mmask8;
+                        let sub0: __mmask8 = (k_inc0 & !k_pos0) as __mmask8;
 
-                        // 2× unrolled: each chunk covers 8 u64 witness coefficients (one __m512i).
-                        while chunk_idx + 1 < width {
-                            // Load the bitmask byte: bit k is set iff column (chunk*8+k) is non-zero / positive.
-                            let k_pos0 = *kpos_row.add(chunk_idx);
-                            let k_inc0 = *kinc_row.add(chunk_idx);
+                        // Map flat column index → (ring element index, offset within ring).
+                        let ring0 = chunk_idx / blocks_per_ring;
+                        let off0 = (chunk_idx - ring0 * blocks_per_ring) * 8;
 
-                            // Split into positive-add and negative-subtract masks.
-                            let add0: __mmask8 = (k_inc0 & k_pos0) as __mmask8;
-                            let sub0: __mmask8 = (k_inc0 & !k_pos0) as __mmask8;
+                        let coeff0 = _mm512_load_epi64(
+                            subwitness.get_unchecked(ring0).v.as_ptr().add(off0) as *const i64,
+                        );
 
-                            // Map flat column index → (ring element index, offset within ring).
-                            let ring0 = chunk_idx / blocks_per_ring;
-                            let off0 = (chunk_idx - ring0 * blocks_per_ring) * 8;
+                        acc0 = _mm512_mask_add_epi64(acc0, add0, acc0, coeff0);
+                        acc0 = _mm512_mask_sub_epi64(acc0, sub0, acc0, coeff0);
 
-                            let coeff0 = _mm512_load_epi64(
-                                subwitness.get_unchecked(ring0).v.as_ptr().add(off0) as *const i64,
-                            );
+                        let k_pos1 = *kpos_row.add(chunk_idx + 1);
+                        let k_inc1 = *kinc_row.add(chunk_idx + 1);
 
-                            acc0 = _mm512_mask_add_epi64(acc0, add0, acc0, coeff0);
-                            acc0 = _mm512_mask_sub_epi64(acc0, sub0, acc0, coeff0);
+                        let add1: __mmask8 = (k_inc1 & k_pos1) as __mmask8;
+                        let sub1: __mmask8 = (k_inc1 & !k_pos1) as __mmask8;
 
-                            let k_pos1 = *kpos_row.add(chunk_idx + 1);
-                            let k_inc1 = *kinc_row.add(chunk_idx + 1);
+                        let ring1 = (chunk_idx + 1) / blocks_per_ring;
+                        let off1 = ((chunk_idx + 1) - ring1 * blocks_per_ring) * 8;
 
-                            let add1: __mmask8 = (k_inc1 & k_pos1) as __mmask8;
-                            let sub1: __mmask8 = (k_inc1 & !k_pos1) as __mmask8;
+                        let coeff1 = _mm512_load_epi64(
+                            subwitness.get_unchecked(ring1).v.as_ptr().add(off1) as *const i64,
+                        );
 
-                            let ring1 = (chunk_idx + 1) / blocks_per_ring;
-                            let off1 = ((chunk_idx + 1) - ring1 * blocks_per_ring) * 8;
+                        acc1 = _mm512_mask_add_epi64(acc1, add1, acc1, coeff1);
+                        acc1 = _mm512_mask_sub_epi64(acc1, sub1, acc1, coeff1);
 
-                            let coeff1 = _mm512_load_epi64(
-                                subwitness.get_unchecked(ring1).v.as_ptr().add(off1) as *const i64,
-                            );
-
-                            acc1 = _mm512_mask_add_epi64(acc1, add1, acc1, coeff1);
-                            acc1 = _mm512_mask_sub_epi64(acc1, sub1, acc1, coeff1);
-
-                            chunk_idx += 2;
-                        }
-
-                        // Scalar tail: handle the last chunk when width is odd.
-                        if chunk_idx < width {
-                            let k_pos = *kpos_row.add(chunk_idx);
-                            let k_inc = *kinc_row.add(chunk_idx);
-
-                            let add: __mmask8 = (k_inc & k_pos) as __mmask8;
-                            let sub: __mmask8 = (k_inc & !k_pos) as __mmask8;
-
-                            let ring = chunk_idx / blocks_per_ring;
-                            let off = (chunk_idx - ring * blocks_per_ring) * 8;
-
-                            let coeff = _mm512_load_epi64(
-                                subwitness.get_unchecked(ring).v.as_ptr().add(off) as *const i64,
-                            );
-
-                            acc0 = _mm512_mask_add_epi64(acc0, add, acc0, coeff);
-                            acc0 = _mm512_mask_sub_epi64(acc0, sub, acc0, coeff);
-                        }
-
-                        // Merge the two accumulators and horizontal-sum all 8 lanes
-                        // into a single u64 that gets added to the output coefficient.
-                        let acc = _mm512_add_epi64(acc0, acc1);
-                        let sum = _mm512_reduce_add_epi64(acc) as u64;
-                        *target = target.wrapping_add(sum);
+                        chunk_idx += 2;
                     }
-                }
 
-                #[cfg(target_arch = "aarch64")]
-                {
-                    use std::arch::aarch64::*;
+                    // Scalar tail: handle the last chunk when width is odd.
+                    if chunk_idx < width {
+                        let k_pos = *kpos_row.add(chunk_idx);
+                        let k_inc = *kinc_row.add(chunk_idx);
 
-                    // NEON has no masked add/sub; AND coefficients against these lane masks.
-                    static MASK_LUT: [[i64; 2]; 4] = [[0, 0], [-1, 0], [0, -1], [-1, -1]];
+                        let add: __mmask8 = (k_inc & k_pos) as __mmask8;
+                        let sub: __mmask8 = (k_inc & !k_pos) as __mmask8;
 
-                    let width = projection_matrix.width;
-                    let blocks_per_ring = DEGREE / 8;
-                    debug_assert!(projection_matrix.projection_width % 8 == 0);
+                        let ring = chunk_idx / blocks_per_ring;
+                        let off = (chunk_idx - ring * blocks_per_ring) * 8;
 
-                    unsafe {
-                        let row_base = inner_row * width;
-                        let kpos_row = projection_matrix.pos_masks().data.as_ptr().add(row_base);
-                        let knz_row = projection_matrix
-                            .non_zero_masks()
-                            .data
-                            .as_ptr()
-                            .add(row_base);
+                        let coeff = _mm512_load_epi64(
+                            subwitness.get_unchecked(ring).v.as_ptr().add(off) as *const i64,
+                        );
 
-                        // Four 2-lane accumulators for ILP, mirroring the AVX-512 path's two.
-                        let mut acc0 = vdupq_n_s64(0);
-                        let mut acc1 = vdupq_n_s64(0);
-                        let mut acc2 = vdupq_n_s64(0);
-                        let mut acc3 = vdupq_n_s64(0);
-
-                        for chunk_idx in 0..width {
-                            let nz_byte = *knz_row.add(chunk_idx);
-                            let pos_byte = *kpos_row.add(chunk_idx);
-                            // Split into positive-add and negative-subtract masks.
-                            let add_byte = nz_byte & pos_byte;
-                            let sub_byte = nz_byte & !pos_byte;
-
-                            let ring_idx = chunk_idx / blocks_per_ring;
-                            let lane_offset = (chunk_idx - ring_idx * blocks_per_ring) * 8;
-                            let coeffs_ptr = subwitness
-                                .get_unchecked(ring_idx)
-                                .v
-                                .as_ptr()
-                                .add(lane_offset)
-                                as *const i64;
-
-                            macro_rules! step {
-                                ($acc:ident, $lane_off:expr, $bit_shift:expr) => {{
-                                    let coeff = vld1q_s64(coeffs_ptr.add($lane_off));
-                                    let add_mask = vld1q_s64(
-                                        MASK_LUT[((add_byte >> $bit_shift) & 0b11) as usize]
-                                            .as_ptr(),
-                                    );
-                                    let sub_mask = vld1q_s64(
-                                        MASK_LUT[((sub_byte >> $bit_shift) & 0b11) as usize]
-                                            .as_ptr(),
-                                    );
-                                    let to_add = vandq_s64(coeff, add_mask);
-                                    let to_sub = vandq_s64(coeff, sub_mask);
-                                    $acc = vaddq_s64($acc, vsubq_s64(to_add, to_sub));
-                                }};
-                            }
-
-                            step!(acc0, 0, 0);
-                            step!(acc1, 2, 2);
-                            step!(acc2, 4, 4);
-                            step!(acc3, 6, 6);
-                        }
-
-                        let acc01 = vaddq_s64(acc0, acc1);
-                        let acc23 = vaddq_s64(acc2, acc3);
-                        let total = vaddq_s64(acc01, acc23);
-                        let sum = vaddvq_s64(total) as u64;
-                        *target = target.wrapping_add(sum);
+                        acc0 = _mm512_mask_add_epi64(acc0, add, acc0, coeff);
+                        acc0 = _mm512_mask_sub_epi64(acc0, sub, acc0, coeff);
                     }
+
+                    // Merge the two accumulators and horizontal-sum all 8 lanes
+                    // into a single u64 that gets added to the output coefficient.
+                    let acc = _mm512_add_epi64(acc0, acc1);
+                    let sum = _mm512_reduce_add_epi64(acc) as u64;
+                    *target = target.wrapping_add(sum);
                 }
+            }
 
-                #[cfg(not(any(
-                    all(target_arch = "x86_64", target_feature = "avx512f"),
-                    target_arch = "aarch64",
-                )))]
-                {
-                    let total_cols =
-                        projection_matrix.projection_ratio * projection_matrix.projection_height;
-                    for i in 0..total_cols {
-                        let (is_positive, is_non_zero) = &projection_matrix[(inner_row, i)];
-                        if !*is_non_zero {
-                            continue;
+            #[cfg(target_arch = "aarch64")]
+            {
+                use std::arch::aarch64::*;
+
+                // NEON has no masked add/sub; AND coefficients against these lane masks.
+                static MASK_LUT: [[i64; 2]; 4] = [[0, 0], [-1, 0], [0, -1], [-1, -1]];
+
+                let width = projection_matrix.width;
+                let blocks_per_ring = DEGREE / 8;
+                debug_assert!(projection_matrix.projection_width % 8 == 0);
+
+                unsafe {
+                    let row_base = inner_row * width;
+                    let kpos_row = projection_matrix.pos_masks().data.as_ptr().add(row_base);
+                    let knz_row = projection_matrix
+                        .non_zero_masks()
+                        .data
+                        .as_ptr()
+                        .add(row_base);
+
+                    // Four 2-lane accumulators for ILP, mirroring the AVX-512 path's two.
+                    let mut acc0 = vdupq_n_s64(0);
+                    let mut acc1 = vdupq_n_s64(0);
+                    let mut acc2 = vdupq_n_s64(0);
+                    let mut acc3 = vdupq_n_s64(0);
+
+                    for chunk_idx in 0..width {
+                        let nz_byte = *knz_row.add(chunk_idx);
+                        let pos_byte = *kpos_row.add(chunk_idx);
+                        // Split into positive-add and negative-subtract masks.
+                        let add_byte = nz_byte & pos_byte;
+                        let sub_byte = nz_byte & !pos_byte;
+
+                        let ring_idx = chunk_idx / blocks_per_ring;
+                        let lane_offset = (chunk_idx - ring_idx * blocks_per_ring) * 8;
+                        let coeffs_ptr = subwitness
+                            .get_unchecked(ring_idx)
+                            .v
+                            .as_ptr()
+                            .add(lane_offset)
+                            as *const i64;
+
+                        macro_rules! step {
+                            ($acc:ident, $lane_off:expr, $bit_shift:expr) => {{
+                                let coeff = vld1q_s64(coeffs_ptr.add($lane_off));
+                                let add_mask = vld1q_s64(
+                                    MASK_LUT[((add_byte >> $bit_shift) & 0b11) as usize].as_ptr(),
+                                );
+                                let sub_mask = vld1q_s64(
+                                    MASK_LUT[((sub_byte >> $bit_shift) & 0b11) as usize].as_ptr(),
+                                );
+                                let to_add = vandq_s64(coeff, add_mask);
+                                let to_sub = vandq_s64(coeff, sub_mask);
+                                $acc = vaddq_s64($acc, vsubq_s64(to_add, to_sub));
+                            }};
                         }
 
-                        // Add or subtract the witness coefficient depending on J's sign
-                        if *is_positive {
-                            *target += subwitness[i / DEGREE].v[i % DEGREE];
-                        } else {
-                            *target -= subwitness[i / DEGREE].v[i % DEGREE];
-                        }
+                        step!(acc0, 0, 0);
+                        step!(acc1, 2, 2);
+                        step!(acc2, 4, 4);
+                        step!(acc3, 6, 6);
+                    }
+
+                    let acc01 = vaddq_s64(acc0, acc1);
+                    let acc23 = vaddq_s64(acc2, acc3);
+                    let total = vaddq_s64(acc01, acc23);
+                    let sum = vaddvq_s64(total) as u64;
+                    *target = target.wrapping_add(sum);
+                }
+            }
+
+            #[cfg(not(any(
+                all(target_arch = "x86_64", target_feature = "avx512f"),
+                target_arch = "aarch64",
+            )))]
+            {
+                let total_cols =
+                    projection_matrix.projection_ratio * projection_matrix.projection_height;
+                for i in 0..total_cols {
+                    let (is_positive, is_non_zero) = &projection_matrix[(inner_row, i)];
+                    if !*is_non_zero {
+                        continue;
+                    }
+
+                    // Add or subtract the witness coefficient depending on J's sign
+                    if *is_positive {
+                        *target += subwitness[i / DEGREE].v[i % DEGREE];
+                    } else {
+                        *target -= subwitness[i / DEGREE].v[i % DEGREE];
                     }
                 }
             }
         }
+    };
+    let inputs = &witness_coeff.data[..chunks * in_len];
+    let outputs = &mut image_ct.data[..chunks * out_len];
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    {
+        let offsets = ternary_group_offsets(projection_matrix);
+        for (outputs, inputs) in outputs
+            .chunks_mut(LANES * out_len)
+            .zip(inputs.chunks(LANES * in_len))
+        {
+            if !project_chunks_grouped(inputs, in_len, &offsets, projection_matrix, outputs) {
+                for (subwitness, projection_subimage) in
+                    inputs.chunks(in_len).zip(outputs.chunks_mut(out_len))
+                {
+                    chunk(subwitness, projection_subimage);
+                }
+            }
+        }
+    }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+    for (out, input) in outputs.chunks_mut(out_len).zip(inputs.chunks(in_len)) {
+        chunk(input, out);
     }
     for el in image_ct.data.iter_mut() {
         unsafe {
@@ -1067,6 +1115,68 @@ mod tests {
                 "batch_projection column {} should produce the same result as computing project_coefficients followed by batching",
                 col
             );
+        }
+    }
+
+    /// Chunks of digits below 2^11 project 32 at a time through the group tables, a partial
+    /// batch and unused columns included; larger coefficients take the masked kernel. Both match
+    /// the definition.
+    #[test]
+    fn coefficients_project_as_defined_in_batches_and_alone() {
+        crate::common::init_common();
+        let (ratio, rows) = (32, 256);
+        let mut projection_matrix = ProjectionMatrix::new(ratio, rows);
+        projection_matrix.sample(&mut HashWrapper::new());
+        let out_len = rows / DEGREE;
+        let in_len = ratio * out_len;
+        let (height, width, used_cols) = (in_len * 40, 3, 2);
+        for bound in [Some(2048), None] {
+            let mut data: Vec<RingElement> = (0..height * width)
+                .map(|_| match bound {
+                    Some(bound) => {
+                        RingElement::random_bounded(Representation::IncompleteNTT, bound)
+                    }
+                    None => RingElement::random(Representation::IncompleteNTT),
+                })
+                .collect();
+            for x in data[used_cols * height..].iter_mut() {
+                *x = RingElement::zero(Representation::IncompleteNTT);
+            }
+            let witness = VerticallyAlignedMatrix {
+                data,
+                width,
+                height,
+                used_cols,
+            };
+            let image = project_coefficients(&witness, &projection_matrix);
+            for col in 0..width {
+                for chunk in 0..height / in_len {
+                    let coefficients: Vec<i128> = witness
+                        .col_slice(col, in_len * chunk, in_len * (chunk + 1))
+                        .iter()
+                        .flat_map(|x| {
+                            let mut x = x.clone();
+                            x.from_incomplete_ntt_to_strided_coefficients();
+                            x.from_strided_coefficients_to_coefficients();
+                            x.v.map(|c| c as i128)
+                        })
+                        .collect();
+                    for row in 0..rows {
+                        let sum: i128 = (0..ratio * rows)
+                            .map(|i| match projection_matrix[(row, i)] {
+                                (_, false) => 0,
+                                (true, true) => coefficients[i],
+                                (false, true) => -coefficients[i],
+                            })
+                            .sum();
+                        assert_eq!(
+                            image[(chunk * out_len + row / DEGREE, col)].v[row % DEGREE] as i128,
+                            sum.rem_euclid(MOD_Q as i128),
+                            "{bound:?}, column {col}, chunk {chunk}, row {row}"
+                        );
+                    }
+                }
+            }
         }
     }
 

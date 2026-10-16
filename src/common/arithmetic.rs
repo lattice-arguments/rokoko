@@ -308,11 +308,64 @@ unsafe fn project_rows_in_blocks<const DEGREE: usize>(
     offsets: &[u16],
     out: &mut [RingElement],
 ) -> bool {
-    let h = out.len();
-    let row_len = subwitness_i16.len();
-    let blocks = row_len / BLOCK;
+    let lines = Lines {
+        base: subwitness_i16.as_ptr() as *const u8,
+        stride: core::mem::size_of::<Signed16RingElement>(),
+        len: subwitness_i16.len(),
+        slices: DEGREE / 32,
+    };
+    ternary_rows(lines, offsets, out.len(), |k, wide| {
+        for (row, out) in out.iter_mut().enumerate() {
+            let dst = out.v.as_mut_ptr().add(k * 32);
+            convert_i32x16_to_u64_mod_q(dst, wide[2 * row]);
+            convert_i32x16_to_u64_mod_q(dst.add(16), wide[2 * row + 1]);
+        }
+    })
+}
+
+/// `project_rows_grouped` over 32 independent blocks at once, block `c` in lane `c` of every
+/// entry of `lanes`: the sums of row `r` come back as lanes `0..16` and `16..32` of entries
+/// `2r` and `2r + 1`, or nothing when some digit reaches 2^11.
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+pub fn project_lanes_grouped(lanes: &[__m512i], offsets: &[u16], h: usize) -> Option<Vec<__m512i>> {
+    let blocks = lanes.len() / BLOCK;
+    if blocks * BLOCK != lanes.len() {
+        return None;
+    }
+    let mut sums = vec![unsafe { _mm512_setzero_si512() }; 2 * h];
+    let lines = Lines {
+        base: lanes.as_ptr() as *const u8,
+        stride: 64,
+        len: lanes.len(),
+        slices: 1,
+    };
+    unsafe { ternary_rows(lines, offsets, h, |_, wide| sums.copy_from_slice(wide)) }.then_some(sums)
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+struct Lines {
+    base: *const u8,
+    stride: usize,
+    len: usize,
+    slices: usize,
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+unsafe fn ternary_rows(
+    lines: Lines,
+    offsets: &[u16],
+    h: usize,
+    mut emit: impl FnMut(usize, &[__m512i]),
+) -> bool {
+    let Lines {
+        base,
+        stride,
+        len,
+        slices,
+    } = lines;
+    let blocks = len / BLOCK;
     assert_eq!(offsets.len(), blocks * h * PASS);
-    assert!(row_len * (i16::MAX as usize / BLOCK) <= i32::MAX as usize);
+    assert!(len * (i16::MAX as usize / BLOCK) <= i32::MAX as usize);
 
     let mut tables = vec![_mm512_setzero_si512(); PASS * GROUP_SUMS];
     let mut scratch = vec![_mm512_setzero_si512(); h];
@@ -324,25 +377,23 @@ unsafe fn project_rows_in_blocks<const DEGREE: usize>(
         wide: wide.as_mut_ptr(),
         rows: h,
     };
-    let base = subwitness_i16.as_ptr() as *const u8;
-    let elem_bytes = core::mem::size_of::<Signed16RingElement>();
 
-    for k in 0..DEGREE / 32 {
+    for k in 0..slices {
         let chunk = base.add(k * 64);
         wide.fill(_mm512_setzero_si512());
         let mut budget = 0;
         for block in 0..blocks {
             if block + 1 < blocks {
-                let next = chunk.add((block + 1) * BLOCK * elem_bytes);
+                let next = chunk.add((block + 1) * BLOCK * stride);
                 for e in 0..BLOCK {
-                    _mm_prefetch::<_MM_HINT_T0>(next.add(e * elem_bytes) as *const i8);
+                    _mm_prefetch::<_MM_HINT_T0>(next.add(e * stride) as *const i8);
                 }
             }
             let mut largest = _mm512_setzero_si512();
             for group in 0..PASS {
-                let first = chunk.add((block * PASS + group) * GROUP * elem_bytes);
+                let first = chunk.add((block * PASS + group) * GROUP * stride);
                 let w: [__m512i; GROUP] = std::array::from_fn(|c| {
-                    let line = _mm512_load_si512(first.add(c * elem_bytes) as *const __m512i);
+                    let line = _mm512_load_si512(first.add(c * stride) as *const __m512i);
                     largest = _mm512_max_epu16(largest, _mm512_abs_epi16(line));
                     line
                 });
@@ -365,11 +416,7 @@ unsafe fn project_rows_in_blocks<const DEGREE: usize>(
             budget += bound;
         }
         sums.widen();
-        for (row, out) in out.iter_mut().enumerate() {
-            let dst = out.v.as_mut_ptr().add(k * 32);
-            convert_i32x16_to_u64_mod_q(dst, wide[2 * row]);
-            convert_i32x16_to_u64_mod_q(dst.add(16), wide[2 * row + 1]);
-        }
+        emit(k, &wide);
     }
     true
 }
