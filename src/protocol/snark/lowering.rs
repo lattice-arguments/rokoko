@@ -14,7 +14,10 @@ use crate::{
             common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
             diff::{DiffSumcheck, DiffSumcheckEvaluation},
             elephant_cell::ElephantCell,
-            linear::{BasicEvaluationLinearSumcheck, FakeEvaluationLinearSumcheck, LinearSumcheck},
+            linear::{
+                conjugated_oracle, witness_oracle, BasicEvaluationLinearSumcheck,
+                FakeEvaluationLinearSumcheck, LinearSumcheck,
+            },
             polynomial::Polynomial,
             product::{ProductSumcheck, ProductSumcheckEvaluation},
             flat::FlatRounds,
@@ -814,27 +817,6 @@ impl<'a> ProverAssembler<'a> {
             }
         }
     }
-}
-
-#[cfg(feature = "unsafe-sumcheck")]
-fn witness_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck<RingElement> {
-    unsafe { LinearSumcheck::from_borrowed(witness, used, None) }
-}
-
-#[cfg(feature = "unsafe-sumcheck")]
-fn conjugated_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck<RingElement> {
-    unsafe { LinearSumcheck::conjugate_of(witness, used) }
-}
-
-#[cfg(not(feature = "unsafe-sumcheck"))]
-fn witness_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck<RingElement> {
-    LinearSumcheck::from_data_with_non_zero_end(witness.to_vec(), used)
-}
-
-#[cfg(not(feature = "unsafe-sumcheck"))]
-fn conjugated_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck<RingElement> {
-    let conjugated = witness.iter().map(RingElement::conjugate).collect();
-    LinearSumcheck::from_data_with_non_zero_end(conjugated, used)
 }
 
 fn used_length(witness: &[RingElement]) -> usize {

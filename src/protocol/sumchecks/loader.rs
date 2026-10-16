@@ -10,6 +10,7 @@ use crate::{
         config::SumcheckConfig,
         open::Opening,
         project_fine::BatchedProjectionChallenges,
+        sumcheck_utils::linear::{conjugated_oracle, witness_oracle},
         sumchecks::helpers::{
             projection_flatter_1_times_matrix, split_projection_flatter, tensor_product_u64,
         },
@@ -17,6 +18,15 @@ use crate::{
 };
 
 use super::context::SumcheckContext;
+
+/// The end of the used part of the composed witness: everything past it is zero.
+pub fn used_length(config: &SumcheckConfig, combined_witness: &[RingElement]) -> usize {
+    let used_columns =
+        (config.composed_witness_length as f64 * config.next_level_usage_ratio).ceil() as usize;
+    used_columns
+        .min(config.composed_witness_length)
+        .min(combined_witness.len())
+}
 
 /// Loads all data into the sumcheck context.
 ///
@@ -26,8 +36,7 @@ use super::context::SumcheckContext;
 pub fn load_sumcheck_data(
     sumcheck_context: &mut SumcheckContext,
     config: &SumcheckConfig,
-    combined_witness: &Vec<RingElement>,
-    conjugated_combined_witness: &Vec<RingElement>,
+    combined_witness: &[RingElement],
     folding_challenges: &Vec<RingElement>,
     fine_proj_batching_challenges: &Option<&[BatchedProjectionChallenges; NOF_BATCHES]>,
     opening: &Opening,
@@ -38,30 +47,24 @@ pub fn load_sumcheck_data(
     // but only a fraction is actually used. Passing the non-zero boundary
     // lets LinearSumcheck skip zero-tail work in partial_evaluate and
     // Karatsuba inner products.
-    let used_columns =
-        (config.composed_witness_length as f64 * config.next_level_usage_ratio).ceil() as usize;
-    let non_zero_end = used_columns
-        .min(config.composed_witness_length)
-        .min(combined_witness.len())
-        .min(conjugated_combined_witness.len());
+    let non_zero_end = used_length(config, combined_witness);
 
-    // Load combined witness
     sumcheck_context
         .combined_witness_sumcheck
         .borrow_mut()
-        .load_from_with_non_zero_end(combined_witness, non_zero_end);
+        .install(witness_oracle(combined_witness, non_zero_end));
+
+    sumcheck_context
+        .norm_check_sumcheck
+        .conjugated_combined_witness
+        .borrow_mut()
+        .install(conjugated_oracle(combined_witness, non_zero_end));
 
     // Load folding challenges
     sumcheck_context
         .folding_challenges_sumcheck
         .borrow_mut()
         .load_from(&folding_challenges);
-
-    sumcheck_context
-        .norm_check_sumcheck
-        .conjugated_combined_witness
-        .borrow_mut()
-        .load_from_with_non_zero_end(&conjugated_combined_witness, non_zero_end);
 
     // Load inner evaluation points (inner_eval_fold)
     for (inner_eval_fold_sc, eval_point) in sumcheck_context

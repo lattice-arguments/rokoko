@@ -60,6 +60,35 @@ impl LinearSumcheck<RingElement> {
     }
 }
 
+/// The witness as a table of its first `used` entries, borrowed while it is unfolded.
+#[cfg(feature = "unsafe-sumcheck")]
+pub(crate) fn witness_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck<RingElement> {
+    unsafe { LinearSumcheck::from_borrowed(witness, used, None) }
+}
+
+/// The conjugated witness as a table viewing the witness.
+#[cfg(feature = "unsafe-sumcheck")]
+pub(crate) fn conjugated_oracle(
+    witness: &[RingElement],
+    used: usize,
+) -> LinearSumcheck<RingElement> {
+    unsafe { LinearSumcheck::conjugate_of(witness, used) }
+}
+
+#[cfg(not(feature = "unsafe-sumcheck"))]
+pub(crate) fn witness_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck<RingElement> {
+    LinearSumcheck::from_data_with_non_zero_end(witness.to_vec(), used)
+}
+
+#[cfg(not(feature = "unsafe-sumcheck"))]
+pub(crate) fn conjugated_oracle(
+    witness: &[RingElement],
+    used: usize,
+) -> LinearSumcheck<RingElement> {
+    let conjugated = witness.iter().map(RingElement::conjugate).collect();
+    LinearSumcheck::from_data_with_non_zero_end(conjugated, used)
+}
+
 /// Standard linear sumcheck over a vector that represents a multilinear extension.
 pub struct LinearSumcheck<E: SumcheckElement = RingElement> {
     pub data: Vec<E>,
@@ -106,6 +135,34 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
             viewed: false,
         }
     }
+    /// A table of `count` entries whose data is installed later with `install`.
+    pub fn unloaded(count: usize) -> Self {
+        LinearSumcheck {
+            data: Vec::new(),
+            borrowed: None,
+            variable_count: count.ilog2() as usize,
+            index_mask: count - 1,
+            poly_scratch: RefCell::new(Polynomial::new(2)),
+            suffix: 0,
+            non_zero_end: 0,
+            viewed: false,
+        }
+    }
+
+    /// Replaces an unloaded table by `table`, which must have its shape.
+    pub fn install(&mut self, table: Self) {
+        assert!(
+            self.data.is_empty() && self.borrowed.is_none(),
+            "only an unloaded table is installed"
+        );
+        assert_eq!(
+            (table.variable_count, table.suffix),
+            (self.variable_count, self.suffix),
+            "the installed table has another shape"
+        );
+        *self = table;
+    }
+
     pub fn from_data(data: Vec<E>) -> Self {
         Self::from_data_with_prefixed_sufixed_data(data, 0, 0)
     }
@@ -909,6 +966,30 @@ impl<E: SumcheckElement> EvaluationSumcheckData for FakeEvaluationLinearSumcheck
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_installed_oracle_reads_as_its_witness_and_only_an_unloaded_table_takes_one() {
+        crate::common::init_common();
+        let witness: Vec<RingElement> = (0..2048)
+            .map(|_| RingElement::random(Representation::IncompleteNTT))
+            .collect();
+        let mut table = LinearSumcheck::<RingElement>::unloaded(2048);
+        table.install(witness_oracle(&witness, 2000));
+        let (_, _, end, entries) = snapshot(&table);
+        assert_eq!((end, &entries[..]), (2000, &witness[..]));
+        let mut conjugate = LinearSumcheck::<RingElement>::unloaded(2048);
+        conjugate.install(conjugated_oracle(&witness, 2000));
+        let conjugates: Vec<RingElement> = witness.iter().map(RingElement::conjugate).collect();
+        assert_eq!(snapshot(&conjugate).3, conjugates);
+        let again = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            table.install(witness_oracle(&witness, 2000))
+        }));
+        assert!(again.is_err());
+        let other = std::panic::catch_unwind(|| {
+            LinearSumcheck::<RingElement>::unloaded(1024).install(witness_oracle(&witness, 2000))
+        });
+        assert!(other.is_err());
+    }
 
     #[test]
     fn tables_are_send() {
