@@ -13,7 +13,17 @@ use crate::common::{
 
 #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
 use crate::common::arithmetic::project_one_row_i16_to_u64;
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    not(target_feature = "avx512bw")
+))]
+use crate::common::arithmetic::project_rows_sparse_tiled;
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
 use crate::common::arithmetic::{project_rows_grouped, GROUP, GROUP_SUMS, PASS};
 
 #[derive(Clone, Copy)]
@@ -112,6 +122,7 @@ pub fn project(
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     {
         let (pos, pos_bounds, neg, neg_bounds) = signed_offset_lists(projection_matrix);
+        #[cfg(target_feature = "avx512bw")]
         let offsets = ternary_group_offsets(projection_matrix);
 
         for col in 0..witness_16.used_cols {
@@ -125,10 +136,20 @@ pub fn project(
                     (rows_chunk + 1) * projection_matrix.projection_height,
                 );
 
+                #[cfg(target_feature = "avx512bw")]
                 project_rows_grouped::<DEGREE>(
                     subwitness_i16,
                     &offsets,
                     (&pos, &pos_bounds, &neg, &neg_bounds),
+                    projection_subimage,
+                );
+                #[cfg(not(target_feature = "avx512bw"))]
+                project_rows_sparse_tiled::<DEGREE>(
+                    subwitness_i16,
+                    &pos,
+                    &pos_bounds,
+                    &neg,
+                    &neg_bounds,
                     projection_subimage,
                 );
             }
@@ -271,7 +292,11 @@ pub fn signed_offset_lists(
     (pos, pos_bounds, neg, neg_bounds)
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
 pub fn ternary_group_offsets(projection_matrix: &ProjectionMatrix) -> Vec<u64> {
     const _: () = assert!(GROUP == 4 && GROUP_SUMS == 81 && PASS == 4);
     let h = projection_matrix.projection_height;
@@ -553,7 +578,11 @@ mod tests {
         );
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "avx512f",
+        target_feature = "avx512bw"
+    ))]
     fn extreme_rows(width: usize) -> Vec<Vec<i8>> {
         use rand::{Rng, SeedableRng};
         let mut rng = rand::rngs::StdRng::seed_from_u64(11);
@@ -571,7 +600,11 @@ mod tests {
         rows
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "avx512f",
+        target_feature = "avx512bw"
+    ))]
     fn extreme_digits(len: usize, cells: usize) -> Vec<(&'static str, Vec<i16>)> {
         use rand::{Rng, SeedableRng};
         let mut rng = rand::rngs::StdRng::seed_from_u64(13);
@@ -626,7 +659,11 @@ mod tests {
         ]
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "avx512f",
+        target_feature = "avx512bw"
+    ))]
     #[test]
     fn grouped_rows_match_the_tiled_kernel_and_the_definition_on_extreme_digits() {
         use crate::common::arithmetic::{project_rows_grouped, project_rows_sparse_tiled};
@@ -676,7 +713,11 @@ mod tests {
         }
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "avx512f",
+        target_feature = "avx512bw"
+    ))]
     #[test]
     fn grouped_lanes_match_the_definition_on_extreme_digits_or_decline() {
         use crate::common::arithmetic::project_lanes_grouped;

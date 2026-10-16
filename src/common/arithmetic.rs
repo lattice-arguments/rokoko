@@ -23,10 +23,17 @@ pub static HALF_WAY_MOD_Q_RING_CF: LazyLock<RingElement> =
 use std::arch::x86_64::{
     __m128i, __m512i, _mm512_abs_epi16, _mm512_add_epi16, _mm512_add_epi32, _mm512_castsi512_si256,
     _mm512_cmpgt_epu64_mask, _mm512_cvtepi16_epi32, _mm512_cvtepi32_epi64, _mm512_cvtepi64_epi16,
-    _mm512_cvtepu16_epi32, _mm512_extracti64x4_epi64, _mm512_load_si512, _mm512_mask_add_epi64,
-    _mm512_mask_sub_epi64, _mm512_max_epu16, _mm512_max_epu32, _mm512_movepi64_mask,
-    _mm512_reduce_max_epu32, _mm512_set1_epi64, _mm512_setzero_si512, _mm512_store_si512,
-    _mm512_storeu_si512, _mm512_sub_epi16, _mm_prefetch, _mm_store_si128, _MM_HINT_T0,
+    _mm512_extracti64x4_epi64, _mm512_load_si512, _mm512_mask_add_epi64, _mm512_mask_sub_epi64,
+    _mm512_max_epu16, _mm512_movepi64_mask, _mm512_set1_epi64, _mm512_setzero_si512,
+    _mm512_store_si512, _mm512_storeu_si512, _mm512_sub_epi16, _mm_store_si128,
+};
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
+use std::arch::x86_64::{
+    _mm512_cvtepu16_epi32, _mm512_max_epu32, _mm512_reduce_max_epu32, _mm_prefetch, _MM_HINT_T0,
 };
 
 #[inline(always)]
@@ -272,16 +279,36 @@ pub fn project_rows_sparse_tiled<const DEGREE: usize>(
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
 pub const GROUP: usize = 4;
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
 pub const GROUP_SUMS: usize = 81;
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
 pub const PASS: usize = 4;
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
 const BLOCK: usize = PASS * GROUP;
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
 pub(crate) fn project_rows_grouped<const DEGREE: usize>(
     subwitness_i16: &[Signed16RingElement],
     offsets: &[u64],
@@ -297,7 +324,11 @@ pub(crate) fn project_rows_grouped<const DEGREE: usize>(
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
 unsafe fn project_rows_in_blocks<const DEGREE: usize>(
     subwitness_i16: &[Signed16RingElement],
     offsets: &[u64],
@@ -318,7 +349,11 @@ unsafe fn project_rows_in_blocks<const DEGREE: usize>(
     })
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
 pub(crate) fn project_lanes_grouped(
     lanes: &[__m512i],
     offsets: &[u64],
@@ -338,7 +373,11 @@ pub(crate) fn project_lanes_grouped(
     unsafe { ternary_rows(lines, offsets, h, |_, wide| sums.copy_from_slice(wide)) }.then_some(sums)
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
 struct Lines {
     base: *const u8,
     stride: usize,
@@ -346,7 +385,11 @@ struct Lines {
     slices: usize,
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
 unsafe fn ternary_rows(
     lines: Lines,
     offsets: &[u64],
@@ -420,7 +463,11 @@ unsafe fn ternary_rows(
     true
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
 struct Sums {
     tables: *const u8,
     scratch: *mut __m512i,
@@ -428,7 +475,11 @@ struct Sums {
     rows: usize,
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
 impl Sums {
     #[inline(always)]
     unsafe fn add<const OPENS: bool>(&self, selections: &[u64]) {
@@ -459,7 +510,11 @@ impl Sums {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
 #[inline(always)]
 unsafe fn largest_lane(x: __m512i) -> usize {
     let low = _mm512_cvtepu16_epi32(_mm512_castsi512_si256(x));
@@ -467,7 +522,11 @@ unsafe fn largest_lane(x: __m512i) -> usize {
     _mm512_reduce_max_epu32(_mm512_max_epu32(low, high)) as usize
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
 #[inline(always)]
 unsafe fn ternary_sums(table: *mut __m512i, [w0, w1, w2, w3]: [__m512i; GROUP]) {
     let signed = |s: __m512i, d: usize, w: __m512i| match d {

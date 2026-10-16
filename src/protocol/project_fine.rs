@@ -13,7 +13,11 @@ use crate::{
     protocol::config::{ConfigBase, SimpleConfig},
 };
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
 use crate::{
     common::arithmetic::project_lanes_grouped, protocol::project_coarse::ternary_group_offsets,
 };
@@ -379,10 +383,18 @@ fn reduce_conjugate_to_incomplete_ntt(el: &mut RingElement) {
     el.conjugate_in_place();
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
 const LANES: usize = 32;
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    target_feature = "avx512bw"
+))]
 fn project_chunks_grouped(
     inputs: &[RingElement],
     in_len: usize,
@@ -717,7 +729,11 @@ pub fn project_coefficients(
     };
     let inputs = &witness_coeff.data[..chunks * in_len];
     let outputs = &mut image_ct.data[..chunks * out_len];
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "avx512f",
+        target_feature = "avx512bw"
+    ))]
     {
         let offsets = ternary_group_offsets(projection_matrix);
         for (outputs, inputs) in outputs
@@ -729,7 +745,11 @@ pub fn project_coefficients(
             }
         }
     }
-    #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
+    #[cfg(not(all(
+        target_arch = "x86_64",
+        target_feature = "avx512f",
+        target_feature = "avx512bw"
+    )))]
     masked(inputs, outputs);
     for el in image_ct.data.iter_mut() {
         unsafe {
