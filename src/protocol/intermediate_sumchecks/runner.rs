@@ -35,6 +35,11 @@ pub fn run_intermediate_sumcheck(
     sumcheck_context: &mut IntermediateSumcheckContext,
     hash_wrapper: &mut HashWrapper,
 ) -> (IntermediateSumcheckProof, Vec<RingElement>) {
+    assert!(
+        !std::mem::replace(&mut sumcheck_context.spent, true),
+        "a sumcheck context serves one proof; build a fresh one with init_sumcheck"
+    );
+
     let mut conjugated_combined_witness =
         vec![RingElement::zero(Representation::IncompleteNTT); combined_witness.len()];
     combined_witness

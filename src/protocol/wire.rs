@@ -10,13 +10,15 @@
 //! gap is unreachable: that accounting charges `log2|c|`, the ideal code length for a scale-free
 //! source, whereas the entropy floor of the coefficients actually sent is 110.7 KB.
 
-use crate::common::config::{DEGREE, MOD_Q, SLOT_DEGREE};
+use crate::common::config::{DEGREE, MOD_Q, NOF_BATCHES, SLOT_DEGREE};
 use crate::common::matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix};
 use crate::common::ring_arithmetic::{FieldExtension, Representation, RingElement};
 use crate::protocol::config::{
-    IntermediateRoundProof, NextRoundCommitment, RoundProof, SimpleRoundProof, SumcheckRoundProof,
+    config_base_from_config, Config, IntermediateConfig, IntermediateRoundProof,
+    NextRoundCommitment, Projection, RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig,
+    SumcheckRoundProof,
 };
-use crate::protocol::snark::ClaimsProof;
+use crate::protocol::snark::{ClaimsProof, WitnessShape};
 use crate::protocol::sumcheck_utils::polynomial::Polynomial;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -33,6 +35,114 @@ const SYMBOLS: usize = 56;
 const ROLES: usize = 16;
 const MAX_ELEMENTS: usize = 1 << 20;
 const VERSION: u8 = 1;
+/// The rows of an opening below the root: the sumcheck point and its conjugate.
+const OPENED_POINTS: usize = 2;
+
+/// What a decoder may allocate, in coefficients, and how many rounds it may recurse into. A zero
+/// in a role where zeros dominate codes into next to nothing, so the length of the input does not
+/// bound what a proof declares; the config does. Declared lengths are charged against the
+/// allowance before anything is allocated.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Allowance {
+    pub(crate) cells: usize,
+    pub(crate) rounds: usize,
+}
+
+impl Allowance {
+    /// Exactly what an honest proof of `config` declares. The verifier's shape checks then hold
+    /// each field to its own size.
+    pub(crate) fn of(config: &SumcheckConfig) -> Allowance {
+        let mut allowance = Allowance {
+            cells: 0,
+            rounds: 0,
+        };
+        allowance.sumcheck(config);
+        allowance
+    }
+
+    /// The claims proof over a witness of `shape`: a round polynomial per variable and the two
+    /// openings.
+    fn claims(shape: WitnessShape) -> Allowance {
+        let mut allowance = Allowance {
+            cells: 0,
+            rounds: 1,
+        };
+        allowance.polys((shape.height * shape.width).ilog2() as usize);
+        allowance.rings(2);
+        allowance
+    }
+
+    fn rings(&mut self, count: usize) {
+        self.cells += count * DEGREE;
+    }
+
+    fn polys(&mut self, count: usize) {
+        self.cells += count * 4 * SLOT_DEGREE;
+    }
+
+    fn images(&mut self, image_height: usize, width: usize) {
+        self.rings((image_height + NOF_BATCHES) * width);
+    }
+
+    fn sumcheck(&mut self, config: &SumcheckConfig) {
+        self.rounds += 1;
+        self.polys(config.composed_witness_length.ilog2() as usize);
+        self.rings(4 + config.projection_norm_scope().is_some() as usize);
+        self.rings(config.opening_recursion.most_inner_config().rank);
+        match &config.projection_recursion {
+            Projection::Coarse(recursion) => self.rings(recursion.most_inner_config().rank),
+            Projection::Fine(recursion) => self.rings(
+                recursion.recursion_constant_term.most_inner_config().rank
+                    + recursion
+                        .recursion_batched_projection
+                        .most_inner_config()
+                        .rank
+                    + NOF_BATCHES,
+            ),
+            Projection::Skip => {}
+        }
+        self.next(config.next.as_deref());
+    }
+
+    /// The next round and the commitment the round before sends for it.
+    fn next(&mut self, next: Option<&Config>) {
+        let Some(next) = next else {
+            return;
+        };
+        if let Config::Sumcheck(next) = next {
+            self.rings(next.commitment_recursion.most_inner_config().rank);
+            return self.sumcheck(next);
+        }
+        let base = config_base_from_config(next);
+        self.rings(base.basic_commitment_rank().next_power_of_two() * base.witness_width());
+        match next {
+            Config::Intermediate(next) => self.intermediate(next),
+            Config::Simple(next) => self.simple(next),
+            Config::Sumcheck(_) => unreachable!(),
+        }
+    }
+
+    fn intermediate(&mut self, config: &IntermediateConfig) {
+        self.rounds += 1;
+        self.rings(OPENED_POINTS * config.witness_width);
+        self.polys((config.witness_height * config.witness_decomposition_chunks).ilog2() as usize);
+        self.rings(3);
+        self.images(
+            config.witness_height / config.projection_ratio,
+            config.witness_width,
+        );
+        self.next(config.next.as_deref());
+    }
+
+    fn simple(&mut self, config: &SimpleConfig) {
+        self.rounds += 1;
+        self.rings(config.witness_height + OPENED_POINTS * config.witness_width);
+        self.images(
+            config.witness_height / config.projection_ratio,
+            config.witness_width,
+        );
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -53,6 +163,18 @@ enum Role {
     BatchedProjection,
     OpeningRhs,
     WitnessEval,
+}
+
+impl Role {
+    /// The representation the protocol holds the role's ring elements in. The label the format
+    /// carries is not read by the transcript or the arithmetic, so it is accepted only when it is
+    /// this one.
+    fn representation(self) -> Representation {
+        match self {
+            Role::ProjectionCt => Representation::Coefficients,
+            _ => Representation::IncompleteNTT,
+        }
+    }
 }
 
 fn residue_bits() -> u32 {
@@ -388,8 +510,9 @@ impl RansEncoder {
         let freq = model.freq[symbol] as u32;
         debug_assert!(freq > 0);
         let mut x = self.state[lane];
-        let ceiling = ((RANS_LOW >> SCALE_BITS) << 16) * freq;
-        if x >= ceiling {
+        // 2^32 for a one-symbol model, whose symbol costs nothing and never renormalises.
+        let ceiling = (((RANS_LOW >> SCALE_BITS) << 16) as u64) * freq as u64;
+        if x as u64 >= ceiling {
             self.words.push(x as u16);
             x >>= 16;
         }
@@ -562,11 +685,17 @@ impl Encoder {
         self.ring_slice(role, &m.data);
     }
 
+    /// A round polynomial is written without its leading zero coefficients, which neither its
+    /// evaluations nor the transcript see.
     fn polys(&mut self, polys: &[Polynomial<FieldExtension>]) {
         self.shape.put_varint(polys.len() as u64);
         for poly in polys {
-            self.shape.put(poly.num_coefficients as u64, 3);
-            for coeff in &poly.coefficients[..poly.num_coefficients] {
+            let len = poly.coefficients[..poly.num_coefficients]
+                .iter()
+                .rposition(|coeff| coeff.coeffs.iter().any(|&v| v != 0))
+                .map_or(0, |top| top + 1);
+            self.shape.put(len as u64, 3);
+            for coeff in &poly.coefficients[..len] {
                 for v in &coeff.coeffs {
                     self.push(Role::Poly, *v);
                 }
@@ -774,10 +903,12 @@ struct Decoder<'a> {
     shape: BitReader<'a>,
     body: Body<'a>,
     models: Vec<Model>,
+    rounds: usize,
+    cells: usize,
 }
 
 impl<'a> Decoder<'a> {
-    fn new(bytes: &'a [u8]) -> Result<Decoder<'a>, WireError> {
+    fn new(bytes: &'a [u8], allowance: Allowance) -> Result<Decoder<'a>, WireError> {
         if bytes.len() < 13 || bytes[0] != VERSION {
             return Err(if bytes.len() < 13 {
                 WireError::Truncated
@@ -817,7 +948,18 @@ impl<'a> Decoder<'a> {
                 index: 0,
             },
             models,
+            rounds: allowance
+                .rounds
+                .checked_sub(1)
+                .ok_or(WireError::Malformed)?,
+            cells: allowance.cells,
         })
+    }
+
+    /// Spends `cells` of the allowance.
+    fn charge(&mut self, cells: usize) -> Result<(), WireError> {
+        self.cells = self.cells.checked_sub(cells).ok_or(WireError::Malformed)?;
+        Ok(())
     }
 
     fn ring_slice(&mut self, role: Role) -> Result<Vec<RingElement>, WireError> {
@@ -825,6 +967,7 @@ impl<'a> Decoder<'a> {
         if len == 0 {
             return Ok(Vec::new());
         }
+        self.charge(len * DEGREE)?;
         let uniform = self.shape.get(1)? != 0;
         let mut representations = Vec::with_capacity(len);
         if uniform {
@@ -834,6 +977,9 @@ impl<'a> Decoder<'a> {
             for _ in 0..len {
                 representations.push(representation(self.shape.get(2)?)?);
             }
+        }
+        if representations.iter().any(|r| *r != role.representation()) {
+            return Err(WireError::Malformed);
         }
         let flip = self.shape.get(1)? != 0;
 
@@ -880,6 +1026,9 @@ impl<'a> Decoder<'a> {
         let height = self.shape.get_len()?;
         let used_cols = self.shape.get_len()?;
         let data = self.ring_slice(role)?;
+        if width.checked_mul(height) != Some(data.len()) || used_cols > width {
+            return Err(WireError::Malformed);
+        }
         Ok(VerticallyAlignedMatrix {
             data,
             width,
@@ -895,6 +1044,9 @@ impl<'a> Decoder<'a> {
         let width = self.shape.get_len()?;
         let height = self.shape.get_len()?;
         let data = self.ring_slice(role)?;
+        if width.checked_mul(height) != Some(data.len()) {
+            return Err(WireError::Malformed);
+        }
         Ok(HorizontallyAlignedMatrix {
             data,
             width,
@@ -904,7 +1056,8 @@ impl<'a> Decoder<'a> {
 
     fn polys(&mut self) -> Result<Vec<Polynomial<FieldExtension>>, WireError> {
         let len = self.shape.get_len()?;
-        let mut polys = Vec::with_capacity(len.min(4096));
+        self.charge(len * 4 * SLOT_DEGREE)?;
+        let mut polys = Vec::with_capacity(len);
         for _ in 0..len {
             let num_coefficients = self.shape.get(3)? as usize;
             if num_coefficients > 4 {
@@ -1013,6 +1166,7 @@ impl<'a> Decoder<'a> {
         if self.shape.get(1)? == 0 {
             return Ok(None);
         }
+        self.rounds = self.rounds.checked_sub(1).ok_or(WireError::Malformed)?;
         Ok(Some(Box::new(self.round()?)))
     }
 }
@@ -1035,13 +1189,19 @@ pub fn initial_to_bytes(proof: &ClaimsProof) -> Vec<u8> {
     encoder.finish()
 }
 
-pub fn initial_from_bytes(bytes: &[u8]) -> Result<ClaimsProof, WireError> {
-    let mut decoder = Decoder::new(bytes)?;
-    Ok(ClaimsProof {
+/// Like `from_bytes_for`, for the claims proof over a witness of `shape`.
+pub fn initial_from_bytes_for(
+    shape: impl Into<WitnessShape>,
+    bytes: &[u8],
+) -> Result<ClaimsProof, WireError> {
+    let mut decoder = Decoder::new(bytes, Allowance::claims(shape.into()))?;
+    let proof = ClaimsProof {
         polys: decoder.polys()?,
         witness_eval: decoder.ring(Role::WitnessEval)?,
         conj_witness_eval: decoder.option_ring(Role::WitnessEval)?,
-    })
+    };
+    canonical(bytes, initial_to_bytes(&proof))?;
+    Ok(proof)
 }
 
 pub fn to_bytes(proof: &SumcheckRoundProof) -> Vec<u8> {
@@ -1050,8 +1210,32 @@ pub fn to_bytes(proof: &SumcheckRoundProof) -> Vec<u8> {
     encoder.finish()
 }
 
-pub fn from_bytes(bytes: &[u8]) -> Result<SumcheckRoundProof, WireError> {
-    Decoder::new(bytes)?.sumcheck()
+/// Decodes a proof of `config`'s chain, declaring no more than an honest one does. It accepts
+/// exactly the bytes `to_bytes` writes for the proof they decode to, so an accepted proof has one
+/// encoding: the coding choices the format leaves open (the histograms, which elements are coded
+/// as coefficients, the padding of each section) are the encoder's, never the sender's.
+pub fn from_bytes_for(
+    config: &SumcheckConfig,
+    bytes: &[u8],
+) -> Result<SumcheckRoundProof, WireError> {
+    from_bytes_within(bytes, Allowance::of(config))
+}
+
+/// `from_bytes_for` within an explicit allowance.
+pub(crate) fn from_bytes_within(
+    bytes: &[u8],
+    allowance: Allowance,
+) -> Result<SumcheckRoundProof, WireError> {
+    let proof = Decoder::new(bytes, allowance)?.sumcheck()?;
+    canonical(bytes, to_bytes(&proof))?;
+    Ok(proof)
+}
+
+fn canonical(bytes: &[u8], encoded: Vec<u8>) -> Result<(), WireError> {
+    if encoded != bytes {
+        return Err(WireError::Malformed);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1059,6 +1243,21 @@ mod tests {
     use super::*;
     use crate::common::init_common;
     use crate::common::matrix::ZeroNew;
+
+    /// The fixtures follow no config; they decode within an allowance well above theirs.
+    const FIXTURE: Allowance = Allowance {
+        cells: 1 << 20,
+        rounds: 8,
+    };
+
+    fn from_bytes(bytes: &[u8]) -> Result<SumcheckRoundProof, WireError> {
+        from_bytes_within(bytes, FIXTURE)
+    }
+
+    /// A claims fixture with `polys` round polynomials.
+    fn initial_from_bytes(polys: usize, bytes: &[u8]) -> Result<ClaimsProof, WireError> {
+        initial_from_bytes_for((1 << polys, 1), bytes)
+    }
 
     fn short(bound: u64) -> RingElement {
         let mut el = RingElement::random_bounded(Representation::Coefficients, bound);
@@ -1076,6 +1275,15 @@ mod tests {
             *slot = short(bound);
         }
         m.used_cols = width - 1;
+        m
+    }
+
+    /// A projection image, which the protocol holds as coefficients.
+    fn image(height: usize, width: usize, bound: u64) -> VerticallyAlignedMatrix<RingElement> {
+        let mut m = vertical(height, width, bound);
+        for slot in m.data.iter_mut() {
+            slot.to_representation(Representation::Coefficients);
+        }
         m
     }
 
@@ -1102,7 +1310,7 @@ mod tests {
     fn simple() -> RoundProof {
         RoundProof::Simple(SimpleRoundProof {
             folded_witness: vertical(4, 3, 1 << 11),
-            projection_image_ct: vertical(2, 2, 1 << 5),
+            projection_image_ct: image(2, 2, 1 << 5),
             batched_projection_image: horizontal(2, 2),
             opening_rhs: horizontal(2, 2),
         })
@@ -1116,7 +1324,7 @@ mod tests {
             claim_over_witness_conjugate: uniform(),
             norm_claim: short(1 << 28),
             next_round_commitment: Some(NextRoundCommitment::Simple(horizontal(2, 1))),
-            projection_image_ct: vertical(2, 1, 1 << 5),
+            projection_image_ct: image(2, 1, 1 << 5),
             batched_projection_image: horizontal(1, 2),
             next: Some(Box::new(simple())),
         })
@@ -1206,5 +1414,204 @@ mod tests {
         let bytes = to_bytes(&sumcheck(None, false));
         assert!(from_bytes(&bytes[..bytes.len() - 8]).is_err());
         assert!(from_bytes(&bytes[..12]).is_err());
+    }
+
+    /// Decoding recurses once per round, so a chain longer than its allowance is refused at the
+    /// first round past it rather than overflowing the stack.
+    #[test]
+    fn wire_refuses_a_chain_past_its_rounds() {
+        init_common();
+        let chain = |rounds: usize| {
+            let mut proof = sumcheck(None, false);
+            for _ in 1..rounds {
+                proof = sumcheck(Some(Box::new(RoundProof::Sumcheck(proof))), false);
+            }
+            to_bytes(&proof)
+        };
+        let allowance = |rounds| Allowance { rounds, ..FIXTURE };
+        assert!(from_bytes_within(&chain(4), allowance(4)).is_ok());
+        assert_eq!(
+            from_bytes_within(&chain(4), allowance(3)).err(),
+            Some(WireError::Malformed)
+        );
+        let deep = std::thread::Builder::new()
+            .stack_size(1 << 28)
+            .spawn(move || chain(1000))
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(
+            from_bytes_within(&deep, allowance(4)).err(),
+            Some(WireError::Malformed)
+        );
+    }
+
+    /// A zero in a role where zeros dominate codes into next to nothing, so a proof can declare
+    /// far more ring elements than it carries; the decoder refuses what its allowance does not
+    /// cover before allocating it.
+    #[test]
+    fn wire_refuses_more_coefficients_than_its_allowance() {
+        init_common();
+        let mut proof = sumcheck(None, false);
+        proof.rc_opening_inner.extend(
+            std::iter::repeat_with(|| RingElement::zero(Representation::IncompleteNTT))
+                .take(1 << 16),
+        );
+        assert_eq!(
+            from_bytes(&to_bytes(&proof)).err(),
+            Some(WireError::Malformed)
+        );
+
+        let mut claims = ClaimsProof {
+            polys: (2..=3).map(poly).collect(),
+            witness_eval: uniform(),
+            conj_witness_eval: Some(uniform()),
+        };
+        let bytes = initial_to_bytes(&claims);
+        assert!(initial_from_bytes(2, &bytes).is_ok());
+        assert_eq!(
+            initial_from_bytes(1, &bytes).err(),
+            Some(WireError::Malformed)
+        );
+        claims.polys = vec![Polynomial::new(0); 1 << 16];
+        assert_eq!(
+            initial_from_bytes(20, &initial_to_bytes(&claims)).err(),
+            Some(WireError::Malformed)
+        );
+    }
+
+    /// The decoder accepts only the bytes the encoder writes: a change to a coding choice (a
+    /// histogram, a section's padding, which elements travel as coefficients, a rANS state) or
+    /// to the length is refused unless it changes the proof, and what decodes encodes back to
+    /// the bytes it came from.
+    #[test]
+    fn wire_accepts_only_the_bytes_it_writes() {
+        init_common();
+        let proof = sumcheck(
+            Some(Box::new(RoundProof::Sumcheck(sumcheck(
+                Some(Box::new(intermediate())),
+                false,
+            )))),
+            true,
+        );
+        let bytes = to_bytes(&proof);
+        let section =
+            |i: usize| u32::from_le_bytes(bytes[1 + 4 * i..5 + 4 * i].try_into().unwrap()) as usize;
+        let choices = 13 + section(0) + section(1) + 4 * LANES;
+        for bit in 0..8 * choices {
+            let mut flipped = bytes.clone();
+            flipped[bit / 8] ^= 1 << (bit % 8);
+            if let Ok(decoded) = from_bytes(&flipped) {
+                assert_eq!(to_bytes(&decoded), flipped, "bit {bit}");
+            }
+        }
+        let mut longer = bytes.clone();
+        longer.push(0);
+        assert!(from_bytes(&longer).is_err());
+    }
+
+    /// The transcript and the arithmetic read a ring element's coefficients and not its label, so
+    /// a relabelled element would be a second encoding of the same proof; the decoder accepts
+    /// only the representation the protocol holds each role in.
+    #[test]
+    fn wire_refuses_a_relabelled_ring_element() {
+        init_common();
+        let relabelled: [fn(&mut SumcheckRoundProof); 3] = [
+            |p| p.claim_over_witness.representation = Representation::Coefficients,
+            |p| p.norm_claim.representation = Representation::Coefficients,
+            |p| {
+                let Some(RoundProof::Simple(last)) = p.next.as_deref_mut() else {
+                    unreachable!()
+                };
+                last.projection_image_ct.data[0].representation = Representation::IncompleteNTT;
+            },
+        ];
+        for relabel in relabelled {
+            let mut proof = sumcheck(Some(Box::new(simple())), false);
+            assert!(from_bytes(&to_bytes(&proof)).is_ok());
+            relabel(&mut proof);
+            assert_eq!(
+                from_bytes(&to_bytes(&proof)).err(),
+                Some(WireError::Malformed)
+            );
+        }
+
+        let mut claims = ClaimsProof {
+            polys: (2..=3).map(poly).collect(),
+            witness_eval: uniform(),
+            conj_witness_eval: Some(uniform()),
+        };
+        assert!(initial_from_bytes(2, &initial_to_bytes(&claims)).is_ok());
+        claims.witness_eval.representation = Representation::Coefficients;
+        assert_eq!(
+            initial_from_bytes(2, &initial_to_bytes(&claims)).err(),
+            Some(WireError::Malformed)
+        );
+    }
+
+    /// A round polynomial is written at its degree, so one held with a zero leading coefficient
+    /// has the same single encoding.
+    #[test]
+    fn wire_writes_a_round_polynomial_at_its_degree() {
+        init_common();
+        let proof = sumcheck(None, false);
+        let mut padded = from_bytes(&to_bytes(&proof)).unwrap();
+        padded.polys[0].num_coefficients += 1;
+        assert_eq!(to_bytes(&padded), to_bytes(&proof));
+        assert_eq!(
+            from_bytes(&to_bytes(&padded)).unwrap().polys[0].num_coefficients,
+            proof.polys[0].num_coefficients
+        );
+    }
+
+    /// A role whose coefficients all fall in one octave, as an all-zero one does, has a model of
+    /// one symbol, which costs no bits. Its renormalisation bound overflowed and left the lanes
+    /// it shares with the other roles out of step, so such a proof did not decode.
+    #[test]
+    fn wire_roundtrips_a_role_of_one_octave() {
+        init_common();
+        let zeroed: [fn(&mut SumcheckRoundProof); 2] = [
+            |p| {
+                for e in p.rc_opening_inner.iter_mut() {
+                    e.set_zero();
+                }
+            },
+            |p| {
+                let Some(RoundProof::Simple(last)) = p.next.as_deref_mut() else {
+                    unreachable!()
+                };
+                for e in last.folded_witness.data.iter_mut() {
+                    e.set_zero();
+                }
+            },
+        ];
+        for zero in zeroed {
+            let mut proof = sumcheck(Some(Box::new(simple())), true);
+            zero(&mut proof);
+            let bytes = to_bytes(&proof);
+            assert_eq!(to_bytes(&from_bytes(&bytes).unwrap()), bytes);
+        }
+    }
+
+    /// A matrix travels with its shape, which must describe its entries.
+    #[test]
+    fn wire_refuses_a_matrix_shape_that_disagrees_with_its_entries() {
+        init_common();
+        let tampered: [fn(&mut SimpleRoundProof); 3] = [
+            |p| p.batched_projection_image.height = 0,
+            |p| p.folded_witness.width += 1,
+            |p| p.projection_image_ct.used_cols = p.projection_image_ct.width + 1,
+        ];
+        for tamper in tampered {
+            let mut proof = sumcheck(Some(Box::new(simple())), false);
+            let Some(RoundProof::Simple(last)) = proof.next.as_deref_mut() else {
+                unreachable!()
+            };
+            tamper(last);
+            assert_eq!(
+                from_bytes(&to_bytes(&proof)).err(),
+                Some(WireError::Malformed)
+            );
+        }
     }
 }

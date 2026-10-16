@@ -1,18 +1,20 @@
 use crate::common::{config::MOD_Q, ring_arithmetic::RingElement};
 
-/// A norm over its bound rejects the proof; `soft-norms` only reports it, for calibration.
-const HARD_ASSERTION: bool = !cfg!(feature = "soft-norms");
+/// Whether a norm over its bound rejects the proof. `soft-norms`, which `calibration` turns on,
+/// only reports it. A crate depending on rokoko reads this rather than its own features: Cargo
+/// unifies features across the build, so another crate may have turned `soft-norms` on here.
+pub const NORMS_ENFORCED: bool = !cfg!(feature = "soft-norms");
 
 macro_rules! maybe_assert {
     ($cond:expr $(,)?) => {
-        if HARD_ASSERTION {
+        if NORMS_ENFORCED {
             assert!($cond);
         } else if !($cond) {
             eprintln!("Assertion failed: {}", stringify!($cond));
         }
     };
     ($cond:expr, $($arg:tt)+) => {
-        if HARD_ASSERTION {
+        if NORMS_ENFORCED {
             assert!($cond, $($arg)+);
         } else if !($cond) {
             eprintln!(
@@ -220,5 +222,21 @@ pub mod calibration {
             );
         }
         println!("];");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `NORMS_ENFORCED` is what this build does with a norm over its bound, `calibration` included.
+    #[test]
+    fn norms_enforced_is_what_a_norm_over_its_bound_does() {
+        let rejected = std::panic::catch_unwind(|| maybe_assert!(2.0 <= 1.0, "over its bound"));
+        assert_eq!(rejected.is_err(), NORMS_ENFORCED);
+        assert_eq!(
+            NORMS_ENFORCED,
+            !cfg!(any(feature = "soft-norms", feature = "calibration"))
+        );
     }
 }

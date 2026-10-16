@@ -1613,6 +1613,41 @@ mod tests {
         (witness, vec![claim1, claim2, claim3, claim4])
     }
 
+    /// A claims proof over an all-zero witness is zero but for its framing and codes into a few
+    /// dozen bytes, a dozen coefficients a byte; it decodes against the witness shape and
+    /// verifies.
+    #[test]
+    fn a_claims_proof_over_a_zero_witness_decodes_and_verifies() {
+        init_common();
+        let (height, width) = (1 << 9, 8);
+        let n = height * width;
+        let witness = VerticallyAlignedMatrix {
+            height,
+            width,
+            used_cols: width,
+            data: vec![RingElement::zero(Representation::IncompleteNTT); n],
+        };
+        let point: Vec<RingElement> = (0..n.ilog2())
+            .map(|_| RingElement::random_bounded(Representation::IncompleteNTT, 1 << 10))
+            .collect();
+        let zero = RingElement::zero(Representation::IncompleteNTT);
+        let claims = vec![
+            SnarkClaim::sums_to(eq(point) * witness_in(Region::whole(n)), zero.clone()),
+            SnarkClaim::sums_to(
+                witness_in(Region::whole(n)) * witness_in(Region::whole(n)).conjugate(),
+                zero,
+            ),
+        ];
+
+        let (proof, chain_prover) = prove_claims(&witness, &claims, &mut HashWrapper::new());
+        let bytes = crate::protocol::wire::initial_to_bytes(&proof);
+        let decoded = crate::protocol::wire::initial_from_bytes_for((height, width), &bytes)
+            .expect("an honest claims proof decodes");
+        let chain_verifier =
+            verify_claims((height, width), &claims, &decoded, &mut HashWrapper::new());
+        assert_eq!(chain_prover.claims, chain_verifier.claims);
+    }
+
     #[test]
     fn test_initial_claims_roundtrip() {
         init_common();

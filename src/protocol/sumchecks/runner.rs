@@ -65,6 +65,11 @@ pub fn sumcheck(
     Vec<RingElement>,
     Option<Vec<RingElement>>,
 ) {
+    assert!(
+        !std::mem::replace(&mut sumcheck_context.spent, true),
+        "a sumcheck context serves one proof; build a fresh one with init_sumcheck"
+    );
+
     let projection_matrix_flatter = match config.projection_recursion {
         Projection::Coarse(_) => {
             let projection_height_flat = config.witness_height / config.projection_ratio;

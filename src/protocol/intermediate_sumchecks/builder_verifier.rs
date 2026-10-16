@@ -173,5 +173,6 @@ pub fn init_intermediate_verifier(
             }
             _ => None,
         },
+        spent: false,
     }
 }

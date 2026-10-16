@@ -6,7 +6,7 @@ use crate::{
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         norms::{assert_norm_bounded, l2_norm_coeffs},
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{Representation, RingElement},
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     hexl::bindings::{add_mod, eltwise_mult_mod, multiply_mod},
@@ -14,8 +14,9 @@ use crate::{
         boundary::{BoundaryCapture, VerifierBoundary},
         commitment::{commit_basic_internal, BasicCommitment},
         config::{
-            Config, IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, RoundProof,
-            SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof,
+            config_base_from_config, Config, IntermediateConfig, IntermediateRoundProof,
+            NextRoundCommitment, Projection, RoundProof, SimpleConfig, SimpleRoundProof,
+            SumcheckConfig, SumcheckRoundProof,
         },
         crs::VerifierCRS,
         intermediate_sumchecks::{
@@ -29,6 +30,7 @@ use crate::{
         project_fine::{
             verifier_sample_projection_challenges_collectively, BatchedProjectionChallengesSuccinct,
         },
+        sumcheck_utils::polynomial::Polynomial,
         sumchecks::{
             context_verifier::{NextVerifierSumcheckContext, VerifierSumcheckContext},
             runner_verifier::sumcheck_verifier,
@@ -49,6 +51,15 @@ pub fn verifier_round(
     hash_wrapper_verifier: Option<HashWrapper>,
     boundary: Option<BoundaryCapture<'_, VerifierBoundary>>,
 ) {
+    check_sumcheck_round_shape(
+        config,
+        rc_commitment,
+        round_proof,
+        evaluation_points_inner,
+        evaluation_points_outer,
+        claims,
+    );
+
     let mut hash_wrapper_verifier = hash_wrapper_verifier.unwrap_or_else(HashWrapper::new);
 
     let evaluation_points = sumcheck_verifier(
@@ -273,7 +284,7 @@ pub(crate) fn fold_matrix_claims(
     matrix: &HorizontallyAlignedMatrix<RingElement>,
     folding_challenges: &[RingElement],
 ) -> Vec<RingElement> {
-    debug_assert_eq!(
+    assert_eq!(
         folding_challenges.len(),
         matrix.width,
         "folding_challenges length must equal matrix width"
@@ -303,6 +314,8 @@ pub fn verifier_round_intermediate(
     sumcheck_context_verifier: &mut IntermediateVerifierSumcheckContext,
     hash_wrapper: Option<HashWrapper>,
 ) {
+    check_intermediate_round_shape(config, commitment, round_proof, claims.len());
+
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
 
@@ -547,6 +560,8 @@ pub fn verifier_round_simple(
     claims: &[RingElement],
     hash_wrapper: Option<HashWrapper>,
 ) {
+    check_simple_round_shape(config, commitment, round_proof, claims.len());
+
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
     hash_wrapper.update_with_ring_element_slice(&round_proof.opening_rhs.data);
@@ -765,5 +780,288 @@ pub fn verifier_round_simple(
         l2_norm_proj,
         config.projection_norm_bound,
     );
+}
 
+/// Panics unless a size a round proof carries is the one the round's config determines. The
+/// transcript absorbs only the entries of a matrix or a slice, not its shape, so a shape is
+/// trusted nowhere: every loop and index the verifier drives off a proof goes through one of the
+/// passes below first.
+fn expect_shape<T: PartialEq + std::fmt::Debug>(what: &str, got: T, expected: T) {
+    assert!(
+        got == expected,
+        "proof shape: {what} is {got:?}, the round's config determines {expected:?}"
+    );
+}
+
+fn vertical_shape<T>(matrix: &VerticallyAlignedMatrix<T>) -> (usize, usize, usize, usize) {
+    (
+        matrix.height,
+        matrix.width,
+        matrix.used_cols,
+        matrix.data.len(),
+    )
+}
+
+fn horizontal_shape<T>(matrix: &HorizontallyAlignedMatrix<T>) -> (usize, usize, usize) {
+    (matrix.height, matrix.width, matrix.data.len())
+}
+
+fn is_zero(element: &RingElement) -> bool {
+    element.v.iter().all(|&c| c == 0)
+}
+
+/// One round polynomial per variable, each at most cubic and with the tail the transcript absorbs
+/// past its coefficients zero.
+fn expect_polys(what: &str, polys: &[Polynomial<FieldExtension>], variables: usize) {
+    expect_shape(what, polys.len(), variables);
+    for (round, poly) in polys.iter().enumerate() {
+        assert!(
+            poly.num_coefficients <= poly.coefficients.len()
+                && poly.coefficients[poly.num_coefficients..]
+                    .iter()
+                    .all(|c| c.coeffs.iter().all(|&x| x == 0)),
+            "proof shape: {what} round {round} is not a cubic with a zero tail"
+        );
+    }
+}
+
+/// A basic commitment to a `width`-column witness: `rank` key rows padded with zero rows to a
+/// power of two.
+fn expect_basic_commitment(what: &str, commitment: &BasicCommitment, rank: usize, width: usize) {
+    let height = rank.next_power_of_two();
+    expect_shape(
+        &format!("{what} (height, width, entries)"),
+        horizontal_shape(commitment),
+        (height, width, height * width),
+    );
+    assert!(
+        commitment.data[rank * width..].iter().all(is_zero),
+        "proof shape: {what} has non-zero padding rows"
+    );
+}
+
+/// One opening row per claim; the last column is recomputed from the claims, so it travels as
+/// zero.
+fn expect_opening_rhs(
+    what: &str,
+    opening_rhs: &HorizontallyAlignedMatrix<RingElement>,
+    claims: usize,
+    width: usize,
+) {
+    expect_shape(
+        &format!("{what} opening_rhs (height, width, entries)"),
+        horizontal_shape(opening_rhs),
+        (claims, width, claims * width),
+    );
+    assert!(
+        (0..claims).all(|row| is_zero(&opening_rhs[(row, width - 1)])),
+        "proof shape: {what} opening_rhs carries a non-zero last column"
+    );
+}
+
+/// The projection images of a round with a fine projection: the constant terms, one row per
+/// `projection_ratio` witness rows, and `NOF_BATCHES` batched rows.
+fn expect_projection_images(
+    what: &str,
+    projection_image_ct: &VerticallyAlignedMatrix<RingElement>,
+    batched_projection_image: &HorizontallyAlignedMatrix<RingElement>,
+    image_height: usize,
+    width: usize,
+) {
+    expect_shape(
+        &format!("{what} projection_image_ct (height, width, used_cols, entries)"),
+        vertical_shape(projection_image_ct),
+        (image_height, width, width, image_height * width),
+    );
+    expect_shape(
+        &format!("{what} batched_projection_image (height, width, entries)"),
+        horizontal_shape(batched_projection_image),
+        (NOF_BATCHES, width, NOF_BATCHES * width),
+    );
+}
+
+/// The commitment a round sends for the next one: a recursive commitment's root when the next
+/// round is a sumcheck round, a basic commitment otherwise, and nothing after the last round.
+fn expect_next_round_commitment(next: Option<&Config>, commitment: &Option<NextRoundCommitment>) {
+    match (next, commitment) {
+        (None, None) => {}
+        (Some(Config::Sumcheck(next)), Some(NextRoundCommitment::Recursive(root))) => expect_shape(
+            "next-round commitment root length",
+            root.len(),
+            next.commitment_recursion.most_inner_config().rank,
+        ),
+        (
+            Some(next @ (Config::Intermediate(_) | Config::Simple(_))),
+            Some(NextRoundCommitment::Simple(basic)),
+        ) => {
+            let next = config_base_from_config(next);
+            expect_basic_commitment(
+                "next-round commitment",
+                basic,
+                next.basic_commitment_rank(),
+                next.witness_width(),
+            );
+        }
+        (next, commitment) => panic!(
+            "proof shape: the next-round commitment is {}, the round's config determines {}",
+            match commitment {
+                None => "absent",
+                Some(NextRoundCommitment::Recursive(_)) => "a recursive commitment root",
+                Some(NextRoundCommitment::Simple(_)) => "a basic commitment",
+            },
+            match next {
+                None => "none",
+                Some(Config::Sumcheck(_)) => "a recursive commitment root",
+                Some(_) => "a basic commitment",
+            }
+        ),
+    }
+}
+
+/// The structural pass over a sumcheck round, run before any of the round is read. It covers the
+/// statement too, since below the root that is the previous round's output.
+fn check_sumcheck_round_shape(
+    config: &SumcheckConfig,
+    rc_commitment: &[RingElement],
+    proof: &SumcheckRoundProof,
+    evaluation_points_inner: &[StructuredRow],
+    evaluation_points_outer: &[StructuredRow],
+    claims: &[RingElement],
+) {
+    let layers = |rows: &[StructuredRow]| -> Vec<usize> {
+        rows.iter().map(|row| row.tensor_layers.len()).collect()
+    };
+    expect_shape("claim count", claims.len(), config.nof_openings);
+    expect_shape(
+        "inner evaluation point layers",
+        layers(evaluation_points_inner),
+        vec![config.witness_height.ilog2() as usize; config.nof_openings],
+    );
+    expect_shape(
+        "outer evaluation point layers",
+        layers(evaluation_points_outer),
+        vec![config.witness_width.ilog2() as usize; config.nof_openings],
+    );
+    expect_shape(
+        "commitment root length",
+        rc_commitment.len(),
+        config.commitment_recursion.most_inner_config().rank,
+    );
+
+    expect_polys(
+        "sumcheck round polys",
+        &proof.polys,
+        config.composed_witness_length.ilog2() as usize,
+    );
+    expect_shape(
+        "projection_norm_claim presence",
+        proof.projection_norm_claim.is_some(),
+        config.projection_norm_scope().is_some(),
+    );
+    expect_shape(
+        "rc_opening_inner length",
+        proof.rc_opening_inner.len(),
+        config.opening_recursion.most_inner_config().rank,
+    );
+    let (coarse, fine) = match &config.projection_recursion {
+        Projection::Coarse(recursion) => (Some(recursion), None),
+        Projection::Fine(recursion) => (None, Some(recursion)),
+        Projection::Skip => (None, None),
+    };
+    expect_shape(
+        "rc_coarse_projection_inner length",
+        proof.rc_coarse_projection_inner.as_ref().map(Vec::len),
+        coarse.map(|recursion| recursion.most_inner_config().rank),
+    );
+    expect_shape(
+        "rc_fine_projection_inner lengths",
+        proof
+            .rc_fine_projection_inner
+            .as_ref()
+            .map(|(constant_term, batched)| (constant_term.len(), batched.len())),
+        fine.map(|recursion| {
+            (
+                recursion.recursion_constant_term.most_inner_config().rank,
+                recursion
+                    .recursion_batched_projection
+                    .most_inner_config()
+                    .rank,
+            )
+        }),
+    );
+    expect_shape(
+        "constant_term_claims length",
+        proof.constant_term_claims.as_ref().map(Vec::len),
+        fine.map(|_| NOF_BATCHES),
+    );
+    expect_next_round_commitment(config.next.as_deref(), &proof.next_round_commitment);
+}
+
+/// The structural pass over an intermediate round, `commitment` being the one the previous round
+/// sent for it.
+fn check_intermediate_round_shape(
+    config: &IntermediateConfig,
+    commitment: &BasicCommitment,
+    proof: &IntermediateRoundProof,
+    claims: usize,
+) {
+    expect_basic_commitment(
+        "intermediate round commitment",
+        commitment,
+        config.basic_commitment_rank,
+        config.witness_width,
+    );
+    expect_opening_rhs(
+        "intermediate round",
+        &proof.opening_rhs,
+        claims,
+        config.witness_width,
+    );
+    expect_polys(
+        "intermediate round polys",
+        &proof.polys,
+        (config.witness_height * config.witness_decomposition_chunks).ilog2() as usize,
+    );
+    expect_next_round_commitment(config.next.as_deref(), &proof.next_round_commitment);
+    expect_projection_images(
+        "intermediate round",
+        &proof.projection_image_ct,
+        &proof.batched_projection_image,
+        config.witness_height / config.projection_ratio,
+        config.witness_width,
+    );
+}
+
+/// The structural pass over the last round, `commitment` being the one the previous round sent
+/// for it.
+fn check_simple_round_shape(
+    config: &SimpleConfig,
+    commitment: &BasicCommitment,
+    proof: &SimpleRoundProof,
+    claims: usize,
+) {
+    expect_basic_commitment(
+        "simple round commitment",
+        commitment,
+        config.basic_commitment_rank,
+        config.witness_width,
+    );
+    expect_shape(
+        "simple round folded_witness (height, width, used_cols, entries)",
+        vertical_shape(&proof.folded_witness),
+        (config.witness_height, 1, 1, config.witness_height),
+    );
+    expect_projection_images(
+        "simple round",
+        &proof.projection_image_ct,
+        &proof.batched_projection_image,
+        config.witness_height / config.projection_ratio,
+        config.witness_width,
+    );
+    expect_opening_rhs(
+        "simple round",
+        &proof.opening_rhs,
+        claims,
+        config.witness_width,
+    );
 }

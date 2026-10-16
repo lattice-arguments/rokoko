@@ -43,6 +43,9 @@ pub struct SumcheckContext {
     pub field_combiner: ElephantCell<RingToFieldCombiner>,
     pub outputs: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>>,
     pub next: Option<Box<NextSumcheckContext>>,
+    /// Set once a proof has run through the context: its tables fold in place, so a context
+    /// serves one proof.
+    pub(crate) spent: bool,
 }
 
 pub enum NextSumcheckContext {

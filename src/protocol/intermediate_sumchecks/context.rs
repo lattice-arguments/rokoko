@@ -37,6 +37,9 @@ pub struct IntermediateSumcheckContext {
     pub combiner: ElephantCell<Combiner<RingElement>>,
     pub field_combiner: ElephantCell<RingToFieldCombiner>,
     pub next: Option<Box<IntermediateSumcheckContext>>,
+    /// Set once a proof has run through the context: its tables fold in place, so a context
+    /// serves one proof.
+    pub(crate) spent: bool,
 }
 
 impl IntermediateSumcheckContext {
