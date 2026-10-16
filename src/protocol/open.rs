@@ -47,10 +47,9 @@ pub fn open_at(
     structured_points_outer: &[StructuredRow],
     skip_last_col: bool,
 ) -> Opening {
-    debug_assert_eq!(
-        structured_points_inner[0].tensor_layers.len(),
-        witness.height.ilog2() as usize
-    );
+    debug_assert!(structured_points_inner
+        .iter()
+        .all(|p| p.tensor_layers.len() == witness.height.ilog2() as usize));
 
     let nof_evaluation_points = structured_points_inner.len();
 
@@ -65,15 +64,14 @@ pub fn open_at(
         .collect::<Vec<PreprocessedRow>>();
 
     // it's not a commitment, but we can reuse the same structure
-    let mut rhs = match structured_points_inner
-        .iter()
-        .all(|p| p.tensor_layers == structured_points_inner[0].tensor_layers)
-    {
-        true => repeated(
-            commit_basic_internal(&preprocessed_points_inner[..1], witness, 1),
-            nof_evaluation_points,
-        ),
-        false => commit_basic_internal(&preprocessed_points_inner, witness, nof_evaluation_points),
+    let mut rhs = match structured_points_inner.split_first() {
+        Some((first, rest)) if rest.iter().all(|p| p.tensor_layers == first.tensor_layers) => {
+            repeated(
+                commit_basic_internal(&preprocessed_points_inner[..1], witness, 1),
+                nof_evaluation_points,
+            )
+        }
+        _ => commit_basic_internal(&preprocessed_points_inner, witness, nof_evaluation_points),
     };
 
     if skip_last_col {
@@ -140,6 +138,45 @@ pub fn claim_over_inner(
 mod tests {
     use super::*;
     use crate::common::config::MOD_Q;
+
+    #[test]
+    fn coinciding_or_absent_inner_points_open_as_the_general_rows() {
+        crate::common::init_common();
+        let (height, width) = (8, 4);
+        let witness = VerticallyAlignedMatrix {
+            height,
+            width,
+            used_cols: width,
+            data: (0..height * width)
+                .map(|_| RingElement::random(Representation::IncompleteNTT))
+                .collect(),
+        };
+        let point = |seed: u64| {
+            evaluation_point_to_structured_row(
+                &(0..3)
+                    .map(|i| RingElement::constant(seed + i, Representation::IncompleteNTT))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        for inner in [
+            vec![],
+            vec![point(5)],
+            vec![point(5), point(5), point(5)],
+            vec![point(5), point(9)],
+        ] {
+            let opening = open_at(&witness, &inner, &[], false);
+            let preprocessed: Vec<PreprocessedRow> = inner
+                .iter()
+                .map(PreprocessedRow::from_structured_row)
+                .collect();
+            let direct = commit_basic_internal(&preprocessed, &witness, inner.len());
+            assert_eq!(
+                (opening.rhs.height, opening.rhs.width),
+                (direct.height, direct.width)
+            );
+            assert_eq!(opening.rhs.data, direct.data, "{} points", inner.len());
+        }
+    }
 
     #[test]
     fn test_opening() {
