@@ -1,10 +1,10 @@
 use crate::{
     common::{
-        arithmetic::{field_to_ring_element_into, inner_product},
+        arithmetic::field_to_ring_element_into,
         config::NOF_BATCHES,
         hash::HashWrapper,
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{FieldExtension, Representation, RingElement},
+        ring_arithmetic::{incomplete_ntt_dot_into, FieldExtension, Representation, RingElement},
         structured_row::PreprocessedRow,
         sumcheck_element::SumcheckElement,
     },
@@ -22,7 +22,21 @@ use crate::{
     },
 };
 
-use super::loader::load_sumcheck_data;
+use super::loader::{borrow_caller_data, load_sumcheck_data, used_length};
+
+fn norm(witness: &[RingElement]) -> RingElement {
+    const BLOCK: usize = 64;
+    let mut conjugates =
+        vec![RingElement::zero(Representation::IncompleteNTT); BLOCK.min(witness.len())];
+    let mut sum = RingElement::zero(Representation::IncompleteNTT);
+    for block in witness.chunks(BLOCK) {
+        for (x, conjugate) in block.iter().zip(conjugates.iter_mut()) {
+            x.conjugate_into(conjugate);
+        }
+        incomplete_ntt_dot_into(&mut sum, block, 1, &conjugates, 1, block.len());
+    }
+    sum
+}
 
 /// Executes the sumcheck protocol for all constraint types.
 ///
@@ -95,34 +109,23 @@ pub fn sumcheck(
         Projection::Skip => None,
     };
 
-    let mut conjugated_combined_witness =
-        vec![RingElement::zero(Representation::IncompleteNTT); combined_witness.len()];
-    combined_witness
-        .iter()
-        .zip(conjugated_combined_witness.iter_mut())
-        .for_each(|(orig, conj)| {
-            orig.conjugate_into(conj);
-        });
-
-    let norm_claim = inner_product(&combined_witness, &conjugated_combined_witness);
+    let norm_claim = norm(&combined_witness[..used_length(config, combined_witness)]);
 
     hash_wrapper.update_with_ring_element(&norm_claim);
 
     // Load all data into the sumcheck context
-    {
+    let _borrows = {
         let _s = tracing::info_span!("sumcheck::load_data").entered();
         load_sumcheck_data(
             sumcheck_context,
-            config,
-            combined_witness,
-            &conjugated_combined_witness,
             folding_challenges,
             fine_proj_batching_challenges,
             opening,
             projection_matrix,
             &projection_matrix_flatter,
         );
-    }
+        borrow_caller_data(sumcheck_context, config, combined_witness)
+    };
 
     let norm_inner_norm_claim = sumcheck_context
         .norm_check_sumcheck
@@ -263,4 +266,21 @@ pub fn sumcheck(
         evaluation_points,
         constant_term_claims,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::arithmetic::inner_product;
+
+    #[test]
+    fn the_norm_is_the_inner_product_with_the_conjugate() {
+        crate::common::init_common();
+        let witness: Vec<RingElement> = (0..1000)
+            .map(|_| RingElement::random(Representation::IncompleteNTT))
+            .collect();
+        let conjugates: Vec<RingElement> = witness.iter().map(RingElement::conjugate).collect();
+        let expected = inner_product(&witness, &conjugates);
+        assert_eq!(norm(&witness), expected);
+    }
 }

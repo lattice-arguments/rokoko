@@ -108,6 +108,19 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
             viewed: false,
         }
     }
+    pub(crate) fn unloaded(count: usize) -> Self {
+        LinearSumcheck {
+            data: Vec::new(),
+            borrowed: None,
+            variable_count: count.ilog2() as usize,
+            index_mask: count - 1,
+            poly_scratch: RefCell::new(Polynomial::new(2)),
+            suffix: 0,
+            non_zero_end: 0,
+            viewed: false,
+        }
+    }
+
     pub fn from_data(data: Vec<E>) -> Self {
         Self::from_data_with_prefixed_sufixed_data(data, 0, 0)
     }
@@ -186,6 +199,22 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
                 data, map: None, ..
             }) => Some(data),
             Some(_) => None,
+        }
+    }
+
+    pub(crate) fn borrows_caller_data(&self) -> bool {
+        matches!(
+            self.borrowed,
+            Some(Borrowed {
+                data: Source::Caller(_),
+                ..
+            })
+        )
+    }
+
+    pub(crate) fn release_caller_data(&mut self) {
+        if self.borrows_caller_data() {
+            self.borrowed = None;
         }
     }
 
