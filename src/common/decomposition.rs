@@ -103,7 +103,6 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
     decomposed
 }
 
-/// The balanced base-`2^{base_log}` digits of an element, `radix` of them.
 struct Digits {
     base_log: u64,
     radix: usize,
@@ -133,7 +132,6 @@ impl Digits {
             big_shift_val,
             big_shift: RingElement::all(big_shift_val, Representation::StridedCoefficients),
             mask: (1u64 << base_log) - 1,
-            // A shifted coefficient at or past 2^window_bits is outside the window.
             window_bits: base_log * radix as u64,
         }
     }
@@ -145,7 +143,6 @@ impl Digits {
         }
     }
 
-    /// Hands digit `i` of `el`, in IncompleteNTT form, to `emit(i, digit)` for every `i`.
     fn of(
         &self,
         el: &RingElement,
@@ -596,7 +593,7 @@ fn test_decompose_bits_preserves_input() {
 fn chunked_digits_are_the_digits_interleaved_by_plane() {
     crate::common::init_common();
     let input: Vec<RingElement> = (0..700)
-        .map(|k| match k % 3 {
+        .map(|k| match k & 3 {
             0 => RingElement::random(Representation::IncompleteNTT),
             _ => RingElement::random_bounded(Representation::IncompleteNTT, 1 << 14),
         })

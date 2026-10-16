@@ -60,13 +60,11 @@ impl LinearSumcheck<RingElement> {
     }
 }
 
-/// The witness as a table of its first `used` entries, borrowed while it is unfolded.
 #[cfg(feature = "unsafe-sumcheck")]
 pub(crate) fn witness_oracle(witness: &[RingElement], used: usize) -> LinearSumcheck<RingElement> {
     unsafe { LinearSumcheck::from_borrowed(witness, used, None) }
 }
 
-/// The conjugated witness as a table viewing the witness.
 #[cfg(feature = "unsafe-sumcheck")]
 pub(crate) fn conjugated_oracle(
     witness: &[RingElement],
@@ -135,8 +133,6 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
             viewed: false,
         }
     }
-    /// A table of `count` entries, padded like `new_with_prefixed_sufixed_data`, whose data is
-    /// installed later with `install` or `install_borrowed`.
     pub fn unloaded(count: usize, prefix_size: usize, suffix_size: usize) -> Self {
         LinearSumcheck {
             data: Vec::new(),
@@ -150,10 +146,6 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
         }
     }
 
-    /// Loads an unloaded table with `data`, borrowed while the table is unfolded.
-    ///
-    /// # Safety
-    /// `data` must outlive every use of the table before its first data fold.
     pub unsafe fn install_borrowed(&mut self, data: &[E]) {
         assert!(
             self.data.is_empty() && self.borrowed.is_none(),
@@ -177,7 +169,6 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
         self.data = data.to_vec();
     }
 
-    /// Replaces an unloaded table by `table`, which must have its shape.
     pub fn install(&mut self, table: Self) {
         assert!(
             self.data.is_empty() && self.borrowed.is_none(),

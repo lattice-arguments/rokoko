@@ -185,8 +185,6 @@ pub(crate) struct FoldedLeaves {
     pub key_rows: Vec<KeyRow>,
 }
 
-/// A table over the `segment`-th of `segments` equal dyadic slices of row `row` of the commitment
-/// key for `wit_dim`, which reads the CRS only once the sumcheck runs.
 pub(crate) struct KeyRow {
     table: ElephantCell<LinearSumcheck<RingElement>>,
     wit_dim: usize,
@@ -202,10 +200,6 @@ impl KeyRow {
         &row[self.segment * len..(self.segment + 1) * len]
     }
 
-    /// Points the table at its slice of `crs`.
-    ///
-    /// # Safety
-    /// `crs` must outlive the table's rounds up to its first data fold.
     pub(crate) unsafe fn load(&self, crs: &CRS) {
         unsafe { self.table.borrow_mut().install_borrowed(self.slice(crs)) };
     }
@@ -220,9 +214,6 @@ impl FoldedLeaves {
         }
     }
 
-    /// The `segment`-th of `segments` equal dyadic slices of the `i`-th commitment key row for
-    /// `wit_dim`: the part of the row that meets one separately placed row block of the
-    /// commitment's input, padded to `total_vars` and registered to be loaded from the CRS.
     pub(crate) fn key_row(
         &mut self,
         crs: &CRS,
@@ -245,7 +236,11 @@ impl FoldedLeaves {
             segments,
             segment,
         };
-        assert_eq!(key_row.slice(crs).len(), len, "the commitment key row is cut evenly");
+        assert_eq!(
+            key_row.slice(crs).len(),
+            len,
+            "the commitment key row is cut evenly"
+        );
         self.key_rows.push(key_row);
         table
     }
