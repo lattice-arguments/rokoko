@@ -459,6 +459,40 @@ impl SlotRing {
         count: usize,
         accumulate: bool,
     ) {
+        self.dot_many_slots(
+            results,
+            result_stride,
+            outputs,
+            op1,
+            stride1,
+            op2,
+            stride2,
+            output_stride,
+            count,
+            accumulate,
+            self.ntt.degree(),
+        );
+    }
+
+    pub unsafe fn dot_many_slots(
+        &self,
+        results: *mut u64,
+        result_stride: usize,
+        outputs: usize,
+        op1: *const u64,
+        stride1: usize,
+        op2: *const u64,
+        stride2: usize,
+        output_stride: usize,
+        count: usize,
+        accumulate: bool,
+        slots: usize,
+    ) {
+        assert!(
+            slots & 7 == 0 && slots <= self.ntt.degree(),
+            "{slots} slots are not whole groups of eight among {}",
+            self.ntt.degree()
+        );
         #[cfg(target_arch = "x86_64")]
         if let Some(ifma) = &self.ifma {
             let kernel = match self.slot_degree {
@@ -479,6 +513,7 @@ impl SlotRing {
                 self.ntt.shift_factors(),
                 self.ntt.shift_factors_precon52(),
                 self.ntt.degree(),
+                slots >> 3,
                 ifma,
             );
             return;

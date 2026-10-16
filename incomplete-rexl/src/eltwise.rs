@@ -2112,11 +2112,16 @@ pub(crate) unsafe fn slot_dot_avx512_ifma<const D: usize>(
     zetas: &[u64],
     zetas_precon: &[u64],
     n: usize,
+    groups: usize,
     ifma: &Ifma52,
 ) {
+    assert!(
+        8 * groups <= n,
+        "{groups} groups of eight slots past the {n} slots"
+    );
     let c = Ifma52x8::new(ifma);
     let zero = _mm512_setzero_si512();
-    let (groups, cells) = (n / 8, slot_cells(D));
+    let cells = slot_cells(D);
     // Output `o`, group `g` at `2 cells (o groups + g)`: the low halves, then the high halves.
     let width = 2 * cells;
     let mut acc = vec![zero; width * groups * outputs.min(SLOT_DOT_OUTPUTS)];
@@ -2809,7 +2814,8 @@ mod slot_tests {
                             2 => slot_dot_avx512_ifma::<2>,
                             _ => slot_dot_avx512_ifma::<4>,
                         };
-                        for accumulate in [false, true] {
+                        for (accumulate, groups) in [(false, n / 8), (true, n / 8), (true, n / 16)]
+                        {
                             let mut result = initial.clone();
                             unsafe {
                                 kernel(
@@ -2826,6 +2832,7 @@ mod slot_tests {
                                     &zetas,
                                     &precon,
                                     n,
+                                    groups,
                                     &ifma,
                                 );
                             }
@@ -2844,11 +2851,20 @@ mod slot_tests {
                                         *w = add_uint_mod(*w, x, modulus);
                                     }
                                 }
-                                assert!(
-                                    result[at] == want[..],
-                                    "d={d} m={modulus} outputs={outputs} count={count} \
-                                     case={case} accumulate={accumulate} o={o}"
-                                );
+                                let got = &result[at.clone()];
+                                let kept = &initial[at];
+                                for part in 0..d {
+                                    let (lower, upper) = (
+                                        part * n..part * n + 8 * groups,
+                                        part * n + 8 * groups..(part + 1) * n,
+                                    );
+                                    assert!(
+                                        got[lower.clone()] == want[lower]
+                                            && got[upper.clone()] == kept[upper],
+                                        "d={d} m={modulus} outputs={outputs} count={count} \
+                                         case={case} accumulate={accumulate} groups={groups} o={o}"
+                                    );
+                                }
                             }
                         }
                     }
