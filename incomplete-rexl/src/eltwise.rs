@@ -1844,6 +1844,10 @@ pub fn eltwise_mult_mod_shoup(
 ) {
     let n = result.len();
     assert!(operand.len() == n && factors.len() == n && quotients.len() == n);
+    debug_assert!(
+        operand.iter().chain(factors).all(|&x| x < modulus),
+        "Shoup multiplication takes residues"
+    );
     #[cfg(target_arch = "x86_64")]
     if *HAS_AVX512IFMA && modulus < (1u64 << 50) && n.is_multiple_of(8) {
         unsafe { eltwise_mult_mod_shoup_avx512_ifma(result, operand, factors, quotients, modulus) };
