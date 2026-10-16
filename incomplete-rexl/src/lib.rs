@@ -526,18 +526,23 @@ impl SlotRing {
             heap.resize(self.ring_degree, 0);
             heap.as_mut_ptr()
         };
+        let n = self.ntt.degree();
         let result = |o: usize| {
             std::slice::from_raw_parts_mut(results.add(o * result_stride), self.ring_degree)
+                .chunks_exact_mut(n)
+                .map(|part| &mut part[..slots])
         };
         if !accumulate {
-            (0..outputs).for_each(|o| result(o).fill(0));
+            (0..outputs).for_each(|o| result(o).for_each(|part| part.fill(0)));
         }
         for k in 0..count {
             for o in 0..outputs {
                 let b = op2.add(k * stride2 + o * output_stride);
                 self.mult(product, op1.add(k * stride1), b);
                 let product = std::slice::from_raw_parts(product, self.ring_degree);
-                eltwise::eltwise_add_mod_assign(result(o), product, self.modulus);
+                for (part, product) in result(o).zip(product.chunks_exact(n)) {
+                    eltwise::eltwise_add_mod_assign(part, &product[..slots], self.modulus);
+                }
             }
         }
     }
@@ -557,5 +562,74 @@ impl SlotRing {
         self.dot_many(
             result, 0, 1, op1, stride1, op2, stride2, 0, count, accumulate,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::{Rng, SeedableRng};
+
+    #[test]
+    fn a_dot_on_the_lower_slots_leaves_the_upper_ones_alike_on_both_paths() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(17);
+        for (degree, modulus) in [
+            (128, 1125899906839937),
+            (128, 1125899906842177),
+            (256, 1125899906839937),
+        ] {
+            let fast = SlotRing::new(degree, modulus);
+            let plain = SlotRing {
+                ntt: fast.ntt.clone(),
+                ring_degree: fast.ring_degree,
+                slot_degree: fast.slot_degree,
+                modulus: fast.modulus,
+                ifma: None,
+            };
+            let n = fast.ntt.degree();
+            let (outputs, count) = (3, 5);
+            let mut random = |len: usize| -> Vec<u64> {
+                (0..len).map(|_| rng.random_range(0..modulus)).collect()
+            };
+            let op1 = random(count * degree);
+            let op2 = random((count + outputs) * degree);
+            let initial = random(outputs * degree);
+            for accumulate in [false, true] {
+                let run = |ring: &SlotRing, slots: usize| {
+                    let mut results = initial.clone();
+                    unsafe {
+                        ring.dot_many_slots(
+                            results.as_mut_ptr(),
+                            degree,
+                            outputs,
+                            op1.as_ptr(),
+                            degree,
+                            op2.as_ptr(),
+                            degree,
+                            degree,
+                            count,
+                            accumulate,
+                            slots,
+                        )
+                    };
+                    results
+                };
+                let whole = run(&plain, n);
+                for slots in [n, n / 2, 8] {
+                    let got = run(&fast, slots);
+                    assert!(
+                        got == run(&plain, slots),
+                        "degree {degree}, q {modulus}, {slots} slots, accumulate {accumulate}"
+                    );
+                    for ((got, whole), initial) in got
+                        .chunks_exact(n)
+                        .zip(whole.chunks_exact(n))
+                        .zip(initial.chunks_exact(n))
+                    {
+                        assert!(got[..slots] == whole[..slots] && got[slots..] == initial[slots..]);
+                    }
+                }
+            }
+        }
     }
 }
