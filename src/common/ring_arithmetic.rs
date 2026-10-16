@@ -677,6 +677,8 @@ pub static CONJUGATION_NTT_TRANSFORM: LazyLock<ConjugationTransform> =
 pub struct ConjugationTransform {
     pub permutation: [[usize; NUM_SLOTS]; SLOT_DEGREE],
     pub factors: [[u64; NUM_SLOTS]; SLOT_DEGREE],
+    scale: [u64; DEGREE],
+    reversed: bool,
 }
 
 /// Conjugates the IncompleteNTT element at `source` into `result`, reading all of `source`
@@ -684,6 +686,25 @@ pub struct ConjugationTransform {
 #[inline(always)]
 unsafe fn conjugate_slots(source: *const u64, result: *mut u64) {
     let transform = &*CONJUGATION_NTT_TRANSFORM;
+    if transform.reversed {
+        let mut temp = std::mem::MaybeUninit::<[u64; DEGREE]>::uninit();
+        let temp = temp.as_mut_ptr() as *mut u64;
+        let parts = std::iter::once(0).chain((1..SLOT_DEGREE).rev());
+        for (k, part) in parts.enumerate() {
+            for i in 0..NUM_SLOTS {
+                *temp.add(k * NUM_SLOTS + i) = *source.add(part * NUM_SLOTS + NUM_SLOTS - 1 - i);
+            }
+        }
+        std::ptr::copy_nonoverlapping(temp, result, NUM_SLOTS);
+        eltwise_mult_mod(
+            result.add(NUM_SLOTS),
+            temp.add(NUM_SLOTS),
+            transform.scale.as_ptr().add(NUM_SLOTS),
+            (DEGREE - NUM_SLOTS) as u64,
+            MOD_Q,
+        );
+        return;
+    }
     let mut temp = [0u64; DEGREE];
     for i in 0..NUM_SLOTS {
         temp[transform.permutation[0][i]] = *source.add(i);
@@ -729,6 +750,7 @@ unsafe fn conjugate_slots(source: *const u64, result: *mut u64) {
 fn derive_conjugation_transform() -> ConjugationTransform {
     let mut permutation = [[0usize; NUM_SLOTS]; SLOT_DEGREE];
     let mut factors = [[0u64; NUM_SLOTS]; SLOT_DEGREE];
+    let mut scale = [0u64; DEGREE];
 
     for part in 0..SLOT_DEGREE {
         let target = (SLOT_DEGREE - part) % SLOT_DEGREE * NUM_SLOTS;
@@ -747,12 +769,18 @@ fn derive_conjugation_transform() -> ConjugationTransform {
             debug_assert_eq!(conjugated.v.iter().filter(|&&x| x != 0).count(), 1);
             permutation[part][i] = j;
             factors[part][i] = conjugated.v[target + j];
+            scale[target + j] = factors[part][i];
         }
     }
 
+    let reversed = permutation
+        .iter()
+        .all(|p| p.iter().enumerate().all(|(i, &j)| j == NUM_SLOTS - 1 - i));
     ConjugationTransform {
         permutation,
         factors,
+        scale,
+        reversed,
     }
 }
 
@@ -1804,6 +1832,20 @@ mod tests {
         a_conj.conjugate_in_place();
         a_conj_ref.conjugate_in_place_ref();
         debug_assert_eq!(a_conj.v, a_conj_ref.v);
+    }
+
+    #[test]
+    fn test_conjugation_matches_the_coefficient_reference_out_of_and_in_place() {
+        init_common();
+        for _ in 0..16 {
+            let a = RingElement::random(Representation::IncompleteNTT);
+            let mut want = a.clone();
+            want.conjugate_in_place_ref();
+            assert_eq!(a.conjugate().v, want.v);
+            let mut aliased = a.clone();
+            aliased.conjugate_in_place();
+            assert_eq!(aliased.v, want.v);
+        }
     }
 
     #[test]
