@@ -91,7 +91,7 @@ pub fn project(
 ) -> VerticallyAlignedMatrix<RingElement> {
     let mut projection_image = VerticallyAlignedMatrix {
         data: vec![
-            RingElement::zero(Representation::IncompleteNTT);
+            RingElement::zero(Representation::StridedCoefficients);
             witness_16.height / projection_matrix.projection_ratio * witness_16.width
         ],
         width: witness_16.width,
@@ -104,10 +104,6 @@ pub fn project(
         projection_image.height * projection_matrix.projection_ratio,
         witness_16.height
     );
-
-    for i in projection_image.data.iter_mut() {
-        i.from_incomplete_ntt_to_strided_coefficients();
-    }
 
     let row_len = projection_matrix.projection_ratio * projection_matrix.projection_height;
 

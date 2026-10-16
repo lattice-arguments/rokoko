@@ -418,12 +418,10 @@ pub fn project_coefficients(
         used_cols: witness.width,
     };
 
-    witness_coeff.data.clone_from_slice(&witness.data);
-
-    for i in 0..witness_coeff.data.len() {
-        witness_coeff.data[i].from_incomplete_ntt_to_strided_coefficients();
-        // this is possible to operate on strided representation directly, but coeeficent rep is better for locality.
-        witness_coeff.data[i].from_strided_coefficients_to_coefficients();
+    for (x, w) in witness_coeff.data.iter_mut().zip(&witness.data) {
+        x.set_from(w);
+        x.from_incomplete_ntt_to_strided_coefficients();
+        x.from_strided_coefficients_to_coefficients();
     }
 
     #[cfg(feature = "debug-hardness")]
