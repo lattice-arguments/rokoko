@@ -197,6 +197,22 @@ fn octave(c: i64) -> usize {
     }
 }
 
+fn cost(values: &[u64]) -> usize {
+    values.iter().map(|v| octave(centred(*v))).sum()
+}
+
+fn flips(
+    held: Representation,
+    len: usize,
+    resident: usize,
+    coefficient_cost: impl FnOnce() -> usize,
+) -> bool {
+    let coefficients = len * DEGREE;
+    held != Representation::Coefficients
+        && resident > coefficients * (residue_bits() as usize - 4)
+        && coefficient_cost() + coefficients < resident
+}
+
 // =================================================================================================
 // bit streams
 // =================================================================================================
@@ -335,28 +351,27 @@ impl<'a> BitReader<'a> {
         Ok((1u64 << k) | self.get_wide(k)?)
     }
 
-    fn get_varint(&mut self) -> Result<u64, WireError> {
-        let mut value = 0u64;
-        let mut shift = 0;
-        loop {
-            let byte = self.get(8)?;
-            value |= (byte & 0x7f) << shift;
+    fn get_len(&mut self) -> Result<usize, WireError> {
+        let mut len = 0;
+        for shift in (0..usize::BITS - MAX_ELEMENTS.leading_zeros()).step_by(7) {
+            let byte = self.get(8)? as usize;
+            len |= (byte & 0x7f) << shift;
             if byte & 0x80 == 0 {
-                return Ok(value);
-            }
-            shift += 7;
-            if shift > 63 {
-                return Err(WireError::Malformed);
+                if (byte == 0 && shift > 0) || len > MAX_ELEMENTS {
+                    return Err(WireError::Malformed);
+                }
+                return Ok(len);
             }
         }
+        Err(WireError::Malformed)
     }
 
-    fn get_len(&mut self) -> Result<usize, WireError> {
-        let len = self.get_varint()? as usize;
-        if len > MAX_ELEMENTS {
+    fn end(mut self) -> Result<(), WireError> {
+        self.refill();
+        if self.pos < self.bytes.len() || self.n >= 8 || self.acc != 0 {
             return Err(WireError::Malformed);
         }
-        Ok(len)
+        Ok(())
     }
 }
 
@@ -415,6 +430,20 @@ impl Model {
         }
     }
 
+    fn chosen(counts: &[u64; SYMBOLS]) -> Model {
+        let total: u64 = counts.iter().sum();
+        if total == 0 {
+            return Model::raw();
+        }
+        let candidate = Model::from_counts(counts);
+        let coded = candidate.bits(counts) + (SYMBOLS * 16) as f64;
+        if coded < 0.98 * (total * residue_bits() as u64) as f64 {
+            candidate
+        } else {
+            Model::raw()
+        }
+    }
+
     fn build_slots(&mut self) {
         self.slot = vec![0u8; SCALE as usize];
         for s in 0..SYMBOLS {
@@ -469,6 +498,9 @@ impl Model {
                 return Err(WireError::Malformed);
             }
             freq[s] = f as u16;
+        }
+        if freq[low] == 0 || freq[high] == 0 {
+            return Err(WireError::Malformed);
         }
         for s in 0..SYMBOLS {
             cum[s] = running as u16;
@@ -546,6 +578,9 @@ impl<'a> RansDecoder<'a> {
         for (lane, slot) in state.iter_mut().enumerate() {
             *slot = u32::from_le_bytes(bytes[4 * lane..4 * lane + 4].try_into().unwrap());
         }
+        if state.iter().any(|&x| x < RANS_LOW) {
+            return Err(WireError::Malformed);
+        }
         Ok(RansDecoder {
             state,
             words: &bytes[4 * LANES..],
@@ -570,6 +605,13 @@ impl<'a> RansDecoder<'a> {
         }
         self.state[lane] = next;
         Ok(symbol)
+    }
+
+    fn end(&self) -> Result<(), WireError> {
+        if self.pos != self.words.len() || self.state.iter().any(|&x| x != RANS_LOW) {
+            return Err(WireError::Malformed);
+        }
+        Ok(())
     }
 }
 
@@ -602,10 +644,7 @@ impl Encoder {
     }
 
     fn ring_cost(els: &[RingElement]) -> usize {
-        els.iter()
-            .flat_map(|e| e.v.iter())
-            .map(|v| octave(centred(*v)))
-            .sum()
+        els.iter().map(|e| cost(&e.v)).sum()
     }
 
     fn ring_slice(&mut self, role: Role, els: &[RingElement]) {
@@ -625,20 +664,21 @@ impl Encoder {
             }
         }
 
-        let resident = Self::ring_cost(els);
-        let coefficients = els.len() * DEGREE;
-        let mut flip = false;
-        if els[0].representation != Representation::Coefficients
-            && resident > coefficients * (residue_bits() as usize - 4)
-        {
-            self.scratch.clear();
-            self.scratch.extend(els.iter().map(|e| {
-                let mut e = e.clone();
-                e.to_representation(Representation::Coefficients);
-                e
-            }));
-            flip = Self::ring_cost(&self.scratch) + coefficients < resident;
-        }
+        let scratch = &mut self.scratch;
+        let flip = flips(
+            els[0].representation,
+            els.len(),
+            Self::ring_cost(els),
+            || {
+                scratch.clear();
+                scratch.extend(els.iter().map(|e| {
+                    let mut e = e.clone();
+                    e.to_representation(Representation::Coefficients);
+                    e
+                }));
+                Self::ring_cost(scratch)
+            },
+        );
         self.shape.put(flip as u64, 1);
 
         let coded = if flip {
@@ -782,26 +822,15 @@ impl Encoder {
     }
 
     fn finish(self) -> Vec<u8> {
+        let models = self.counts.iter().map(Model::chosen).collect();
+        self.finish_with(models)
+    }
+
+    fn finish_with(self, models: Vec<Model>) -> Vec<u8> {
         let bits = residue_bits();
         let mut head = BitWriter::with_capacity(512);
-        let mut models: Vec<Model> = Vec::with_capacity(ROLES);
-        for role in 0..ROLES {
-            let counts = &self.counts[role];
-            let total: u64 = counts.iter().sum();
-            if total == 0 {
-                models.push(Model::raw());
-                Model::raw().write(&mut head);
-                continue;
-            }
-            let candidate = Model::from_counts(counts);
-            let coded = candidate.bits(counts) + (SYMBOLS * 16) as f64;
-            let model = if coded < 0.98 * (total * bits as u64) as f64 {
-                candidate
-            } else {
-                Model::raw()
-            };
+        for model in &models {
             model.write(&mut head);
-            models.push(model);
         }
 
         let mut raw = BitWriter::with_capacity(self.cells.len() * 8);
@@ -859,26 +888,36 @@ impl Encoder {
 struct Body<'a> {
     raw: BitReader<'a>,
     rans: RansDecoder<'a>,
+    models: Vec<Model>,
+    counts: [[u64; SYMBOLS]; ROLES],
     bits: u32,
     index: usize,
 }
 
 impl<'a> Body<'a> {
-    fn fill(&mut self, model: &Model, out: &mut [u64]) -> Result<(), WireError> {
+    fn fill(&mut self, role: Role, out: &mut [u64]) -> Result<usize, WireError> {
+        let model = &self.models[role as usize];
+        let counts = &mut self.counts[role as usize];
+        let mut sent = 0;
         if !model.coded {
             for slot in out.iter_mut() {
                 let v = self.raw.get_wide(self.bits)?;
                 if v >= MOD_Q {
                     return Err(WireError::Malformed);
                 }
+                let b = octave(centred(v));
+                counts[b] += 1;
+                sent += b;
                 *slot = v;
             }
-            return Ok(());
+            return Ok(sent);
         }
         let mut index = self.index;
         for slot in out.iter_mut() {
             let b = self.rans.get(index % LANES, model)?;
             index += 1;
+            counts[b] += 1;
+            sent += b;
             if b == 0 {
                 *slot = 0;
                 continue;
@@ -895,14 +934,13 @@ impl<'a> Body<'a> {
             };
         }
         self.index = index;
-        Ok(())
+        Ok(sent)
     }
 }
 
 struct Decoder<'a> {
     shape: BitReader<'a>,
     body: Body<'a>,
-    models: Vec<Model>,
     rounds: usize,
     cells: usize,
 }
@@ -939,15 +977,17 @@ impl<'a> Decoder<'a> {
         for _ in 0..ROLES {
             models.push(Model::read(&mut head)?);
         }
+        head.end()?;
         Ok(Decoder {
             shape: BitReader::new(shape),
             body: Body {
                 raw: BitReader::new(raw),
                 rans: RansDecoder::new(rans)?,
+                models,
+                counts: [[0; SYMBOLS]; ROLES],
                 bits: residue_bits(),
                 index: 0,
             },
-            models,
             rounds: allowance
                 .rounds
                 .checked_sub(1)
@@ -968,33 +1008,41 @@ impl<'a> Decoder<'a> {
             return Ok(Vec::new());
         }
         self.charge(len * DEGREE)?;
-        let uniform = self.shape.get(1)? != 0;
-        let mut representations = Vec::with_capacity(len);
-        if uniform {
-            let r = representation(self.shape.get(2)?)?;
-            representations.resize(len, r);
-        } else {
-            for _ in 0..len {
-                representations.push(representation(self.shape.get(2)?)?);
-            }
-        }
-        if representations.iter().any(|r| *r != role.representation()) {
+        let held = role.representation();
+        if self.shape.get(1)? == 0 || representation(self.shape.get(2)?)? != held {
             return Err(WireError::Malformed);
         }
         let flip = self.shape.get(1)? != 0;
 
         let mut els = Vec::with_capacity(len.min(4096));
-        for representation in representations {
+        let mut sent = 0;
+        for _ in 0..len {
             let mut el = RingElement::new(if flip {
                 Representation::Coefficients
             } else {
-                representation
+                held
             });
-            self.body.fill(&self.models[role as usize], &mut el.v)?;
+            sent += self.body.fill(role, &mut el.v)?;
             if flip {
-                el.to_representation(representation);
+                el.to_representation(held);
             }
             els.push(el);
+        }
+        let chosen = if flip {
+            flips(held, len, Encoder::ring_cost(&els), || sent)
+        } else {
+            flips(held, len, sent, || {
+                let mut strided = [0; DEGREE];
+                els.iter()
+                    .map(|e| {
+                        e.strided_coefficients_into(&mut strided);
+                        cost(&strided)
+                    })
+                    .sum()
+            })
+        };
+        if chosen != flip {
+            return Err(WireError::Malformed);
         }
         Ok(els)
     }
@@ -1067,9 +1115,14 @@ impl<'a> Decoder<'a> {
             poly.num_coefficients = num_coefficients;
             for i in 0..num_coefficients {
                 let mut coeffs = [0u64; SLOT_DEGREE];
-                self.body
-                    .fill(&self.models[Role::Poly as usize], &mut coeffs)?;
+                self.body.fill(Role::Poly, &mut coeffs)?;
                 poly.coefficients[i].coeffs = coeffs;
+            }
+            if poly.coefficients[..num_coefficients]
+                .last()
+                .is_some_and(|top| top.coeffs.iter().all(|&v| v == 0))
+            {
+                return Err(WireError::Malformed);
             }
             polys.push(poly);
         }
@@ -1169,6 +1222,25 @@ impl<'a> Decoder<'a> {
         self.rounds = self.rounds.checked_sub(1).ok_or(WireError::Malformed)?;
         Ok(Some(Box::new(self.round()?)))
     }
+
+    fn finish(self) -> Result<(), WireError> {
+        let Body {
+            raw,
+            rans,
+            models,
+            counts,
+            ..
+        } = self.body;
+        for (model, counts) in models.iter().zip(&counts) {
+            let chosen = Model::chosen(counts);
+            if (model.coded, model.freq) != (chosen.coded, chosen.freq) {
+                return Err(WireError::Malformed);
+            }
+        }
+        self.shape.end()?;
+        raw.end()?;
+        rans.end()
+    }
 }
 
 fn representation(tag: u64) -> Result<Representation, WireError> {
@@ -1200,7 +1272,7 @@ pub fn initial_from_bytes_for(
         witness_eval: decoder.ring(Role::WitnessEval)?,
         conj_witness_eval: decoder.option_ring(Role::WitnessEval)?,
     };
-    canonical(bytes, initial_to_bytes(&proof))?;
+    decoder.finish()?;
     Ok(proof)
 }
 
@@ -1226,23 +1298,19 @@ pub(crate) fn from_bytes_within(
     bytes: &[u8],
     allowance: Allowance,
 ) -> Result<SumcheckRoundProof, WireError> {
-    let proof = Decoder::new(bytes, allowance)?.sumcheck()?;
-    canonical(bytes, to_bytes(&proof))?;
+    let mut decoder = Decoder::new(bytes, allowance)?;
+    let proof = decoder.sumcheck()?;
+    decoder.finish()?;
     Ok(proof)
 }
 
-fn canonical(bytes: &[u8], encoded: Vec<u8>) -> Result<(), WireError> {
-    if encoded != bytes {
-        return Err(WireError::Malformed);
-    }
-    Ok(())
-}
-
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::common::init_common;
     use crate::common::matrix::ZeroNew;
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
 
     /// The fixtures follow no config; they decode within an allowance well above theirs.
     const FIXTURE: Allowance = Allowance {
@@ -1610,6 +1678,398 @@ mod tests {
             tamper(last);
             assert_eq!(
                 from_bytes(&to_bytes(&proof)).err(),
+                Some(WireError::Malformed)
+            );
+        }
+    }
+
+    pub(crate) fn mutations(bytes: &[u8], count: usize, seed: u64) -> Vec<Vec<u8>> {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let choices =
+            (13 + spliced_lengths(bytes)[..2].iter().sum::<usize>() + 4 * LANES).min(bytes.len());
+        (0..count)
+            .map(|i| {
+                let mut mutated = bytes.to_vec();
+                let at = match i & 3 {
+                    0 | 1 => rng.random_range(0..bytes.len()),
+                    2 => rng.random_range(0..choices),
+                    _ => rng.random_range(bytes.len().saturating_sub(16)..bytes.len()),
+                };
+                match rng.random_range(0..5) {
+                    0 => mutated[at] ^= 1 << rng.random_range(0..8),
+                    1 => mutated[at] = rng.random(),
+                    2 => mutated.insert(at, rng.random()),
+                    3 => drop(mutated.remove(at)),
+                    _ => mutated.truncate(at),
+                }
+                mutated
+            })
+            .collect()
+    }
+
+    fn spliced_lengths(bytes: &[u8]) -> [usize; 3] {
+        std::array::from_fn(|i| {
+            u32::from_le_bytes(bytes[1 + 4 * i..5 + 4 * i].try_into().unwrap()) as usize
+        })
+    }
+
+    fn spliced(bytes: &[u8], section: usize, edit: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
+        let mut parts = Vec::with_capacity(4);
+        let mut at = 13;
+        for len in spliced_lengths(bytes) {
+            parts.push(bytes[at..at + len].to_vec());
+            at += len;
+        }
+        parts.push(bytes[at..].to_vec());
+        edit(&mut parts[section]);
+        let mut out = vec![bytes[0]];
+        for part in &parts[..3] {
+            out.extend_from_slice(&(part.len() as u32).to_le_bytes());
+        }
+        for part in &parts {
+            out.extend_from_slice(part);
+        }
+        out
+    }
+
+    fn bits(writer: &BitWriter) -> usize {
+        8 * writer.bytes.len() + writer.n as usize
+    }
+
+    fn written(proof: &SumcheckRoundProof) -> [usize; 3] {
+        let mut encoder = Encoder::new();
+        encoder.sumcheck(proof);
+        let models: Vec<Model> = encoder.counts.iter().map(Model::chosen).collect();
+        let mut head = BitWriter::default();
+        for model in &models {
+            model.write(&mut head);
+        }
+        let raw = encoder
+            .cells
+            .iter()
+            .map(|(c, role)| {
+                if models[*role as usize].coded {
+                    octave(*c)
+                } else {
+                    residue_bits() as usize
+                }
+            })
+            .sum();
+        [bits(&head), bits(&encoder.shape), raw]
+    }
+
+    fn single_octaves() -> SumcheckRoundProof {
+        let mut proof = sumcheck(None, false);
+        proof.norm_claim.set_zero();
+        proof.most_inner_norm_claim.set_zero();
+        proof
+    }
+
+    fn fixtures() -> Vec<SumcheckRoundProof> {
+        let mut fixtures = vec![
+            sumcheck(None, false),
+            sumcheck(None, true),
+            sumcheck(Some(Box::new(simple())), false),
+            sumcheck(Some(Box::new(simple())), true),
+            sumcheck(Some(Box::new(intermediate())), false),
+            sumcheck(
+                Some(Box::new(RoundProof::Sumcheck(sumcheck(
+                    Some(Box::new(intermediate())),
+                    false,
+                )))),
+                true,
+            ),
+            single_octaves(),
+        ];
+        let mut zeroed = sumcheck(Some(Box::new(simple())), true);
+        for e in zeroed.rc_opening_inner.iter_mut() {
+            e.set_zero();
+        }
+        let Some(RoundProof::Simple(last)) = zeroed.next.as_deref_mut() else {
+            unreachable!()
+        };
+        for e in last.folded_witness.data.iter_mut() {
+            e.set_zero();
+        }
+        fixtures.push(zeroed);
+        fixtures
+    }
+
+    fn claims_fixtures() -> Vec<ClaimsProof> {
+        vec![
+            ClaimsProof {
+                polys: (2..=3).map(poly).collect(),
+                witness_eval: uniform(),
+                conj_witness_eval: Some(uniform()),
+            },
+            ClaimsProof {
+                polys: (1..=3).map(poly).collect(),
+                witness_eval: short(1 << 5),
+                conj_witness_eval: None,
+            },
+            ClaimsProof {
+                polys: vec![Polynomial::new(0); 2],
+                witness_eval: RingElement::zero(Representation::IncompleteNTT),
+                conj_witness_eval: Some(short(1 << 20)),
+            },
+        ]
+    }
+
+    #[test]
+    fn wire_roundtrips_every_fixture() {
+        init_common();
+        for proof in fixtures() {
+            let bytes = to_bytes(&proof);
+            assert_eq!(to_bytes(&from_bytes(&bytes).unwrap()), bytes);
+        }
+        for claims in claims_fixtures() {
+            let bytes = initial_to_bytes(&claims);
+            assert_eq!(
+                initial_to_bytes(&initial_from_bytes(3, &bytes).unwrap()),
+                bytes
+            );
+        }
+    }
+
+    #[test]
+    fn wire_accepts_a_mutation_only_as_its_own_encoding() {
+        init_common();
+        let mut accepted = 0;
+        for (seed, proof) in fixtures().iter().enumerate() {
+            for mutated in mutations(&to_bytes(proof), 2000, seed as u64) {
+                if let Ok(decoded) = from_bytes(&mutated) {
+                    assert_eq!(to_bytes(&decoded), mutated);
+                    accepted += 1;
+                }
+            }
+        }
+        for (seed, claims) in claims_fixtures().iter().enumerate() {
+            for mutated in mutations(&initial_to_bytes(claims), 2000, 100 + seed as u64) {
+                if let Ok(decoded) = initial_from_bytes(3, &mutated) {
+                    assert_eq!(initial_to_bytes(&decoded), mutated);
+                    accepted += 1;
+                }
+            }
+        }
+        assert!(accepted > 0);
+    }
+
+    #[test]
+    fn wire_refuses_a_section_padded_otherwise() {
+        init_common();
+        let mut padded = [0; 3];
+        for proof in fixtures() {
+            let bytes = to_bytes(&proof);
+            assert_eq!(spliced(&bytes, 2, |_| {}), bytes);
+            for (i, (section, bits)) in [0, 1, 3].into_iter().zip(written(&proof)).enumerate() {
+                assert_eq!(
+                    from_bytes(&spliced(&bytes, section, |part| part.push(0))).err(),
+                    Some(WireError::Malformed)
+                );
+                if bits & 7 != 0 {
+                    let marked = spliced(&bytes, section, |part| *part.last_mut().unwrap() |= 0x80);
+                    assert_eq!(from_bytes(&marked).err(), Some(WireError::Malformed));
+                    padded[i] += 1;
+                }
+            }
+            for extra in [&[0u8][..], &[0, 0]] {
+                let longer = spliced(&bytes, 2, |rans| rans.extend_from_slice(extra));
+                assert_eq!(from_bytes(&longer).err(), Some(WireError::Malformed));
+            }
+        }
+        assert!(padded.iter().all(|&tested| tested > 0), "{padded:?}");
+    }
+
+    #[test]
+    fn wire_refuses_a_lane_outside_the_encoders_states() {
+        init_common();
+        let bytes = to_bytes(&single_octaves());
+        assert_eq!(spliced_lengths(&bytes)[2], 4 * LANES);
+        assert!(from_bytes(&bytes).is_ok());
+        let low = spliced(&bytes, 2, |rans| {
+            rans[..4].copy_from_slice(&1u32.to_le_bytes());
+            rans.extend_from_slice(&[0, 0]);
+        });
+        let high = spliced(&bytes, 2, |rans| {
+            rans[12..16].copy_from_slice(&(RANS_LOW + 1).to_le_bytes())
+        });
+        for bytes in [low, high] {
+            assert_eq!(from_bytes(&bytes).err(), Some(WireError::Malformed));
+        }
+    }
+
+    #[test]
+    fn wire_refuses_a_histogram_other_than_the_encoders() {
+        init_common();
+        let proof = sumcheck(Some(Box::new(simple())), true);
+        let encoder = || {
+            let mut encoder = Encoder::new();
+            encoder.sumcheck(&proof);
+            encoder
+        };
+        let counts = encoder().counts;
+        let chosen: Vec<Model> = counts.iter().map(Model::chosen).collect();
+        assert_eq!(encoder().finish_with(chosen.clone()), to_bytes(&proof));
+        let coded = (0..ROLES)
+            .find(|&r| chosen[r].freq.iter().filter(|&&f| f > 0).count() > 1)
+            .unwrap();
+        let raw = (0..ROLES)
+            .find(|&r| !chosen[r].coded && counts[r].iter().sum::<u64>() > 0)
+            .unwrap();
+
+        let mut freq = chosen[coded].freq;
+        let top = (0..SYMBOLS).max_by_key(|&s| freq[s]).unwrap();
+        let other = (0..SYMBOLS).find(|&s| s != top && freq[s] > 0).unwrap();
+        freq[top] -= 1;
+        freq[other] += 1;
+        let mut requantised = chosen[coded].clone();
+        requantised.freq = freq;
+        for s in 1..SYMBOLS {
+            requantised.cum[s] = requantised.cum[s - 1] + freq[s - 1];
+        }
+
+        let mut variants = vec![chosen.clone(); 3];
+        variants[0][coded] = Model::raw();
+        variants[1][raw] = Model::from_counts(&counts[raw]);
+        variants[2][coded] = requantised;
+        for models in variants {
+            assert_eq!(
+                from_bytes(&encoder().finish_with(models)).err(),
+                Some(WireError::Malformed)
+            );
+        }
+
+        let model = &chosen[coded];
+        let low = model.freq.iter().position(|&f| f > 0).unwrap();
+        let high = model.freq.iter().rposition(|&f| f > 0).unwrap() + 1;
+        let mut head = BitWriter::default();
+        for (role, model) in chosen.iter().enumerate() {
+            if role != coded {
+                model.write(&mut head);
+                continue;
+            }
+            head.put(1, 1);
+            head.put(low as u64, 6);
+            head.put(high as u64, 6);
+            for s in low..=high {
+                head.put_gamma(model.freq[s] as u64 + 1);
+            }
+        }
+        let wide = spliced(&to_bytes(&proof), 0, |part| *part = head.finish());
+        assert_eq!(from_bytes(&wide).err(), Some(WireError::Malformed));
+    }
+
+    fn claims_written(
+        claims: &ClaimsProof,
+        padded: bool,
+        len: &[u8],
+        uniform: u64,
+        flip: bool,
+    ) -> Vec<u8> {
+        let mut encoder = Encoder::new();
+        encoder.shape.put_varint(claims.polys.len() as u64);
+        for poly in &claims.polys {
+            let written = poly.num_coefficients + padded as usize;
+            encoder.shape.put(written as u64, 3);
+            for coeff in &poly.coefficients[..written] {
+                for v in &coeff.coeffs {
+                    encoder.push(Role::Poly, *v);
+                }
+            }
+        }
+        for byte in len {
+            encoder.shape.put(*byte as u64, 8);
+        }
+        encoder.shape.put(uniform, 1);
+        encoder.shape.put(Representation::IncompleteNTT as u64, 2);
+        encoder.shape.put(flip as u64, 1);
+        let mut el = claims.witness_eval.clone();
+        if flip {
+            el.to_representation(Representation::Coefficients);
+        }
+        for v in &el.v {
+            encoder.push(Role::WitnessEval, *v);
+        }
+        encoder.option_ring(Role::WitnessEval, &claims.conj_witness_eval);
+        encoder.finish()
+    }
+
+    #[test]
+    fn wire_refuses_a_shape_written_otherwise() {
+        init_common();
+        let claims = |witness_eval| ClaimsProof {
+            polys: (2..=3).map(poly).collect(),
+            witness_eval,
+            conj_witness_eval: Some(uniform()),
+        };
+        for (claims, flip) in [(claims(uniform()), false), (claims(short(1 << 5)), true)] {
+            let canonical = claims_written(&claims, false, &[1], 1, flip);
+            assert_eq!(canonical, initial_to_bytes(&claims));
+            assert!(initial_from_bytes(2, &canonical).is_ok());
+            for written in [
+                claims_written(&claims, true, &[1], 1, flip),
+                claims_written(&claims, false, &[0x81, 0], 1, flip),
+                claims_written(&claims, false, &[1], 0, flip),
+                claims_written(&claims, false, &[1], 1, !flip),
+            ] {
+                assert_eq!(
+                    initial_from_bytes(2, &written).err(),
+                    Some(WireError::Malformed)
+                );
+            }
+        }
+
+        let proof = sumcheck(Some(Box::new(simple())), false);
+        let bytes = to_bytes(&proof);
+        let overlong = spliced(&bytes, 1, |shape| {
+            shape[0] |= 0x80;
+            shape.insert(1, 0);
+        });
+        assert_eq!(from_bytes(&overlong).err(), Some(WireError::Malformed));
+
+        let Some(RoundProof::Simple(last)) = proof.next.as_deref() else {
+            unreachable!()
+        };
+        let mut tail = Encoder::new();
+        tail.matrix_h(Role::BatchedProjection, &last.batched_projection_image);
+        tail.matrix_h(Role::OpeningRhs, &last.opening_rhs);
+        let at = written(&proof)[1] - bits(&tail.shape) - 1;
+        let shape = &bytes[13 + spliced_lengths(&bytes)[0]..];
+        assert_eq!(shape[at >> 3] >> (at & 7) & 1, 0);
+        let flipped = spliced(&bytes, 1, |shape| shape[at >> 3] ^= 1 << (at & 7));
+        assert_eq!(from_bytes(&flipped).err(), Some(WireError::Malformed));
+    }
+
+    fn with_cell(proof: &SumcheckRoundProof, coded: bool, c: i64) -> Vec<u8> {
+        let mut encoder = Encoder::new();
+        encoder.sumcheck(proof);
+        let models: Vec<bool> = encoder
+            .counts
+            .iter()
+            .map(|counts| Model::chosen(counts).coded)
+            .collect();
+        let (old, role) = encoder
+            .cells
+            .iter_mut()
+            .find(|(_, role)| models[*role as usize] == coded)
+            .unwrap();
+        encoder.counts[*role as usize][octave(*old)] -= 1;
+        encoder.counts[*role as usize][octave(c)] += 1;
+        *old = c;
+        encoder.finish()
+    }
+
+    #[test]
+    fn wire_refuses_a_coefficient_outside_its_residues() {
+        init_common();
+        let proof = sumcheck(None, false);
+        for coded in [false, true] {
+            let bytes = with_cell(&proof, coded, 5);
+            assert_eq!(to_bytes(&from_bytes(&bytes).unwrap()), bytes);
+        }
+        for (coded, c) in [(false, MOD_Q as i64), (true, (MOD_Q / 2 + 1) as i64)] {
+            assert_eq!(
+                from_bytes(&with_cell(&proof, coded, c)).err(),
                 Some(WireError::Malformed)
             );
         }

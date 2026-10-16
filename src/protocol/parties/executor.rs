@@ -483,8 +483,10 @@ mod tests {
 
         /// A copy of the proof, through the wire.
         fn copy(&self) -> SumcheckRoundProof {
-            wire::from_bytes_for(&self.config, &wire::to_bytes(&self.proof))
-                .expect("an honest proof decodes")
+            let bytes = wire::to_bytes(&self.proof);
+            let copy = wire::from_bytes_for(&self.config, &bytes).expect("an honest proof decodes");
+            assert_eq!(wire::to_bytes(&copy), bytes);
+            copy
         }
 
         fn verify(&self, proof: &SumcheckRoundProof) {
@@ -903,6 +905,26 @@ mod tests {
                 wire::from_bytes_for(&honest.config, &wire::to_bytes(&flooded)).err(),
                 Some(WireError::Malformed)
             );
+        }
+    }
+
+    #[test]
+    fn a_proof_decodes_only_from_its_own_encoding() {
+        for (seed, aux) in [three_openings_aux(), intermediate_aux()]
+            .into_iter()
+            .enumerate()
+        {
+            init_common();
+            let honest = Honest::prove(&sumcheck_config(aux));
+            let bytes = wire::to_bytes(&honest.proof);
+            let mut accepted = 0;
+            for mutated in wire::tests::mutations(&bytes, 8000, seed as u64) {
+                if let Ok(decoded) = wire::from_bytes_for(&honest.config, &mutated) {
+                    assert_eq!(wire::to_bytes(&decoded), mutated);
+                    accepted += 1;
+                }
+            }
+            assert!(accepted > 0);
         }
     }
 
