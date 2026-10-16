@@ -13,8 +13,14 @@ use crate::common::{
 
 #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
 use crate::common::arithmetic::project_one_row_i16_to_u64;
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "avx512f",
+    not(target_feature = "avx512bw")
+))]
 use crate::common::arithmetic::project_rows_sparse_tiled;
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+use crate::common::arithmetic::{project_rows_grouped, GROUP, GROUP_SUMS, PASS};
 
 #[derive(Clone, Copy)]
 #[repr(align(64))]
@@ -116,6 +122,8 @@ pub fn project(
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     {
         let (pos, pos_bounds, neg, neg_bounds) = signed_offset_lists(projection_matrix);
+        #[cfg(target_feature = "avx512bw")]
+        let offsets = ternary_group_offsets(projection_matrix);
 
         for col in 0..witness_16.used_cols {
             for rows_chunk in 0..projection_image.height / projection_matrix.projection_height {
@@ -128,6 +136,14 @@ pub fn project(
                     (rows_chunk + 1) * projection_matrix.projection_height,
                 );
 
+                #[cfg(target_feature = "avx512bw")]
+                project_rows_grouped::<DEGREE>(
+                    subwitness_i16,
+                    &offsets,
+                    (&pos, &pos_bounds, &neg, &neg_bounds),
+                    projection_subimage,
+                );
+                #[cfg(not(target_feature = "avx512bw"))]
                 project_rows_sparse_tiled::<DEGREE>(
                     subwitness_i16,
                     &pos,
@@ -274,6 +290,34 @@ pub fn signed_offset_lists(
     }
 
     (pos, pos_bounds, neg, neg_bounds)
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+pub(crate) fn ternary_group_offsets(projection_matrix: &ProjectionMatrix) -> Vec<u64> {
+    const _: () = assert!(GROUP == 4 && GROUP_SUMS == 81 && PASS == 4);
+    let h = projection_matrix.projection_height;
+    let blocks = projection_matrix.projection_width / (GROUP * PASS);
+    let digits: [u64; 256] = std::array::from_fn(|masks| {
+        (0..GROUP).rev().fold(0, |index, c| {
+            let (pos, non_zero) = ((masks >> c) & 1, (masks >> (GROUP + c)) & 1);
+            3 * index + if non_zero == 0 { 1 } else { 2 * pos as u64 }
+        })
+    });
+    let mut offsets = vec![0u64; blocks * h];
+    for row in 0..h {
+        let (pos_row, nz_row) = projection_matrix.row_chunks(row);
+        let pairs = pos_row.chunks_exact(2).zip(nz_row.chunks_exact(2));
+        for (block, (pos, non_zero)) in pairs.take(blocks).enumerate() {
+            let pos = u16::from_le_bytes([pos[0], pos[1]]) as usize;
+            let non_zero = u16::from_le_bytes([non_zero[0], non_zero[1]]) as usize;
+            offsets[block * h + row] = (0..PASS).fold(0, |packed, group| {
+                let shift = GROUP * group;
+                let masks = (pos >> shift) & 15 | ((non_zero >> shift) & 15) << GROUP;
+                packed | 64 * digits[masks] << (16 * group)
+            });
+        }
+    }
+    offsets
 }
 
 #[cfg(test)]
@@ -504,5 +548,128 @@ mod tests {
                 Representation::IncompleteNTT
             )
         );
+    }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+    fn extreme_rows(width: usize) -> Vec<Vec<i8>> {
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(11);
+        let mut rows: Vec<Vec<i8>> = (0..256)
+            .map(|_| (0..width).map(|_| rng.random_range(-1..=1)).collect())
+            .collect();
+        rows[0].fill(1);
+        rows[1].fill(-1);
+        rows[2] = (0..width)
+            .map(|i| if i < width / 2 { 1 } else { -1 })
+            .collect();
+        rows[3].fill(0);
+        rows[4] = (0..width).map(|i| 1 - 2 * (i & 1) as i8).collect();
+        rows[5] = (0..width).map(|i| (i >= width - 16) as i8).collect();
+        rows
+    }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+    fn extreme_digits(len: usize, cells: usize) -> Vec<(&'static str, Vec<i16>)> {
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(13);
+        let n = len * cells;
+        let last = |x: i16| {
+            let mut digits = vec![2047i16; n];
+            digits[n - 1] = x;
+            digits
+        };
+        vec![
+            ("all 2047", vec![2047; n]),
+            ("all -2047", vec![-2047; n]),
+            ("all -2048", vec![-2048; n]),
+            ("2047 then 2048", last(2048)),
+            ("2047 then i16::MIN", last(i16::MIN)),
+            (
+                "ones then 2047",
+                (0..n).map(|k| if k < n / 2 { 1 } else { 2047 }).collect(),
+            ),
+            (
+                "blocks of 1000 and 2047",
+                (0..n)
+                    .map(|k| {
+                        if (k / (16 * cells)) & 1 == 0 {
+                            1000
+                        } else {
+                            2047
+                        }
+                    })
+                    .collect(),
+            ),
+            (
+                "alternating 2047",
+                (0..n)
+                    .map(|k| if (k / cells) & 1 == 0 { 2047 } else { -2047 })
+                    .collect(),
+            ),
+            (
+                "random 2047",
+                (0..n).map(|_| rng.random_range(-2047..=2047)).collect(),
+            ),
+            (
+                "random 2048",
+                (0..n).map(|_| rng.random_range(-2048..=2048)).collect(),
+            ),
+            (
+                "random i16",
+                (0..n)
+                    .map(|_| rng.random_range(-i16::MAX..=i16::MAX))
+                    .collect(),
+            ),
+        ]
+    }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+    #[test]
+    fn grouped_rows_match_the_tiled_kernel_and_the_definition_on_extreme_digits() {
+        use crate::common::arithmetic::{project_rows_grouped, project_rows_sparse_tiled};
+        crate::common::init_common();
+        let width = 256 * 32;
+        let rows = extreme_rows(width);
+        let projection_matrix = ProjectionMatrix::from_i8(rows.clone());
+        let (pos, pos_bounds, neg, neg_bounds) = signed_offset_lists(&projection_matrix);
+        let offsets = ternary_group_offsets(&projection_matrix);
+        for (name, digits) in extreme_digits(width, DEGREE) {
+            let witness: Vec<Signed16RingElement> = digits
+                .chunks(DEGREE)
+                .map(|c| Signed16RingElement(c.try_into().unwrap()))
+                .collect();
+            let zero = RingElement::zero(Representation::StridedCoefficients);
+            let mut grouped = vec![zero.clone(); rows.len()];
+            let mut tiled = vec![zero; rows.len()];
+            project_rows_grouped::<DEGREE>(
+                &witness,
+                &offsets,
+                (&pos, &pos_bounds, &neg, &neg_bounds),
+                &mut grouped,
+            );
+            project_rows_sparse_tiled::<DEGREE>(
+                &witness,
+                &pos,
+                &pos_bounds,
+                &neg,
+                &neg_bounds,
+                &mut tiled,
+            );
+            assert!(grouped == tiled, "{name}");
+            for (row, entries) in rows.iter().enumerate().take(8) {
+                for t in 0..DEGREE {
+                    let sum: i64 = entries
+                        .iter()
+                        .zip(&witness)
+                        .map(|(&j, w)| j as i64 * w.0[t] as i64)
+                        .sum();
+                    assert_eq!(
+                        grouped[row].v[t],
+                        sum.rem_euclid(MOD_Q as i64) as u64,
+                        "{name}, row {row}"
+                    );
+                }
+            }
+        }
     }
 }

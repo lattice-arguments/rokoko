@@ -27,6 +27,10 @@ use std::arch::x86_64::{
     _mm512_max_epu16, _mm512_movepi64_mask, _mm512_set1_epi64, _mm512_setzero_si512,
     _mm512_store_si512, _mm512_storeu_si512, _mm512_sub_epi16, _mm_store_si128,
 };
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+use std::arch::x86_64::{
+    _mm512_cvtepu16_epi32, _mm512_max_epu32, _mm512_reduce_max_epu32, _mm_prefetch, _MM_HINT_T0,
+};
 
 #[inline(always)]
 pub fn centered_i64_from_u64_mod_q_scalar(x: u64) -> i64 {
@@ -267,6 +271,206 @@ pub fn project_rows_sparse_tiled<const DEGREE: usize>(
                 convert_i32x16_to_u64_mod_q(dst, _mm512_load_si512(acc));
                 convert_i32x16_to_u64_mod_q(dst.add(16), _mm512_load_si512(acc.add(1)));
             }
+        }
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+pub(crate) const GROUP: usize = 4;
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+pub(crate) const GROUP_SUMS: usize = 81;
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+pub(crate) const PASS: usize = 4;
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+const BLOCK: usize = PASS * GROUP;
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+pub(crate) fn project_rows_grouped<const DEGREE: usize>(
+    subwitness_i16: &[Signed16RingElement],
+    offsets: &[u64],
+    lists: (&[u32], &[usize], &[u32], &[usize]),
+    out: &mut [RingElement],
+) {
+    let blocks = subwitness_i16.len() / BLOCK;
+    if blocks * BLOCK != subwitness_i16.len()
+        || !unsafe { project_rows_in_blocks::<DEGREE>(subwitness_i16, offsets, out) }
+    {
+        let (pos, pos_bounds, neg, neg_bounds) = lists;
+        project_rows_sparse_tiled::<DEGREE>(subwitness_i16, pos, pos_bounds, neg, neg_bounds, out);
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+unsafe fn project_rows_in_blocks<const DEGREE: usize>(
+    subwitness_i16: &[Signed16RingElement],
+    offsets: &[u64],
+    out: &mut [RingElement],
+) -> bool {
+    let lines = Lines {
+        base: subwitness_i16.as_ptr() as *const u8,
+        stride: core::mem::size_of::<Signed16RingElement>(),
+        len: subwitness_i16.len(),
+        slices: DEGREE / 32,
+    };
+    ternary_rows(lines, offsets, out.len(), |k, wide| {
+        for (row, out) in out.iter_mut().enumerate() {
+            let dst = out.v.as_mut_ptr().add(k * 32);
+            convert_i32x16_to_u64_mod_q(dst, wide[2 * row]);
+            convert_i32x16_to_u64_mod_q(dst.add(16), wide[2 * row + 1]);
+        }
+    })
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+struct Lines {
+    base: *const u8,
+    stride: usize,
+    len: usize,
+    slices: usize,
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+unsafe fn ternary_rows(
+    lines: Lines,
+    offsets: &[u64],
+    h: usize,
+    mut emit: impl FnMut(usize, &[__m512i]),
+) -> bool {
+    let Lines {
+        base,
+        stride,
+        len,
+        slices,
+    } = lines;
+    let blocks = len / BLOCK;
+    assert_eq!(offsets.len(), blocks * h);
+    if len * (i16::MAX as usize / BLOCK) > i32::MAX as usize {
+        return false;
+    }
+
+    let mut tables = vec![_mm512_setzero_si512(); PASS * GROUP_SUMS];
+    let mut scratch = vec![_mm512_setzero_si512(); h];
+    let mut wide = vec![_mm512_setzero_si512(); 2 * h];
+    let table = tables.as_mut_ptr();
+    let sums = Sums {
+        tables: table as *const u8,
+        scratch: scratch.as_mut_ptr(),
+        wide: wide.as_mut_ptr(),
+        rows: h,
+    };
+
+    for k in 0..slices {
+        let chunk = base.add(k * 64);
+        wide.fill(_mm512_setzero_si512());
+        let mut budget = 0;
+        for block in 0..blocks {
+            if block + 1 < blocks {
+                let next = chunk.add((block + 1) * BLOCK * stride);
+                for e in 0..BLOCK {
+                    _mm_prefetch::<_MM_HINT_T0>(next.add(e * stride) as *const i8);
+                }
+            }
+            let mut largest = _mm512_setzero_si512();
+            for group in 0..PASS {
+                let first = chunk.add((block * PASS + group) * GROUP * stride);
+                let w: [__m512i; GROUP] = std::array::from_fn(|c| {
+                    let line = _mm512_load_si512(first.add(c * stride) as *const __m512i);
+                    largest = _mm512_max_epu16(largest, _mm512_abs_epi16(line));
+                    line
+                });
+                ternary_sums(table.add(group * GROUP_SUMS), w);
+            }
+            // a row adds at most BLOCK digits per block, so a partial within an i16 budget is exact
+            let bound = BLOCK * largest_lane(largest);
+            if bound > i16::MAX as usize {
+                return false;
+            }
+            if budget + bound > i16::MAX as usize {
+                sums.widen();
+                budget = 0;
+            }
+            let selections = &offsets[block * h..(block + 1) * h];
+            if budget == 0 {
+                sums.add::<true>(selections);
+            } else {
+                sums.add::<false>(selections);
+            }
+            budget += bound;
+        }
+        sums.widen();
+        emit(k, &wide);
+    }
+    true
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+struct Sums {
+    tables: *const u8,
+    scratch: *mut __m512i,
+    wide: *mut __m512i,
+    rows: usize,
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+impl Sums {
+    #[inline(always)]
+    unsafe fn add<const OPENS: bool>(&self, selections: &[u64]) {
+        const _: () = assert!(PASS == 4);
+        for (row, &s) in selections.iter().enumerate() {
+            let sum = |group: usize| {
+                let offset = (s >> (16 * group)) as u16 as usize;
+                _mm512_load_si512(
+                    self.tables.add(group * GROUP_SUMS * 64 + offset) as *const __m512i
+                )
+            };
+            let mut partial = _mm512_add_epi16(
+                _mm512_add_epi16(sum(0), sum(1)),
+                _mm512_add_epi16(sum(2), sum(3)),
+            );
+            if !OPENS {
+                partial = _mm512_add_epi16(partial, _mm512_load_si512(self.scratch.add(row)));
+            }
+            _mm512_store_si512(self.scratch.add(row), partial);
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn widen(&self) {
+        for row in 0..self.rows {
+            widen_into(self.wide.add(2 * row) as *mut i32, *self.scratch.add(row));
+        }
+    }
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+#[inline(always)]
+unsafe fn largest_lane(x: __m512i) -> usize {
+    let low = _mm512_cvtepu16_epi32(_mm512_castsi512_si256(x));
+    let high = _mm512_cvtepu16_epi32(_mm512_extracti64x4_epi64::<1>(x));
+    _mm512_reduce_max_epu32(_mm512_max_epu32(low, high)) as usize
+}
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
+#[inline(always)]
+unsafe fn ternary_sums(table: *mut __m512i, [w0, w1, w2, w3]: [__m512i; GROUP]) {
+    let signed = |s: __m512i, d: usize, w: __m512i| match d {
+        0 => _mm512_sub_epi16(s, w),
+        1 => s,
+        _ => _mm512_add_epi16(s, w),
+    };
+    let first = [
+        signed(_mm512_setzero_si512(), 0, w0),
+        _mm512_setzero_si512(),
+        w0,
+    ];
+    let second: [[__m512i; 3]; 3] = std::array::from_fn(|d| first.map(|s| signed(s, d, w1)));
+    for d in 0..3 {
+        for (i, &s) in second.as_flattened().iter().enumerate() {
+            let s = signed(s, d, w2);
+            let at = table.add(9 * d + i);
+            _mm512_store_si512(at, _mm512_sub_epi16(s, w3));
+            _mm512_store_si512(at.add(27), s);
+            _mm512_store_si512(at.add(54), _mm512_add_epi16(s, w3));
         }
     }
 }
