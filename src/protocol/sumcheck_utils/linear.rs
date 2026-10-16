@@ -1,4 +1,8 @@
-use std::{cell::RefCell, ops::Index};
+use std::{
+    cell::RefCell,
+    ops::{Deref, Index},
+    sync::Arc,
+};
 
 use crate::{
     common::{
@@ -18,8 +22,24 @@ use crate::{
 #[cfg(test)]
 use crate::common::{config::MOD_Q, structured_row::PreprocessedRow};
 
+enum Source<E: 'static> {
+    Caller(&'static [E]),
+    Shared(Arc<Vec<E>>),
+}
+
+impl<E> Deref for Source<E> {
+    type Target = [E];
+
+    fn deref(&self) -> &[E] {
+        match self {
+            Source::Caller(data) => data,
+            Source::Shared(data) => data,
+        }
+    }
+}
+
 struct Borrowed<E: 'static> {
-    data: &'static [E],
+    data: Source<E>,
     map: Option<fn(&E, &mut E)>,
     conjugate: bool,
 }
@@ -137,7 +157,7 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
         LinearSumcheck {
             data: Vec::new(),
             borrowed: Some(Borrowed {
-                data: unsafe { std::mem::transmute::<&[E], &'static [E]>(data) },
+                data: Source::Caller(unsafe { std::mem::transmute::<&[E], &'static [E]>(data) }),
                 map,
                 conjugate: false,
             }),
@@ -167,13 +187,23 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
         }
     }
 
+    fn own_shared(&mut self) {
+        match self.borrowed.take() {
+            Some(Borrowed {
+                data: Source::Shared(data),
+                ..
+            }) => self.data = Arc::unwrap_or_clone(data),
+            borrowed => self.borrowed = borrowed,
+        }
+    }
+
     pub fn partial_evaluate_with_mapped(&mut self, mapped: &mut Self, value: &E) -> bool {
         let (other, map, conjugate) = match &mapped.borrowed {
             Some(Borrowed {
                 data,
                 map: Some(map),
                 conjugate,
-            }) => (*data, *map, *conjugate),
+            }) => (&**data as *const [E], *map, *conjugate),
             _ => return false,
         };
         let Some(values) = self.values() else {
@@ -190,11 +220,17 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
         map(value, &mut image);
         if conjugate && image == *value && values.len() / 2 >= BORROW_MIN_LEN {
             mapped.borrowed = None;
+            self.own_shared();
             self.viewed = false;
             self.partial_evaluate(value);
-            let folded = self.values().unwrap();
+            let folded = Arc::new(std::mem::take(&mut self.data));
+            self.borrowed = Some(Borrowed {
+                data: Source::Shared(folded.clone()),
+                map: None,
+                conjugate: false,
+            });
             mapped.borrowed = Some(Borrowed {
-                data: unsafe { std::mem::transmute::<&[E], &'static [E]>(folded) },
+                data: Source::Shared(folded),
                 map: Some(map),
                 conjugate,
             });
@@ -227,6 +263,7 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
             *out *= value;
             *out += &even;
         }
+        self.viewed = false;
         self.install_fold(first, half, fold_end);
         mapped.install_fold(second, half, fold_end);
         true
@@ -1016,6 +1053,45 @@ mod tests {
         let mut b = unsafe { LinearSumcheck::from_borrowed(&data, data.len(), Some(map)) };
         assert!(a.partial_evaluate_with_mapped(&mut b, &r));
         assert!(a.borrowed.is_none() && b.borrowed.is_none() && !a.viewed);
+    }
+
+    #[test]
+    fn a_conjugate_view_outlives_the_table_it_was_folded_from() {
+        crate::common::init_common();
+        let data = crate::common::sampling::sample_random_short_vector(
+            4 * BORROW_MIN_LEN,
+            60,
+            Representation::IncompleteNTT,
+        );
+        let x = crate::common::sampling::sample_random_short_vector(
+            1,
+            1 << 20,
+            Representation::IncompleteNTT,
+        )
+        .remove(0);
+        let r = &x + &x.conjugate();
+        let s = RingElement::constant(5, Representation::IncompleteNTT);
+        let map: fn(&RingElement, &mut RingElement) = conjugate;
+        let mut want = unsafe { LinearSumcheck::from_borrowed(&data, data.len(), Some(map)) };
+        want.partial_evaluate(&r);
+        for replace in [false, true] {
+            let mut a = unsafe { LinearSumcheck::from_borrowed(&data, data.len(), None) };
+            let mut b = unsafe { LinearSumcheck::conjugate_of(&data, data.len()) };
+            assert!(a.partial_evaluate_with_mapped(&mut b, &r));
+            assert!(b.borrowed.is_some() && a.data.is_empty());
+            if replace {
+                a.data = data.clone();
+            }
+            drop(a);
+            let reused = vec![RingElement::constant(1, Representation::IncompleteNTT); data.len()];
+            assert_eq!(snapshot(&b), snapshot(&want));
+            drop(reused);
+            let mut again = unsafe { LinearSumcheck::from_borrowed(&data, data.len(), Some(map)) };
+            again.partial_evaluate(&r);
+            again.partial_evaluate(&s);
+            b.partial_evaluate(&s);
+            assert_eq!(snapshot(&b), snapshot(&again));
+        }
     }
 
     #[test]
