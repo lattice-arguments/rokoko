@@ -205,6 +205,16 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
         self.load(2 * p + 1, odd);
     }
 
+    pub(crate) fn entries(&self) -> Vec<E> {
+        (0..self.len())
+            .map(|index| {
+                let mut entry = E::zero();
+                self.load(index, &mut entry);
+                entry
+            })
+            .collect()
+    }
+
     fn load(&self, index: usize, out: &mut E) {
         match &self.borrowed {
             Some(Borrowed {
