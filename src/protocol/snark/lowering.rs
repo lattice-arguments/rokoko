@@ -7,8 +7,11 @@ use crate::{
         sumcheck_element::SumcheckElement,
     },
     protocol::{
-        commitment::Prefix,
-        open::{evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate},
+        commitment::{BasicCommitment, Prefix},
+        open::{
+            evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
+            opened, Opening,
+        },
         sumcheck_utils::{
             combiner::{Combiner, CombinerEvaluation},
             common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
@@ -554,6 +557,7 @@ pub struct ChainInputs {
     pub evaluation_points_inner: Vec<StructuredRow>,
     pub evaluation_points_outer: Vec<StructuredRow>,
     pub claims: Vec<RingElement>,
+    pub opening: Option<Opening>,
 }
 
 fn is_unit(e: &RingElement) -> bool {
@@ -819,6 +823,38 @@ impl<'a> ProverAssembler<'a> {
     }
 }
 
+fn opening_rows(
+    asm: &ProverAssembler,
+    used_cols: usize,
+    conjugate: bool,
+) -> Option<BasicCommitment> {
+    let witness = asm.witness_pool.first_cell(&FULL_WITNESS_KEY)?.borrow();
+    let width = witness.len();
+    if width < 2 {
+        return None;
+    }
+    let mut data = witness.values()?.to_vec();
+    if conjugate {
+        let mapped = asm.conj_pool.first_cell(&FULL_WITNESS_KEY)?.borrow();
+        let mut pair = [(); 2].map(|_| RingElement::zero(Representation::IncompleteNTT));
+        for p in 0..width / 2 {
+            let [even, odd] = &mut pair;
+            mapped.pair_into(p, even, odd);
+            data.extend(pair.iter().map(RingElement::conjugate));
+        }
+    }
+    for row in data.chunks_exact_mut(width) {
+        row[used_cols.min(width)..]
+            .iter_mut()
+            .for_each(RingElement::set_zero);
+    }
+    Some(BasicCommitment {
+        height: data.len() / width,
+        data,
+        width,
+    })
+}
+
 fn used_length(witness: &[RingElement]) -> usize {
     witness
         .iter()
@@ -1019,6 +1055,7 @@ fn chain_inputs(
         evaluation_points_inner,
         evaluation_points_outer,
         claims,
+        opening: None,
     }
 }
 /// Canonicalize a claim: lower segments to `selector x witness`, fold scales
@@ -1292,6 +1329,11 @@ fn prove_claims_with(
     let mut num_vars = total_vars;
     let mut polys: Vec<Polynomial<FieldExtension>> = vec![];
     let mut evaluation_points: Vec<RingElement> = vec![];
+    let row_vars = witness.height.ilog2() as usize;
+    let mut rows = match row_vars {
+        0 => opening_rows(&asm, witness.used_cols, needs_conjugate),
+        _ => None,
+    };
 
     use crate::common::arithmetic::field_to_ring_element_into;
     while num_vars > 0 {
@@ -1330,6 +1372,9 @@ fn prove_claims_with(
                 _ => leaf.partial_evaluate(&r),
             }
         }
+        if total_vars - num_vars == row_vars {
+            rows = opening_rows(&asm, witness.used_cols, needs_conjugate);
+        }
         evaluation_points.push(r);
         polys.push(poly_over_field);
     }
@@ -1367,12 +1412,19 @@ fn prove_claims_with(
 
     evaluation_points.reverse();
 
-    let inputs = chain_inputs(
+    let mut inputs = chain_inputs(
         &evaluation_points,
         witness.width,
         &witness_eval,
         conj_witness_eval.as_ref(),
     );
+    inputs.opening = rows.map(|rhs| {
+        opened(
+            rhs,
+            &inputs.evaluation_points_inner,
+            &inputs.evaluation_points_outer,
+        )
+    });
 
     (
         InitialSumcheckProof {
@@ -2036,6 +2088,55 @@ mod tests {
         assert_flat_matches(&witness, &claims);
         for claim in &claims {
             assert_flat_matches(&witness, std::slice::from_ref(claim));
+        }
+    }
+
+    #[test]
+    fn the_opening_handed_to_the_chain_is_the_one_it_would_compute() {
+        init_common();
+        let (toy, mut first) = toy_setup();
+        first.truncate(1);
+        let mut cases = vec![
+            (toy, first),
+            toy_setup(),
+            binariness_setup(false),
+            shaped_setup(),
+        ];
+        let (mut narrow, claims) = shaped_setup();
+        narrow.used_cols -= 1;
+        cases.push((narrow, claims));
+        for (witness, claims) in cases {
+            let (_, inputs) = prove_claims(&witness, &claims, &mut HashWrapper::new());
+            let opening = inputs
+                .opening
+                .expect("the claims sumcheck opens the witness");
+            let direct = crate::protocol::open::open_at(
+                &witness,
+                &inputs.evaluation_points_inner,
+                &inputs.evaluation_points_outer,
+                false,
+            );
+            assert_eq!(
+                (opening.rhs.height, opening.rhs.width),
+                (direct.rhs.height, direct.rhs.width)
+            );
+            assert_eq!(opening.rhs.data, direct.rhs.data);
+            for (ours, theirs) in [
+                (
+                    &opening.evaluation_points_inner,
+                    &direct.evaluation_points_inner,
+                ),
+                (
+                    &opening.evaluation_points_outer,
+                    &direct.evaluation_points_outer,
+                ),
+            ] {
+                assert_eq!(ours.len(), theirs.len());
+                assert!(ours
+                    .iter()
+                    .zip(theirs)
+                    .all(|(x, y)| x.preprocessed_row == y.preprocessed_row));
+            }
         }
     }
 

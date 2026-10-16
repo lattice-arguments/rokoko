@@ -89,6 +89,24 @@ pub fn open_at(
     }
 }
 
+pub fn opened(
+    rhs: BasicCommitment,
+    structured_points_inner: &[StructuredRow],
+    structured_points_outer: &[StructuredRow],
+) -> Opening {
+    let preprocessed = |points: &[StructuredRow]| {
+        points
+            .iter()
+            .map(PreprocessedRow::from_structured_row)
+            .collect()
+    };
+    Opening {
+        rhs,
+        evaluation_points_inner: preprocessed(structured_points_inner),
+        evaluation_points_outer: preprocessed(structured_points_outer),
+    }
+}
+
 pub fn claim(
     witness: &VerticallyAlignedMatrix<RingElement>,
     evaluation_point_inner: &StructuredRow,

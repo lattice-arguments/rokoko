@@ -25,7 +25,7 @@ use crate::{
         },
         open::{
             evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
-            open_at,
+            open_at, Opening,
         },
         project_coarse::{prepare_i16_witness, project},
         project_fine::{batch_projection_n_times, project_coefficients},
@@ -73,7 +73,6 @@ enum PendingNextCommitment {
     Basic(BasicCommitment),
 }
 
-#[tracing::instrument(skip_all, name = "prover_round")]
 pub fn prover_round(
     crs: &CRS,
     config: &SumcheckConfig,
@@ -86,26 +85,51 @@ pub fn prover_round(
     hash_wrapper: Option<HashWrapper>,
     boundary: Option<BoundaryCapture<'_, ProverBoundary>>,
 ) -> (SumcheckRoundProof, Option<Vec<RingElement>>) {
+    let opening = {
+        let _s = tracing::info_span!("prover_round::open_at").entered();
+        open_at(
+            &witness,
+            &evaluation_points_inner,
+            &evaluation_points_outer,
+            false,
+        )
+    };
+    prover_round_opened(
+        crs,
+        config,
+        commitment_with_aux,
+        witness,
+        opening,
+        evaluation_points_outer,
+        sumcheck_context,
+        with_claims,
+        hash_wrapper,
+        boundary,
+    )
+}
+
+#[tracing::instrument(skip_all, name = "prover_round")]
+pub fn prover_round_opened(
+    crs: &CRS,
+    config: &SumcheckConfig,
+    commitment_with_aux: &CommitmentWithAux,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    opening: Opening,
+    evaluation_points_outer: &Vec<StructuredRow>,
+    sumcheck_context: &mut SumcheckContext,
+    with_claims: bool,
+    hash_wrapper: Option<HashWrapper>,
+    boundary: Option<BoundaryCapture<'_, ProverBoundary>>,
+) -> (SumcheckRoundProof, Option<Vec<RingElement>>) {
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     let rc_commitment = &commitment_with_aux.rc_commitment_with_aux;
 
     hash_wrapper.update_with_ring_element_slice(&rc_commitment.most_inner_commitment());
 
-    let (opening, claims) = {
-        let _s = tracing::info_span!("prover_round::open_at").entered();
-        let opening = open_at(
-            &witness,
-            &evaluation_points_inner,
-            &evaluation_points_outer,
-            false,
-        );
-
-        let claims = if with_claims {
-            Some(outer_eval_claims(&opening.rhs, evaluation_points_outer))
-        } else {
-            None
-        };
-        (opening, claims)
+    let claims = if with_claims {
+        Some(outer_eval_claims(&opening.rhs, evaluation_points_outer))
+    } else {
+        None
     };
 
     let rc_opening = {
