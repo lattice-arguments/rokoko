@@ -15,6 +15,7 @@ use crate::{
         sumcheck::SumcheckContext,
         sumcheck_utils::{
             common::{HighOrderSumcheckData, SumcheckBaseData},
+            elephant_cell::ElephantCell,
             flat::FlatRounds,
             polynomial::Polynomial,
             ring_to_field_combiner::ring_polynomial_to_field,
@@ -23,6 +24,8 @@ use crate::{
 };
 
 use super::loader::{load_sumcheck_data, used_length};
+
+type Cell = ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>;
 
 /// `sum_i w_i conj(w_i)`, the conjugates formed a block at a time.
 fn norm(witness: &[RingElement]) -> RingElement {
@@ -36,6 +39,23 @@ fn norm(witness: &[RingElement]) -> RingElement {
         }
         incomplete_ntt_dot_into(&mut sum, block, 1, &conjugates, 1, block.len());
     }
+    sum
+}
+
+/// The sum of `output` over the hypercube, through the flat evaluator when it covers `output`.
+fn claim(output: Cell, total_vars: usize) -> RingElement {
+    let outputs = [output];
+    let flat = FlatRounds::new(&outputs, total_vars);
+    if flat.rounds() == 0 {
+        return outputs[0].borrow().claim();
+    }
+    let poly = flat.round_polynomial(
+        &outputs,
+        &[RingElement::constant(1, Representation::IncompleteNTT)],
+        None,
+    );
+    let mut sum = poly.at_one();
+    sum += &poly.at_zero();
     sum
 }
 
@@ -129,17 +149,17 @@ pub fn sumcheck(
         );
     }
 
-    let norm_inner_norm_claim = sumcheck_context
-        .norm_check_sumcheck
-        .output_2
-        .borrow_mut()
-        .claim();
+    let total_vars = sumcheck_context.combiner.borrow().variable_count();
+    let norm_inner_norm_claim = claim(
+        sumcheck_context.norm_check_sumcheck.output_2.clone(),
+        total_vars,
+    );
 
     let projection_norm_claim = sumcheck_context
         .norm_check_sumcheck
         .output_3
         .as_ref()
-        .map(|output_3| output_3.borrow_mut().claim());
+        .map(|output_3| claim(output_3.clone(), total_vars));
 
     let constant_term_claims =
         sumcheck_context
@@ -149,7 +169,7 @@ pub fn sumcheck(
                 fine_proj_sumchecks
                     .sumchecks
                     .iter()
-                    .map(|fine_proj_sc| fine_proj_sc.output_2.borrow().claim())
+                    .map(|fine_proj_sc| claim(fine_proj_sc.output_2.clone(), total_vars))
                     .collect::<Vec<_>>()
             });
 
@@ -183,8 +203,7 @@ pub fn sumcheck(
         .borrow_mut()
         .load_challenges_from(fe.clone());
 
-    let mut num_vars = sumcheck_context.combiner.borrow().variable_count();
-    let total_vars = num_vars;
+    let mut num_vars = total_vars;
     let flat = FlatRounds::new(&sumcheck_context.outputs, total_vars);
     // Collect evaluation points during sumcheck
     let mut evaluation_points: Vec<RingElement> = vec![];
