@@ -28,7 +28,6 @@ use super::loader::{load_sumcheck_data, used_length};
 
 type Cell = ElephantCell<dyn HighOrderSumcheckData<Element = RingElement>>;
 
-/// `sum_i w_i conj(w_i)`, the conjugates formed a block at a time.
 fn norm(witness: &[RingElement]) -> RingElement {
     const BLOCK: usize = 64;
     let mut conjugates =
@@ -43,7 +42,6 @@ fn norm(witness: &[RingElement]) -> RingElement {
     sum
 }
 
-/// The sum of `output` over the hypercube, through the flat evaluator when it covers `output`.
 fn claim(output: Cell, total_vars: usize) -> RingElement {
     let outputs = [output];
     let flat = FlatRounds::new(&outputs, total_vars);

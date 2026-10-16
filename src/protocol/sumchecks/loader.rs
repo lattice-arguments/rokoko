@@ -20,8 +20,7 @@ use crate::{
 
 use super::context::SumcheckContext;
 
-/// The end of the used part of the composed witness: everything past it is zero.
-pub fn used_length(config: &SumcheckConfig, combined_witness: &[RingElement]) -> usize {
+pub(crate) fn used_length(config: &SumcheckConfig, combined_witness: &[RingElement]) -> usize {
     let used_columns =
         (config.composed_witness_length as f64 * config.next_level_usage_ratio).ceil() as usize;
     used_columns
@@ -34,7 +33,7 @@ pub fn used_length(config: &SumcheckConfig, combined_witness: &[RingElement]) ->
 /// This function encapsulates all the `load_from` calls that populate the sumcheck
 /// gadgets with their actual input values. By extracting this logic, we separate
 /// data preparation from the main sumcheck execution flow.
-pub fn load_sumcheck_data(
+pub(crate) fn load_sumcheck_data(
     sumcheck_context: &mut SumcheckContext,
     config: &SumcheckConfig,
     crs: &CRS,
@@ -51,10 +50,17 @@ pub fn load_sumcheck_data(
     // Karatsuba inner products.
     let non_zero_end = used_length(config, combined_witness);
 
+    // Load combined witness
     sumcheck_context
         .combined_witness_sumcheck
         .borrow_mut()
         .install(witness_oracle(combined_witness, non_zero_end));
+
+    // Load folding challenges
+    sumcheck_context
+        .folding_challenges_sumcheck
+        .borrow_mut()
+        .load_from(&folding_challenges);
 
     sumcheck_context
         .norm_check_sumcheck
@@ -65,12 +71,6 @@ pub fn load_sumcheck_data(
     for key_row in &sumcheck_context.key_rows {
         unsafe { key_row.load(crs) };
     }
-
-    // Load folding challenges
-    sumcheck_context
-        .folding_challenges_sumcheck
-        .borrow_mut()
-        .load_from(&folding_challenges);
 
     // Load inner evaluation points (inner_eval_fold)
     for (inner_eval_fold_sc, eval_point) in sumcheck_context

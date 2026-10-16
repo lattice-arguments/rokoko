@@ -272,24 +272,19 @@ pub fn project_rows_sparse_tiled<const DEGREE: usize>(
     }
 }
 
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 pub const GROUP: usize = 4;
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 pub const GROUP_SUMS: usize = 81;
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 pub const PASS: usize = 4;
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 const BLOCK: usize = PASS * GROUP;
 
-// Computes what `project_rows_sparse_tiled` computes by the method of four Russians. Per
-// coefficient slice, the witness block is cut into groups of `GROUP` consecutive elements, the
-// `GROUP_SUMS` signed sums `sum_c t_c w_c`, `t in {-1, 0, 1}^GROUP`, of a group are tabulated once,
-// and every row adds the one its entries of `J` select: a row costs one add per group instead of
-// one per non-zero entry. Rows take `PASS` groups per visit; `offsets` holds their selections as
-// byte offsets into the tables (see `ternary_group_offsets`). A row's i16 partial is widened into
-// its i32 sum before the digits it has taken in could leave i16, which the tables measure as they
-// are built; a block whose digits are too large for an i16 partial at all is handed to
-// `project_rows_sparse_tiled`.
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-pub fn project_rows_grouped<const DEGREE: usize>(
+pub(crate) fn project_rows_grouped<const DEGREE: usize>(
     subwitness_i16: &[Signed16RingElement],
-    offsets: &[u16],
+    offsets: &[u64],
     lists: (&[u32], &[usize], &[u32], &[usize]),
     out: &mut [RingElement],
 ) {
@@ -305,7 +300,7 @@ pub fn project_rows_grouped<const DEGREE: usize>(
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 unsafe fn project_rows_in_blocks<const DEGREE: usize>(
     subwitness_i16: &[Signed16RingElement],
-    offsets: &[u16],
+    offsets: &[u64],
     out: &mut [RingElement],
 ) -> bool {
     let lines = Lines {
@@ -323,11 +318,12 @@ unsafe fn project_rows_in_blocks<const DEGREE: usize>(
     })
 }
 
-/// `project_rows_grouped` over 32 independent blocks at once, block `c` in lane `c` of every
-/// entry of `lanes`: the sums of row `r` come back as lanes `0..16` and `16..32` of entries
-/// `2r` and `2r + 1`, or nothing when some digit reaches 2^11.
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-pub fn project_lanes_grouped(lanes: &[__m512i], offsets: &[u16], h: usize) -> Option<Vec<__m512i>> {
+pub(crate) fn project_lanes_grouped(
+    lanes: &[__m512i],
+    offsets: &[u64],
+    h: usize,
+) -> Option<Vec<__m512i>> {
     let blocks = lanes.len() / BLOCK;
     if blocks * BLOCK != lanes.len() {
         return None;
@@ -353,7 +349,7 @@ struct Lines {
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 unsafe fn ternary_rows(
     lines: Lines,
-    offsets: &[u16],
+    offsets: &[u64],
     h: usize,
     mut emit: impl FnMut(usize, &[__m512i]),
 ) -> bool {
@@ -364,8 +360,10 @@ unsafe fn ternary_rows(
         slices,
     } = lines;
     let blocks = len / BLOCK;
-    assert_eq!(offsets.len(), blocks * h * PASS);
-    assert!(len * (i16::MAX as usize / BLOCK) <= i32::MAX as usize);
+    assert_eq!(offsets.len(), blocks * h);
+    if len * (i16::MAX as usize / BLOCK) > i32::MAX as usize {
+        return false;
+    }
 
     let mut tables = vec![_mm512_setzero_si512(); PASS * GROUP_SUMS];
     let mut scratch = vec![_mm512_setzero_si512(); h];
@@ -399,6 +397,7 @@ unsafe fn ternary_rows(
                 });
                 ternary_sums(table.add(group * GROUP_SUMS), w);
             }
+            // a row adds at most BLOCK digits per block, so a partial within an i16 budget is exact
             let bound = BLOCK * largest_lane(largest);
             if bound > i16::MAX as usize {
                 return false;
@@ -407,7 +406,7 @@ unsafe fn ternary_rows(
                 sums.widen();
                 budget = 0;
             }
-            let selections = offsets.as_ptr().add(block * h * PASS) as *const u64;
+            let selections = &offsets[block * h..(block + 1) * h];
             if budget == 0 {
                 sums.add::<true>(selections);
             } else {
@@ -432,10 +431,9 @@ struct Sums {
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 impl Sums {
     #[inline(always)]
-    unsafe fn add<const OPENS: bool>(&self, selections: *const u64) {
+    unsafe fn add<const OPENS: bool>(&self, selections: &[u64]) {
         const _: () = assert!(PASS == 4);
-        for row in 0..self.rows {
-            let s = *selections.add(row);
+        for (row, &s) in selections.iter().enumerate() {
             let sum = |group: usize| {
                 let offset = (s >> (16 * group)) as u16 as usize;
                 _mm512_load_si512(
@@ -469,7 +467,6 @@ unsafe fn largest_lane(x: __m512i) -> usize {
     _mm512_reduce_max_epu32(_mm512_max_epu32(low, high)) as usize
 }
 
-/// `table[sum_c 3^c d_c] = sum_c (d_c - 1) w_c` over `d in {0, 1, 2}^GROUP`.
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 #[inline(always)]
 unsafe fn ternary_sums(table: *mut __m512i, [w0, w1, w2, w3]: [__m512i; GROUP]) {
@@ -483,9 +480,9 @@ unsafe fn ternary_sums(table: *mut __m512i, [w0, w1, w2, w3]: [__m512i; GROUP]) 
         _mm512_setzero_si512(),
         w0,
     ];
-    let second: [__m512i; 9] = std::array::from_fn(|i| signed(first[i % 3], i / 3, w1));
+    let second: [[__m512i; 3]; 3] = std::array::from_fn(|d| first.map(|s| signed(s, d, w1)));
     for d in 0..3 {
-        for (i, &s) in second.iter().enumerate() {
+        for (i, &s) in second.as_flattened().iter().enumerate() {
             let s = signed(s, d, w2);
             let at = table.add(9 * d + i);
             _mm512_store_si512(at, _mm512_sub_epi16(s, w3));
