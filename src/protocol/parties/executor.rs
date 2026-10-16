@@ -111,7 +111,7 @@ fn run(
     let bytes = wire::to_bytes(&proof);
     let serialise = start.elapsed();
     let start = std::time::Instant::now();
-    let proof = wire::from_bytes(&bytes).expect("the proof must deserialise");
+    let proof = wire::from_bytes_for(&config, &bytes).expect("the proof must deserialise");
     let deserialise = start.elapsed();
     println!(
         "Wire proof size: {} KB (serialise {:.3} ms, deserialise {:.3} ms)",
@@ -326,9 +326,12 @@ pub fn execute_snark(inst: &Instantiation) {
     let initial_bytes = wire::initial_to_bytes(&initial_proof);
     let serialise = start.elapsed();
     let start = std::time::Instant::now();
-    let proof = wire::from_bytes(&bytes).expect("the proof must deserialise");
-    let initial_proof =
-        wire::initial_from_bytes(&initial_bytes).expect("the initial proof must deserialise");
+    let proof = wire::from_bytes_for(&config, &bytes).expect("the proof must deserialise");
+    let initial_proof = wire::initial_from_bytes_for(
+        (config.witness_height, config.witness_width),
+        &initial_bytes,
+    )
+    .expect("the initial proof must deserialise");
     let deserialise = start.elapsed();
     println!(
         "Wire proof size: {} KB (serialise {:.3} ms, deserialise {:.3} ms)",
@@ -480,7 +483,8 @@ mod tests {
 
         /// A copy of the proof, through the wire.
         fn copy(&self) -> SumcheckRoundProof {
-            wire::from_bytes(&wire::to_bytes(&self.proof)).expect("an honest proof decodes")
+            wire::from_bytes_for(&self.config, &wire::to_bytes(&self.proof))
+                .expect("an honest proof decodes")
         }
 
         fn verify(&self, proof: &SumcheckRoundProof) {
@@ -857,6 +861,48 @@ mod tests {
                 let honest = Honest::prove_witness(&config, witness);
                 honest.verify(&honest.copy());
             }
+        }
+    }
+
+    /// The decoder allows exactly what an honest proof of the config declares: one coefficient or
+    /// one round less refuses it, and a proof declaring more is refused before it is allocated,
+    /// however few bytes its zeros take.
+    #[test]
+    fn a_proof_decodes_within_what_its_config_allows() {
+        use crate::common::ring_arithmetic::Representation;
+        use crate::protocol::wire::{from_bytes_within, Allowance, WireError};
+
+        for aux in [three_openings_aux(), intermediate_aux()] {
+            init_common();
+            let honest = Honest::prove(&sumcheck_config(aux));
+            let bytes = wire::to_bytes(&honest.proof);
+            let allowance = Allowance::of(&honest.config);
+            assert!(from_bytes_within(&bytes, allowance).is_ok());
+            for short in [
+                Allowance {
+                    cells: allowance.cells - 1,
+                    ..allowance
+                },
+                Allowance {
+                    rounds: allowance.rounds - 1,
+                    ..allowance
+                },
+            ] {
+                assert_eq!(
+                    from_bytes_within(&bytes, short).err(),
+                    Some(WireError::Malformed)
+                );
+            }
+
+            let mut flooded = honest.copy();
+            flooded.rc_opening_inner.extend(
+                std::iter::repeat_with(|| RingElement::zero(Representation::IncompleteNTT))
+                    .take(1 << 14),
+            );
+            assert_eq!(
+                wire::from_bytes_for(&honest.config, &wire::to_bytes(&flooded)).err(),
+                Some(WireError::Malformed)
+            );
         }
     }
 
