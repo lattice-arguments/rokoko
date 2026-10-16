@@ -825,34 +825,43 @@ impl<'a> ProverAssembler<'a> {
 
 fn opening_rows(
     asm: &ProverAssembler,
-    used_cols: usize,
+    witness: &VerticallyAlignedMatrix<RingElement>,
     conjugate: bool,
-) -> Option<BasicCommitment> {
-    let witness = asm.witness_pool.first_cell(&FULL_WITNESS_KEY)?.borrow();
-    let width = witness.len();
-    if width < 2 {
-        return None;
-    }
-    let mut data = witness.values()?.to_vec();
+) -> BasicCommitment {
+    let table = asm
+        .witness_pool
+        .first_cell(&FULL_WITNESS_KEY)
+        .expect("the full witness oracle seeds the chain")
+        .borrow();
+    let width = table.len();
+    assert_eq!(
+        width, witness.width,
+        "the row variables fold the witness to one entry per column"
+    );
+    assert!(
+        witness.used_cols <= width,
+        "{} used columns of a {width}-column witness",
+        witness.used_cols
+    );
+    let mut data = table.entries();
     if conjugate {
-        let mapped = asm.conj_pool.first_cell(&FULL_WITNESS_KEY)?.borrow();
-        let mut pair = [(); 2].map(|_| RingElement::zero(Representation::IncompleteNTT));
-        for p in 0..width / 2 {
-            let [even, odd] = &mut pair;
-            mapped.pair_into(p, even, odd);
-            data.extend(pair.iter().map(RingElement::conjugate));
-        }
+        let mapped = asm
+            .conj_pool
+            .first_cell(&FULL_WITNESS_KEY)
+            .expect("a claim reading the conjugate folds the conjugate oracle")
+            .borrow();
+        data.extend(mapped.entries().iter().map(RingElement::conjugate));
     }
     for row in data.chunks_exact_mut(width) {
-        row[used_cols.min(width)..]
+        row[witness.used_cols..]
             .iter_mut()
             .for_each(RingElement::set_zero);
     }
-    Some(BasicCommitment {
+    BasicCommitment {
         height: data.len() / width,
         data,
         width,
-    })
+    }
 }
 
 fn used_length(witness: &[RingElement]) -> usize {
@@ -1331,7 +1340,7 @@ fn prove_claims_with(
     let mut evaluation_points: Vec<RingElement> = vec![];
     let row_vars = witness.height.ilog2() as usize;
     let mut rows = match row_vars {
-        0 => opening_rows(&asm, witness.used_cols, needs_conjugate),
+        0 => Some(opening_rows(&asm, witness, needs_conjugate)),
         _ => None,
     };
 
@@ -1373,7 +1382,7 @@ fn prove_claims_with(
             }
         }
         if total_vars - num_vars == row_vars {
-            rows = opening_rows(&asm, witness.used_cols, needs_conjugate);
+            rows = Some(opening_rows(&asm, witness, needs_conjugate));
         }
         evaluation_points.push(r);
         polys.push(poly_over_field);
@@ -1418,13 +1427,12 @@ fn prove_claims_with(
         &witness_eval,
         conj_witness_eval.as_ref(),
     );
-    inputs.opening = rows.map(|rhs| {
-        opened(
-            rhs,
-            &inputs.evaluation_points_inner,
-            &inputs.evaluation_points_outer,
-        )
-    });
+    let rows = rows.expect("the claims sumcheck folds the row variables of the witness");
+    inputs.opening = Some(opened(
+        rows,
+        &inputs.evaluation_points_inner,
+        &inputs.evaluation_points_outer,
+    ));
 
     (
         InitialSumcheckProof {
@@ -2138,6 +2146,15 @@ mod tests {
                     .all(|(x, y)| x.preprocessed_row == y.preprocessed_row));
             }
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "5 used columns of a 4-column witness")]
+    fn a_witness_using_more_columns_than_it_has_is_refused() {
+        init_common();
+        let (mut witness, claims) = toy_setup();
+        witness.used_cols = witness.width + 1;
+        prove_claims(&witness, &claims, &mut HashWrapper::new());
     }
 
     #[test]

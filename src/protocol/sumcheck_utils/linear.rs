@@ -263,6 +263,16 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
         }
     }
 
+    pub(crate) fn entries(&self) -> Vec<E> {
+        (0..self.len())
+            .map(|index| {
+                let mut entry = E::zero();
+                self.load(index, &mut entry);
+                entry
+            })
+            .collect()
+    }
+
     pub(crate) fn borrows_caller_data(&self) -> bool {
         matches!(
             self.borrowed,
