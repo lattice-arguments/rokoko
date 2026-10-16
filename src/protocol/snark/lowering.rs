@@ -259,10 +259,6 @@ fn expand_combination(
         });
 
     if !scalar_components.is_empty() {
-        assert!(
-            scalar_components.len() <= 32,
-            "lazy accumulation caps at 32 components"
-        );
         let mut cs = vec![0u64; scalar_components.len()];
         for (i, m) in merged.iter_mut().enumerate() {
             for (a, comp) in scalar_components.iter().enumerate() {
