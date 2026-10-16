@@ -182,6 +182,33 @@ impl Recomposition {
 pub(crate) struct FoldedLeaves {
     pub selectors: Vec<ElephantCell<SelectorEq<RingElement>>>,
     pub weights: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
+    pub key_rows: Vec<KeyRow>,
+}
+
+/// A table over the `segment`-th of `segments` equal dyadic slices of row `row` of the commitment
+/// key for `wit_dim`, which reads the CRS only once the sumcheck runs.
+pub(crate) struct KeyRow {
+    table: ElephantCell<LinearSumcheck<RingElement>>,
+    wit_dim: usize,
+    row: usize,
+    segments: usize,
+    segment: usize,
+}
+
+impl KeyRow {
+    fn slice<'a>(&self, crs: &'a CRS) -> &'a [RingElement] {
+        let row = &crs.ck_for_wit_dim(self.wit_dim)[self.row].preprocessed_row;
+        let len = row.len() / self.segments;
+        &row[self.segment * len..(self.segment + 1) * len]
+    }
+
+    /// Points the table at its slice of `crs`.
+    ///
+    /// # Safety
+    /// `crs` must outlive the table's rounds up to its first data fold.
+    pub(crate) unsafe fn load(&self, crs: &CRS) {
+        unsafe { self.table.borrow_mut().install_borrowed(self.slice(crs)) };
+    }
 }
 
 impl FoldedLeaves {
@@ -189,7 +216,38 @@ impl FoldedLeaves {
         FoldedLeaves {
             selectors: Vec::new(),
             weights: Vec::new(),
+            key_rows: Vec::new(),
         }
+    }
+
+    /// The `segment`-th of `segments` equal dyadic slices of the `i`-th commitment key row for
+    /// `wit_dim`: the part of the row that meets one separately placed row block of the
+    /// commitment's input, padded to `total_vars` and registered to be loaded from the CRS.
+    pub(crate) fn key_row(
+        &mut self,
+        crs: &CRS,
+        total_vars: usize,
+        wit_dim: usize,
+        i: usize,
+        segments: usize,
+        segment: usize,
+    ) -> ElephantCell<LinearSumcheck<RingElement>> {
+        let len = wit_dim / segments;
+        let table = ElephantCell::new(LinearSumcheck::<RingElement>::unloaded(
+            len,
+            total_vars - len.ilog2() as usize,
+            0,
+        ));
+        let key_row = KeyRow {
+            table: table.clone(),
+            wit_dim,
+            row: i,
+            segments,
+            segment,
+        };
+        assert_eq!(key_row.slice(crs).len(), len, "the commitment key row is cut evenly");
+        self.key_rows.push(key_row);
+        table
     }
 
     /// Builds the recomposition of a placed component and registers its leaves.
@@ -288,25 +346,6 @@ pub(crate) fn ck_sumcheck(
         &crs.ck_for_wit_dim(wit_dim)[i].preprocessed_row,
         total_vars,
         sufix,
-    )
-}
-
-/// The `segment`-th of `segments` equal dyadic slices of the `i`-th commitment key row: the part
-/// of the row that meets one separately placed row block of the commitment's input.
-/// `segments == 1` reproduces `ck_sumcheck`.
-pub(crate) fn ck_segment_sumcheck(
-    crs: &CRS,
-    total_vars: usize,
-    wit_dim: usize,
-    i: usize,
-    segments: usize,
-    segment: usize,
-) -> ElephantCell<LinearSumcheck<RingElement>> {
-    let len = wit_dim / segments;
-    ck_row_sumcheck(
-        &crs.ck_for_wit_dim(wit_dim)[i].preprocessed_row[segment * len..(segment + 1) * len],
-        total_vars,
-        0,
     )
 }
 

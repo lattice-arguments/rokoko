@@ -12,6 +12,7 @@ use crate::{
             ring_to_field_combiner::RingToFieldCombiner,
             selector_eq::SelectorEq,
         },
+        sumchecks::helpers::KeyRow,
     },
 };
 
@@ -31,6 +32,8 @@ pub struct SumcheckContext {
     /// per such recomposition.
     pub recomposition_weights: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
     pub folding_challenges_sumcheck: ElephantCell<LinearSumcheck<RingElement>>,
+    /// The commitment key tables, loaded from the CRS when the sumcheck runs.
+    pub(crate) key_rows: Vec<KeyRow>,
     pub commitment_key_rows_sumcheck: Vec<ElephantCell<LinearSumcheck<RingElement>>>,
     pub commitment_fold_sumchecks: Vec<CommitmentFoldSumcheckContext>,
     pub inner_eval_fold_sumchecks: Vec<InnerEvalFoldSumcheckContext>,

@@ -10,6 +10,7 @@ use crate::{
     },
     protocol::{
         config::{Projection, SumcheckConfig},
+        crs::CRS,
         open::{evaluation_point_to_structured_row, Opening},
         project_fine::BatchedProjectionChallenges,
         sumcheck::SumcheckContext,
@@ -83,6 +84,7 @@ fn claim(output: Cell, total_vars: usize) -> RingElement {
 #[tracing::instrument(skip_all, name = "sumcheck")]
 pub fn sumcheck(
     config: &SumcheckConfig,
+    crs: &CRS,
     combined_witness: &Vec<RingElement>,
     projection_matrix: &ProjectionMatrix,
     folding_challenges: &Vec<RingElement>,
@@ -140,6 +142,7 @@ pub fn sumcheck(
         load_sumcheck_data(
             sumcheck_context,
             config,
+            crs,
             combined_witness,
             folding_challenges,
             fine_proj_batching_challenges,
