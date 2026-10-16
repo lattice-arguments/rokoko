@@ -55,17 +55,9 @@ pub enum NextSumcheckContext {
 
 impl SumcheckContext {
     pub fn partial_evaluate_all(&mut self, r: &RingElement) {
-        let conjugate = &self.norm_check_sumcheck.conjugated_combined_witness;
-        let joint = self
-            .combined_witness_sumcheck
+        self.combined_witness_sumcheck
             .borrow_mut()
-            .partial_evaluate_with_mapped(&mut conjugate.borrow_mut(), r);
-        if !joint {
-            self.combined_witness_sumcheck
-                .borrow_mut()
-                .partial_evaluate(r);
-            conjugate.borrow_mut().partial_evaluate(r);
-        }
+            .partial_evaluate(r);
         for selector in self.selectors.iter() {
             selector.borrow_mut().partial_evaluate(r);
         }
@@ -147,6 +139,10 @@ impl SumcheckContext {
         for com_verify_sc in self.com_verify_sumchecks.iter_mut() {
             partial_evaluate_com_verify(com_verify_sc, r);
         }
+        self.norm_check_sumcheck
+            .conjugated_combined_witness
+            .borrow_mut()
+            .partial_evaluate(r);
     }
 }
 

@@ -2,8 +2,6 @@
 
 mod lowering;
 
-pub(crate) use lowering::{conjugated_oracle, witness_oracle};
-
 pub use crate::common::hash::HashWrapper as Transcript;
 pub use lowering::InitialSumcheckProof as ClaimsProof;
 pub use lowering::SnarkClaim as Claim;
