@@ -8,6 +8,7 @@ use crate::{
         decomposition::decompose_chunks_into,
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         ring_arithmetic::{incomplete_ntt_dot_into, Representation, RingElement},
+        structured_row::PreprocessedRow,
     },
     protocol::{
         crs::{CK, CRS},
@@ -34,7 +35,7 @@ impl CommitmentWithAux {
 
 #[tracing::instrument(skip_all, name = "commit::basic_internal")]
 pub fn commit_basic_internal(
-    ck: &CK,
+    ck: &[PreprocessedRow],
     witness: &VerticallyAlignedMatrix<RingElement>,
     rank: usize,
 ) -> BasicCommitment {
@@ -43,7 +44,7 @@ pub fn commit_basic_internal(
 
 /// One commitment per (key row, witness column); the cells are independent accumulations.
 fn commit_basic_internal_with(
-    ck: &CK,
+    ck: &[PreprocessedRow],
     witness: &VerticallyAlignedMatrix<RingElement>,
     rank: usize,
     parallel: bool,

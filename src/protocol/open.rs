@@ -27,6 +27,20 @@ pub fn evaluation_point_to_structured_row_conjugate(
     }
 }
 
+fn repeated(row: BasicCommitment, rows: usize) -> BasicCommitment {
+    let width = row.width;
+    let height = rows.next_power_of_two();
+    let mut data = vec![RingElement::zero(Representation::IncompleteNTT); height * width];
+    for copy in data.chunks_exact_mut(width).take(rows) {
+        copy.clone_from_slice(&row.data[..width]);
+    }
+    BasicCommitment {
+        data,
+        width,
+        height,
+    }
+}
+
 pub fn open_at(
     witness: &VerticallyAlignedMatrix<RingElement>,
     structured_points_inner: &[StructuredRow],
@@ -51,7 +65,16 @@ pub fn open_at(
         .collect::<Vec<PreprocessedRow>>();
 
     // it's not a commitment, but we can reuse the same structure
-    let mut rhs = commit_basic_internal(&preprocessed_points_inner, witness, nof_evaluation_points);
+    let mut rhs = match structured_points_inner
+        .iter()
+        .all(|p| p.tensor_layers == structured_points_inner[0].tensor_layers)
+    {
+        true => repeated(
+            commit_basic_internal(&preprocessed_points_inner[..1], witness, 1),
+            nof_evaluation_points,
+        ),
+        false => commit_basic_internal(&preprocessed_points_inner, witness, nof_evaluation_points),
+    };
 
     if skip_last_col {
         for i in 0..structured_points_outer.len() {
