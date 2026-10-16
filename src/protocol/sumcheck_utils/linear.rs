@@ -369,6 +369,25 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
         self.variable_count -= 1;
     }
 
+    pub(crate) fn views_conjugate_of(&self, other: &Self) -> bool {
+        match (&self.borrowed, other.values()) {
+            (
+                Some(Borrowed {
+                    data,
+                    map: Some(_),
+                    conjugate: true,
+                }),
+                Some(values),
+            ) => {
+                std::ptr::eq(&**data, values)
+                    && self.non_zero_end == other.non_zero_end
+                    && self.suffix == other.suffix
+                    && self.variable_count == other.variable_count
+            }
+            _ => false,
+        }
+    }
+
     pub(crate) fn is_folding(&self) -> bool {
         self.suffix == 0 && self.len() > 1
     }

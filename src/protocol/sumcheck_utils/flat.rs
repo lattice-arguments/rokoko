@@ -1,7 +1,10 @@
 use crate::{
     common::{
         config::MOD_Q,
-        ring_arithmetic::{incomplete_ntt_dot_into, Representation, RingElement},
+        ring_arithmetic::{
+            incomplete_ntt_dot_into, incomplete_ntt_self_conjugate_dot_into, Representation,
+            RingElement,
+        },
     },
     protocol::sumcheck_utils::{
         common::{FlatTerm, HighOrderSumcheckData},
@@ -33,6 +36,7 @@ struct Plan<'a> {
     rounds: Vec<(bool, &'a RingElement)>,
     shift: Option<u32>,
     karatsuba_pair: bool,
+    self_conjugate: bool,
 }
 
 impl Plan<'_> {
@@ -219,6 +223,12 @@ impl FlatRounds {
         }
         for (plan, accumulator) in plans.iter().zip(accumulators.iter_mut()) {
             flush(plan, accumulator, skip, &mut product);
+            if plan.self_conjugate && !plan.weighted() {
+                accumulator
+                    .sums
+                    .iter_mut()
+                    .for_each(RingElement::complete_self_conjugate);
+            }
         }
         if let Some(r) = challenge.filter(|_| skip) {
             for (accumulator, previous) in accumulators.iter_mut().zip(previous.iter()) {
@@ -346,6 +356,13 @@ fn plan<'a>(output: usize, term: &Term<'a>, slots: &mut Vec<Slot<'a>>) -> Plan<'
     }
     end = end.min(half);
     assert!(!active.is_empty() && active.len() + rounds.len() <= 3);
+    let self_conjugate = match active[..] {
+        [a, b] => {
+            let (a, b) = (slots[a].table, slots[b].table);
+            a.views_conjugate_of(b) || b.views_conjugate_of(a)
+        }
+        _ => false,
+    };
     Plan {
         output,
         negative: term.negative,
@@ -357,6 +374,7 @@ fn plan<'a>(output: usize, term: &Term<'a>, slots: &mut Vec<Slot<'a>>) -> Plan<'
         rounds,
         shift,
         karatsuba_pair: term.pair && term.tables.len() == 2 && interleaved == 2,
+        self_conjugate,
     }
 }
 
@@ -438,6 +456,10 @@ fn accumulate(
                 if count == 1 {
                     *product *= (&left[0], &right[0]);
                     *sum += &*product;
+                } else if plan.self_conjugate {
+                    incomplete_ntt_self_conjugate_dot_into(
+                        sum, left, left_step, right, right_step, count,
+                    );
                 } else {
                     incomplete_ntt_dot_into(sum, left, left_step, right, right_step, count);
                 }
@@ -485,6 +507,9 @@ fn flush(plan: &Plan, accumulator: &mut Accumulator, skip: bool, product: &mut R
         let mut negative = false;
         let mut doubled = 0;
         let mut vanishes = false;
+        if plan.self_conjugate {
+            run.complete_self_conjugate();
+        }
         match &weight {
             Some(weight) => *product *= (&*run, weight),
             None => product.set_from(run),

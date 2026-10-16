@@ -4,7 +4,9 @@ use crate::{
         config::NOF_BATCHES,
         hash::HashWrapper,
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{incomplete_ntt_dot_into, FieldExtension, Representation, RingElement},
+        ring_arithmetic::{
+            incomplete_ntt_self_conjugate_dot_into, FieldExtension, Representation, RingElement,
+        },
         structured_row::PreprocessedRow,
         sumcheck_element::SumcheckElement,
     },
@@ -37,8 +39,9 @@ fn norm(witness: &[RingElement]) -> RingElement {
         for (x, conjugate) in block.iter().zip(conjugates.iter_mut()) {
             x.conjugate_into(conjugate);
         }
-        incomplete_ntt_dot_into(&mut sum, block, 1, &conjugates, 1, block.len());
+        incomplete_ntt_self_conjugate_dot_into(&mut sum, block, 1, &conjugates, 1, block.len());
     }
+    sum.complete_self_conjugate();
     sum
 }
 
