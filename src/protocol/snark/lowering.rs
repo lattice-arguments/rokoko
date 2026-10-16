@@ -2114,37 +2114,77 @@ mod tests {
         narrow.used_cols -= 1;
         cases.push((narrow, claims));
         for (witness, claims) in cases {
-            let (_, inputs) = prove_claims(&witness, &claims, &mut HashWrapper::new());
-            let opening = inputs
-                .opening
-                .expect("the claims sumcheck opens the witness");
-            let direct = crate::protocol::open::open_at(
-                &witness,
-                &inputs.evaluation_points_inner,
-                &inputs.evaluation_points_outer,
-                false,
-            );
-            assert_eq!(
-                (opening.rhs.height, opening.rhs.width),
-                (direct.rhs.height, direct.rhs.width)
-            );
-            assert_eq!(opening.rhs.data, direct.rhs.data);
-            for (ours, theirs) in [
-                (
-                    &opening.evaluation_points_inner,
-                    &direct.evaluation_points_inner,
-                ),
-                (
-                    &opening.evaluation_points_outer,
-                    &direct.evaluation_points_outer,
-                ),
-            ] {
-                assert_eq!(ours.len(), theirs.len());
-                assert!(ours
-                    .iter()
-                    .zip(theirs)
-                    .all(|(x, y)| x.preprocessed_row == y.preprocessed_row));
+            hands_over_the_opening_it_would_compute(&witness, &claims);
+        }
+    }
+
+    fn hands_over_the_opening_it_would_compute(
+        witness: &VerticallyAlignedMatrix<RingElement>,
+        claims: &[SnarkClaim],
+    ) {
+        let (_, inputs) = prove_claims(witness, claims, &mut HashWrapper::new());
+        let opening = inputs
+            .opening
+            .expect("the claims sumcheck opens the witness");
+        let direct = crate::protocol::open::open_at(
+            witness,
+            &inputs.evaluation_points_inner,
+            &inputs.evaluation_points_outer,
+            false,
+        );
+        assert_eq!(
+            (opening.rhs.height, opening.rhs.width),
+            (direct.rhs.height, direct.rhs.width)
+        );
+        assert_eq!(opening.rhs.data, direct.rhs.data);
+        for (ours, theirs) in [
+            (
+                &opening.evaluation_points_inner,
+                &direct.evaluation_points_inner,
+            ),
+            (
+                &opening.evaluation_points_outer,
+                &direct.evaluation_points_outer,
+            ),
+        ] {
+            assert_eq!(ours.len(), theirs.len());
+            assert!(ours
+                .iter()
+                .zip(theirs)
+                .all(|(x, y)| x.preprocessed_row == y.preprocessed_row));
+        }
+    }
+
+    #[test]
+    fn a_witness_of_height_one_hands_over_its_columns_before_any_round() {
+        init_common();
+        for (width, used_cols, conjugate) in [
+            (1, 1, true),
+            (4, 4, false),
+            (4, 3, true),
+            (4096, 4096, true),
+            (4096, 4000, false),
+            (4096, 4000, true),
+        ] {
+            let witness = VerticallyAlignedMatrix {
+                height: 1,
+                width,
+                used_cols,
+                data: sample_random_short_vector(width, 100, Representation::IncompleteNTT),
+            };
+            let a = sample_random_short_vector(width, 50, Representation::IncompleteNTT);
+            let mut exprs = vec![table(a) * ClaimExpr::witness()];
+            if conjugate {
+                exprs.push(ClaimExpr::witness() * ClaimExpr::conj_witness());
             }
+            let claims: Vec<SnarkClaim> = exprs
+                .into_iter()
+                .map(|expr| SnarkClaim {
+                    value: expr.sum(&witness),
+                    expr,
+                })
+                .collect();
+            hands_over_the_opening_it_would_compute(&witness, &claims);
         }
     }
 
