@@ -463,7 +463,7 @@ impl SlotRing {
         if let Some(ifma) = &self.ifma {
             let kernel = match self.slot_degree {
                 2 => eltwise::slot_dot_avx512_ifma::<2>,
-                _ => eltwise::slot_dot_avx512_ifma::<4>,
+                _ => eltwise::slot4_dot_avx512_ifma,
             };
             kernel(
                 results,
