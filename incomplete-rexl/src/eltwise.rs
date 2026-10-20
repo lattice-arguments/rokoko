@@ -1831,25 +1831,36 @@ macro_rules! load {
     };
 }
 
-/// `d_0..d_6` for `D = 4`; `a_0 b_0, (a_0 + a_1)(b_0 + b_1), a_1 b_1` for `D = 2`.
+/// Karatsuba products `a_0 b_0, (a_0 + a_1)(b_0 + b_1), a_1 b_1` for `D = 2`; for `D = 4` these
+/// of the low halves `(a_0, a_1)`, the high halves `(a_2, a_3)` and the half sums.
 const fn slot_cells(d: usize) -> usize {
-    2 * d - 1
+    3usize.pow(d.ilog2())
 }
 
-/// Eight slots at `p`, ordered `(x_0, x_0 + x_1, x_1)` for `D = 2`.
+/// Eight slots at `p` as the factors of the [`slot_cells`].
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx512f")]
 #[inline]
-unsafe fn load_slot_factors<const D: usize>(p: *const u64, n: usize) -> [__m512i; 4] {
-    let mut x = [_mm512_setzero_si512(); 4];
+unsafe fn load_slot_factors<const D: usize>(p: *const u64, n: usize) -> [__m512i; 9] {
+    let mut x = [_mm512_setzero_si512(); 9];
     if D == 2 {
         x[0] = load!(p);
         x[2] = load!(p.add(n));
         x[1] = _mm512_add_epi64(x[0], x[2]);
     } else {
-        for j in 0..D {
-            x[j] = load!(p.add(j * n));
-        }
+        let [x0, x1, x2, x3] = [0, 1, 2, 3].map(|j| load!(p.add(j * n)));
+        let (s0, s1) = (_mm512_add_epi64(x0, x2), _mm512_add_epi64(x1, x3));
+        x = [
+            x0,
+            _mm512_add_epi64(x0, x1),
+            x1,
+            x2,
+            _mm512_add_epi64(x2, x3),
+            x3,
+            s0,
+            _mm512_add_epi64(s0, s1),
+            s1,
+        ];
     }
     x
 }
@@ -1858,23 +1869,14 @@ unsafe fn load_slot_factors<const D: usize>(p: *const u64, n: usize) -> [__m512i
 #[target_feature(enable = "avx512f,avx512ifma")]
 #[inline]
 unsafe fn add_slot_cells<const D: usize>(
-    lo: &mut [__m512i; 7],
-    hi: &mut [__m512i; 7],
-    a: &[__m512i; 4],
-    b: &[__m512i; 4],
+    lo: &mut [__m512i; 9],
+    hi: &mut [__m512i; 9],
+    a: &[__m512i; 9],
+    b: &[__m512i; 9],
 ) {
-    if D == 2 {
-        for k in 0..3 {
-            lo[k] = _mm512_madd52lo_epu64(lo[k], a[k], b[k]);
-            hi[k] = _mm512_madd52hi_epu64(hi[k], a[k], b[k]);
-        }
-    } else {
-        for j in 0..D {
-            for l in 0..D {
-                lo[j + l] = _mm512_madd52lo_epu64(lo[j + l], a[j], b[l]);
-                hi[j + l] = _mm512_madd52hi_epu64(hi[j + l], a[j], b[l]);
-            }
-        }
+    for k in 0..slot_cells(D) {
+        lo[k] = _mm512_madd52lo_epu64(lo[k], a[k], b[k]);
+        hi[k] = _mm512_madd52hi_epu64(hi[k], a[k], b[k]);
     }
 }
 
@@ -1954,12 +1956,12 @@ impl Ifma52x8 {
         _mm512_min_epu64(x, _mm512_sub_epi64(x, self.p))
     }
 
-    /// Slot coefficients below `6p` from [`slot_cells`] in [0, 2p).
+    /// Slot coefficients below `18p` from [`slot_cells`] in [0, 2p).
     #[target_feature(enable = "avx512f,avx512ifma")]
     #[inline]
     unsafe fn combine_slot_cells<const D: usize>(
         &self,
-        cell: &[__m512i; 7],
+        cell: &[__m512i; 9],
         z: __m512i,
         z_precon: __m512i,
     ) -> [__m512i; 4] {
@@ -1972,13 +1974,24 @@ impl Ifma52x8 {
                 _mm512_add_epi64(cell[0], cell[2]),
             );
         } else {
-            for k in 0..D {
-                c[k] = if k + 1 < D {
-                    _mm512_add_epi64(cell[k], self.shoup(cell[k + D], z, z_precon))
-                } else {
-                    cell[k]
-                };
-            }
+            // `a b = L + Y^2 (S - L - H) + Y^4 H` for the products `L`, `H`, `S` of the halves.
+            let add = |x, y| _mm512_add_epi64(x, y);
+            let sub = |x, y| _mm512_sub_epi64(x, y);
+            let four_p = _mm512_slli_epi64(self.p, 2);
+            let below_4p = |x| _mm512_min_epu64(x, sub(x, four_p));
+            let [l0, lm, l2, h0, hm, h2, s0, sm, s2] = *cell;
+            let l1 = sub(add(lm, four_p), add(l0, l2));
+            let h1 = sub(add(hm, four_p), add(h0, h2));
+            let wrap0 = sub(add(add(s2, h0), four_p), add(l2, h2));
+            let c2 = sub(add(add(s0, l2), four_p), add(l0, h0));
+            let c3 = sub(
+                add(sm, _mm512_slli_epi64(four_p, 2)),
+                add(add(s0, s2), add(l1, h1)),
+            );
+            c[0] = add(l0, self.shoup(below_4p(wrap0), z, z_precon));
+            c[1] = add(l1, self.shoup(below_4p(h1), z, z_precon));
+            c[2] = add(c2, self.shoup(h2, z, z_precon));
+            c[3] = c3;
         }
         c
     }
@@ -2083,7 +2096,7 @@ pub(crate) unsafe fn slot_dot_avx512_ifma<const D: usize>(
                         let bp = b.add(k * b_stride + (first + o) * b_output_stride + 8 * g);
                         let bv = load_slot_factors::<D>(bp, n);
                         let p = cell(&mut acc, o, g);
-                        let (mut lo, mut hi) = ([zero; 7], [zero; 7]);
+                        let (mut lo, mut hi) = ([zero; 9], [zero; 9]);
                         for d in 0..cells {
                             lo[d] = *p.add(d);
                             hi[d] = *p.add(cells + d);
@@ -2101,7 +2114,7 @@ pub(crate) unsafe fn slot_dot_avx512_ifma<const D: usize>(
             for o in 0..taken {
                 for g in 0..groups {
                     let p = cell(&mut acc, o, g);
-                    let (mut lo, mut hi) = ([zero; 7], [zero; 7]);
+                    let (mut lo, mut hi) = ([zero; 9], [zero; 9]);
                     for d in 0..cells {
                         lo[d] = *p.add(d);
                         hi[d] = *p.add(cells + d);
@@ -2124,6 +2137,95 @@ pub(crate) unsafe fn slot_dot_avx512_ifma<const D: usize>(
                     let coefficients = c.combine_slot_cells::<D>(&lo, z, z_precon);
                     for d in 0..D {
                         let out = results.add((first + o) * result_stride + d * n + 8 * g);
+                        let mut x = coefficients[d];
+                        if accumulate {
+                            x = _mm512_add_epi64(x, load!(out));
+                        }
+                        let reduced = c.reduce_wide(x, zero);
+                        _mm512_storeu_si512(out as *mut __m512i, c.canonical(reduced));
+                    }
+                }
+            }
+            if last {
+                break;
+            }
+            start = end;
+        }
+    }
+}
+
+/// Terms up to which [`slot4_dot_avx512_ifma`] keeps the cells of an output in registers for the
+/// whole sum, and terms per tile beyond.
+const SLOT_DOT_UNTILED: usize = 64;
+const SLOT_DOT_TILE: usize = 4;
+
+// [`slot_dot_avx512_ifma`] for `D = 4` over the nine [`slot_cells`], whose factors are at most
+// `4(p - 1) <= 2^52 - 8`: a term adds under 2^52 to a low half and at most 2^52 - 16 to a high
+// half, so a 256-term chunk keeps the low halves below 2^61 and a 1024-term block the high halves
+// below 2^62. The cells of one output and eight slots stay in registers over a tile of terms, and
+// the tiles run over passes of `SLOT_DOT_OUTPUTS` outputs.
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512ifma")]
+pub(crate) unsafe fn slot4_dot_avx512_ifma(
+    results: *mut u64,
+    result_stride: usize,
+    outputs: usize,
+    a: *const u64,
+    a_stride: usize,
+    b: *const u64,
+    b_stride: usize,
+    b_output_stride: usize,
+    count: usize,
+    accumulate: bool,
+    zetas: &[u64],
+    zetas_precon: &[u64],
+    n: usize,
+    ifma: &Ifma52,
+) {
+    let c = Ifma52x8::new(ifma);
+    let zero = _mm512_setzero_si512();
+    let groups = n / 8;
+    let tiled = count > SLOT_DOT_UNTILED;
+    let tile = if tiled { SLOT_DOT_TILE } else { count };
+    let mut acc = vec![[[zero; 9]; 2]; if tiled { groups * SLOT_DOT_OUTPUTS } else { 0 }];
+
+    for first in (0..outputs).step_by(SLOT_DOT_OUTPUTS) {
+        let taken = (outputs - first).min(SLOT_DOT_OUTPUTS);
+        let mut start = 0;
+        loop {
+            let end = count.min(start + tile);
+            let last = end == count;
+            let carry = last || end % SLOT_DOT_CHUNK == 0;
+            let reduce = last || end % SLOT_DOT_BLOCK == 0;
+            for o in first..first + taken {
+                let b = b.add(o * b_output_stride);
+                for g in 0..groups {
+                    let at = (o - first) * groups + g;
+                    let [mut lo, mut hi] = if start == 0 { [[zero; 9]; 2] } else { acc[at] };
+                    for k in start..end {
+                        let av = load_slot_factors::<4>(a.add(k * a_stride + 8 * g), n);
+                        let bv = load_slot_factors::<4>(b.add(k * b_stride + 8 * g), n);
+                        add_slot_cells::<4>(&mut lo, &mut hi, &av, &bv);
+                    }
+                    if carry {
+                        for d in 0..9 {
+                            hi[d] = _mm512_add_epi64(hi[d], _mm512_srli_epi64(lo[d], 52));
+                            lo[d] = _mm512_and_si512(lo[d], c.mask);
+                            if reduce {
+                                lo[d] = c.reduce_wide(lo[d], hi[d]);
+                                hi[d] = zero;
+                            }
+                        }
+                    }
+                    if !last {
+                        acc[at] = [lo, hi];
+                        continue;
+                    }
+                    let z = load!(zetas.as_ptr().add(8 * g));
+                    let z_precon = load!(zetas_precon.as_ptr().add(8 * g));
+                    let coefficients = c.combine_slot_cells::<4>(&lo, z, z_precon);
+                    for d in 0..4 {
+                        let out = results.add(o * result_stride + d * n + 8 * g);
                         let mut x = coefficients[d];
                         if accumulate {
                             x = _mm512_add_epi64(x, load!(out));
@@ -2728,7 +2830,7 @@ mod slot_tests {
                         let (b_stride, b_output_stride) = (outputs * stride, stride);
                         let kernel = match d {
                             2 => slot_dot_avx512_ifma::<2>,
-                            _ => slot_dot_avx512_ifma::<4>,
+                            _ => slot4_dot_avx512_ifma,
                         };
                         for accumulate in [false, true] {
                             let mut result = initial.clone();
@@ -2772,6 +2874,71 @@ mod slot_tests {
                                 );
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Every operand, zeta and accumulated result `q - 1`, across the tile, chunk and block ends.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_slot_dot_ifma_worst_case() {
+        if !ifma_cpu("test_slot_dot_ifma_worst_case") {
+            return;
+        }
+        let n = 16;
+        let shapes = [
+            (5usize, 64usize),
+            (5, 65),
+            (1, 256),
+            (5, 1024),
+            (1, 1025),
+            (5, 2049),
+        ];
+        for d in [2usize, 4] {
+            let len = d * n;
+            for modulus in [IFMA_MODULI[3], IFMA_MODULI[4]] {
+                let ifma = Ifma52::new(modulus).unwrap();
+                let zetas = vec![modulus - 1; n];
+                let precon = precon52(&zetas, modulus);
+                let top = vec![modulus - 1; len];
+                let product = slot_schoolbook(&top, &top, &zetas, d, modulus);
+                for (outputs, count) in shapes {
+                    let operands = vec![modulus - 1; count * outputs * len];
+                    let mut result = vec![modulus - 1; outputs * len];
+                    let kernel = match d {
+                        2 => slot_dot_avx512_ifma::<2>,
+                        _ => slot4_dot_avx512_ifma,
+                    };
+                    unsafe {
+                        kernel(
+                            result.as_mut_ptr(),
+                            len,
+                            outputs,
+                            operands.as_ptr(),
+                            len,
+                            operands.as_ptr(),
+                            outputs * len,
+                            len,
+                            count,
+                            true,
+                            &zetas,
+                            &precon,
+                            n,
+                            &ifma,
+                        );
+                    }
+                    let q = modulus as u128;
+                    let want: Vec<u64> = product
+                        .iter()
+                        .map(|&x| ((q - 1 + count as u128 * x as u128) % q) as u64)
+                        .collect();
+                    for o in 0..outputs {
+                        assert!(
+                            result[o * len..][..len] == want[..],
+                            "d={d} m={modulus} outputs={outputs} count={count} o={o}"
+                        );
                     }
                 }
             }
