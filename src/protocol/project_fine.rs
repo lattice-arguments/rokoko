@@ -457,29 +457,20 @@ pub fn project_coefficients(
     witness: &VerticallyAlignedMatrix<RingElement>,
     projection_matrix: &ProjectionMatrix,
 ) -> VerticallyAlignedMatrix<RingElement> {
-    let mut witness_coeff = VerticallyAlignedMatrix {
-        data: vec![
-            RingElement::zero(Representation::IncompleteNTT);
-            witness.height * witness.width
-        ],
-        width: witness.width,
-        height: witness.height,
-        used_cols: witness.width,
-    };
+    // Only the used columns are projected.
+    let mut witness_coeff = witness.data[..witness.used_cols * witness.height].to_vec();
 
-    witness_coeff.data.clone_from_slice(&witness.data);
-
-    for i in 0..witness_coeff.data.len() {
-        witness_coeff.data[i].from_incomplete_ntt_to_strided_coefficients();
+    for el in witness_coeff.iter_mut() {
+        el.from_incomplete_ntt_to_strided_coefficients();
         // this is possible to operate on strided representation directly, but coeeficent rep is better for locality.
-        witness_coeff.data[i].from_strided_coefficients_to_coefficients();
+        el.from_strided_coefficients_to_coefficients();
     }
 
     #[cfg(feature = "debug-hardness")]
     {
         use crate::common::norms::l2_norm_coeffs;
         tracing::debug!("Projecting coefficients with projection matrix:");
-        let norm = l2_norm_coeffs(&witness_coeff.data);
+        let norm = l2_norm_coeffs(&witness_coeff);
         tracing::debug!("L2 norm of witness coefficients: {}", norm);
     }
 
@@ -717,7 +708,7 @@ pub fn project_coefficients(
             }
         }
     };
-    let inputs = &witness_coeff.data[..chunks * in_len];
+    let inputs = &witness_coeff[..chunks * in_len];
     let outputs = &mut image_ct.data[..chunks * out_len];
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
     {
