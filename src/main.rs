@@ -1,13 +1,17 @@
-#[cfg_attr(rokoko_ring = "n128_d4", allow(dead_code))]
+#[cfg_attr(any(rokoko_ring = "n128_d4", rokoko_ring = "n256"), allow(dead_code))]
 mod instantiation;
 #[cfg(rokoko_ring = "n128_d4")]
 mod instantiation_n128_d4;
+#[cfg(rokoko_ring = "n256")]
+mod instantiation_n256;
 
 /// The parameter sets of the ring spec the crate is built with.
-#[cfg(not(rokoko_ring = "n128_d4"))]
+#[cfg(not(any(rokoko_ring = "n128_d4", rokoko_ring = "n256")))]
 use instantiation as ring_instantiation;
 #[cfg(rokoko_ring = "n128_d4")]
 use instantiation_n128_d4 as ring_instantiation;
+#[cfg(rokoko_ring = "n256")]
+use instantiation_n256 as ring_instantiation;
 
 use instantiation::ParamSet;
 use rokoko::common::init_common;
@@ -131,7 +135,7 @@ fn main() {
     rokoko::tracing::print_artifact_paths(rokoko::tracing::run_dir());
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(rokoko_ring = "n256")))]
 mod tests {
     use super::ring_instantiation::instantiation;
     use super::ParamSet;
