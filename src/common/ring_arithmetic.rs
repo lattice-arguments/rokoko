@@ -565,29 +565,14 @@ impl RingElement {
         result
     }
 
-    /// Slot by slot in `Z_q[Y]/(Y^4 - alpha)` through the tower `Z = Y^2`: for
-    /// `a = A0 + Y A1`, `A0 = a0 + a2 Z`, `A1 = a1 + a3 Z`, the norm to `Z_q[Z]/(Z^2 - alpha)` is
-    /// `n = A0^2 - Z A1^2 = n0 + n1 Z`, and `a^{-1} = (A0 - Y A1)(n0 - n1 Z) / (n0^2 - alpha n1^2)`.
     fn inverse_degree4(&self) -> RingElement {
-        let alpha = *FIELD_SHIFT_FACTOR;
         let mul = |a: u64, b: u64| unsafe { multiply_mod(a, b, MOD_Q) };
-        let add = |a: u64, b: u64| unsafe { add_mod(a, b, MOD_Q) };
-        let sub = |a: u64, b: u64| unsafe { sub_mod(a, b, MOD_Q) };
-        let part = |r: usize, i: usize| self.v[r * NUM_SLOTS + i];
 
-        let mut n0 = [0u64; NUM_SLOTS];
-        let mut n1 = [0u64; NUM_SLOTS];
+        let mut adjugates = [[0u64; SLOT_DEGREE]; NUM_SLOTS];
         let mut denominators = [0u64; NUM_SLOTS];
         for i in 0..NUM_SLOTS {
-            let (a0, a1, a2, a3) = (part(0, i), part(1, i), part(2, i), part(3, i));
-            let a1a3 = mul(a1, a3);
-            n0[i] = sub(
-                add(mul(a0, a0), mul(alpha, mul(a2, a2))),
-                mul(alpha, add(a1a3, a1a3)),
-            );
-            let a0a2 = mul(a0, a2);
-            n1[i] = sub(sub(add(a0a2, a0a2), mul(a1, a1)), mul(alpha, mul(a3, a3)));
-            denominators[i] = sub(mul(n0[i], n0[i]), mul(alpha, mul(n1[i], n1[i])));
+            let slot = std::array::from_fn(|r| self.v[r * NUM_SLOTS + i]);
+            (adjugates[i], denominators[i]) = adjugate(&slot);
         }
 
         let mut prefix_products = [0u64; NUM_SLOTS];
@@ -605,14 +590,7 @@ impl RingElement {
 
         let mut result = RingElement::new(Representation::HomogenizedFieldExtensions);
         for i in 0..NUM_SLOTS {
-            let (a0, a1, a2, a3) = (part(0, i), part(1, i), part(2, i), part(3, i));
-            let coefficients = [
-                sub(mul(a0, n0[i]), mul(alpha, mul(a2, n1[i]))),
-                sub(mul(alpha, mul(a3, n1[i])), mul(a1, n0[i])),
-                sub(mul(a2, n0[i]), mul(a0, n1[i])),
-                sub(mul(a1, n1[i]), mul(a3, n0[i])),
-            ];
-            for (r, c) in coefficients.into_iter().enumerate() {
+            for (r, &c) in adjugates[i].iter().enumerate() {
                 result.v[r * NUM_SLOTS + i] = mul(c, inverses[i]);
             }
         }
@@ -1307,6 +1285,51 @@ impl FieldExtension {
     pub fn is_base(&self) -> bool {
         self.coeffs[1..].iter().all(|&c| c == 0)
     }
+
+    pub fn inverse(&self) -> FieldExtension {
+        let (adjugate, denominator) = adjugate(&self.coeffs);
+        let inv = unsafe { inv_mod(denominator, MOD_Q) };
+        Self {
+            coeffs: adjugate.map(|c| unsafe { multiply_mod(c, inv, MOD_Q) }),
+        }
+    }
+}
+
+/// `a^{-1}` as `(b, d)`, `a b = d` in `Z_q`; for degree 4 through the tower `Z = Y^2`: with
+/// `a = A0 + Y A1`, `A0 = a0 + a2 Z`, `A1 = a1 + a3 Z`, `n = A0^2 - Z A1^2 = n0 + n1 Z`,
+/// `b = (A0 - Y A1)(n0 - n1 Z)` and `d = n0^2 - alpha n1^2`.
+#[inline(always)]
+fn adjugate(a: &[u64; SLOT_DEGREE]) -> ([u64; SLOT_DEGREE], u64) {
+    let alpha = *FIELD_SHIFT_FACTOR;
+    let mul = |a: u64, b: u64| unsafe { multiply_mod(a, b, MOD_Q) };
+    let add = |a: u64, b: u64| unsafe { add_mod(a, b, MOD_Q) };
+    let sub = |a: u64, b: u64| unsafe { sub_mod(a, b, MOD_Q) };
+    if SLOT_DEGREE == 2 {
+        let [a0, a1]: [u64; 2] = std::array::from_fn(|i| a[i]);
+        let b = [a0, sub(0, a1)];
+        return (
+            std::array::from_fn(|k| b[k]),
+            sub(mul(a0, a0), mul(alpha, mul(a1, a1))),
+        );
+    }
+    let [a0, a1, a2, a3]: [u64; 4] = std::array::from_fn(|i| a[i]);
+    let a1a3 = mul(a1, a3);
+    let n0 = sub(
+        add(mul(a0, a0), mul(alpha, mul(a2, a2))),
+        mul(alpha, add(a1a3, a1a3)),
+    );
+    let a0a2 = mul(a0, a2);
+    let n1 = sub(sub(add(a0a2, a0a2), mul(a1, a1)), mul(alpha, mul(a3, a3)));
+    let b = [
+        sub(mul(a0, n0), mul(alpha, mul(a2, n1))),
+        sub(mul(alpha, mul(a3, n1)), mul(a1, n0)),
+        sub(mul(a2, n0), mul(a0, n1)),
+        sub(mul(a1, n1), mul(a3, n0)),
+    ];
+    (
+        std::array::from_fn(|k| b[k]),
+        sub(mul(n0, n0), mul(alpha, mul(n1, n1))),
+    )
 }
 
 /// `x mod q` for `x < 2^(bits(q) + 61)`: Barrett with `floor(2^(64 + s) / q)`, `s = bits(q) - 2`,
@@ -2057,6 +2080,19 @@ mod tests {
                 "Slot {i} inverse incorrect: {:?} * {:?} = {:?}",
                 slots[i], inv_slots[i], product
             );
+        }
+    }
+
+    #[test]
+    fn test_field_extension_inverse_matches_ring_inverse() {
+        init_common();
+
+        let a = RingElement::random(Representation::HomogenizedFieldExtensions);
+        let inverses = a.inverse().split_into_field_extensions();
+        let one = FieldExtension::from_base(1);
+        for (slot, inverse) in a.split_into_field_extensions().iter().zip(inverses) {
+            assert_eq!(slot.inverse(), inverse);
+            assert_eq!(*slot * slot.inverse(), one);
         }
     }
 
