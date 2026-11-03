@@ -297,6 +297,28 @@ fn expand_combination(
     let mut value = RingElement::zero(Representation::IncompleteNTT);
     let mut sub_value = RingElement::zero(Representation::IncompleteNTT);
     for comp in &general_components {
+        let field_only = comp.subs.iter().all(|(_, _, t)| !matches!(t, SubTable::Ring(_) | SubTable::RingOwned(_)));
+        if field_only {
+            let unit = is_unit(comp.gamma);
+            for (i, m) in merged.iter_mut().enumerate() {
+                let mut p = FieldExtension::from_base(1);
+                for (shift, mask, tab) in &comp.subs {
+                    let at = (i >> shift) & mask;
+                    match tab {
+                        SubTable::Scalar(v) => p *= &FieldExtension::from_base(v[at]),
+                        SubTable::Field(v) => p *= &v[at],
+                        SubTable::FieldOwned(v) => p *= &v[at],
+                        _ => unreachable!(),
+                    }
+                }
+                let mut e = embed_fe(&p);
+                if !unit {
+                    e *= comp.gamma;
+                }
+                *m += &e;
+            }
+            continue;
+        }
         'entries: for (i, m) in merged.iter_mut().enumerate() {
             value.set_from(comp.gamma);
             for (shift, mask, tab) in &comp.subs {
