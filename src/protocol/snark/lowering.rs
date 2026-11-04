@@ -1284,10 +1284,7 @@ fn prove_claims_with(
         asm.leaves.push(LeafCell::Linear(cell));
     }
 
-    // Bind the claim values, then sample batching challenges
-    for claim in claims {
-        hash_wrapper.update_with_ring_element(&claim.value);
-    }
+    super::transcript::bind_claims(hash_wrapper, WitnessShape::from(witness), claims);
     let mut combination = vec![RingElement::zero(Representation::IncompleteNTT); outputs.len()];
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
 
@@ -1495,9 +1492,7 @@ pub fn verify_claims(
 
     let effective_values: Vec<RingElement> =
         claims.iter().map(|claim| claim.value.clone()).collect();
-    for value in &effective_values {
-        hash_wrapper.update_with_ring_element(value);
-    }
+    super::transcript::bind_claims(hash_wrapper, shape, claims);
     let mut combination = vec![RingElement::zero(Representation::IncompleteNTT); outputs.len()];
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
 

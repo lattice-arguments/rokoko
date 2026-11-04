@@ -73,7 +73,6 @@ enum PendingNextCommitment {
     Basic(BasicCommitment),
 }
 
-#[tracing::instrument(skip_all, name = "prover_round")]
 pub fn prover_round(
     crs: &CRS,
     config: &SumcheckConfig,
@@ -86,10 +85,42 @@ pub fn prover_round(
     hash_wrapper: Option<HashWrapper>,
     boundary: Option<BoundaryCapture<'_, ProverBoundary>>,
 ) -> (SumcheckRoundProof, Option<Vec<RingElement>>) {
-    let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
-    let rc_commitment = &commitment_with_aux.rc_commitment_with_aux;
+    prover_round_inner(
+        crs,
+        config,
+        commitment_with_aux,
+        witness,
+        evaluation_points_inner,
+        evaluation_points_outer,
+        sumcheck_context,
+        with_claims,
+        hash_wrapper,
+        boundary,
+        true,
+    )
+}
 
-    hash_wrapper.update_with_ring_element_slice(&rc_commitment.most_inner_commitment());
+#[tracing::instrument(skip_all, name = "prover_round")]
+fn prover_round_inner(
+    crs: &CRS,
+    config: &SumcheckConfig,
+    commitment_with_aux: &CommitmentWithAux,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    evaluation_points_inner: &Vec<StructuredRow>,
+    evaluation_points_outer: &Vec<StructuredRow>,
+    sumcheck_context: &mut SumcheckContext,
+    with_claims: bool,
+    hash_wrapper: Option<HashWrapper>,
+    boundary: Option<BoundaryCapture<'_, ProverBoundary>>,
+    bind_statement: bool,
+) -> (SumcheckRoundProof, Option<Vec<RingElement>>) {
+    let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
+    if bind_statement {
+        let mut statement = crate::protocol::fiat_shamir::Statement(&mut hash_wrapper);
+        statement.pcs_domain();
+        statement.sumcheck(config);
+    }
+    let rc_commitment = &commitment_with_aux.rc_commitment_with_aux;
 
     let (opening, claims) = {
         let _s = tracing::info_span!("prover_round::open_at").entered();
@@ -107,6 +138,16 @@ pub fn prover_round(
         };
         (opening, claims)
     };
+
+    if bind_statement {
+        let values = outer_eval_claims(&opening.rhs, evaluation_points_outer);
+        crate::protocol::fiat_shamir::Statement(&mut hash_wrapper).openings(
+            evaluation_points_inner,
+            evaluation_points_outer,
+            &values,
+        );
+    }
+    hash_wrapper.update_with_ring_element_slice(&rc_commitment.most_inner_commitment());
 
     let rc_opening = {
         let _s = tracing::info_span!("prover_round::rc_opening").entered();
@@ -193,8 +234,7 @@ pub fn prover_round(
         _ => None,
     };
 
-    if let Projection::Skip = &config.projection_recursion {
-    }
+    if let Projection::Skip = &config.projection_recursion {}
     let mut fold_challenge = vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
 
     hash_wrapper.sample_low_op_norm_ring_vec_into(&mut fold_challenge);
@@ -287,9 +327,7 @@ pub fn prover_round(
         &config.commitment_recursion,
     );
 
-
-    let next_witness_span =
-        tracing::info_span!("prover_round::next_witness_and_commit").entered();
+    let next_witness_span = tracing::info_span!("prover_round::next_witness_and_commit").entered();
 
     let next_config_base = config.next.as_ref().map(|c| config_base_from_config(c));
 
@@ -364,7 +402,6 @@ pub fn prover_round(
         )
     };
 
-
     let (
         claim_over_witness,
         claim_over_witness_conjugate,
@@ -415,15 +452,15 @@ pub fn prover_round(
                     Some(NextRoundCommitment::Recursive(most_inner_commitment)),
                 )
             } else {
-                let (points_outer, points_inner) = evaluation_points
-                    .split_at(next_sumcheck_config.witness_width.ilog2() as usize);
+                let (points_outer, points_inner) =
+                    evaluation_points.split_at(next_sumcheck_config.witness_width.ilog2() as usize);
                 let most_inner_commitment = rc.most_inner_commitment().clone();
                 let next_commitment_with_aux = CommitmentWithAux::from_rc_commitment_with_aux(rc);
                 let next_context = match sumcheck_context.next.as_deref_mut() {
                     Some(NextSumcheckContext::Simple(next_ctx)) => next_ctx,
                     _ => panic!("Expected NextSumcheckContext::Simple in sumcheck_context.next"),
                 };
-                let proof = prover_round(
+                let proof = prover_round_inner(
                     &crs,
                     next_sumcheck_config,
                     &next_commitment_with_aux,
@@ -434,6 +471,7 @@ pub fn prover_round(
                     false,
                     Some(hash_wrapper),
                     boundary.and_then(BoundaryCapture::advance),
+                    false,
                 )
                 .0;
                 (
@@ -452,13 +490,14 @@ pub fn prover_round(
             );
             let (points_outer, points_inner) =
                 evaluation_points.split_at(next_simple_config.witness_width.ilog2() as usize);
-            let proof = prover_round_simple(
+            let proof = prover_round_simple_inner(
                 next_simple_config,
                 &basic_commitment,
                 &next_round_witness,
                 &evaluation_point_pair(points_inner),
                 &evaluation_point_pair(points_outer),
                 Some(hash_wrapper),
+                false,
             );
             (
                 Some(RoundProof::Simple(proof)),
@@ -479,7 +518,7 @@ pub fn prover_round(
                 Some(NextSumcheckContext::Intermediate(next_ctx)) => next_ctx,
                 _ => panic!("Expected NextSumcheckContext::Intermediate in sumcheck_context.next"),
             };
-            let proof = prover_round_intermediate(
+            let proof = prover_round_intermediate_inner(
                 crs,
                 next_intermediate_config,
                 &basic_commitment,
@@ -488,6 +527,7 @@ pub fn prover_round(
                 &evaluation_point_pair(points_outer),
                 next_context,
                 Some(hash_wrapper),
+                false,
             );
             (
                 Some(RoundProof::Intermediate(proof)),
@@ -522,7 +562,6 @@ pub fn prover_round(
     (rp, claims)
 }
 
-#[tracing::instrument(skip_all, name = "prover_round_intermediate")]
 pub fn prover_round_intermediate(
     crs: &CRS,
     config: &IntermediateConfig,
@@ -533,15 +572,58 @@ pub fn prover_round_intermediate(
     sumcheck_context: &mut IntermediateSumcheckContext,
     hash_wrapper: Option<HashWrapper>,
 ) -> IntermediateRoundProof {
-    let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
-    hash_wrapper.update_with_ring_element_slice(&commitment.data);
+    prover_round_intermediate_inner(
+        crs,
+        config,
+        commitment,
+        witness,
+        evaluation_points_inner,
+        evaluation_points_outer,
+        sumcheck_context,
+        hash_wrapper,
+        true,
+    )
+}
 
-    let opening = open_at(
+#[tracing::instrument(skip_all, name = "prover_round_intermediate")]
+fn prover_round_intermediate_inner(
+    crs: &CRS,
+    config: &IntermediateConfig,
+    commitment: &BasicCommitment,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    evaluation_points_inner: &Vec<StructuredRow>,
+    evaluation_points_outer: &Vec<StructuredRow>,
+    sumcheck_context: &mut IntermediateSumcheckContext,
+    hash_wrapper: Option<HashWrapper>,
+    bind_statement: bool,
+) -> IntermediateRoundProof {
+    let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
+    if bind_statement {
+        let mut statement = crate::protocol::fiat_shamir::Statement(&mut hash_wrapper);
+        statement.pcs_domain();
+        statement.intermediate(config);
+    }
+
+    let mut opening = open_at(
         &witness,
         &evaluation_points_inner,
         &evaluation_points_outer,
-        true,
+        !bind_statement,
     );
+    if bind_statement {
+        let values = outer_eval_claims(&opening.rhs, evaluation_points_outer);
+        crate::protocol::fiat_shamir::Statement(&mut hash_wrapper).openings(
+            evaluation_points_inner,
+            evaluation_points_outer,
+            &values,
+        );
+        // Restore the wire convention: the last opening column is recomputed by the verifier.
+        let last = opening.rhs.width - 1;
+        for row in 0..opening.rhs.height {
+            opening.rhs[(row, last)].set_zero();
+        }
+    }
+    hash_wrapper.update_with_ring_element_slice(&commitment.data);
     tracing::debug!(
         "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
         evaluation_points_inner.len(),
@@ -549,7 +631,8 @@ pub fn prover_round_intermediate(
     );
     tracing::debug!(
         "int opening height: {}, width: {}",
-        opening.rhs.height, opening.rhs.width
+        opening.rhs.height,
+        opening.rhs.width
     );
 
     hash_wrapper.update_with_ring_element_slice(&opening.rhs.data);
@@ -645,7 +728,7 @@ pub fn prover_round_intermediate(
             Config::Intermediate(next_intermediate_config) => {
                 let (new_evaluation_points_outer, new_evaluation_points_inner) = evaluation_points
                     .split_at(next_intermediate_config.witness_width.ilog2() as usize);
-                let proof = prover_round_intermediate(
+                let proof = prover_round_intermediate_inner(
                     crs,
                     next_intermediate_config,
                     &next_round_commitment,
@@ -660,13 +743,14 @@ pub fn prover_round_intermediate(
                     ],
                     sumcheck_context.next.as_deref_mut().unwrap(),
                     Some(hash_wrapper),
+                    false,
                 );
                 RoundProof::Intermediate(proof)
             }
             Config::Simple(next_simple_config) => {
                 let (new_evaluation_points_outer, new_evaluation_points_inner) =
                     evaluation_points.split_at(next_simple_config.witness_width.ilog2() as usize);
-                let proof = prover_round_simple(
+                let proof = prover_round_simple_inner(
                     next_simple_config,
                     &next_round_commitment,
                     &next_round_witness,
@@ -679,6 +763,7 @@ pub fn prover_round_intermediate(
                         evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
                     ],
                     Some(hash_wrapper),
+                    false,
                 );
                 RoundProof::Simple(proof)
             }
@@ -699,7 +784,6 @@ pub fn prover_round_intermediate(
 }
 
 // this is only for the last round
-#[tracing::instrument(skip_all, name = "prover_round_simple")]
 pub fn prover_round_simple(
     config: &SimpleConfig,
     commitment: &BasicCommitment,
@@ -708,16 +792,54 @@ pub fn prover_round_simple(
     evaluation_points_outer: &Vec<StructuredRow>,
     hash_wrapper: Option<HashWrapper>,
 ) -> SimpleRoundProof {
+    prover_round_simple_inner(
+        config,
+        commitment,
+        witness,
+        evaluation_points_inner,
+        evaluation_points_outer,
+        hash_wrapper,
+        true,
+    )
+}
+
+#[tracing::instrument(skip_all, name = "prover_round_simple")]
+fn prover_round_simple_inner(
+    config: &SimpleConfig,
+    commitment: &BasicCommitment,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    evaluation_points_inner: &Vec<StructuredRow>,
+    evaluation_points_outer: &Vec<StructuredRow>,
+    hash_wrapper: Option<HashWrapper>,
+    bind_statement: bool,
+) -> SimpleRoundProof {
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
+    if bind_statement {
+        let mut statement = crate::protocol::fiat_shamir::Statement(&mut hash_wrapper);
+        statement.pcs_domain();
+        statement.simple(config);
+    }
 
-    hash_wrapper.update_with_ring_element_slice(&commitment.data);
-
-    let opening = open_at(
+    let mut opening = open_at(
         &witness,
         &evaluation_points_inner,
         &evaluation_points_outer,
-        true,
+        !bind_statement,
     );
+    if bind_statement {
+        let values = outer_eval_claims(&opening.rhs, evaluation_points_outer);
+        crate::protocol::fiat_shamir::Statement(&mut hash_wrapper).openings(
+            evaluation_points_inner,
+            evaluation_points_outer,
+            &values,
+        );
+        // Restore the wire convention: the last opening column is recomputed by the verifier.
+        let last = opening.rhs.width - 1;
+        for row in 0..opening.rhs.height {
+            opening.rhs[(row, last)].set_zero();
+        }
+    }
+    hash_wrapper.update_with_ring_element_slice(&commitment.data);
     tracing::debug!(
         "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
         evaluation_points_inner.len(),
@@ -725,7 +847,8 @@ pub fn prover_round_simple(
     );
     tracing::debug!(
         "opening height: {}, width: {}",
-        opening.rhs.height, opening.rhs.width
+        opening.rhs.height,
+        opening.rhs.width
     );
 
     hash_wrapper.update_with_ring_element_slice(&opening.rhs.data);

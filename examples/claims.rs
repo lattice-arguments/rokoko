@@ -32,6 +32,20 @@ fn main() {
     let energy = (witness_in(everything) * witness_in(everything).conjugate()).sum(&witness);
 
     let build_claims = |transcript: &mut Transcript| -> Vec<Claim> {
+        // Bind the underlying public inputs before deriving randomized checks.
+        // This demo runs the initial reduction only. A full proof also absorbs
+        // its witness commitment here and continues into the opening chain.
+        transcript.update_with_bytes(b"rokoko/claims-example/public-inputs/v1");
+        transcript.update_with_u64(256);
+        transcript.update_with_u64(8);
+        transcript.update_with_u64(prices.len() as u64);
+        for price in &prices {
+            transcript.update_with_u64(*price);
+        }
+        transcript.update_with_u64(audit_totals.len() as u64);
+        transcript.update_with_ring_element_slice(&audit_totals);
+        transcript.update_with_ring_element(&revenue);
+        transcript.update_with_ring_element(&energy);
         let spot_check = challenge_point(transcript, balances_at.vars().len());
         let (total_index, digit_index) = digits_at.vars().split_at(5);
         let audit_point = challenge_point(transcript, total_index.len());

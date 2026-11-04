@@ -20,3 +20,5 @@ pub mod wire;
 
 pub mod error;
 pub use error::{VerificationError, VerificationResult};
+
+pub(crate) mod fiat_shamir;

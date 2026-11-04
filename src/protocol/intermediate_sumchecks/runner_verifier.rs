@@ -43,7 +43,7 @@ pub fn batch_claims_linear(
     Ok((batched, idx))
 }
 
-pub fn intermediate_sumcheck_verifier(
+pub(crate) fn intermediate_sumcheck_verifier(
     config: &IntermediateConfig,
     verifier_sumcheck_context: &mut IntermediateVerifierSumcheckContext,
     proof: &IntermediateRoundProof,

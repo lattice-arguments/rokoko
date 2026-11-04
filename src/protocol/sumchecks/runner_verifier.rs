@@ -164,7 +164,7 @@ fn batch_claims(
     Ok(batched_claim)
 }
 
-pub fn sumcheck_verifier(
+pub(crate) fn sumcheck_verifier(
     config: &SumcheckConfig,
     verifier_sumcheck_context: &mut VerifierSumcheckContext,
     rc_commitment: &[RingElement],

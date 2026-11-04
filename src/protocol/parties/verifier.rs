@@ -39,7 +39,6 @@ use crate::{
     },
 };
 
-#[tracing::instrument(skip_all, name = "verifier_round")]
 pub fn verifier_round(
     crs: &VerifierCRS,
     config: &SumcheckConfig,
@@ -52,7 +51,49 @@ pub fn verifier_round(
     hash_wrapper_verifier: Option<HashWrapper>,
     boundary: Option<BoundaryCapture<'_, VerifierBoundary>>,
 ) -> VerificationResult<()> {
+    verifier_round_inner(
+        crs,
+        config,
+        rc_commitment,
+        round_proof,
+        evaluation_points_inner,
+        evaluation_points_outer,
+        claims,
+        sumcheck_context_verifier,
+        hash_wrapper_verifier,
+        boundary,
+        true,
+    )
+}
+
+#[tracing::instrument(skip_all, name = "verifier_round")]
+fn verifier_round_inner(
+    crs: &VerifierCRS,
+    config: &SumcheckConfig,
+    rc_commitment: &[RingElement],
+    round_proof: &SumcheckRoundProof,
+    evaluation_points_inner: &[StructuredRow],
+    evaluation_points_outer: &[StructuredRow],
+    claims: &[RingElement],
+    sumcheck_context_verifier: &mut VerifierSumcheckContext,
+    hash_wrapper_verifier: Option<HashWrapper>,
+    boundary: Option<BoundaryCapture<'_, VerifierBoundary>>,
+    bind_statement: bool,
+) -> VerificationResult<()> {
     let mut hash_wrapper_verifier = hash_wrapper_verifier.unwrap_or_else(HashWrapper::new);
+    if bind_statement {
+        let mut statement = crate::protocol::fiat_shamir::Statement(&mut hash_wrapper_verifier);
+        statement.pcs_domain();
+        statement.sumcheck(config);
+    }
+
+    if bind_statement {
+        crate::protocol::fiat_shamir::Statement(&mut hash_wrapper_verifier).openings(
+            evaluation_points_inner,
+            evaluation_points_outer,
+            claims,
+        );
+    }
 
     let evaluation_points = sumcheck_verifier(
         &config,
@@ -162,7 +203,7 @@ pub fn verifier_round(
                         round_proof.claim_over_witness_conjugate.conjugate(),
                     ];
 
-                    verifier_round(
+                    verifier_round_inner(
                         crs,
                         &next_sumcheck_config,
                         next_round_commiments_recursive.as_slice(),
@@ -180,6 +221,7 @@ pub fn verifier_round(
                         },
                         Some(hash_wrapper_verifier),
                         boundary.and_then(BoundaryCapture::advance),
+                        false,
                     )?;
                 }
 
@@ -232,7 +274,7 @@ pub fn verifier_round(
                         round_proof.claim_over_witness_conjugate.conjugate(),
                     ];
 
-                    verifier_round_simple(
+                    verifier_round_simple_inner(
                         crs,
                         next_simple_config,
                         commitment,
@@ -241,6 +283,7 @@ pub fn verifier_round(
                         &outer_rows,
                         &new_claims,
                         Some(hash_wrapper_verifier),
+                        false,
                     )?;
                 }
                 RoundProof::Intermediate(next_intermediate_round_proof) => {
@@ -294,7 +337,7 @@ pub fn verifier_round(
                         round_proof.claim_over_witness_conjugate.conjugate(),
                     ];
 
-                    verifier_round_intermediate(
+                    verifier_round_intermediate_inner(
                         crs,
                         next_intermediate_config,
                         commitment,
@@ -311,6 +354,7 @@ pub fn verifier_round(
                             }
                         },
                         Some(hash_wrapper_verifier),
+                        false,
                     )?;
                 }
             }
@@ -353,7 +397,6 @@ pub(crate) fn fold_matrix_claims(
     Ok(folded_claims)
 }
 
-#[tracing::instrument(skip_all, name = "verifier_round_intermediate")]
 pub fn verifier_round_intermediate(
     crs: &VerifierCRS,
     config: &IntermediateConfig,
@@ -364,6 +407,33 @@ pub fn verifier_round_intermediate(
     claims: &[RingElement],
     sumcheck_context_verifier: &mut IntermediateVerifierSumcheckContext,
     hash_wrapper: Option<HashWrapper>,
+) -> VerificationResult<()> {
+    verifier_round_intermediate_inner(
+        crs,
+        config,
+        commitment,
+        round_proof,
+        evaluation_points_inner,
+        evaluation_points_outer,
+        claims,
+        sumcheck_context_verifier,
+        hash_wrapper,
+        true,
+    )
+}
+
+#[tracing::instrument(skip_all, name = "verifier_round_intermediate")]
+fn verifier_round_intermediate_inner(
+    crs: &VerifierCRS,
+    config: &IntermediateConfig,
+    commitment: &BasicCommitment,
+    round_proof: &IntermediateRoundProof,
+    evaluation_points_inner: &[StructuredRow],
+    evaluation_points_outer: &[StructuredRow],
+    claims: &[RingElement],
+    sumcheck_context_verifier: &mut IntermediateVerifierSumcheckContext,
+    hash_wrapper: Option<HashWrapper>,
+    bind_statement: bool,
 ) -> VerificationResult<()> {
     check_intermediate_round_shape(config, commitment, round_proof, claims.len())?;
     expect_evaluation_points(
@@ -380,6 +450,19 @@ pub fn verifier_round_intermediate(
     )?;
 
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
+    if bind_statement {
+        let mut statement = crate::protocol::fiat_shamir::Statement(&mut hash_wrapper);
+        statement.pcs_domain();
+        statement.intermediate(config);
+    }
+    if bind_statement {
+        crate::protocol::fiat_shamir::Statement(&mut hash_wrapper).openings(
+            evaluation_points_inner,
+            evaluation_points_outer,
+            claims,
+        );
+    }
+
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
 
     hash_wrapper.update_with_ring_element_slice(&round_proof.opening_rhs.data);
@@ -594,7 +677,7 @@ pub fn verifier_round_intermediate(
 
     match (next_round_proof.as_ref(), next_round_config.as_ref()) {
         (RoundProof::Simple(simple_round_proof), Config::Simple(simple_config)) => {
-            verifier_round_simple(
+            verifier_round_simple_inner(
                 crs,
                 simple_config,
                 next_round_commitment,
@@ -603,13 +686,14 @@ pub fn verifier_round_intermediate(
                 &outer_rows,
                 &new_claims,
                 Some(hash_wrapper),
+                false,
             )?;
         }
         (
             RoundProof::Intermediate(intermediate_round_proof),
             Config::Intermediate(intermediate_config),
         ) => {
-            verifier_round_intermediate(
+            verifier_round_intermediate_inner(
                 crs,
                 intermediate_config,
                 next_round_commitment,
@@ -626,6 +710,7 @@ pub fn verifier_round_intermediate(
                         )
                     })?,
                 Some(hash_wrapper),
+                false,
             )?;
         }
         _ => {
@@ -637,7 +722,6 @@ pub fn verifier_round_intermediate(
     Ok(())
 }
 
-#[tracing::instrument(skip_all, name = "verifier_round_simple")]
 pub fn verifier_round_simple(
     crs: &VerifierCRS,
     config: &SimpleConfig,
@@ -647,6 +731,31 @@ pub fn verifier_round_simple(
     evaluation_points_outer: &[StructuredRow],
     claims: &[RingElement],
     hash_wrapper: Option<HashWrapper>,
+) -> VerificationResult<()> {
+    verifier_round_simple_inner(
+        crs,
+        config,
+        commitment,
+        round_proof,
+        evaluation_points_inner,
+        evaluation_points_outer,
+        claims,
+        hash_wrapper,
+        true,
+    )
+}
+
+#[tracing::instrument(skip_all, name = "verifier_round_simple")]
+fn verifier_round_simple_inner(
+    crs: &VerifierCRS,
+    config: &SimpleConfig,
+    commitment: &BasicCommitment,
+    round_proof: &SimpleRoundProof,
+    evaluation_points_inner: &[StructuredRow],
+    evaluation_points_outer: &[StructuredRow],
+    claims: &[RingElement],
+    hash_wrapper: Option<HashWrapper>,
+    bind_statement: bool,
 ) -> VerificationResult<()> {
     check_simple_round_shape(config, commitment, round_proof, claims.len())?;
     expect_evaluation_points(
@@ -658,6 +767,19 @@ pub fn verifier_round_simple(
     )?;
 
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
+    if bind_statement {
+        let mut statement = crate::protocol::fiat_shamir::Statement(&mut hash_wrapper);
+        statement.pcs_domain();
+        statement.simple(config);
+    }
+    if bind_statement {
+        crate::protocol::fiat_shamir::Statement(&mut hash_wrapper).openings(
+            evaluation_points_inner,
+            evaluation_points_outer,
+            claims,
+        );
+    }
+
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
     hash_wrapper.update_with_ring_element_slice(&round_proof.opening_rhs.data);
 

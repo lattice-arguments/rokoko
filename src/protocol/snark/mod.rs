@@ -1,6 +1,7 @@
 //! SNARK claim language; guide in `docs/snark.md`, demo in `examples/claims.rs`.
 
 mod lowering;
+mod transcript;
 
 pub use crate::common::hash::HashWrapper as Transcript;
 pub use lowering::InitialSumcheckProof as ClaimsProof;
@@ -630,7 +631,9 @@ impl SnarkClaim {
 }
 
 /// Transcript-drawn point, one coordinate per variable; both sides must draw
-/// at the same transcript state.
+/// at the same transcript state. Bind the witness commitment and underlying
+/// public inputs before drawing this point; binding the completed claim later
+/// does not bind this earlier challenge.
 pub fn challenge_point(transcript: &mut Transcript, num_vars: usize) -> Vec<FieldExtension> {
     lowering::sample_fe_layers(transcript, num_vars)
 }

@@ -932,6 +932,102 @@ mod tests {
         }
     }
 
+    #[test]
+    fn external_simple_and_intermediate_entries_bind_their_statements() {
+        use crate::common::{matrix::VerticallyAlignedMatrix, ring_arithmetic::Representation};
+        use crate::protocol::open::claim;
+        use crate::protocol::{
+            commitment::commit_basic,
+            config::config_base_from_config,
+            intermediate_sumchecks::{
+                builder::init_intermediate_sumcheck, builder_verifier::init_intermediate_verifier,
+            },
+            parties::{
+                prover::{prover_round_intermediate, prover_round_simple},
+                verifier::{verifier_round_intermediate, verifier_round_simple},
+            },
+        };
+        init_common();
+        for aux in [three_openings_aux(), intermediate_aux()] {
+            let root = sumcheck_config(aux);
+            let config = root.next.as_deref().unwrap();
+            let base = config_base_from_config(config);
+            let crs = CRS::gen_prover_crs(&root);
+            let verifier_crs = CRS::gen_verifier_crs(&root);
+            let witness = VerticallyAlignedMatrix {
+                height: base.witness_height(),
+                width: base.witness_width(),
+                used_cols: base.witness_width(),
+                data: short_witness(base.witness_height() * base.witness_width()),
+            };
+            let commitment = commit_basic(&crs, &witness, base.basic_commitment_rank());
+            let point = |n: usize| StructuredRow {
+                tensor_layers: vec![
+                    RingElement::constant(2, Representation::IncompleteNTT);
+                    n.ilog2() as usize
+                ],
+            };
+            let inner = vec![point(witness.height); 2];
+            let outer = vec![point(witness.width); 2];
+            let claims: Vec<_> = inner
+                .iter()
+                .zip(&outer)
+                .map(|(i, o)| claim(&witness, i, o))
+                .collect();
+            // A caller-supplied transcript must not bypass statement binding.
+            let mut prefix = crate::common::hash::HashWrapper::new();
+            prefix.update_with_bytes(b"application context");
+            match config {
+                Config::Simple(c) => {
+                    let proof = prover_round_simple(
+                        c,
+                        &commitment,
+                        &witness,
+                        &inner,
+                        &outer,
+                        Some(prefix.clone()),
+                    );
+                    verifier_round_simple(
+                        &verifier_crs,
+                        c,
+                        &commitment,
+                        &proof,
+                        &inner,
+                        &outer,
+                        &claims,
+                        Some(prefix),
+                    )
+                    .unwrap();
+                }
+                Config::Intermediate(c) => {
+                    let proof = prover_round_intermediate(
+                        &crs,
+                        c,
+                        &commitment,
+                        &witness,
+                        &inner,
+                        &outer,
+                        &mut init_intermediate_sumcheck(&crs, c),
+                        Some(prefix.clone()),
+                    );
+                    verifier_round_intermediate(
+                        &verifier_crs,
+                        c,
+                        &commitment,
+                        &proof,
+                        &inner,
+                        &outer,
+                        &claims,
+                        &mut init_intermediate_verifier(&verifier_crs, c),
+                        Some(prefix),
+                    )
+                    .unwrap();
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
     /// A context serves one proof: its tables fold and its evaluations cache in place, so a
     /// second proof through the same context is refused outright rather than run against what the
     /// first one left behind.

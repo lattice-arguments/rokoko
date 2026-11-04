@@ -34,7 +34,8 @@ const LANES: usize = 8;
 const SYMBOLS: usize = 56;
 const ROLES: usize = 16;
 const MAX_ELEMENTS: usize = 1 << 20;
-const VERSION: u8 = 1;
+// v2 uses statement-bound Fiat–Shamir challenges; v1 proofs are incompatible.
+const VERSION: u8 = 2;
 /// The rows of an opening below the root: the sumcheck point and its conjugate.
 const OPENED_POINTS: usize = 2;
 

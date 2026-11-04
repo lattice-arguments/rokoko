@@ -173,7 +173,7 @@ Three cases, from strongest to weakest verifier position:
    anything of the form `a - b`. Nothing ships.
 3. **The prover ships it.** Norm accumulators, binariness sums - anything
    depending on the secret witness. The front end proves `sum = value` for
-   the value you supply and absorbs every claim value into the transcript
+   the value you supply and binds the complete claim into the transcript
    before drawing batching randomness. Two duties stay yours: deliver the
    value to the verifier, and check its *structure* there (e.g. a zero
    constant coefficient for a binariness claim) - the front end checks
@@ -184,11 +184,12 @@ Three cases, from strongest to weakest verifier position:
 ## Fiat-Shamir, in one paragraph
 
 Prover and verifier drive one shared transcript and must stay in lockstep:
-absorb the commitment first, build the claims in the same order, draw
-`challenge_point`s at the same transcript states, and absorb anything the
-prover ships (claim values are absorbed for you; other shipped data - a
-table, a coefficient - you must `update` yourself before proving). The
-verifier panics on any mismatch.
+absorb the commitment first, build the claims in the same order, and draw
+`challenge_point`s at the same transcript states. The front end absorbs the
+witness shape and complete claims (expressions, public weights and values)
+before drawing batching randomness. Bind underlying public inputs before
+any `challenge_point` used to build the claims. The verifier returns an error
+on mismatch.
 
 ## Recipes
 
