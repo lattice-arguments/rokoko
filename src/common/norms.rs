@@ -26,7 +26,6 @@ macro_rules! maybe_assert {
     };
 }
 
-
 pub fn inf_norm(vec: &[RingElement]) -> u64 {
     vec.iter()
         .map(|el| {
@@ -97,6 +96,29 @@ pub fn assert_norm_bounded(label: &str, value: f64, bound: f64) {
         value <= bound,
         "L2 norm of {label} = {value} exceeds the registered bound {bound}"
     );
+}
+
+/// Checks a verifier norm, preserving the reporting-only behavior of `soft-norms`.
+pub fn check_norm_bounded(
+    label: &str,
+    value: f64,
+    bound: f64,
+) -> crate::protocol::VerificationResult<()> {
+    tracing::debug!("L2 norm of {label}: {value} (bound {bound})");
+    #[cfg(feature = "calibration")]
+    calibration::record(label, value, bound);
+    if !(value <= bound) {
+        let error = crate::protocol::VerificationError::NormExceeded {
+            label: label.to_owned(),
+            value,
+            bound,
+        };
+        if NORMS_ENFORCED {
+            return Err(error);
+        }
+        eprintln!("{error}");
+    }
+    Ok(())
 }
 
 /// Measures the norm schedule a run actually produces, in the shape `assign_norm_bounds`
@@ -228,6 +250,28 @@ pub mod calibration {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn verifier_norm_errors_include_the_measurement_and_bound() {
+        let result = check_norm_bounded("folded witness in simple verifier", 2.0, 1.0);
+        if NORMS_ENFORCED {
+            assert!(matches!(
+                result,
+                Err(crate::protocol::VerificationError::NormExceeded {
+                    value: 2.0,
+                    bound: 1.0,
+                    ..
+                })
+            ));
+        } else {
+            assert!(result.is_ok());
+        }
+        assert!(check_norm_bounded("folded witness in simple verifier", 1.0, 1.0).is_ok());
+        assert_eq!(
+            check_norm_bounded("folded witness in simple verifier", f64::NAN, 1.0).is_err(),
+            NORMS_ENFORCED,
+        );
+    }
 
     /// `NORMS_ENFORCED` is what this build does with a norm over its bound, `calibration` included.
     #[test]

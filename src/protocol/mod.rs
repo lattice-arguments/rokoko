@@ -17,3 +17,6 @@ pub mod sumcheck;
 pub mod sumcheck_utils;
 pub mod sumchecks;
 pub mod wire;
+
+pub mod error;
+pub use error::{VerificationError, VerificationResult};

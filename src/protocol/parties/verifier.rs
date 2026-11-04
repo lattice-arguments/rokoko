@@ -1,10 +1,11 @@
+use crate::protocol::error::{VerificationError, VerificationResult};
 use crate::{
     common::{
         arithmetic::precompute_structured_values_fast,
         config::{DEGREE, MOD_Q, NOF_BATCHES},
         hash::HashWrapper,
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
-        norms::{assert_norm_bounded, l2_norm_coeffs},
+        norms::{check_norm_bounded, l2_norm_coeffs},
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
@@ -50,16 +51,7 @@ pub fn verifier_round(
     sumcheck_context_verifier: &mut VerifierSumcheckContext,
     hash_wrapper_verifier: Option<HashWrapper>,
     boundary: Option<BoundaryCapture<'_, VerifierBoundary>>,
-) {
-    check_sumcheck_round_shape(
-        config,
-        rc_commitment,
-        round_proof,
-        evaluation_points_inner,
-        evaluation_points_outer,
-        claims,
-    );
-
+) -> VerificationResult<()> {
     let mut hash_wrapper_verifier = hash_wrapper_verifier.unwrap_or_else(HashWrapper::new);
 
     let evaluation_points = sumcheck_verifier(
@@ -71,26 +63,38 @@ pub fn verifier_round(
         &evaluation_points_outer,
         &claims,
         &mut hash_wrapper_verifier,
-    );
+    )?;
 
     let at_cut = boundary.as_ref().is_some_and(BoundaryCapture::is_at_cut);
 
     if at_cut {
         let next_config = match config.next.as_deref() {
             Some(Config::Sumcheck(next_sumcheck_config)) => next_sumcheck_config.clone(),
-            _ => panic!("round boundary cut requires the next round to be a Sumcheck round"),
+            _ => {
+                return Err(VerificationError::InvalidRound(
+                    "round boundary cut requires the next round to be a Sumcheck round".into(),
+                ))
+            }
         };
-        let next_round_commitment = round_proof
-            .next_round_commitment
-            .as_ref()
-            .expect("cut round must still carry the next-round commitment");
+        let next_round_commitment =
+            round_proof.next_round_commitment.as_ref().ok_or_else(|| {
+                VerificationError::InvalidRound(
+                    "cut round must still carry the next-round commitment".to_owned(),
+                )
+            })?;
         let commitment_root = match next_round_commitment {
             NextRoundCommitment::Recursive(rc) => rc.clone(),
             NextRoundCommitment::Simple(_) => {
-                panic!("round boundary cut requires a recursive next-round commitment")
+                return Err(VerificationError::InvalidRound(
+                    "round boundary cut requires a recursive next-round commitment".into(),
+                ))
             }
         };
-        let capture = boundary.expect("round boundary cut requires a boundary slot");
+        let capture = boundary.ok_or_else(|| {
+            VerificationError::InvalidRound(
+                "round boundary cut requires a boundary slot".to_owned(),
+            )
+        })?;
         *capture.slot = Some(VerifierBoundary {
             config: next_config,
             commitment_root,
@@ -101,29 +105,35 @@ pub fn verifier_round(
             evaluation_points,
             transcript: hash_wrapper_verifier,
         });
-        return;
+        return Ok(());
     }
 
     match &round_proof.next {
         Some(next_round_proof) => {
             let next_round_commitment =
-                round_proof
-                    .next_round_commitment
-                    .as_ref()
-                    .unwrap_or_else(|| {
-                        panic!(
+                round_proof.next_round_commitment.as_ref().ok_or_else(|| {
+                    VerificationError::InvalidRound(
                         "Next round commitment must be present when next round proof is present."
+                            .into(),
                     )
-                    });
+                })?;
 
             match next_round_proof.as_ref() {
                 RoundProof::Sumcheck(next_sumcheck_round_proof) => {
                     let next_sumcheck_config = match &config.next {
                         Some(next_config) => match next_config.as_ref() {
                             Config::Sumcheck(next_sumcheck_config) => next_sumcheck_config,
-                            _ => panic!("Expected sumcheck config for next round."),
+                            _ => {
+                                return Err(VerificationError::InvalidRound(
+                                    "Expected sumcheck config for next round.".into(),
+                                ))
+                            }
                         },
-                        None => panic!("Next sumcheck config must be present."),
+                        None => {
+                            return Err(VerificationError::InvalidRound(
+                                "Next sumcheck config must be present.".into(),
+                            ))
+                        }
                     };
 
                     let (new_evaluation_points_outer, new_evaluation_points_inner) =
@@ -132,7 +142,11 @@ pub fn verifier_round(
 
                     let next_round_commiments_recursive = match &next_round_commitment {
                         NextRoundCommitment::Recursive(rc) => rc,
-                        _ => panic!("Expected recursive commitment for next round."),
+                        _ => {
+                            return Err(VerificationError::InvalidRound(
+                                "Expected recursive commitment for next round.".into(),
+                            ))
+                        }
                     };
 
                     let inner_rows = [
@@ -158,24 +172,38 @@ pub fn verifier_round(
                         &new_claims,
                         match sumcheck_context_verifier.next.as_deref_mut() {
                             Some(NextVerifierSumcheckContext::Simple(ctx)) => ctx,
-                            _ => panic!("Expected Simple context for next round."),
+                            _ => {
+                                return Err(VerificationError::InvalidRound(
+                                    "Expected Simple context for next round.".into(),
+                                ))
+                            }
                         },
                         Some(hash_wrapper_verifier),
                         boundary.and_then(BoundaryCapture::advance),
-                    );
+                    )?;
                 }
 
                 RoundProof::Simple(next_simple_round_proof) => {
-                    assert!(
-                        boundary.is_none(),
-                        "round boundary cut requires the next round to be a Sumcheck round"
-                    );
+                    if boundary.is_some() {
+                        return Err(VerificationError::InvalidRound(
+                            "round boundary cut requires the next round to be a Sumcheck round"
+                                .into(),
+                        ));
+                    }
                     let next_simple_config = match &config.next {
                         Some(next_config) => match next_config.as_ref() {
                             Config::Simple(next_simple_config) => next_simple_config,
-                            _ => panic!("Expected simple config for next round."),
+                            _ => {
+                                return Err(VerificationError::InvalidRound(
+                                    "Expected simple config for next round.".into(),
+                                ))
+                            }
                         },
-                        None => panic!("Next simple config must be present."),
+                        None => {
+                            return Err(VerificationError::InvalidRound(
+                                "Next simple config must be present.".into(),
+                            ))
+                        }
                     };
 
                     let (new_evaluation_points_outer, new_evaluation_points_inner) =
@@ -184,7 +212,11 @@ pub fn verifier_round(
 
                     let commitment = match &next_round_commitment {
                         NextRoundCommitment::Simple(basic_commitment) => basic_commitment,
-                        _ => panic!("Expected simple commitment for next round."),
+                        _ => {
+                            return Err(VerificationError::InvalidRound(
+                                "Expected simple commitment for next round.".into(),
+                            ))
+                        }
                     };
 
                     let inner_rows = [
@@ -209,33 +241,45 @@ pub fn verifier_round(
                         &outer_rows,
                         &new_claims,
                         Some(hash_wrapper_verifier),
-                    );
+                    )?;
                 }
                 RoundProof::Intermediate(next_intermediate_round_proof) => {
-                    assert!(
-                        boundary.is_none(),
-                        "round boundary cut requires the next round to be a Sumcheck round"
-                    );
+                    if boundary.is_some() {
+                        return Err(VerificationError::InvalidRound(
+                            "round boundary cut requires the next round to be a Sumcheck round"
+                                .into(),
+                        ));
+                    }
                     let next_intermediate_config = match &config.next {
                         Some(next_config) => match next_config.as_ref() {
                             Config::Intermediate(next_intermediate_config) => {
                                 next_intermediate_config
                             }
-                            _ => panic!("Expected intermediate config for next round."),
+                            _ => {
+                                return Err(VerificationError::InvalidRound(
+                                    "Expected intermediate config for next round.".into(),
+                                ))
+                            }
                         },
-                        None => panic!("Next intermediate config must be present."),
+                        None => {
+                            return Err(VerificationError::InvalidRound(
+                                "Next intermediate config must be present.".into(),
+                            ))
+                        }
                     };
 
                     let (new_evaluation_points_outer, new_evaluation_points_inner) =
                         evaluation_points
                             .split_at(next_intermediate_config.witness_width.ilog2() as usize);
 
-                    let commitment = match &next_round_commitment {
-                        NextRoundCommitment::Simple(basic_commitment) => basic_commitment,
-                        _ => panic!(
-                            "Expected NextRoundCommitment::Simple for intermediate next round."
-                        ),
-                    };
+                    let commitment =
+                        match &next_round_commitment {
+                            NextRoundCommitment::Simple(basic_commitment) => basic_commitment,
+                            _ => return Err(VerificationError::InvalidRound(
+                                "Expected NextRoundCommitment::Simple for intermediate next round."
+                                    .into(),
+                            )),
+                        };
 
                     let inner_rows = [
                         evaluation_point_to_structured_row(new_evaluation_points_inner),
@@ -260,35 +304,42 @@ pub fn verifier_round(
                         &new_claims,
                         match sumcheck_context_verifier.next.as_deref_mut() {
                             Some(NextVerifierSumcheckContext::Intermediate(ctx)) => ctx,
-                            _ => panic!("Expected Intermediate context for next round."),
+                            _ => {
+                                return Err(VerificationError::InvalidRound(
+                                    "Expected Intermediate context for next round.".into(),
+                                ))
+                            }
                         },
                         Some(hash_wrapper_verifier),
-                    );
+                    )?;
                 }
             }
         }
         None => {
-            assert!(
-                boundary.is_none(),
-                "round boundary cut requested past the end of the round chain"
-            );
-            assert!(
-                config.next.is_none(),
-                "proof ends before the configured round chain"
-            );
+            if boundary.is_some() {
+                return Err(VerificationError::InvalidRound(
+                    "round boundary cut requested past the end of the round chain".into(),
+                ));
+            }
+            if config.next.is_some() {
+                return Err(VerificationError::InvalidRound(
+                    "proof ends before the configured round chain".into(),
+                ));
+            }
         }
     }
+    Ok(())
 }
 
 pub(crate) fn fold_matrix_claims(
     matrix: &HorizontallyAlignedMatrix<RingElement>,
     folding_challenges: &[RingElement],
-) -> Vec<RingElement> {
-    assert_eq!(
-        folding_challenges.len(),
-        matrix.width,
-        "folding_challenges length must equal matrix width"
-    );
+) -> VerificationResult<Vec<RingElement>> {
+    if folding_challenges.len() != matrix.width {
+        return Err(VerificationError::CheckFailed(
+            "folding_challenges length must equal matrix width".into(),
+        ));
+    }
     let mut folded_claims = vec![RingElement::zero(Representation::IncompleteNTT); matrix.height];
     let mut temp = RingElement::zero(Representation::IncompleteNTT);
 
@@ -299,7 +350,7 @@ pub(crate) fn fold_matrix_claims(
         }
     }
 
-    folded_claims
+    Ok(folded_claims)
 }
 
 #[tracing::instrument(skip_all, name = "verifier_round_intermediate")]
@@ -313,8 +364,20 @@ pub fn verifier_round_intermediate(
     claims: &[RingElement],
     sumcheck_context_verifier: &mut IntermediateVerifierSumcheckContext,
     hash_wrapper: Option<HashWrapper>,
-) {
-    check_intermediate_round_shape(config, commitment, round_proof, claims.len());
+) -> VerificationResult<()> {
+    check_intermediate_round_shape(config, commitment, round_proof, claims.len())?;
+    expect_evaluation_points(
+        evaluation_points_inner,
+        evaluation_points_outer,
+        claims.len(),
+        config.witness_height,
+        config.witness_width,
+    )?;
+    expect_shape(
+        "intermediate claim count",
+        claims.len(),
+        config.nof_openings,
+    )?;
 
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
@@ -412,7 +475,11 @@ pub fn verifier_round_intermediate(
 
                 let ct = round_proof.batched_projection_image[(i, col)]
                     .constant_term_from_incomplete_ntt();
-                assert_eq!(ct, expected_ct);
+                if ct != expected_ct {
+                    return Err(VerificationError::CheckFailed(
+                        "projection constant term mismatch".to_owned(),
+                    ));
+                }
             }
         }
     }
@@ -427,14 +494,17 @@ pub fn verifier_round_intermediate(
     }
 
     let next_round_commitment =
-        match round_proof
-            .next_round_commitment
-            .as_ref()
-            .unwrap_or_else(|| {
-                panic!("Next round commitment must be present for intermediate round proof.")
-            }) {
+        match round_proof.next_round_commitment.as_ref().ok_or_else(|| {
+            VerificationError::InvalidRound(
+                "Next round commitment must be present for intermediate round proof.".into(),
+            )
+        })? {
             NextRoundCommitment::Simple(basic_commitment) => basic_commitment,
-            _ => panic!("Expected simple commitment for intermediate round."),
+            _ => {
+                return Err(VerificationError::InvalidRound(
+                    "Expected simple commitment for intermediate round.".into(),
+                ))
+            }
         };
     hash_wrapper.update_with_ring_element_slice(&next_round_commitment.data);
 
@@ -465,14 +535,14 @@ pub fn verifier_round_intermediate(
     }
 
     let folded_batched_projection_claims =
-        fold_matrix_claims(&round_proof.batched_projection_image, &folding_challenges);
+        fold_matrix_claims(&round_proof.batched_projection_image, &folding_challenges)?;
 
     let l2_norm_proj = l2_norm_coeffs(&round_proof.projection_image_ct.data);
-    assert_norm_bounded(
+    check_norm_bounded(
         "projection image in intermediate verifier",
         l2_norm_proj,
         config.projection_norm_bound,
-    );
+    )?;
 
     let intermediate_evaluation_points = intermediate_sumcheck_verifier(
         config,
@@ -484,21 +554,27 @@ pub fn verifier_round_intermediate(
         evaluation_points_inner,
         &challenges,
         &mut hash_wrapper,
-    );
+    )?;
 
-    let next_round_proof = round_proof.next.as_ref().unwrap_or_else(|| {
-        panic!("Next round proof must be present for intermediate round proof.")
-    });
+    let next_round_proof = round_proof.next.as_ref().ok_or_else(|| {
+        VerificationError::InvalidRound(
+            "Next round proof must be present for intermediate round proof.".into(),
+        )
+    })?;
 
-    let next_round_config = config.next.as_ref().unwrap_or_else(|| {
-        panic!("Next round config must be present for intermediate round proof.")
-    });
+    let next_round_config = config.next.as_ref().ok_or_else(|| {
+        VerificationError::InvalidRound(
+            "Next round config must be present for intermediate round proof.".into(),
+        )
+    })?;
 
     let next_witness_width = match next_round_config.as_ref() {
         Config::Simple(simple_config) => simple_config.witness_width,
         Config::Intermediate(intermediate_config) => intermediate_config.witness_width,
         Config::Sumcheck(_) => {
-            unreachable!("Intermediate round must be followed by simple or intermediate round.")
+            return Err(VerificationError::InvalidRound(
+                "Intermediate round must be followed by simple or intermediate round.".into(),
+            ))
         }
     };
     let (new_evaluation_points_outer, new_evaluation_points_inner) =
@@ -527,7 +603,7 @@ pub fn verifier_round_intermediate(
                 &outer_rows,
                 &new_claims,
                 Some(hash_wrapper),
-            );
+            )?;
         }
         (
             RoundProof::Intermediate(intermediate_round_proof),
@@ -541,12 +617,24 @@ pub fn verifier_round_intermediate(
                 &inner_rows,
                 &outer_rows,
                 &new_claims,
-                sumcheck_context_verifier.next.as_deref_mut().unwrap(),
+                sumcheck_context_verifier
+                    .next
+                    .as_deref_mut()
+                    .ok_or_else(|| {
+                        VerificationError::InvalidRound(
+                            "missing intermediate verifier context".into(),
+                        )
+                    })?,
                 Some(hash_wrapper),
-            );
+            )?;
         }
-        _ => panic!("Next round proof and config type mismatch."),
+        _ => {
+            return Err(VerificationError::InvalidRound(
+                "Next round proof and config type mismatch.".into(),
+            ))
+        }
     }
+    Ok(())
 }
 
 #[tracing::instrument(skip_all, name = "verifier_round_simple")]
@@ -559,8 +647,15 @@ pub fn verifier_round_simple(
     evaluation_points_outer: &[StructuredRow],
     claims: &[RingElement],
     hash_wrapper: Option<HashWrapper>,
-) {
-    check_simple_round_shape(config, commitment, round_proof, claims.len());
+) -> VerificationResult<()> {
+    check_simple_round_shape(config, commitment, round_proof, claims.len())?;
+    expect_evaluation_points(
+        evaluation_points_inner,
+        evaluation_points_outer,
+        claims.len(),
+        config.witness_height,
+        config.witness_width,
+    )?;
 
     let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
     hash_wrapper.update_with_ring_element_slice(&commitment.data);
@@ -619,12 +714,12 @@ pub fn verifier_round_simple(
     }
 
     for i in 0..config.basic_commitment_rank {
-        assert_eq!(
-            commitment_of_folded_witness[(i, 0)],
-            folded_commitment[(i, 0)],
-            "Folded commitment at row {} does not match expected value.",
-            i
-        );
+        if commitment_of_folded_witness[(i, 0)] != folded_commitment[(i, 0)] {
+            return Err(VerificationError::CheckFailed(format!(
+                "Folded commitment at row {} does not match expected value.",
+                i
+            )));
+        }
     }
 
     let opening_to_folded_witness = open_at(
@@ -678,7 +773,11 @@ pub fn verifier_round_simple(
         folded_opening[(i, 0)] += &temp;
     }
 
-    assert_eq!(opening_to_folded_witness.rhs, folded_opening);
+    if opening_to_folded_witness.rhs != folded_opening {
+        return Err(VerificationError::CheckFailed(
+            "folded opening mismatch".to_owned(),
+        ));
+    }
 
     let mut batched_projection_of_folded_witness = VerticallyAlignedMatrix {
         data: vec![
@@ -718,10 +817,11 @@ pub fn verifier_round_simple(
         }
     }
 
-    assert_eq!(
-        batched_projection_of_folded_witness,
-        folded_batched_projection_image
-    );
+    if batched_projection_of_folded_witness != folded_batched_projection_image {
+        return Err(VerificationError::CheckFailed(
+            "batched projection mismatch".to_owned(),
+        ));
+    }
 
     // check constant terms
     for i in 0..NOF_BATCHES {
@@ -755,7 +855,11 @@ pub fn verifier_round_simple(
 
             let ct =
                 round_proof.batched_projection_image[(i, k)].constant_term_from_incomplete_ntt();
-            assert_eq!(ct, expected_ct);
+            if ct != expected_ct {
+                return Err(VerificationError::CheckFailed(
+                    "projection constant term mismatch".to_owned(),
+                ));
+            }
         }
     }
 
@@ -770,27 +874,34 @@ pub fn verifier_round_simple(
     let l2_norm_witness = l2_norm_coeffs(&witness_strided);
     let l2_norm_proj = l2_norm_coeffs(&round_proof.projection_image_ct.data);
 
-    assert_norm_bounded(
+    check_norm_bounded(
         "folded witness in simple verifier",
         l2_norm_witness,
         config.witness_norm_bound,
-    );
-    assert_norm_bounded(
+    )?;
+    check_norm_bounded(
         "projection image in simple verifier",
         l2_norm_proj,
         config.projection_norm_bound,
-    );
+    )?;
+    Ok(())
 }
 
-/// Panics unless a size a round proof carries is the one the round's config determines. The
+/// Checks that a size a round proof carries is the one the round's config determines. The
 /// transcript absorbs only the entries of a matrix or a slice, not its shape, so a shape is
 /// trusted nowhere: every loop and index the verifier drives off a proof goes through one of the
 /// passes below first.
-fn expect_shape<T: PartialEq + std::fmt::Debug>(what: &str, got: T, expected: T) {
-    assert!(
-        got == expected,
-        "proof shape: {what} is {got:?}, the round's config determines {expected:?}"
-    );
+fn expect_shape<T: PartialEq + std::fmt::Debug>(
+    what: &str,
+    got: T,
+    expected: T,
+) -> VerificationResult<()> {
+    if got != expected {
+        return Err(VerificationError::InvalidShape(format!(
+            "proof shape: {what} is {got:?}, the round's config determines {expected:?}"
+        )));
+    }
+    Ok(())
 }
 
 fn vertical_shape<T>(matrix: &VerticallyAlignedMatrix<T>) -> (usize, usize, usize, usize) {
@@ -812,32 +923,46 @@ fn is_zero(element: &RingElement) -> bool {
 
 /// One round polynomial per variable, each at most cubic and with the tail the transcript absorbs
 /// past its coefficients zero.
-fn expect_polys(what: &str, polys: &[Polynomial<FieldExtension>], variables: usize) {
-    expect_shape(what, polys.len(), variables);
+pub(crate) fn expect_polys(
+    what: &str,
+    polys: &[Polynomial<FieldExtension>],
+    variables: usize,
+) -> VerificationResult<()> {
+    expect_shape(what, polys.len(), variables)?;
     for (round, poly) in polys.iter().enumerate() {
-        assert!(
-            poly.num_coefficients <= poly.coefficients.len()
-                && poly.coefficients[poly.num_coefficients..]
-                    .iter()
-                    .all(|c| c.coeffs.iter().all(|&x| x == 0)),
-            "proof shape: {what} round {round} is not a cubic with a zero tail"
-        );
+        if !(poly.num_coefficients <= poly.coefficients.len()
+            && poly.coefficients[poly.num_coefficients..]
+                .iter()
+                .all(|c| c.coeffs.iter().all(|&x| x == 0)))
+        {
+            return Err(VerificationError::InvalidShape(format!(
+                "proof shape: {what} round {round} is not a cubic with a zero tail"
+            )));
+        }
     }
+    Ok(())
 }
 
 /// A basic commitment to a `width`-column witness: `rank` key rows padded with zero rows to a
 /// power of two.
-fn expect_basic_commitment(what: &str, commitment: &BasicCommitment, rank: usize, width: usize) {
+fn expect_basic_commitment(
+    what: &str,
+    commitment: &BasicCommitment,
+    rank: usize,
+    width: usize,
+) -> VerificationResult<()> {
     let height = rank.next_power_of_two();
     expect_shape(
         &format!("{what} (height, width, entries)"),
         horizontal_shape(commitment),
         (height, width, height * width),
-    );
-    assert!(
-        commitment.data[rank * width..].iter().all(is_zero),
-        "proof shape: {what} has non-zero padding rows"
-    );
+    )?;
+    if !(commitment.data[rank * width..].iter().all(is_zero)) {
+        return Err(VerificationError::InvalidShape(format!(
+            "proof shape: {what} has non-zero padding rows"
+        )));
+    }
+    Ok(())
 }
 
 /// One opening row per claim; the last column is recomputed from the claims, so it travels as
@@ -847,16 +972,18 @@ fn expect_opening_rhs(
     opening_rhs: &HorizontallyAlignedMatrix<RingElement>,
     claims: usize,
     width: usize,
-) {
+) -> VerificationResult<()> {
     expect_shape(
         &format!("{what} opening_rhs (height, width, entries)"),
         horizontal_shape(opening_rhs),
         (claims, width, claims * width),
-    );
-    assert!(
-        (0..claims).all(|row| is_zero(&opening_rhs[(row, width - 1)])),
-        "proof shape: {what} opening_rhs carries a non-zero last column"
-    );
+    )?;
+    if !((0..claims).all(|row| is_zero(&opening_rhs[(row, width - 1)]))) {
+        return Err(VerificationError::InvalidShape(format!(
+            "proof shape: {what} opening_rhs carries a non-zero last column"
+        )));
+    }
+    Ok(())
 }
 
 /// The projection images of a round with a fine projection: the constant terms, one row per
@@ -867,29 +994,33 @@ fn expect_projection_images(
     batched_projection_image: &HorizontallyAlignedMatrix<RingElement>,
     image_height: usize,
     width: usize,
-) {
+) -> VerificationResult<()> {
     expect_shape(
         &format!("{what} projection_image_ct (height, width, used_cols, entries)"),
         vertical_shape(projection_image_ct),
         (image_height, width, width, image_height * width),
-    );
+    )?;
     expect_shape(
         &format!("{what} batched_projection_image (height, width, entries)"),
         horizontal_shape(batched_projection_image),
         (NOF_BATCHES, width, NOF_BATCHES * width),
-    );
+    )?;
+    Ok(())
 }
 
 /// The commitment a round sends for the next one: a recursive commitment's root when the next
 /// round is a sumcheck round, a basic commitment otherwise, and nothing after the last round.
-fn expect_next_round_commitment(next: Option<&Config>, commitment: &Option<NextRoundCommitment>) {
+fn expect_next_round_commitment(
+    next: Option<&Config>,
+    commitment: &Option<NextRoundCommitment>,
+) -> VerificationResult<()> {
     match (next, commitment) {
         (None, None) => {}
         (Some(Config::Sumcheck(next)), Some(NextRoundCommitment::Recursive(root))) => expect_shape(
             "next-round commitment root length",
             root.len(),
             next.commitment_recursion.most_inner_config().rank,
-        ),
+        )?,
         (
             Some(next @ (Config::Intermediate(_) | Config::Simple(_))),
             Some(NextRoundCommitment::Simple(basic)),
@@ -900,69 +1031,72 @@ fn expect_next_round_commitment(next: Option<&Config>, commitment: &Option<NextR
                 basic,
                 next.basic_commitment_rank(),
                 next.witness_width(),
-            );
+            )?;
         }
-        (next, commitment) => panic!(
-            "proof shape: the next-round commitment is {}, the round's config determines {}",
-            match commitment {
-                None => "absent",
-                Some(NextRoundCommitment::Recursive(_)) => "a recursive commitment root",
-                Some(NextRoundCommitment::Simple(_)) => "a basic commitment",
-            },
-            match next {
-                None => "none",
-                Some(Config::Sumcheck(_)) => "a recursive commitment root",
-                Some(_) => "a basic commitment",
-            }
-        ),
+        (next, commitment) => {
+            return Err(VerificationError::InvalidShape(format!(
+                "proof shape: the next-round commitment is {}, the round's config determines {}",
+                match commitment {
+                    None => "absent",
+                    Some(NextRoundCommitment::Recursive(_)) => "a recursive commitment root",
+                    Some(NextRoundCommitment::Simple(_)) => "a basic commitment",
+                },
+                match next {
+                    None => "none",
+                    Some(Config::Sumcheck(_)) => "a recursive commitment root",
+                    Some(_) => "a basic commitment",
+                }
+            )))
+        }
     }
+    Ok(())
 }
 
 /// The structural pass over a sumcheck round, run before any of the round is read. It covers the
 /// statement too, since below the root that is the previous round's output.
-fn check_sumcheck_round_shape(
+pub(crate) fn check_sumcheck_round_shape(
     config: &SumcheckConfig,
     rc_commitment: &[RingElement],
     proof: &SumcheckRoundProof,
     evaluation_points_inner: &[StructuredRow],
     evaluation_points_outer: &[StructuredRow],
     claims: &[RingElement],
-) {
+) -> VerificationResult<()> {
     let layers = |rows: &[StructuredRow]| -> Vec<usize> {
         rows.iter().map(|row| row.tensor_layers.len()).collect()
     };
-    expect_shape("claim count", claims.len(), config.nof_openings);
+    expect_shape("claim count", claims.len(), config.nof_openings)?;
     expect_shape(
         "inner evaluation point layers",
         layers(evaluation_points_inner),
         vec![config.witness_height.ilog2() as usize; config.nof_openings],
-    );
+    )?;
     expect_shape(
         "outer evaluation point layers",
         layers(evaluation_points_outer),
         vec![config.witness_width.ilog2() as usize; config.nof_openings],
-    );
+    )?;
     expect_shape(
         "commitment root length",
         rc_commitment.len(),
         config.commitment_recursion.most_inner_config().rank,
-    );
+    )?;
 
     expect_polys(
         "sumcheck round polys",
         &proof.polys,
         config.composed_witness_length.ilog2() as usize,
-    );
+    )?;
     expect_shape(
         "projection_norm_claim presence",
         proof.projection_norm_claim.is_some(),
         config.projection_norm_scope().is_some(),
-    );
+    )?;
     expect_shape(
         "rc_opening_inner length",
         proof.rc_opening_inner.len(),
         config.opening_recursion.most_inner_config().rank,
-    );
+    )?;
     let (coarse, fine) = match &config.projection_recursion {
         Projection::Coarse(recursion) => (Some(recursion), None),
         Projection::Fine(recursion) => (None, Some(recursion)),
@@ -972,7 +1106,7 @@ fn check_sumcheck_round_shape(
         "rc_coarse_projection_inner length",
         proof.rc_coarse_projection_inner.as_ref().map(Vec::len),
         coarse.map(|recursion| recursion.most_inner_config().rank),
-    );
+    )?;
     expect_shape(
         "rc_fine_projection_inner lengths",
         proof
@@ -988,13 +1122,14 @@ fn check_sumcheck_round_shape(
                     .rank,
             )
         }),
-    );
+    )?;
     expect_shape(
         "constant_term_claims length",
         proof.constant_term_claims.as_ref().map(Vec::len),
         fine.map(|_| NOF_BATCHES),
-    );
-    expect_next_round_commitment(config.next.as_deref(), &proof.next_round_commitment);
+    )?;
+    expect_next_round_commitment(config.next.as_deref(), &proof.next_round_commitment)?;
+    Ok(())
 }
 
 /// The structural pass over an intermediate round, `commitment` being the one the previous round
@@ -1004,32 +1139,33 @@ fn check_intermediate_round_shape(
     commitment: &BasicCommitment,
     proof: &IntermediateRoundProof,
     claims: usize,
-) {
+) -> VerificationResult<()> {
     expect_basic_commitment(
         "intermediate round commitment",
         commitment,
         config.basic_commitment_rank,
         config.witness_width,
-    );
+    )?;
     expect_opening_rhs(
         "intermediate round",
         &proof.opening_rhs,
         claims,
         config.witness_width,
-    );
+    )?;
     expect_polys(
         "intermediate round polys",
         &proof.polys,
         (config.witness_height * config.witness_decomposition_chunks).ilog2() as usize,
-    );
-    expect_next_round_commitment(config.next.as_deref(), &proof.next_round_commitment);
+    )?;
+    expect_next_round_commitment(config.next.as_deref(), &proof.next_round_commitment)?;
     expect_projection_images(
         "intermediate round",
         &proof.projection_image_ct,
         &proof.batched_projection_image,
         config.witness_height / config.projection_ratio,
         config.witness_width,
-    );
+    )?;
+    Ok(())
 }
 
 /// The structural pass over the last round, `commitment` being the one the previous round sent
@@ -1039,29 +1175,57 @@ fn check_simple_round_shape(
     commitment: &BasicCommitment,
     proof: &SimpleRoundProof,
     claims: usize,
-) {
+) -> VerificationResult<()> {
     expect_basic_commitment(
         "simple round commitment",
         commitment,
         config.basic_commitment_rank,
         config.witness_width,
-    );
+    )?;
     expect_shape(
         "simple round folded_witness (height, width, used_cols, entries)",
         vertical_shape(&proof.folded_witness),
         (config.witness_height, 1, 1, config.witness_height),
-    );
+    )?;
     expect_projection_images(
         "simple round",
         &proof.projection_image_ct,
         &proof.batched_projection_image,
         config.witness_height / config.projection_ratio,
         config.witness_width,
-    );
+    )?;
     expect_opening_rhs(
         "simple round",
         &proof.opening_rhs,
         claims,
         config.witness_width,
-    );
+    )?;
+    Ok(())
+}
+
+// Check statement rows before preprocessing them or indexing their entries.
+fn expect_evaluation_points(
+    inner: &[StructuredRow],
+    outer: &[StructuredRow],
+    claims: usize,
+    height: usize,
+    width: usize,
+) -> VerificationResult<()> {
+    expect_shape(
+        "inner evaluation point layers",
+        inner
+            .iter()
+            .map(|row| row.tensor_layers.len())
+            .collect::<Vec<_>>(),
+        vec![height.ilog2() as usize; claims],
+    )?;
+    expect_shape(
+        "outer evaluation point layers",
+        outer
+            .iter()
+            .map(|row| row.tensor_layers.len())
+            .collect::<Vec<_>>(),
+        vec![width.ilog2() as usize; claims],
+    )?;
+    Ok(())
 }

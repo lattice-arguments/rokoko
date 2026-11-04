@@ -1,3 +1,4 @@
+use crate::protocol::VerificationError;
 use crate::{
     common::{
         hash::HashWrapper,
@@ -1430,29 +1431,42 @@ impl<T> From<&VerticallyAlignedMatrix<T>> for WitnessShape {
 /// and returns the evaluation claims the chain must prove. Claim values are
 /// used as given: witness-dependent values travel in the caller's envelope,
 /// and any structural check on them (a zero constant coefficient, say) is
-/// the caller's, on this side. Panics on any mismatch; `claims` must be
+/// the caller's, on this side. Returns an error on proof mismatch; `claims` must be
 /// rebuilt exactly as the prover built them (same transcript state).
+///
+/// Invalid caller-built claim expressions still panic during statement validation.
+/// The transcript may be modified on error; use a fresh transcript for another attempt.
 pub fn verify_claims(
     shape: impl Into<WitnessShape>,
     claims: &[SnarkClaim],
     proof: &InitialSumcheckProof,
     hash_wrapper: &mut HashWrapper,
-) -> ChainInputs {
+) -> crate::protocol::VerificationResult<ChainInputs> {
     let shape = shape.into();
-    let n = shape.height * shape.width;
-    assert!(n.is_power_of_two());
+    let n = shape.height.checked_mul(shape.width).ok_or_else(|| {
+        VerificationError::InvalidShape("initial witness dimensions overflow usize".into())
+    })?;
+    if !(n.is_power_of_two()) {
+        return Err(VerificationError::InvalidShape(
+            "invalid initial sumcheck dimensions".into(),
+        ));
+    }
     let total_vars = n.ilog2() as usize;
     let canon: Vec<SnarkClaim> = claims.iter().map(canonicalize).collect();
     let claims = &canon[..];
     validate_claims(claims, total_vars);
-    assert_eq!(proof.polys.len(), total_vars);
+    crate::protocol::parties::verifier::expect_polys(
+        "initial sumcheck polys",
+        &proof.polys,
+        total_vars,
+    )?;
 
     let needs_conjugate = claims.iter().any(|claim| uses_conjugate(&claim.expr));
-    assert_eq!(
-        proof.conj_witness_eval.is_some(),
-        needs_conjugate,
-        "proof and statement disagree on the conjugate opening"
-    );
+    if proof.conj_witness_eval.is_some() != needs_conjugate {
+        return Err(VerificationError::InvalidShape(
+            "proof and statement disagree on the conjugate opening".into(),
+        ));
+    }
 
     // Mirror of the prover's gadget tree over the claimed evaluations
     let witness_eval_cell = ElephantCell::new(FakeEvaluationLinearSumcheck::new());
@@ -1522,21 +1536,9 @@ pub fn verify_claims(
     for (round, poly_over_field) in proof.polys.iter().enumerate() {
         hash_wrapper.update_with_field_extension_slice(&poly_over_field.coefficients);
 
-        // The transcript absorbs the full coefficient array; the unused tail
-        // must be zero so the prover cannot vary it under one absorption.
-        for c in &poly_over_field.coefficients[poly_over_field.num_coefficients..] {
-            assert_eq!(
-                c,
-                &FieldExtension::zero(),
-                "round polynomial tail nonzero in round {round}"
-            );
+        if poly_over_field.at_zero() + poly_over_field.at_one() != batched_claim_over_field {
+            return Err(VerificationError::SumcheckRound { round });
         }
-
-        assert_eq!(
-            poly_over_field.at_zero() + poly_over_field.at_one(),
-            batched_claim_over_field,
-            "round claim mismatch in sumcheck round {round}"
-        );
 
         let mut f = FieldExtension::zero();
         hash_wrapper.sample_field_element_into(&mut f);
@@ -1549,11 +1551,11 @@ pub fn verify_claims(
         evaluation_points.push(r);
     }
 
-    assert_eq!(
-        &batched_claim_over_field,
-        field_combiner_evaluation.evaluate_at_ring_point(&evaluation_points),
-        "Initial sumcheck final evaluation mismatch"
-    );
+    if &batched_claim_over_field
+        != field_combiner_evaluation.evaluate_at_ring_point(&evaluation_points)
+    {
+        return Err(VerificationError::SumcheckEvaluation);
+    }
 
     hash_wrapper.update_with_ring_element(&proof.witness_eval);
     if let Some(conj_eval) = &proof.conj_witness_eval {
@@ -1562,12 +1564,12 @@ pub fn verify_claims(
 
     evaluation_points.reverse();
 
-    chain_inputs(
+    Ok(chain_inputs(
         &evaluation_points,
         shape.width,
         &proof.witness_eval,
         proof.conj_witness_eval.as_ref(),
-    )
+    ))
 }
 
 #[cfg(test)]
@@ -1679,7 +1681,8 @@ mod tests {
             .expect("an honest claims proof decodes");
         assert_eq!(crate::protocol::wire::initial_to_bytes(&decoded), bytes);
         let chain_verifier =
-            verify_claims((height, width), &claims, &decoded, &mut HashWrapper::new());
+            verify_claims((height, width), &claims, &decoded, &mut HashWrapper::new())
+                .expect("verification failed");
         assert_eq!(chain_prover.claims, chain_verifier.claims);
     }
 
@@ -1697,7 +1700,8 @@ mod tests {
             &claims,
             &proof,
             &mut hw_verifier,
-        );
+        )
+        .expect("verification failed");
 
         assert_eq!(chain_prover.claims, chain_verifier.claims);
 
@@ -1759,7 +1763,8 @@ mod tests {
             &claims_v,
             &proof,
             &mut hw_v,
-        );
+        )
+        .expect("verification failed");
         assert_eq!(chain_p.claims, chain_v.claims);
 
         for j in 0..chain_p.claims.len() {
@@ -1837,7 +1842,8 @@ mod tests {
             &claims_v,
             &proof,
             &mut hw_v,
-        );
+        )
+        .expect("verification failed");
         assert_eq!(chain_p.claims, chain_v.claims);
 
         for j in 0..chain_p.claims.len() {
@@ -1909,7 +1915,8 @@ mod tests {
             &make_claims(),
             &proof,
             &mut hw_v,
-        );
+        )
+        .expect("verification failed");
         assert_eq!(chain_p.claims, chain_v.claims);
 
         for j in 0..chain_p.claims.len() {
@@ -2017,11 +2024,17 @@ mod tests {
             table(wide.clone()) * ClaimExpr::witness(),
             eq(&alpha).on(node) * table(rows.clone()).on(block) * witness_in(half)
                 - eq(&alpha).on(node) * powers(3, block.len()).on(block) * witness_in(half),
-            table(wide[..n / 2].to_vec()).on(half.vars()) * witness_in(half) * witness_in(half).conjugate(),
-            witness_in(quarter) * witness_in(quarter).conjugate() - witness_in(quarter).scale(&seven),
+            table(wide[..n / 2].to_vec()).on(half.vars())
+                * witness_in(half)
+                * witness_in(half).conjugate(),
+            witness_in(quarter) * witness_in(quarter).conjugate()
+                - witness_in(quarter).scale(&seven),
             witness_in(small) * witness_in(small).conjugate() + witness_in(quarter),
             combination(vec![
-                (gammas[0].clone(), vec![table(rows.clone()).on(block), eq(&alpha).on(node)]),
+                (
+                    gammas[0].clone(),
+                    vec![table(rows.clone()).on(block), eq(&alpha).on(node)],
+                ),
                 (gammas[1].clone(), vec![powers(5, block.len()).on(block)]),
             ])
             .on(half.vars())
@@ -2070,7 +2083,8 @@ mod tests {
         let mut hw_p = HashWrapper::new();
         let (proof, chain_p) = prove_claims(&witness, &claims, &mut hw_p);
         let mut hw_v = HashWrapper::new();
-        let chain_v = verify_claims((1, 1), &claims, &proof, &mut hw_v);
+        let chain_v =
+            verify_claims((1, 1), &claims, &proof, &mut hw_v).expect("verification failed");
         assert_eq!(chain_p.claims, chain_v.claims);
         assert_eq!(proof.witness_eval, witness.data[0]);
     }
@@ -2098,7 +2112,8 @@ mod tests {
             &claims_v,
             &proof,
             &mut hw_v,
-        );
+        )
+        .expect("verification failed");
         assert_eq!(chain_p.claims, chain_v.claims);
         for j in 0..chain_p.claims.len() {
             let direct = crate::protocol::open::claim(
@@ -2125,7 +2140,18 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "round claim mismatch")]
+    fn malformed_initial_polynomial_returns_shape_error() {
+        init_common();
+        let (witness, claims) = toy_setup();
+        let (mut proof, _) = prove_claims(&witness, &claims, &mut HashWrapper::new());
+        proof.polys[0].num_coefficients = usize::MAX;
+        assert!(matches!(
+            verify_claims(&witness, &claims, &proof, &mut HashWrapper::new()),
+            Err(VerificationError::InvalidShape(_))
+        ));
+    }
+
+    #[test]
     fn test_initial_claims_wrong_value_rejected() {
         init_common();
         let (witness, mut claims) = toy_setup();
@@ -2135,12 +2161,15 @@ mod tests {
 
         claims[0].value += &RingElement::constant(1, Representation::IncompleteNTT);
         let mut hw_verifier = HashWrapper::new();
-        verify_claims(
-            (witness.height, witness.width),
-            &claims,
-            &proof,
-            &mut hw_verifier,
-        );
+        assert!(matches!(
+            verify_claims(
+                (witness.height, witness.width),
+                &claims,
+                &proof,
+                &mut hw_verifier,
+            ),
+            Err(VerificationError::SumcheckRound { .. })
+        ));
     }
 
     /// Prove and verify `make()` (rebuilt for each side), then check the
@@ -2152,7 +2181,8 @@ mod tests {
         let mut hw_p = HashWrapper::new();
         let (proof, chain_p) = prove_claims(witness, &make(), &mut hw_p);
         let mut hw_v = HashWrapper::new();
-        let chain_v = verify_claims((witness.height, witness.width), &make(), &proof, &mut hw_v);
+        let chain_v = verify_claims((witness.height, witness.width), &make(), &proof, &mut hw_v)
+            .expect("verification failed");
         assert_eq!(chain_p.claims, chain_v.claims);
         for j in 0..chain_p.claims.len() {
             let direct = crate::protocol::open::claim(
@@ -2252,7 +2282,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "round claim mismatch")]
     fn test_add_exprs_wrong_value_rejected() {
         init_common();
         let (witness, a, b) = combine_setup();
@@ -2274,11 +2303,14 @@ mod tests {
             value,
         }];
         let mut hw_v = HashWrapper::new();
-        verify_claims(
-            (witness.height, witness.width),
-            &claims_v,
-            &proof,
-            &mut hw_v,
-        );
+        assert!(matches!(
+            verify_claims(
+                (witness.height, witness.width),
+                &claims_v,
+                &proof,
+                &mut hw_v,
+            ),
+            Err(VerificationError::SumcheckRound { .. })
+        ));
     }
 }

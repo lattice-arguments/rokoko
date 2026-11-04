@@ -1,9 +1,10 @@
+use crate::protocol::error::{VerificationError, VerificationResult};
 use crate::{
     common::{
         arithmetic::field_to_ring_element,
         config::{NOF_BATCHES, NUM_SLOTS},
         hash::HashWrapper,
-        norms::assert_norm_bounded,
+        norms::check_norm_bounded,
         ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::StructuredRow,
         sumcheck_element::SumcheckElement,
@@ -24,11 +25,12 @@ pub fn batch_claims_linear(
     claims: &[RingElement],
     combination: &[RingElement],
     start_idx: usize,
-) -> (RingElement, usize) {
-    assert!(
-        start_idx + claims.len() <= combination.len(),
-        "Not enough combination challenges for linear claim batching"
-    );
+) -> VerificationResult<(RingElement, usize)> {
+    if start_idx > combination.len() || claims.len() > combination.len() - start_idx {
+        return Err(VerificationError::CheckFailed(
+            "Not enough combination challenges for linear claim batching".into(),
+        ));
+    }
 
     let mut batched = RingElement::zero(Representation::IncompleteNTT);
     let mut idx = start_idx;
@@ -38,7 +40,7 @@ pub fn batch_claims_linear(
         batched += &weighted;
         idx += 1;
     }
-    (batched, idx)
+    Ok((batched, idx))
 }
 
 pub fn intermediate_sumcheck_verifier(
@@ -51,17 +53,22 @@ pub fn intermediate_sumcheck_verifier(
     evaluation_points_inner: &[StructuredRow],
     fine_proj_batching_challenges: &[BatchedProjectionChallengesSuccinct; NOF_BATCHES],
     hash_wrapper: &mut HashWrapper,
-) -> Vec<RingElement> {
-    assert!(
-        !std::mem::replace(&mut verifier_sumcheck_context.spent, true),
-        "a sumcheck context serves one proof; build a fresh one with init_verifier"
-    );
+) -> VerificationResult<Vec<RingElement>> {
+    crate::protocol::parties::verifier::expect_polys(
+        "intermediate sumcheck polys",
+        &proof.polys,
+        (config.witness_height * config.witness_decomposition_chunks).ilog2() as usize,
+    )?;
 
-    assert_eq!(
-        folded_commitment.len(),
-        config.basic_commitment_rank,
-        "Folded commitment length mismatch for intermediate batcher"
-    );
+    if std::mem::replace(&mut verifier_sumcheck_context.spent, true) {
+        return Err(VerificationError::ContextReused);
+    }
+
+    if folded_commitment.len() != config.basic_commitment_rank {
+        return Err(VerificationError::CheckFailed(
+            "Folded commitment length mismatch for intermediate batcher".into(),
+        ));
+    }
 
     hash_wrapper.update_with_ring_element(&proof.norm_claim);
 
@@ -73,30 +80,31 @@ pub fn intermediate_sumcheck_verifier(
     hash_wrapper.sample_ring_element_vec_into(&mut combination);
 
     let norm_ct = proof.norm_claim.constant_term_from_incomplete_ntt();
-    assert_norm_bounded(
+    check_norm_bounded(
         "norm claim via inner-product (intermediate)",
         (norm_ct as f64).sqrt(),
         config.norm_bound,
-    );
+    )?;
 
     let mut combination_to_field = RingElement::zero(Representation::IncompleteNTT);
     hash_wrapper.sample_ring_element_into(&mut combination_to_field);
     combination_to_field.from_incomplete_ntt_to_homogenized_field_extensions();
     let fe: [FieldExtension; NUM_SLOTS] = combination_to_field.split_into_field_extensions();
 
-    let (mut batched_claim, idx) = batch_claims_linear(folded_commitment, &combination, 0);
+    let (mut batched_claim, idx) = batch_claims_linear(folded_commitment, &combination, 0)?;
     let (batched_inner_eval_claims, idx) =
-        batch_claims_linear(folded_opening_claims, &combination, idx);
+        batch_claims_linear(folded_opening_claims, &combination, idx)?;
     batched_claim += &batched_inner_eval_claims;
     let (batched_fine_proj_claims, idx) =
-        batch_claims_linear(folded_batched_projection_claims, &combination, idx);
+        batch_claims_linear(folded_batched_projection_claims, &combination, idx)?;
     batched_claim += &batched_fine_proj_claims;
-    assert!(
-        idx < combination.len(),
-        "Not enough combination challenges for norm claim (idx={}, len={})",
-        idx,
-        combination.len()
-    );
+    if idx >= combination.len() {
+        return Err(VerificationError::CheckFailed(format!(
+            "Not enough combination challenges for norm claim (idx={}, len={})",
+            idx,
+            combination.len()
+        )));
+    }
     let mut weighted_norm = proof.norm_claim.clone();
     weighted_norm *= &combination[idx];
     batched_claim += &weighted_norm;
@@ -116,13 +124,12 @@ pub fn intermediate_sumcheck_verifier(
 
     let mut evaluation_points_field: Vec<FieldExtension> = Vec::with_capacity(proof.polys.len());
 
-    for poly_over_field in proof.polys.iter() {
+    for (round, poly_over_field) in proof.polys.iter().enumerate() {
         hash_wrapper.update_with_field_extension_slice(&poly_over_field.coefficients);
 
-        assert_eq!(
-            poly_over_field.at_zero() + poly_over_field.at_one(),
-            batched_claim_over_field
-        );
+        if poly_over_field.at_zero() + poly_over_field.at_one() != batched_claim_over_field {
+            return Err(VerificationError::SumcheckRound { round });
+        }
 
         let mut challenge = FieldExtension::zero();
         hash_wrapper.sample_field_element_into(&mut challenge);
@@ -141,18 +148,19 @@ pub fn intermediate_sumcheck_verifier(
         &fe,
     );
 
-    assert_eq!(
-        &batched_claim_over_field,
-        verifier_sumcheck_context
+    if &batched_claim_over_field
+        != verifier_sumcheck_context
             .field_combiner_evaluation
             .borrow_mut()
             .evaluate(&evaluation_points_field)
-    );
+    {
+        return Err(VerificationError::SumcheckEvaluation);
+    }
 
     hash_wrapper.update_with_ring_element(&proof.claim_over_witness);
     hash_wrapper.update_with_ring_element(&proof.claim_over_witness_conjugate);
 
-    evaluation_points_field
+    Ok(evaluation_points_field
         .iter()
         .rev()
         .map(|f| {
@@ -160,5 +168,5 @@ pub fn intermediate_sumcheck_verifier(
             r.from_homogenized_field_extensions_to_incomplete_ntt();
             r
         })
-        .collect()
+        .collect())
 }

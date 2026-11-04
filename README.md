@@ -74,7 +74,7 @@ The prover takes as input the CRS, `SumcheckConfig`, the recursive commitment (p
 
 ```rust
 pub fn verifier_round(
-    crs: &CRS,
+    crs: &VerifierCRS,
     config: &SumcheckConfig,
     rc_commitment: &[RingElement],
     round_proof: &SumcheckRoundProof,
@@ -83,10 +83,25 @@ pub fn verifier_round(
     claims: &[RingElement],
     sumcheck_context_verifier: &mut VerifierSumcheckContext,
     hash_wrapper_verifier: Option<HashWrapper>,
-)
+    boundary: Option<BoundaryCapture<'_, VerifierBoundary>>,
+) -> VerificationResult<()>
 ```
 
 The verifier interface, similarly to the prover, requires a CRS, `SumcheckConfig`, structured evaluation points, and an (optionally pre-initialised) Fiat–Shamir transcript. Additionally, it takes as input the claimed polynomial evaluations to be checked and a mutable `VerifierSumcheckContext`.
+
+Verification returns `Result`: `verifier_round`, `verifier_round_simple` and
+`verifier_round_intermediate` return `VerificationResult<()>`, while
+`snark::verify_claims` returns `VerificationResult<ChainInputs>`.
+Import `VerificationError` and `VerificationResult` from `rokoko::protocol`.
+
+The error enum distinguishes malformed proof shapes, inconsistent round chains,
+failed algebraic checks, sumcheck round/final evaluation mismatches, norm violations
+(with the measured value and bound), and reused contexts.
+
+Configuration/CRS construction and caller-built statement expressions still require
+valid inputs and retain their internal assertions. Use fresh transcripts and contexts
+after an unsuccessful verification. The `soft-norms` and `calibration` features
+retain their existing reporting-only treatment of norm violations.
 
 ### Sumcheck Interface
 

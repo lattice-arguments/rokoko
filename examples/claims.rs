@@ -27,7 +27,8 @@ fn main() {
     let witness = layout.finish();
 
     let prices: Vec<u64> = (1..=512).collect();
-    let revenue = (table(prices.clone()).on(balances_at.vars()) * witness_in(balances_at)).sum(&witness);
+    let revenue =
+        (table(prices.clone()).on(balances_at.vars()) * witness_in(balances_at)).sum(&witness);
     let energy = (witness_in(everything) * witness_in(everything).conjugate()).sum(&witness);
 
     let build_claims = |transcript: &mut Transcript| -> Vec<Claim> {
@@ -41,7 +42,8 @@ fn main() {
                 revenue.clone(),
             ),
             Claim::sums_to_zero(
-                eq(&spot_check).on(balances_at.vars()) * (witness_in(balances_at) - witness_in(mirror_at)),
+                eq(&spot_check).on(balances_at.vars())
+                    * (witness_in(balances_at) - witness_in(mirror_at)),
             ),
             Claim::sums_to(
                 eq(&audit_point).on(total_index)
@@ -68,7 +70,8 @@ fn main() {
         &verifier_claims,
         &proof,
         &mut verifier_transcript,
-    );
+    )
+    .expect("verification failed");
     println!("verifier: accepted the weighted revenue, the mirrored balances,");
     println!("          the digit recomposition of every audit total,");
 

@@ -5,8 +5,8 @@ mod lowering;
 pub use crate::common::hash::HashWrapper as Transcript;
 pub use lowering::InitialSumcheckProof as ClaimsProof;
 pub use lowering::SnarkClaim as Claim;
-pub use lowering::{prove_claims, verify_claims, ChainInputs, ClaimExpr, WitnessShape};
 pub use lowering::{embed_fe, eq_layers_fe, fe_one_minus, tensor_at};
+pub use lowering::{prove_claims, verify_claims, ChainInputs, ClaimExpr, WitnessShape};
 
 use lowering::{ClaimFactor, Coeffs, PublicFactor, SnarkClaim, Weights};
 
@@ -675,7 +675,8 @@ mod tests {
 
         let mut tv = Transcript::new();
         let claims_v = make(&mut tv);
-        let chain_v = verify_claims(witness, &claims_v, &proof, &mut tv);
+        let chain_v =
+            verify_claims(witness, &claims_v, &proof, &mut tv).expect("verification failed");
 
         assert_eq!(chain_p.claims, chain_v.claims);
         for j in 0..chain_p.claims.len() {
@@ -804,7 +805,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "round claim mismatch")]
     fn test_copy_regions_tampered_rejected() {
         init_common();
         let data = short(128, 100);
@@ -826,7 +826,10 @@ mod tests {
         let (proof, _) = prove_claims(&w, &claims_p, &mut tp);
         let mut tv = Transcript::new();
         let claims_v = make(&mut tv);
-        verify_claims(&w, &claims_v, &proof, &mut tv);
+        assert!(matches!(
+            verify_claims(&w, &claims_v, &proof, &mut tv),
+            Err(crate::protocol::VerificationError::SumcheckRound { .. })
+        ));
     }
 
     #[test]

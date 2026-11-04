@@ -1,9 +1,10 @@
+use crate::protocol::error::{VerificationError, VerificationResult};
 use crate::{
     common::{
         arithmetic::field_to_ring_element,
         config::{NOF_BATCHES, NUM_SLOTS},
         hash::HashWrapper,
-        norms::assert_norm_bounded,
+        norms::check_norm_bounded,
         projection_matrix::ProjectionMatrix,
         ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::StructuredRow,
@@ -34,7 +35,7 @@ fn batch_claims(
     most_inner_norm_claim: &RingElement,
     projection_norm_claim: Option<&RingElement>,
     combination: &[RingElement],
-) -> RingElement {
+) -> VerificationResult<RingElement> {
     let mut batched_claim = RingElement::zero(Representation::IncompleteNTT);
     let mut idx = 0;
 
@@ -90,17 +91,33 @@ fn batch_claims(
             2 => match &config.projection_recursion {
                 Projection::Coarse(proj_config) => proj_config,
                 // Projection::Fine(proj_config) => &proj_config.recursion_constant_term,
-                _ => unreachable!(),
+                _ => {
+                    return Err(VerificationError::InvalidRound(
+                        "inconsistent projection configuration".into(),
+                    ))
+                }
             },
             3 => match &config.projection_recursion {
                 Projection::Fine(proj_config) => &proj_config.recursion_constant_term,
-                _ => unreachable!(),
+                _ => {
+                    return Err(VerificationError::InvalidRound(
+                        "inconsistent projection configuration".into(),
+                    ))
+                }
             },
             4 => match &config.projection_recursion {
                 Projection::Fine(proj_config) => &proj_config.recursion_batched_projection,
-                _ => unreachable!(),
+                _ => {
+                    return Err(VerificationError::InvalidRound(
+                        "inconsistent projection configuration".into(),
+                    ))
+                }
             },
-            _ => unreachable!(),
+            _ => {
+                return Err(VerificationError::InvalidRound(
+                    "inconsistent projection configuration".into(),
+                ))
+            }
         };
 
         // Internal layers (zero claims)
@@ -137,14 +154,14 @@ fn batch_claims(
         idx += 1;
     }
 
-    assert_eq!(
-        idx,
-        combination.len(),
-        "batched claim walked {idx} of {} combiner outputs",
-        combination.len()
-    );
+    if idx != combination.len() {
+        return Err(VerificationError::CheckFailed(format!(
+            "batched claim walked {idx} of {} combiner outputs",
+            combination.len()
+        )));
+    }
 
-    batched_claim
+    Ok(batched_claim)
 }
 
 pub fn sumcheck_verifier(
@@ -156,11 +173,19 @@ pub fn sumcheck_verifier(
     evaluation_points_outer: &[StructuredRow],
     claims: &[RingElement],
     hash_wrapper: &mut HashWrapper,
-) -> Vec<RingElement> {
-    assert!(
-        !std::mem::replace(&mut verifier_sumcheck_context.spent, true),
-        "a sumcheck context serves one proof; build a fresh one with init_verifier"
-    );
+) -> VerificationResult<Vec<RingElement>> {
+    crate::protocol::parties::verifier::check_sumcheck_round_shape(
+        config,
+        rc_commitment,
+        round_proof,
+        evaluation_points_inner,
+        evaluation_points_outer,
+        claims,
+    )?;
+
+    if std::mem::replace(&mut verifier_sumcheck_context.spent, true) {
+        return Err(VerificationError::ContextReused);
+    }
 
     hash_wrapper.update_with_ring_element_slice(rc_commitment);
     hash_wrapper.update_with_ring_element_slice(&round_proof.rc_opening_inner);
@@ -228,11 +253,13 @@ pub fn sumcheck_verifier(
     ) {
         (Some(_), Some(claim)) => Some(claim),
         (None, None) => None,
-        (scope, claim) => panic!(
-            "projection norm claim presence {} does not match the round's config {}",
-            claim.is_some(),
-            scope.is_some()
-        ),
+        (scope, claim) => {
+            return Err(VerificationError::InvalidRound(format!(
+                "projection norm claim presence {} does not match the round's config {}",
+                claim.is_some(),
+                scope.is_some()
+            )))
+        }
     };
 
     hash_wrapper.update_with_ring_element(&round_proof.norm_claim);
@@ -274,38 +301,42 @@ pub fn sumcheck_verifier(
         &round_proof.most_inner_norm_claim,
         projection_norm_claim,
         &combination,
-    );
+    )?;
 
     if let Some(constant_term_claims) = &round_proof.constant_term_claims {
         for ct_claim in constant_term_claims.iter() {
             let ct = ct_claim.constant_term_from_incomplete_ntt();
-            assert_eq!(ct, 0);
+            if ct != 0 {
+                return Err(VerificationError::CheckFailed(
+                    "projection constant term mismatch".to_owned(),
+                ));
+            }
         }
     }
 
     let norm_ct = round_proof.norm_claim.constant_term_from_incomplete_ntt();
-    assert_norm_bounded(
+    check_norm_bounded(
         "norm claim via inner-product",
         (norm_ct as f64).sqrt(),
         config.norm_bound,
-    );
+    )?;
 
     let most_inner_norm_ct = round_proof
         .most_inner_norm_claim
         .constant_term_from_incomplete_ntt();
-    assert_norm_bounded(
+    check_norm_bounded(
         "most inner norm claim via inner-product",
         (most_inner_norm_ct as f64).sqrt(),
         config.most_inner_norm_bound,
-    );
+    )?;
 
     if let Some(projection_norm_claim) = projection_norm_claim {
         let projection_norm_ct = projection_norm_claim.constant_term_from_incomplete_ntt();
-        assert_norm_bounded(
+        check_norm_bounded(
             "projection image norm claim via inner-product",
             (projection_norm_ct as f64).sqrt(),
             config.projection_norm_bound,
-        );
+        )?;
     }
 
     let mut batched_claim_over_field = {
@@ -336,13 +367,11 @@ pub fn sumcheck_verifier(
 
         hash_wrapper.update_with_field_extension_slice(&poly_over_field.coefficients);
 
-        assert_eq!(
-            poly_over_field.at_zero() + poly_over_field.at_one(),
-            batched_claim_over_field,
-            "round-poly claim mismatch at witness_height={} num_vars_left={}",
-            config.witness_height,
-            num_vars
-        );
+        if poly_over_field.at_zero() + poly_over_field.at_one() != batched_claim_over_field {
+            return Err(VerificationError::SumcheckRound {
+                round: round_proof.polys.len() - num_vars - 1,
+            });
+        }
 
         let mut f = FieldExtension::zero();
 
@@ -366,13 +395,14 @@ pub fn sumcheck_verifier(
         &fe,
     );
 
-    assert_eq!(
-        &batched_claim_over_field,
-        verifier_sumcheck_context
+    if &batched_claim_over_field
+        != verifier_sumcheck_context
             .field_combiner_evaluation
             .borrow_mut()
             .evaluate(&evaluation_points)
-    );
+    {
+        return Err(VerificationError::SumcheckEvaluation);
+    }
 
     hash_wrapper.update_with_ring_element(&round_proof.claim_over_witness);
     hash_wrapper.update_with_ring_element(&round_proof.claim_over_witness_conjugate);
@@ -387,5 +417,5 @@ pub fn sumcheck_verifier(
         })
         .collect();
 
-    eps
+    Ok(eps)
 }

@@ -137,7 +137,8 @@ fn run(
             cut,
             slot: &mut verifier_boundary,
         }),
-    );
+    )
+    .expect("verification failed");
     drop(verifier_span);
 
     let verifier_duration = start.elapsed().as_nanos();
@@ -354,6 +355,7 @@ pub fn execute_snark(inst: &Instantiation) {
             &initial_proof,
             &mut hash_wrapper_verifier,
         )
+        .expect("verification failed")
     };
 
     verifier_round(
@@ -367,7 +369,8 @@ pub fn execute_snark(inst: &Instantiation) {
         &mut sumcheck_context_verifier,
         Some(hash_wrapper_verifier),
         None,
-    );
+    )
+    .expect("verification failed");
     drop(_verifier_span);
     println!("TOTAL Verifier time: {:?} ns", start.elapsed().as_nanos());
 }
@@ -489,13 +492,13 @@ mod tests {
             copy
         }
 
-        fn verify(&self, proof: &SumcheckRoundProof) {
+        fn verify(&self, proof: &SumcheckRoundProof) -> crate::protocol::VerificationResult<()> {
             self.verify_in(
                 &mut init_verifier(&self.crs, &self.config),
                 &self.rc_commitment,
                 &self.claims,
                 proof,
-            );
+            )
         }
 
         fn verify_in(
@@ -504,7 +507,7 @@ mod tests {
             rc_commitment: &[RingElement],
             claims: &[RingElement],
             proof: &SumcheckRoundProof,
-        ) {
+        ) -> crate::protocol::VerificationResult<()> {
             use crate::protocol::parties::verifier::verifier_round;
 
             verifier_round(
@@ -518,7 +521,7 @@ mod tests {
                 sumcheck_context,
                 None,
                 None,
-            );
+            )
         }
     }
 
@@ -538,20 +541,12 @@ mod tests {
     fn round_trip_with(config: &SumcheckConfig, tamper: impl FnOnce(&mut SumcheckRoundProof)) {
         let mut honest = Honest::prove(config);
         tamper(&mut honest.proof);
-        honest.verify(&honest.proof);
+        honest.verify(&honest.proof).unwrap();
     }
 
-    /// The message a verification panics with, or a panic of its own when it accepts.
-    fn refusal(verify: impl FnOnce()) -> String {
-        let payload = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(verify)) {
-            Ok(()) => panic!("the verifier accepted"),
-            Err(payload) => payload,
-        };
-        payload
-            .downcast_ref::<String>()
-            .cloned()
-            .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
-            .unwrap_or_default()
+    /// Rejection diagnostics, without catching panics: a verifier panic fails the test.
+    fn refusal(verify: impl FnOnce() -> crate::protocol::VerificationResult<()>) -> String {
+        verify().expect_err("the verifier accepted").to_string()
     }
 
     fn sumcheck_config(
@@ -609,7 +604,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "proof ends before the configured round chain")]
     fn a_proof_cut_before_the_last_round_is_rejected() {
         init_common();
 
@@ -619,7 +613,14 @@ mod tests {
             _ => panic!("expected a sumcheck config"),
         };
 
-        round_trip_with(config, |proof| proof.next = None);
+        let honest = Honest::prove(config);
+        let mut proof = honest.copy();
+        proof.next = None;
+        assert!(matches!(
+            honest.verify(&proof),
+            Err(crate::protocol::VerificationError::InvalidRound(message))
+                if message == "proof ends before the configured round chain"
+        ));
     }
 
     /// The verifier takes every size from the config and none from the proof: a proof whose
@@ -745,12 +746,15 @@ mod tests {
         ] {
             init_common();
             let honest = Honest::prove(&sumcheck_config(aux));
-            honest.verify(&honest.copy());
+            honest.verify(&honest.copy()).unwrap();
             for (case, tamper) in cases {
                 let mut proof = honest.copy();
                 tamper(&mut proof);
-                let refusal = refusal(|| honest.verify(&proof));
-                assert!(refusal.starts_with("proof shape"), "{case}: {refusal}");
+                let error = honest.verify(&proof).expect_err(case);
+                assert!(
+                    matches!(error, crate::protocol::VerificationError::InvalidShape(_)),
+                    "{case}: {error}"
+                );
             }
         }
     }
@@ -861,7 +865,7 @@ mod tests {
             for witness in [zero, one_entry] {
                 init_common();
                 let honest = Honest::prove_witness(&config, witness);
-                honest.verify(&honest.copy());
+                honest.verify(&honest.copy()).unwrap();
             }
         }
     }
@@ -938,40 +942,34 @@ mod tests {
         let crs = CRS::gen_prover_crs(&config);
         let mut prover_context = init_sumcheck(&crs, &config);
         let first = Honest::prove_in(&config, &crs, &mut prover_context, short_witness);
-        let refusal_to_prove = refusal(|| {
-            drop(Honest::prove_in(
-                &config,
-                &crs,
-                &mut prover_context,
-                short_witness,
-            ))
-        });
-        assert!(
-            refusal_to_prove.starts_with("a sumcheck context serves one proof"),
-            "{refusal_to_prove}"
-        );
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            Honest::prove_in(&config, &crs, &mut prover_context, short_witness)
+        }))
+        .is_err());
 
         let second = Honest::prove(&config);
         let mut verifier_context = init_verifier(&first.crs, &config);
-        first.verify_in(
-            &mut verifier_context,
-            &first.rc_commitment,
-            &first.claims,
-            &first.proof,
-        );
-        let refusal_to_verify = refusal(|| {
+        first
+            .verify_in(
+                &mut verifier_context,
+                &first.rc_commitment,
+                &first.claims,
+                &first.proof,
+            )
+            .unwrap();
+        let refusal_to_verify = {
             second.verify_in(
                 &mut verifier_context,
                 &second.rc_commitment,
                 &second.claims,
                 &second.proof,
             )
-        });
-        assert!(
-            refusal_to_verify.starts_with("a sumcheck context serves one proof"),
-            "{refusal_to_verify}"
+        };
+        assert_eq!(
+            refusal_to_verify,
+            Err(crate::protocol::VerificationError::ContextReused)
         );
-        second.verify(&second.proof);
+        second.verify(&second.proof).unwrap();
     }
 
     /// `three_openings_aux` with an intermediate round before the last one, whose basic
