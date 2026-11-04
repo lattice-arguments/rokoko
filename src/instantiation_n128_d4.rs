@@ -23,7 +23,7 @@ const _: () = assert!(
 pub fn instantiation(set: ParamSet) -> Option<Instantiation> {
     Some(Instantiation {
         config: chain(set)?,
-        witness: initial_witness(set),
+        witness: initial_witness(&root_aux(set, 1)),
     })
 }
 

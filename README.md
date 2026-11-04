@@ -226,7 +226,7 @@ Due to memory requirements for polynomial degree 2^30 exceeding 64 GB, the respe
 
 ## Parameter sets
 
-The binary takes the parameter set as its argument: `p-22`, `p-24`, `p-26`, `p-28` (default) and `p-30` for polynomial degrees 2^22 to 2^30, e.g. `cargo run --release -- p-26`; `p-29` exists as an exact-norm chain for `snark` mode. The sets are defined in `src/instantiation.rs`, measured for rings with 2 projection batches. The build script passes the spec's file name to the crate as the cfg `rokoko_ring`, and `src/main.rs` selects `src/instantiation_n128_d4.rs` for `rokoko_ring = "n128_d4"`; that module retunes the default chains for `rings/n128_d4.toml` and fails to compile against any other ring.
+The binary takes the parameter set as its argument: `p-22`, `p-24`, `p-26`, `p-28` (default) and `p-30` for polynomial degrees 2^22 to 2^30, e.g. `cargo run --release -- p-26`; `p-29` exists as an exact-norm chain for `snark` mode. The sets are defined in `src/instantiation.rs`, measured for rings with 2 projection batches. The build script passes the spec's file name to the crate as the cfg `rokoko_ring`, and `src/main.rs` selects `src/instantiation_n128_d4.rs` for `rokoko_ring = "n128_d4"` and `src/instantiation_n256.rs` for `rokoko_ring = "n256"`; each retunes the chains for its ring and fails to compile against any other. The degree-256 sets are `p-22` to `p-30` except `p-29`, plain chains only, e.g. `ROKOKO_RING=rings/n256.toml cargo run --release -- p-26`.
 
 ## Ring
 
