@@ -1,3 +1,8 @@
+//! The `FiniteRing` trait: the arithmetic `RingElement` and `FieldExtension` share (in-place and
+//! two-operand add, sub and mul, shared zero/one/two, zeroing, copying), which the transcript,
+//! structured rows and the sumcheck engine are generic over. Also holds `U64Wrapper`, a plain
+//! `u64` with in-place add, sub and mul and two-operand mul, which does not implement the trait.
+
 use std::ops::{AddAssign, MulAssign, SubAssign};
 
 use crate::ring::{

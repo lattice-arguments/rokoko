@@ -1,3 +1,8 @@
+//! The Fiat-Shamir transcript `HashWrapper`: a BLAKE3 hasher that absorbs ring elements,
+//! field elements, bytes and `u64`s, and derives challenges from a labelled XOF on a sample
+//! counter: bytes, `u64`s, uniform ring and field elements, ring elements with one field
+//! element in every slot, biased ternary ring elements, and short challenges.
+
 use crate::ring::helpers::field_to_ring_element_into;
 use crate::ring::config::{DEGREE, MOD_Q};
 use crate::ring::ring_arithmetic::*;

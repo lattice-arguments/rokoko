@@ -1,3 +1,8 @@
+//! Verifier twin of `builder.rs`: `init_verifier` builds a Sumcheck round's evaluation-only
+//! gadget tree, outputs in the prover's order, into a `VerifierSumcheckContext`. Selectors and
+//! recompositions evaluate over the slot field (`FieldBlocksEvaluation`), key rows share tensor
+//! products (`KeyRowProducts`); its leaf constructors are reused by the Intermediate verifier.
+
 use crate::{
     commitment::{self, crs::VerifierCRS, Placement, Prefix},
     common::structured_row::StructuredRow,

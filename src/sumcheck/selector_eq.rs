@@ -1,3 +1,8 @@
+//! `SelectorEq`, the gadget for `eq(x, s)`: it fixes the `selector_variable_count` most
+//! significant variables to the bits of `s` and is constant in the rest, giving the packing
+//! prefixes `eq(p_i, ·)` without a table. `SelectorEqEvaluation` is the verifier-side
+//! evaluation at a point.
+
 use std::cell::RefCell;
 
 use crate::{

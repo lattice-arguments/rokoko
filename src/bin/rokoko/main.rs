@@ -1,3 +1,8 @@
+//! The `rokoko` binary: runs one parameter set (`p-22` to `p-30`, default `p-28`) end to end.
+//! It takes the chain from `instantiation` (`instantiation_n128_d4` for that ring), plain or,
+//! with `snark`, exact-norm; prints CPU and build information; installs `tracing`; then runs
+//! `execute` (a Ξ^lin start) or, with `snark`, `execute_snark` (a Ξ^sum start).
+
 // Each entry point is used under one feature, or by the tests only.
 #[allow(dead_code)]
 mod executor;

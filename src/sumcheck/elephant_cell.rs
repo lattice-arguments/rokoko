@@ -1,13 +1,13 @@
+//! `ElephantCell`, the shared mutable handle (`Rc`) through which sumcheck trees reference
+//! their gadgets. It wraps a `RefCell` without the `unsafe-sumcheck` feature and an unchecked
+//! `UnsafeCell` with it; `Cargo.toml` enables that feature by default.
+//!
+//! Safety invariant of the unchecked mode: gadgets are only read while round polynomials are
+//! computed, and only mutated by `partial_evaluate`, which never runs concurrently with those
+//! reads.
+
 use std::marker::Unsize;
 use std::ops::CoerceUnsized;
-/// ElephantCell: A cell type that can operate in safe or unsafe mode via compile-time feature flag.
-///
-/// - Safe mode (default): Uses Rc<RefCell<T>> with runtime borrow checking
-/// - Unsafe mode (feature="unsafe-sumcheck"): Uses Rc<UnsafeCell<T>> with zero-cost access
-///
-/// Safety invariant for unsafe mode: During polynomial generation (read operations),
-/// no mutations occur. Mutations only happen during partial_evaluate, which is never
-/// concurrent with polynomial generation.
 use std::rc::Rc;
 
 #[cfg(not(feature = "unsafe-sumcheck"))]

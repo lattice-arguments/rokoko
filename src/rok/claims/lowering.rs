@@ -1,3 +1,8 @@
+//! Lowering of the claim language to sumchecks: claims (`SnarkClaim` over a `ClaimExpr`) are
+//! canonicalised, validated and built into gadget trees, and `prove_claims` and `verify_claims`
+//! run the batched sumcheck that reduces them (a Ξ^sum statement) to the evaluation claims
+//! `ChainInputs`, a Ξ^lin statement for the chain.
+
 use crate::{
     commitment::Prefix,
     common::{

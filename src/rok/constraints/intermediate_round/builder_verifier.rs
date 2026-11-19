@@ -1,3 +1,7 @@
+//! Verifier twin of the Intermediate `builder.rs`: `init_intermediate_verifier` builds the
+//! evaluation-only gadget tree, outputs in the prover's order, into an
+//! `IntermediateVerifierSumcheckContext`, recursing into a following Intermediate round.
+
 use crate::{
     commitment::crs::VerifierCRS,
     ring::{

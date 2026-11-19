@@ -1,3 +1,7 @@
+//! Verifier-side state of an Intermediate round's sumcheck:
+//! `IntermediateVerifierSumcheckContext` mirrors `IntermediateSumcheckContext` with
+//! evaluation-only gadgets, one sub-context per constraint, and the combiner evaluations.
+
 use crate::{
     ring::{
         config::NOF_BATCHES,

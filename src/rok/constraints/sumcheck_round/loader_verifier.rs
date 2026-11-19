@@ -1,3 +1,8 @@
+//! Verifier-side data loading for a Sumcheck round: `load_verifier_sumcheck_data` sets the
+//! witness leaves to the prover's claimed evaluations `z_0`, `z_1`, and loads the folding
+//! challenges, the evaluation points and projection coefficients in structured form, and the
+//! batching challenges.
+
 use crate::{
     common::structured_row::{PreprocessedRow, StructuredRow},
     ring::{

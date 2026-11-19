@@ -1,3 +1,8 @@
+//! Kernels behind `Π^proj-c` and `Π^proj-f`: a ternary row's output is the exact sum of the
+//! `i16` witness digits it selects with `+1` minus those it selects with `−1`. Portable
+//! `project_one_row_i16_to_u64`, AVX-512 `project_rows_sparse_tiled` and AVX-512BW
+//! `project_rows_grouped` write it mod `q`; `project_lanes_grouped` returns the `i32` sums.
+
 use crate::ring::{config::MOD_Q, ring_arithmetic::Signed16RingElement};
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 use crate::ring::{config::DEGREE, ring_arithmetic::RingElement};

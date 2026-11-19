@@ -1,3 +1,8 @@
+//! `FlatRounds`, the prover's fast path for the early sumcheck rounds (all but the last five,
+//! `unsafe-sumcheck` only). It flattens each batched tree into sum-of-products `FlatTerm`s and
+//! builds the `γ`-combined round polynomial from per-term sums at 0, 1, ∞ and 2, taking the
+//! value at 1 from the previous round's polynomial. Used by the sumcheck loops in `rok`.
+
 use crate::{
     ring::{
         config::MOD_Q,

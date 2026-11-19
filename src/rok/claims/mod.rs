@@ -1,4 +1,7 @@
-//! SNARK claim language; guide in `docs/claims.md`, demo in `examples/claims.rs`.
+//! Claims for a Ξ^sum start. `language` is the claim language, and `lowering` reduces such claims
+//! to the Ξ^lin claims the chain starts from (`prove_claims`, `verify_claims`); both are
+//! re-exported here, with the transcript as `Transcript`. Guide in `docs/claims.md`, demo in
+//! `examples/claims.rs`.
 
 mod language;
 mod lowering;

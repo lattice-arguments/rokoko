@@ -1,5 +1,6 @@
-// `fmt::layer`'s ancestor chain is unreadable under the recursive `prover_round`
-// span, so we render just the `message` field; span context comes from `ConsoleLayer`.
+//! `LogLayer` prints the `message` field of each event to stdout, one line per event, with no
+//! level, target or span context: `fmt::layer`'s ancestor chain is unreadable under the
+//! recursive `prover_round` span, and span context comes from `ConsoleLayer`.
 
 use std::fmt::Write as _;
 use std::io::{self, Write as _};

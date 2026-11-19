@@ -1,3 +1,6 @@
+//! `HypercubePoint`, a vertex of the Boolean hypercube `{0,1}^n` stored as a `usize` bitmask,
+//! with the shift and mask helpers gadgets use to index their tables.
+
 /// Compact representation of a vertex in {0,1}^n using an integer bitmask.
 #[derive(Clone, Copy, Debug)]
 pub struct HypercubePoint {

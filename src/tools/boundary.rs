@@ -1,3 +1,8 @@
+//! Round-boundary capture: `ProverBoundary` and `VerifierBoundary` hold each party's state at
+//! the start of a sumcheck round (config, witness or commitment root, claims, evaluation
+//! points, transcript), and `BoundaryCapture` tells `prover_round` and `verifier_round` after
+//! which round to stop the chain and fill them in.
+
 use std::num::NonZeroUsize;
 
 use crate::common::hash::HashWrapper;

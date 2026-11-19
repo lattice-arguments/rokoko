@@ -1,3 +1,7 @@
+//! Verifier-side state of a Sumcheck round's sumcheck: `VerifierSumcheckContext` mirrors
+//! `SumcheckContext` with evaluation-only gadgets, one sub-context per constraint, the combiner
+//! evaluations and the next round's context (`NextVerifierSumcheckContext`).
+
 use crate::{
     ring::{
         config::NOF_BATCHES,

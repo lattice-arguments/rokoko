@@ -1,3 +1,8 @@
+//! Norms of ring-element vectors over centred coefficients: `inf_norm` and `l2_norm` (input
+//! in IncompleteNTT), `l2_norm_coeffs` (input in coefficients), and `assert_norm_bounded`,
+//! which panics over the bound unless `soft-norms` is on (`NORMS_ENFORCED`). Under
+//! `calibration`, the `calibration` module records each check and prints the measured schedule.
+
 use crate::ring::{config::MOD_Q, ring_arithmetic::RingElement};
 
 /// Whether a norm over its bound rejects the proof. `soft-norms`, which `calibration` turns on,

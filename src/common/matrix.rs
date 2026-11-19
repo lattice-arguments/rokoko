@@ -1,3 +1,8 @@
+//! Dense matrix containers indexed by `(row, col)`: `VerticallyAlignedMatrix` (column-major,
+//! with `used_cols` for padded widths) and `HorizontallyAlignedMatrix` (row-major), plus the
+//! `ZeroNew` constructor trait. The `rok` layer keeps witnesses, commitments and images in
+//! them.
+
 use std::ops::{Index, IndexMut};
 
 pub trait ZeroNew<T> {

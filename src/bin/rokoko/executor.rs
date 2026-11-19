@@ -1,3 +1,8 @@
+//! End-to-end runs of the chain, as the binary and its tests use them: sample a witness and the
+//! initial statement, generate the CRS, commit, prove, round-trip the proof through `wire` and
+//! verify, printing timings and sizes. `execute` starts from a Ξ^lin statement, `execute_snark`
+//! from a Ξ^sum one, and `execute_to_boundary` stops after a given round (`BoundaryRun`).
+
 use std::num::NonZeroUsize;
 
 use rokoko::{

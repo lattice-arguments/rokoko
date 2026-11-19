@@ -1,3 +1,6 @@
+//! `SumSumcheck`, the gadget for the pointwise sum of two sumcheck trees; its round polynomial
+//! is the sum of the children's. `SumSumcheckEvaluation` is the verifier-side evaluation.
+
 #[cfg(feature = "unsafe-sumcheck")]
 use crate::sumcheck::common::FlatTerm;
 use crate::{

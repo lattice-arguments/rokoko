@@ -1,3 +1,8 @@
+//! `setup` installs the global tracing subscriber for a run: `LogLayer` always, `ConsoleLayer`
+//! with `events`, `SnapshotLayer` with `profile`, each filtered by `RustLog`. It returns
+//! `TracingGuards`, to hold until the reports are due. With `profile`, `run_dir` names the
+//! artifact directory `profiles/<set>_<timestamp>` and `print_artifact_paths` lists the files.
+
 use std::any::Any;
 
 use tracing_subscriber::{prelude::*, registry::Registry, Layer};

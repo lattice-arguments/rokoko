@@ -1,3 +1,7 @@
+//! Verifier-side data loading for an Intermediate round: sets the witness leaves to the
+//! prover's claimed evaluations and loads the inner evaluation points, the FineProj challenges
+//! and the batching challenges (`load_intermediate_verifier_sumcheck_data`).
+
 use crate::{
     common::structured_row::StructuredRow,
     ring::{

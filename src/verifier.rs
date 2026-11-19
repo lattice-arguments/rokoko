@@ -1,3 +1,8 @@
+//! The verifier's side of the round chain: `verifier_round`, `verifier_round_intermediate` and
+//! `verifier_round_simple` replay the transcript, check a round against its config and recurse
+//! into the next, panicking on any failure. A structural pass checks every shape a proof
+//! carries before the round is read.
+
 use crate::{
     commitment::{commit_basic_internal, crs::VerifierCRS, BasicCommitment},
     common::{

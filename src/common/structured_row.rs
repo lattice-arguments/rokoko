@@ -1,3 +1,7 @@
+//! Rows with tensor-product structure, generic over `FiniteRing`: `StructuredRow` holds
+//! layers `a_i` and evaluates entry `pos` as the product of `a_i` or `1 − a_i` over the bits
+//! of `pos`, the last layer taking the lowest bit; `PreprocessedRow` expands all `2^k` entries.
+
 use crate::ring::{finite_ring::FiniteRing, ring_arithmetic::RingElement};
 
 #[cfg(test)]
@@ -14,10 +18,10 @@ pub struct StructuredRow<E: FiniteRing = RingElement> {
     //   [1 - b, b],  // Layer 1
     //   [1 - c, c],  // Layer 2
     // ]
-    // Then, the entry at position 5 (binary 100) would be computed as:
-    // a * (1 - b) * (1 - c).
-    // Notably, the order of layers corresponds to the inverse order of bits in the index,
-    // (i.e. with the first layer corresponding to the least significant bit.)
+    // Then, the entry at position 5 (binary 101) would be computed as:
+    // a * (1 - b) * c.
+    // The first layer corresponds to the most significant bit of the index and the last layer
+    // to the least significant bit.
     pub tensor_layers: Vec<E>,
 }
 

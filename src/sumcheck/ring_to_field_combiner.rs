@@ -1,3 +1,8 @@
+//! `RingToFieldCombiner`, the gadget that maps a ring-valued sumcheck tree to one over
+//! `FieldExtension`: it splits each round-polynomial coefficient into its `NUM_SLOTS` slots and
+//! combines them with challenges (the map `Φ = δ^T ∘ θ_a`). Also `ring_polynomial_to_field`
+//! and the verifier-side `RingToFieldCombinerEvaluation`.
+
 use std::cell::RefCell;
 
 use crate::{

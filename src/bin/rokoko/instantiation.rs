@@ -1,3 +1,9 @@
+//! The binary's parameter sets for rings with two projection batches: `ParamSet` (`p-22` to
+//! `p-30`), the round configurations of each chain (`p_root_aux` to `P_LAST`) and the measured
+//! norm-bound tables `NB_P_*`. `instantiation`/`chain` build the plain chain (none for `p-29`),
+//! `snark_instantiation`/`exact_norm_chain` the exact-norm chain (none for `p-22`, `p-24`;
+//! `p-30`'s has no measured norm table).
+
 use std::sync::LazyLock;
 
 use rokoko::ring::config::NOF_BATCHES;

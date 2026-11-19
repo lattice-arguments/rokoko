@@ -1,6 +1,6 @@
-// Just enough JSON to emit two well-formed artifact files. `serde` + `serde_json`
-// carry a derive macro and a full parser/deserializer; profiling only ever writes,
-// and only writes these two fixed shapes.
+//! Minimal JSON writing for the profile artifacts (feature `profile`): `str_into` appends an
+//! escaped JSON string, `field_str` a `"key": "value"` line. Used instead of `serde_json`,
+//! since profiling only writes the two fixed shapes of `snapshot.json` and `trace.json`.
 
 use std::fmt::Write as _;
 

@@ -1,3 +1,8 @@
+//! The prover's side of the round chain. `prover_round` proves a sumcheck round: it opens the
+//! witness, commits the opening and projection images, folds and decomposes the witness into
+//! the packed next-round witness, commits that, runs the round's sumcheck and recurses into the
+//! next round. `prover_round_intermediate` and `prover_round_simple` prove the other kinds.
+
 use crate::{
     commitment::{
         commit_basic, crs::CRS, recursive_commit, BasicCommitment, CommitmentWithAux,

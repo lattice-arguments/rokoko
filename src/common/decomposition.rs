@@ -1,3 +1,10 @@
+//! Digit decomposition of ring-element vectors: `decompose` (balanced base-`2^base_log`
+//! digits, in `[-b/2, b/2)` for coefficients inside the decomposition window, the top digit
+//! carrying any excess; grouped by element), `decompose_chunks_into` (the same, grouped by
+//! digit), `decompose_bits` (unsigned bits of the `[0, q)` representative) and
+//! `compose_from_decomposed`, which recomposes. Digits are in IncompleteNTT form, except that
+//! `base_log == 1` returns the input as it is.
+
 use crate::ring::{
     config::{DEGREE, MOD_Q},
     helpers::pow_mod,

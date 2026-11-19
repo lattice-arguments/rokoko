@@ -1,3 +1,8 @@
+//! The projection matrix `J ∈ {−1, 0, 1}^{H × W}`. `ProjectionMatrix` stores it as two packed
+//! bitmasks (`pos`, `non_zero`), AES-256-CTR keystreams under a key drawn from the transcript,
+//! materialised on first use, with row and 8-column accessors for the SIMD projection kernels
+//! and, on AVX-512 with VAES and GFNI, the Four-Russians kernel `accumulate_signed_sums`.
+
 use crate::common::hash::HashWrapper;
 use crate::common::matrix::HorizontallyAlignedMatrix;
 use std::ops::Index;
@@ -43,7 +48,7 @@ static TRUE_TRUE: (bool, bool) = (true, true);
 ///
 /// # SIMD usage
 ///
-/// The AVX-512 projection kernels in [`project_fine`](crate::rok::proj::fine)
+/// The AVX-512 projection kernels in [`fine`](crate::rok::proj::fine)
 /// and [`helpers`](crate::rok::constraints::sumcheck_round::helpers) load `pos_masks` and
 /// `non_zero_masks` bytes directly as `__mmask8` values, using:
 ///

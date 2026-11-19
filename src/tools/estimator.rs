@@ -1,3 +1,8 @@
+//! Bit-security estimates: `estimate_sis_security` for SIS in the l2 or l-infinity norm, and
+//! `estimate_rsis_security`, which flattens an `n × m` instance over `R_q` to SIS. The cost
+//! model (`sis_lattice`) is a Rust port of lattice-estimator's `SISLattice` with MATZOV and
+//! GSA; `estimate_sis_security_lattice_estimator` runs `scripts/run_sage_estimator.sh` instead.
+
 use std::io;
 use std::process::Command;
 

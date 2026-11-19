@@ -1,3 +1,7 @@
+//! Openings of a witness at structured evaluation points: `open_at` computes the opening
+//! `T = matrix-from-rows(l_j) · W`, `claim` the scalar `l^T W r`, and helpers turn an
+//! evaluation point or its conjugate into a `StructuredRow`.
+
 use crate::{
     commitment::{commit_basic_internal, BasicCommitment},
     common::{

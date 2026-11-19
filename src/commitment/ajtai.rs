@@ -1,3 +1,8 @@
+//! Ajtai commitments to ring vectors: `commit_basic` (one commitment per witness column) and
+//! `recursive_commit`, which decomposes its input and commits it level by level along a
+//! `RecursionConfig`. Also the layout types `Prefix` and `Placement`, which say where each
+//! committed component sits in the next round's witness.
+
 use std::ops::IndexMut;
 
 #[cfg(feature = "parallel")]

@@ -1,3 +1,8 @@
+//! Helpers shared by the round sumcheck builders and loaders: digit-plane recomposition of
+//! placed components (`Recomposition`, `FoldedLeaves`, `block_recomposition_weights`), prefix
+//! selectors, commitment-key rows as linear sumchecks (`ck_sumcheck`, `ck_segment_sumcheck`),
+//! and the CoarseProj coefficients `projection_flatter_1_times_matrix` (with SIMD paths).
+
 use crate::{
     commitment::{crs::CRS, Placement, Prefix, RecursionConfig},
     common::structured_row::{PreprocessedRow, StructuredRow},

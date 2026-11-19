@@ -1,3 +1,8 @@
+//! Thin `unsafe` wrappers over the `incomplete-rexl` kernel crate, the only place the library
+//! calls it: scalar and element-wise modular arithmetic, forward and inverse NTTs, root
+//! tables, and the fused incomplete-NTT and slot-wise ring multiplications. Re-exports
+//! `SlotRing`.
+
 use incomplete_rexl as hexl;
 pub use incomplete_rexl::SlotRing;
 

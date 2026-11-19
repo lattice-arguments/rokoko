@@ -1,3 +1,8 @@
+//! Derives a full `Config` chain from an `AuxSumcheckConfig`, a description without layout: it
+//! collects the components of each round's packed next-round witness (folded witness, recursive
+//! commitment levels, projection images) and assigns each a dyadic `Placement`, checking that
+//! the packed length matches the next round's witness.
+
 use crate::ring::config::NOF_BATCHES;
 use crate::commitment::{block_sizes, Placement, Prefix, RecursionConfig};
 use crate::rok::config::{

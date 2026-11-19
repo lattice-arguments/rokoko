@@ -1,3 +1,7 @@
+//! `Combiner`, the gadget that batches sumcheck trees of equal variable count into one claim
+//! `Σ_i γ_i · tree_i`: it computes each tree's round polynomial on its own, scales it by its
+//! challenge and sums. `CombinerEvaluation` is the verifier-side evaluation at a point.
+
 use std::cell::RefCell;
 
 use crate::{

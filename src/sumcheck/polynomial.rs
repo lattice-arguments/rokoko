@@ -1,3 +1,7 @@
+//! `Polynomial`, the dense round polynomial of degree at most 3 (fixed four-coefficient
+//! storage), with evaluation at 0, 1 and any point, and the add, subtract and multiply helpers
+//! the gadgets use (`mul_coefficients_into` multiplies two linear factors by Karatsuba).
+
 use std::cmp::max;
 
 use crate::ring::{finite_ring::FiniteRing, ring_arithmetic::RingElement};

@@ -1,3 +1,8 @@
+//! Verifier check of an Intermediate round's sumcheck: `intermediate_sumcheck_verifier` batches
+//! the folded commitment, opening and projection claims with the norm claim
+//! (`batch_claims_linear`), checks the norm bound, each round polynomial and the final
+//! evaluation of the gadget tree, and returns the evaluation point.
+
 use crate::{
     common::{hash::HashWrapper, norms::assert_norm_bounded, structured_row::StructuredRow},
     ring::{

@@ -1,3 +1,7 @@
+//! The committer: `commit` commits a witness with the root round's basic commitment and then
+//! its commitment recursion, returning the `CommitmentWithAux` the prover keeps and the
+//! commitment root the verifier receives.
+
 use crate::{
     commitment::{crs::CRS, CommitmentWithAux},
     common::matrix::VerticallyAlignedMatrix,

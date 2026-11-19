@@ -1,3 +1,8 @@
+//! The round chain and its proofs: `Config` (a `Sumcheck`, `Intermediate` or `Simple` round),
+//! the per-round configs and `Projection`, the matching proof types (`SumcheckRoundProof`,
+//! `IntermediateRoundProof`, `SimpleRoundProof`) with their `SizeableProof` sizes, and the
+//! helpers that paste components into the next round's packed witness.
+
 use std::any::Any;
 
 use crate::{

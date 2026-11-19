@@ -1,3 +1,8 @@
+//! Samples the evaluation points of the initial Ξ^lin statement:
+//! `sample_initial_evaluation_points` draws inner and outer points for the decomposed witness,
+//! appending digit-selector layers to the inner point so that its claim is the undecomposed
+//! witness's claim times `witness_claim_scale`.
+
 use crate::{
     common::structured_row::StructuredRow,
     ring::{

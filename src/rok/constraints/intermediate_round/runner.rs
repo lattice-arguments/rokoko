@@ -1,3 +1,8 @@
+//! Prover run of an Intermediate round's batched sumcheck: `run_intermediate_sumcheck` computes
+//! and binds the norm claim, samples the batching challenges, loads the context and produces
+//! one round polynomial per variable, returning an `IntermediateSumcheckProof` and the
+//! evaluation point.
+
 use crate::{
     common::{hash::HashWrapper, structured_row::StructuredRow},
     ring::{

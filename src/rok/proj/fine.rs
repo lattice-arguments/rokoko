@@ -1,3 +1,8 @@
+//! Fine projection Π^proj-f: `project_coefficients` computes `V = (I_d ⊗ J) · coeff(W)` on the
+//! witness coefficients, and `batch_projection_n_times` the `NOF_BATCHES` batched images under
+//! tensor-structured challenges. The `verifier_sample_projection_challenges*` functions redraw
+//! those challenges, with the batched matrix `J_batched`, on the verifier's side.
+
 use std::any::Any;
 
 use crate::{

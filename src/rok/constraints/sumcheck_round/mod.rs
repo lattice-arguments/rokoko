@@ -1,42 +1,39 @@
 //! Sumcheck gadgets of a round: one per paper constraint (CommitmentFold-NormCheck).
 //! The sumcheck engine they are built on is `crate::sumcheck`.
 //!
-//! The sumcheck protocol is complex and involves many types of constraints (CommitmentFold-NormCheck),
-//! each with its own sumcheck gadgets and verification logic.
+//! A Sumcheck round proves all its constraints with one batched sumcheck over the packed
+//! witness `ŵ` (`combined_witness`). The folded witness, the commitment, opening and projection
+//! values and the recursive-commitment levels are placed in `ŵ` as digit planes, which the
+//! gadgets recompose with prefix selectors and radix weights.
 //!
-//! **Constraint Types Overview:**
+//! **Constraint types:**
 //!
-//! - **CommitmentFold**: Basic commitment correctness - verifies `CK · folded_witness = commitment · fold_challenge`
-//! - **InnerEvalFold**: Inner evaluation consistency - verifies opening RHS matches witness evaluation
-//! - **OuterEvalClaim**: Outer evaluation consistency - verifies opening produces the claimed scalar result
-//! - **CoarseProj**: Projection validity (block-diagonal) - verifies projection image is correctly computed from witness
-//! - **FineProj**: Projection validity (Kronecker) - verifies `c^T (I ⊗ P) · witness = c^T projection_image · fold_challenge`
-//! - **ComVerify**: Recursive commitment well-formedness - verifies the entire recursive commitment
-//!   tree structure (internal layer parent-child consistency + leaf layer anchoring to public values)
-//! - **NormCheck**: Witness norm check - verifies `<combined_witness, conjugated_witness> = norm_claim`
+//! - **CommitmentFold**: `CK · folded_witness = commitment · fold_challenge`, one per key row
+//! - **InnerEvalFold**: `<l_j, folded_witness> = opening.rhs[j] · fold_challenge`, per opening
+//! - **OuterEvalClaim**: `<opening.rhs[j], r_j> = t_j`, the public claim, per opening
+//! - **CoarseProj** (Π^proj-c): `<flattener · (I ⊗ J), folded_witness> =
+//!   <fold_challenge ⊗ flattener, projection_image>`
+//! - **FineProj** (Π^proj-f): per batch, `c^T (I ⊗ J) · folded_witness = c^T projection_image ·
+//!   fold_challenge` over coefficients, plus consistency of the batched-projection commitment
+//!   with the constant-term commitment
+//! - **ComVerify**: per recursion tree (commitment, opening, projection; two for
+//!   `Projection::Fine`, none under `Projection::Skip`), each internal level's key rows times
+//!   its input equal its commitment
+//!   recomposed from the child level, and the leaf level equals the public value
+//!   (`rc_commitment`, `rc_*_inner`)
+//! - **NormCheck**: `<ŵ, conj(ŵ)> = norm_claim`, the same inner product restricted to the
+//!   innermost commitment of every tree, and, under `exact_projection_norm`, one weighted over
+//!   the projection tree's level-0 digit planes
 //!
-//! **Module Organization:**
-//!
-//! - `sumchecks::context`: Type definitions for all sumcheck contexts (CommitmentFold-ComVerify).
-//!   Each type represents a different semantic constraint in the protocol (commitment
-//!   correctness, opening consistency, projection validity, recursive commitment
-//!   well-formedness).
-//!
-//! - `sumchecks::builder`: Construction of sumcheck contexts. The `init_sumcheck` function
-//!   wires together all the constraint gadgets, loads CRS data, and prepares the
-//!   decomposition/recomposition machinery.
-//!
-//! - `sumchecks::helpers`: Utility functions for common operations (tensor products,
-//!   projection coefficient computation, CK row loading, prefix selectors, composition
-//!   sumchecks). These helpers encapsulate repeated patterns and make the builder code
-//!   more readable.
-//!
-//! - `sumchecks::runner`: The main `sumcheck` function that executes a full protocol
-//!   round. This is currently written as a test/simulation (with assertions at each
-//!   step), but can be adapted for interactive prover/verifier operation.
-//!
-//! If you're looking to understand or modify the sumcheck logic, start with
-//! `sumchecks/builder.rs` (for setup) and `sumchecks/runner.rs` (for execution).
+//! **How the files fit together:** each side runs builder -> context -> loader -> runner.
+//! `init_sumcheck` (`builder.rs`) wires the gadgets into a `SumcheckContext` (`context.rs`)
+//! once per round; `sumcheck` (`runner.rs`) fills it through `loader.rs` and folds it one
+//! variable per sumcheck round. The `_verifier` files are evaluation-only twins:
+//! `init_verifier` builds the same tree in the same output order, and `sumcheck_verifier`
+//! replays the round's transcript, checks the round polynomials and evaluates the tree at the
+//! final point.
+//! `helpers.rs` serves both sides and the Intermediate round (`rok::constraints::intermediate_round`).
+//! Read `context.rs` first, then `builder.rs`.
 
 pub mod builder;
 pub mod builder_verifier;

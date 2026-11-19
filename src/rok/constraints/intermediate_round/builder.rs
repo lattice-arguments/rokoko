@@ -1,3 +1,8 @@
+//! Prover-side construction of an Intermediate round's sumcheck: `init_intermediate_sumcheck`
+//! builds CommitmentFold, InnerEvalFold, FineProj (one per batch) and NormCheck gadgets over
+//! the decomposed folded witness, batches their outputs in a `Combiner`, and recurses into a
+//! following Intermediate round.
+
 use crate::{
     commitment::crs::CRS,
     ring::{

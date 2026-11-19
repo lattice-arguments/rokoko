@@ -1,3 +1,8 @@
+//! Prover-side data loading for a Sumcheck round: `load_sumcheck_data` fills the leaf tables
+//! of a `SumcheckContext` with the packed witness and its conjugate, the folding challenges,
+//! the evaluation points, and the CoarseProj or FineProj coefficients derived from the
+//! projection matrix and its challenges.
+
 use crate::{
     common::structured_row::{PreprocessedRow, StructuredRow},
     ring::{

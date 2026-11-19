@@ -1,3 +1,8 @@
+//! The traits every sumcheck gadget implements. `HighOrderSumcheckData` yields a round's
+//! univariate polynomial (default: a sweep over the half-hypercube) plus optional hooks that
+//! let parents skip zero or constant points; `SumcheckBaseData` adds folding for leaves, and
+//! `EvaluationSumcheckData` is the verifier-side evaluation. `FlatTerm` serves `flat`.
+
 use std::cell::RefCell;
 
 use crate::ring::finite_ring::FiniteRing;

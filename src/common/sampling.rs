@@ -1,3 +1,8 @@
+//! Samplers outside the transcript: `sample_random_vector` and `sample_random_short_vector`
+//! draw from the thread-local RNG of `ring_arithmetic` (witnesses and tests), and
+//! `AesCtrPublicSampler` expands a seed by AES-256-CTR into uniform ring elements, which
+//! `sample_public_vector_from_seed` uses with `PUBLIC_CRS_SEED` for the CRS.
+
 use aes::cipher::{KeyIvInit, StreamCipher};
 
 use crate::ring::ring_arithmetic::Representation;

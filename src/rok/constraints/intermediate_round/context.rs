@@ -1,3 +1,7 @@
+//! Prover-side state of an Intermediate round's sumcheck: `IntermediateSumcheckContext` holds
+//! the witness and leaf tables, one sub-context per constraint, the combiners and the next
+//! Intermediate round's context; `partial_evaluate_all` folds every leaf with one challenge.
+
 use crate::{
     ring::{config::NOF_BATCHES, ring_arithmetic::RingElement},
     sumcheck::{

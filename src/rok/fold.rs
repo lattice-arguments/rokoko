@@ -1,3 +1,6 @@
+//! `fold` computes the folded witness `W c`: the columns of the witness `W` combined with the
+//! folding challenge `c`.
+
 use crate::{
     common::matrix::VerticallyAlignedMatrix,
     ring::ring_arithmetic::{incomplete_ntt_dot_many_into, Representation, RingElement},

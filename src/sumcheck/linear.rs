@@ -1,3 +1,8 @@
+//! `LinearSumcheck`, the leaf gadget over a multilinear table. It folds the least-significant
+//! variable each round, allows dummy prefix/suffix variables and a known zero tail, and can
+//! borrow caller data through a map such as conjugation. Verifier-side evaluators:
+//! `{Basic,StructuredRow,Fake}EvaluationLinearSumcheck` and `RingToFieldWrapperEvaluation`.
+
 use std::{
     cell::RefCell,
     ops::{Deref, Index},

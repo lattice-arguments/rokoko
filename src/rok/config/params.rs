@@ -1,3 +1,7 @@
+//! Run parameters: `Instantiation` bundles a round chain with the parameters of the initial
+//! witness, which `witness_sampler` samples and `decompose_witness` decomposes.
+//! `assign_norm_bounds` fills a chain's norm bounds, scaled by `NORM_MARGIN`.
+
 use crate::{
     common::{
         decomposition::decompose, matrix::VerticallyAlignedMatrix,

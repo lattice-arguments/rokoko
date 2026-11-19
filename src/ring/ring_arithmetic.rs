@@ -1,3 +1,8 @@
+//! The ring `R_q = Z_q[X]/(X^N + 1)`: `RingElement`, its four `Representation`s and their
+//! conversions, conjugation and inversion; `FieldExtension`, one homogenized slot
+//! `Z_q[Y]/(Y^D - alpha)`; add, subtract and multiply functions and operators on both,
+//! slot-wise dot products, NTT factor tables, the thread-local RNG and `Signed16RingElement`.
+
 use crate::ring::config::*;
 use crate::ring::kernels::*;
 use rand::{Rng, SeedableRng};
@@ -1521,7 +1526,8 @@ impl RingElement {
 }
 
 impl FieldExtension {
-    /// Bits needed to send this element, each coefficient in centred signed form.
+    /// Bits needed to send this element: the bit length of each coefficient's centred
+    /// magnitude, with no sign bit counted.
     pub fn size_in_bits(&self) -> usize {
         let mut size = 0;
         for v in &self.coeffs {
@@ -1529,7 +1535,7 @@ impl FieldExtension {
             if centered == 0 {
                 continue; // zero contributes 0 bits
             }
-            size += centered.ilog2() as usize + 1; // +1 for the sign bit
+            size += centered.ilog2() as usize + 1; // bit length of the magnitude
         }
         size
     }

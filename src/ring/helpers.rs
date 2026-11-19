@@ -1,3 +1,8 @@
+//! Helpers on top of `ring_arithmetic`: the shared constants `ZERO`, `ONE`, `TWO` (and their
+//! `_FE` field forms), `HALF_WAY_MOD_Q` (a multiple of `q` near `2^62`), centring to `i16`,
+//! `inner_product`, `pow_mod` and `inv_mod` in `Z_q`, `field_to_ring_element` (one field
+//! element in every slot) and `precompute_structured_values` (a `u64` tensor-product table).
+
 use std::sync::LazyLock;
 
 use crate::ring::{

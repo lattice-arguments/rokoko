@@ -1,3 +1,8 @@
+//! Prover-side data loading for an Intermediate round: `load_intermediate_sumcheck_data` checks
+//! the witness length and fills the context with the decomposed witness and its conjugate, the
+//! inner evaluation points, the FineProj challenges (`c_0`, `j_batched`) and the batching
+//! challenges.
+
 use crate::{
     common::structured_row::{PreprocessedRow, StructuredRow},
     ring::{

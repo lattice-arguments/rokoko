@@ -1,11 +1,7 @@
-// `RUST_LOG` parsing, in place of `tracing-subscriber`'s `env-filter`.
-//
-// `RUST_LOG` here is just a level, case-insensitively:
-//   trace  debug  info  warn  error  off
-//
-// `warning` and `err` are accepted as aliases. Note that other standard RUST_LOG notation — including the
-// per-target syntax `env-filter` supports (`rokoko=debug`, `rokoko::rok=trace`), and numeric
-// values — is not recognised, and an unset or unrecognised `RUST_LOG` falls back to `info`.
+//! `RustLog`: the level filter of every layer, used instead of `tracing-subscriber`'s
+//! `env-filter`. `RUST_LOG` is one level, case-insensitively: `trace`, `debug`, `info`, `warn`
+//! (or `warning`), `error` (or `err`), `off`. Per-target specs and numeric levels are not
+//! recognised; an unset or unrecognised value gives `info`.
 
 use std::env;
 

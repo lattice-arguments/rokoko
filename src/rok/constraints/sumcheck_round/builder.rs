@@ -1,3 +1,8 @@
+//! Prover-side construction of a Sumcheck round's sumcheck: `init_sumcheck` builds one gadget
+//! per constraint (CommitmentFold to NormCheck) over the packed witness from the CRS and the
+//! `SumcheckConfig`, batches their outputs in a `Combiner`, and recurses into the next round's
+//! context. `build_com_verify_sumcheck_context` builds the ComVerify levels of one tree.
+
 use crate::ring::helpers::ONE;
 use crate::ring::config::DEGREE;
 use crate::rok::config::{Projection, SumcheckConfig};

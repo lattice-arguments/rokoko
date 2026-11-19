@@ -1,3 +1,8 @@
+//! `ConsoleLayer` (feature `events`) times spans and prints a summary to stdout when its
+//! `ConsoleSummaryGuard` drops: by default a tree per root span of time, calls and percent of
+//! parent, aggregated by `(parent, child)` edge; at `RUST_LOG=debug` or `trace`, each span in
+//! start order, then each `*_round` span's time without the nested rounds of its chain.
+
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write as _};
 use std::sync::{Arc, Mutex};

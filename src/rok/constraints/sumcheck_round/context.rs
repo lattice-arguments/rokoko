@@ -1,3 +1,8 @@
+//! Prover-side state of a Sumcheck round's sumcheck: `SumcheckContext` holds the leaf tables,
+//! one `*SumcheckContext` per constraint (CommitmentFold to NormCheck), the combiners and the
+//! next round's context (`NextSumcheckContext`); `partial_evaluate_all` folds every leaf with
+//! one sumcheck challenge.
+
 use crate::{
     ring::{config::NOF_BATCHES, ring_arithmetic::RingElement},
     rok::constraints::intermediate_round::context::IntermediateSumcheckContext,

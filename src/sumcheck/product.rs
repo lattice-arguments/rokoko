@@ -1,3 +1,8 @@
+//! `ProductSumcheck`, the gadget for the pointwise product of two sumcheck trees. Its round
+//! polynomial is a batched Karatsuba sum when both children expose full tables, and otherwise
+//! a per-point sweep over the children's non-zero range, with per-round constant flags and a
+//! per-point cache. `ProductSumcheckEvaluation` is the verifier-side evaluation at a point.
+
 #[cfg(feature = "unsafe-sumcheck")]
 use crate::sumcheck::common::FlatTerm;
 use std::cell::{Cell, RefCell};

@@ -1,6 +1,7 @@
-// Span aggregation + artifact writing:
-//   - snapshot.json  per-span totals + run metadata
-//   - trace.json     Chrome Trace Event timeline (flat array of "ph":"X" events)
+//! `SnapshotLayer` (feature `profile`) records each closed span; its `SnapshotGuard` writes two
+//! files to the run directory on drop: `snapshot.json`, per-span-name totals (`total_ns`,
+//! `calls`) with run metadata (git SHA, date, features, machine), and `trace.json`, a Chrome
+//! Trace Event timeline of `"ph": "X"` events carrying the span fields as `args`.
 
 use std::cell::Cell;
 use std::collections::HashMap;

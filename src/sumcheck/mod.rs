@@ -1,3 +1,13 @@
+//! The generic sumcheck engine. A claim is a tree of gadgets implementing the traits in
+//! `common` (read it first): `linear` tables and `selector_eq` selectors are the leaves,
+//! `product`, `sum` and `diff` combine two subtrees, `combiner` batches several trees with
+//! challenges `γ`, and `ring_to_field_combiner` maps the ring-valued root to a field one. Each
+//! round the prover asks the root for its univariate `polynomial`, then folds every leaf at
+//! the challenge, least-significant variable first. Gadgets are shared through `elephant_cell`
+//! handles, `flat` computes the early rounds from flattened product terms, and each gadget has
+//! an evaluation-only twin that the verifier evaluates at the final point. The gadgets are
+//! generic over `ring::finite_ring::FiniteRing`, so they run over ring or field elements.
+
 pub mod combiner;
 pub mod common;
 pub mod diff;

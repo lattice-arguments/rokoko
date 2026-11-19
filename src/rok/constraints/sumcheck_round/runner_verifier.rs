@@ -1,3 +1,8 @@
+//! Verifier check of a Sumcheck round: `sumcheck_verifier` replays the round's transcript
+//! (commitments, projection matrix, folding and batching challenges), checks the norm bounds,
+//! the zero constant terms, each round polynomial and the final evaluation of the gadget tree.
+//! `batch_claims` combines the public claims in the combiner's output order.
+
 use crate::{
     common::{hash::HashWrapper, norms::assert_norm_bounded, structured_row::StructuredRow},
     ring::{

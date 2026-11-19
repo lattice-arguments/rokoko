@@ -1,3 +1,7 @@
+//! `DiffSumcheck`, the gadget for the pointwise difference `lhs - rhs` of two sumcheck trees,
+//! used to state that two expressions have equal sums; its round polynomial is the difference
+//! of the children's. `DiffSumcheckEvaluation` is the verifier-side evaluation at a point.
+
 #[cfg(feature = "unsafe-sumcheck")]
 use crate::sumcheck::common::FlatTerm;
 use std::{cell::RefCell, cmp::max};

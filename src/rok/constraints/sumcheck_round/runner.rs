@@ -1,3 +1,8 @@
+//! Prover run of a Sumcheck round's batched sumcheck: `sumcheck` computes the norm claims and
+//! binds them to the transcript, samples the batching challenges, loads the context and
+//! produces one round polynomial per variable. It returns `z_0`, `z_1` over the packed
+//! witness, the norm and constant-term claims, the round polynomials and the evaluation point.
+
 use crate::{
     common::{hash::HashWrapper, structured_row::PreprocessedRow},
     ring::{
