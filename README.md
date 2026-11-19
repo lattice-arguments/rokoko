@@ -14,7 +14,7 @@ We implement two variants of committed random projections based on the Johnson-L
 
 ## Build and Run Instructions
 
-Ring arithmetic runs on `incomplete-rexl`, a [pure Rust implementation](incomplete-rexl/README.md) of modular arithmetic and NTT operations. It runs on any Rust-supported platform (with degraded performance).
+Ring arithmetic runs on `incomplete-rexl`, a [pure Rust implementation](crates/incomplete-rexl/README.md) of modular arithmetic and NTT operations. It runs on any Rust-supported platform (with degraded performance).
 
 For the best performance, it is required to compile and run the project on an AVX-512-enabled processor.
 Note that your processor may not support all AVX-512 instruction subsets, as listed here: https://en.wikipedia.org/wiki/AVX-512#CPUs_with_AVX-512.  
@@ -128,7 +128,7 @@ Currently, a framework for supporting different kinds of relations is not fully 
 
 The ring degree `DEGREE`, the modulus `MOD_Q` and the number of fine-projection batches `NOF_BATCHES` are constants in `src/common/config.rs`, generated from the ring spec (see [Ring](#ring)).
 
-Protocol configuration is defined in `src/protocol/config.rs`. The library takes the chain of rounds as a runtime value, `protocol::params::Instantiation`, which bundles the chain `Config` with the parameters of the initial witness. The concrete parameter sets are defined in the binary, `src/instantiation.rs`, and selected by its command-line argument. In the future, we plan to provide automatic selection.
+Protocol configuration is defined in `src/protocol/config.rs`. The library takes the chain of rounds as a runtime value, `protocol::params::Instantiation`, which bundles the chain `Config` with the parameters of the initial witness. The concrete parameter sets are defined in the binary, `src/bin/rokoko/instantiation.rs`, and selected by its command-line argument. In the future, we plan to provide automatic selection.
 
 Each run executed by the prover or verifier consists of one or more **rounds**. Each round is either:
 
@@ -226,7 +226,7 @@ Due to memory requirements for polynomial degree 2^30 exceeding 64 GB, the respe
 
 ## Parameter sets
 
-The binary takes the parameter set as its argument: `p-22`, `p-24`, `p-26`, `p-28` (default) and `p-30` for polynomial degrees 2^22 to 2^30, e.g. `cargo run --release -- p-26`; `p-29` exists as an exact-norm chain for `snark` mode. The sets are defined in `src/instantiation.rs`, measured for rings with 2 projection batches. The build script passes the spec's file name to the crate as the cfg `rokoko_ring`, and `src/main.rs` selects `src/instantiation_n128_d4.rs` for `rokoko_ring = "n128_d4"`; that module retunes the default chains for `rings/n128_d4.toml` and fails to compile against any other ring.
+The binary takes the parameter set as its argument: `p-22`, `p-24`, `p-26`, `p-28` (default) and `p-30` for polynomial degrees 2^22 to 2^30, e.g. `cargo run --release -- p-26`; `p-29` exists as an exact-norm chain for `snark` mode. The sets are defined in `src/bin/rokoko/instantiation.rs`, measured for rings with 2 projection batches. The build script passes the spec's file name to the crate as the cfg `rokoko_ring`, and `src/bin/rokoko/main.rs` selects `src/bin/rokoko/instantiation_n128_d4.rs` for `rokoko_ring = "n128_d4"`; that module retunes the default chains for `ring-params/n128_d4.toml` and fails to compile against any other ring.
 
 ## Ring
 
@@ -239,13 +239,13 @@ tau = 22
 op_norm_bound = 9.8
 ```
 
-`rings/default.toml` holds these values and is used unless the environment variable `ROKOKO_RING` names another spec; a relative path is resolved against this crate's root, e.g. `ROKOKO_RING=rings/n256.toml cargo build --release`. The build fails with a message unless N is a power of two in [128, 256], q is a prime in (2^15, 2^50), q - 1 has 2-adic valuation exactly log2(N) (so X^N + 1 splits into irreducible quadratics), and 1 <= tau <= N.
+`ring-params/default.toml` holds these values and is used unless the environment variable `ROKOKO_RING` names another spec; a relative path is resolved against this crate's root, e.g. `ROKOKO_RING=ring-params/n256.toml cargo build --release`. The build fails with a message unless N is a power of two in [128, 256], q is a prime in (2^15, 2^50), q - 1 has 2-adic valuation exactly log2(N) (so X^N + 1 splits into irreducible quadratics), and 1 <= tau <= N.
 
 A crate depending on `rokoko` sets the ring in its own `.cargo/config.toml`; cargo passes `[env]` to the build scripts of dependencies as well, and `relative = true` resolves the path against the directory holding `.cargo`:
 
 ```toml
 [env]
-ROKOKO_RING = { value = "rings/mine.toml", relative = true }
+ROKOKO_RING = { value = "ring-params/mine.toml", relative = true }
 ```
 
 ## Features

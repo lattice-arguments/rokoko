@@ -137,8 +137,8 @@ pub fn exact_norm_chain(set: ParamSet, nof_openings: usize) -> Option<Config> {
 fn assert_two_batches() {
     assert_eq!(
         NOF_BATCHES, 2,
-        "src/instantiation.rs is measured for 2 projection batches and the ring spec sets \
-         {NOF_BATCHES}; src/main.rs selects the instantiation of a ring"
+        "src/bin/rokoko/instantiation.rs is measured for 2 projection batches and the ring spec sets \
+         {NOF_BATCHES}; src/bin/rokoko/main.rs selects the instantiation of a ring"
     );
 }
 
