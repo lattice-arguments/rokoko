@@ -1,3 +1,6 @@
+// Each entry point is used under one feature, or by the tests only.
+#[allow(dead_code)]
+mod executor;
 #[cfg_attr(rokoko_ring = "n128_d4", allow(dead_code))]
 mod instantiation;
 #[cfg(rokoko_ring = "n128_d4")]
@@ -16,7 +19,7 @@ use rokoko::common::short_challenge::repetition_rate;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[cfg(not(feature = "snark"))]
-use rokoko::executor::execute;
+use crate::executor::execute;
 
 fn main() {
     let set = match std::env::args().nth(1) {
@@ -116,7 +119,7 @@ fn main() {
     #[cfg(feature = "snark")]
     {
         println!("Running executor from a Ξ^sum start...");
-        rokoko::executor::execute_snark(&inst);
+        crate::executor::execute_snark(&inst);
     }
     #[cfg(not(feature = "snark"))]
     {
@@ -136,7 +139,7 @@ mod tests {
     use super::ring_instantiation::instantiation;
     use super::ParamSet;
     use rokoko::common::init_common;
-    use rokoko::executor::{execute, execute_to_boundary};
+    use crate::executor::{execute, execute_to_boundary};
     use std::num::NonZeroUsize;
 
     #[test]

@@ -8,7 +8,7 @@ sum over the whole vector of   weight(i) * witness(i) * ...   =   value
 
 Everything happens in `rokoko::rok::claims`. A runnable end-to-end program
 is `examples/claims.rs` (`cargo run --release --example claims`); the full
-pipeline with the commitment chain is `execute_snark` in `src/executor.rs`.
+pipeline with the commitment chain is `execute_snark` in `src/bin/rokoko/executor.rs`.
 
 ## The five-minute version
 
