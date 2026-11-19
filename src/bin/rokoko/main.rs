@@ -16,7 +16,7 @@ use rokoko::common::short_challenge::repetition_rate;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[cfg(not(feature = "snark"))]
-use rokoko::protocol::parties::executor::execute;
+use rokoko::executor::execute;
 
 fn main() {
     let set = match std::env::args().nth(1) {
@@ -116,7 +116,7 @@ fn main() {
     #[cfg(feature = "snark")]
     {
         println!("Running executor in SNARK mode...");
-        rokoko::protocol::parties::executor::execute_snark(&inst);
+        rokoko::executor::execute_snark(&inst);
     }
     #[cfg(not(feature = "snark"))]
     {
@@ -136,7 +136,7 @@ mod tests {
     use super::ring_instantiation::instantiation;
     use super::ParamSet;
     use rokoko::common::init_common;
-    use rokoko::protocol::parties::executor::{execute, execute_to_boundary};
+    use rokoko::executor::{execute, execute_to_boundary};
     use std::num::NonZeroUsize;
 
     #[test]

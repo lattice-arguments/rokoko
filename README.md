@@ -128,7 +128,7 @@ Currently, a framework for supporting different kinds of relations is not fully 
 
 The ring degree `DEGREE`, the modulus `MOD_Q` and the number of fine-projection batches `NOF_BATCHES` are constants in `src/ring/config.rs`, generated from the ring spec (see [Ring](#ring)).
 
-Protocol configuration is defined in `src/protocol/config.rs`. The library takes the chain of rounds as a runtime value, `protocol::params::Instantiation`, which bundles the chain `Config` with the parameters of the initial witness. The concrete parameter sets are defined in the binary, `src/bin/rokoko/instantiation.rs`, and selected by its command-line argument. In the future, we plan to provide automatic selection.
+Protocol configuration is defined in `src/rok/config/chain.rs`. The library takes the chain of rounds as a runtime value, `rok::config::params::Instantiation`, which bundles the chain `Config` with the parameters of the initial witness. The concrete parameter sets are defined in the binary, `src/bin/rokoko/instantiation.rs`, and selected by its command-line argument. In the future, we plan to provide automatic selection.
 
 Each run executed by the prover or verifier consists of one or more **rounds**. Each round is either:
 
@@ -250,7 +250,7 @@ ROKOKO_RING = { value = "ring-params/mine.toml", relative = true }
 
 ## Features
 
-* `snark`: runs the executor in SNARK mode; without it, the executor runs the PCS chain (disclaimer: snark mode is currently highly experimental). The claim-language guide is [docs/snark.md](docs/snark.md), and `cargo run --release --example claims` is a runnable walk-through.
+* `snark`: runs the executor in SNARK mode; without it, the executor runs the PCS chain (disclaimer: snark mode is currently highly experimental). The claim-language guide is [docs/claims.md](docs/claims.md), and `cargo run --release --example claims` is a runnable walk-through.
 * `events`: prints a per-phase timing summary to the console at the end of the run (see [Tracing and Profiling](#tracing-and-profiling))
 * `profile`: writes a Chrome trace and a per-span snapshot to `profiles/` for offline analysis (see [Tracing and Profiling](#tracing-and-profiling))
 * `unsafe-sumcheck`: enables zero-cost borrow checking by using `UnsafeCell` instead of `RefCell` in sumcheck subprotocols

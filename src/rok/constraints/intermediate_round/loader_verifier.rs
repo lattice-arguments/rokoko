@@ -1,0 +1,76 @@
+use crate::{
+    common::structured_row::StructuredRow,
+    ring::{
+        config::{NOF_BATCHES, NUM_SLOTS},
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
+    },
+};
+use crate::rok::proj::fine::BatchedProjectionChallengesSuccinct;
+
+use super::context_verifier::IntermediateVerifierSumcheckContext;
+
+pub fn load_intermediate_verifier_sumcheck_data(
+    verifier_sumcheck_context: &mut IntermediateVerifierSumcheckContext,
+    claim_over_witness: &RingElement,
+    claim_over_witness_conjugate: &RingElement,
+    evaluation_points_inner: &[StructuredRow],
+    combination: &[RingElement],
+    fine_proj_batching_challenges: &[BatchedProjectionChallengesSuccinct; NOF_BATCHES],
+    fe: &[FieldExtension; NUM_SLOTS],
+) {
+    verifier_sumcheck_context
+        .witness_evaluation
+        .borrow_mut()
+        .set_result(claim_over_witness.clone());
+    verifier_sumcheck_context
+        .conjugated_witness_evaluation
+        .borrow_mut()
+        .set_result(claim_over_witness_conjugate.clone());
+    verifier_sumcheck_context
+        .norm_check_evaluation
+        .conjugated_witness_evaluation
+        .borrow_mut()
+        .set_result(claim_over_witness_conjugate.clone());
+
+    for (inner_eval_fold_eval, point) in verifier_sumcheck_context
+        .inner_eval_fold_evaluations
+        .iter()
+        .zip(evaluation_points_inner.iter())
+    {
+        inner_eval_fold_eval
+            .inner_evaluation
+            .borrow_mut()
+            .load_from(point.clone());
+    }
+
+    for (fine_proj_eval, challenge) in verifier_sumcheck_context
+        .fine_proj_evaluations
+        .iter()
+        .zip(fine_proj_batching_challenges.iter())
+    {
+        fine_proj_eval
+            .c_0_evaluation
+            .borrow_mut()
+            .load_from(StructuredRow {
+                tensor_layers: challenge
+                    .c_0_layers
+                    .iter()
+                    .map(|&val| RingElement::constant(val, Representation::IncompleteNTT))
+                    .collect(),
+            });
+        fine_proj_eval
+            .j_batched_evaluation
+            .borrow_mut()
+            .load_from(&challenge.j_batched);
+    }
+
+    verifier_sumcheck_context
+        .combiner_evaluation
+        .borrow_mut()
+        .load_challenges_from(combination);
+
+    verifier_sumcheck_context
+        .field_combiner_evaluation
+        .borrow_mut()
+        .load_challenges_from(*fe);
+}
