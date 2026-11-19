@@ -163,8 +163,8 @@ pub fn verifier_round(
                         &outer_rows,
                         &new_claims,
                         match sumcheck_context_verifier.next.as_deref_mut() {
-                            Some(NextVerifierSumcheckContext::Simple(ctx)) => ctx,
-                            _ => panic!("Expected Simple context for next round."),
+                            Some(NextVerifierSumcheckContext::Sumcheck(ctx)) => ctx,
+                            _ => panic!("Expected NextVerifierSumcheckContext::Sumcheck"),
                         },
                         Some(hash_wrapper_verifier),
                         boundary.and_then(BoundaryCapture::advance),

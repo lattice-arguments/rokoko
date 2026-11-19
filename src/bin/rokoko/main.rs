@@ -115,12 +115,12 @@ fn main() {
     init_common();
     #[cfg(feature = "snark")]
     {
-        println!("Running executor in SNARK mode...");
+        println!("Running executor from a Ξ^sum start...");
         rokoko::executor::execute_snark(&inst);
     }
     #[cfg(not(feature = "snark"))]
     {
-        println!("Running executor...");
+        println!("Running executor from a Ξ^lin start...");
         execute(&inst);
     }
     #[cfg(feature = "calibration")]

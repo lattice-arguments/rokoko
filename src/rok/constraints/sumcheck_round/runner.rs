@@ -8,9 +8,9 @@ use crate::{
     },
     rok::{
         config::{Projection, SumcheckConfig},
+        constraints::sumcheck_round::context::SumcheckContext,
         open::{evaluation_point_to_structured_row, Opening},
         proj::{fine::BatchedProjectionChallenges, matrix::ProjectionMatrix},
-        sumcheck::SumcheckContext,
     },
     sumcheck::{
         common::{HighOrderSumcheckData, SumcheckBaseData},

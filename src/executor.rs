@@ -11,10 +11,9 @@ use crate::{
             params::{decompose_witness, witness_sampler, Instantiation},
             to_kb, SizeableProof,
         },
-        constraints::sumcheck_round::builder_verifier::init_verifier,
+        constraints::sumcheck_round::{builder::init_sumcheck, builder_verifier::init_verifier},
         evaluation_point_sampler::{sample_initial_evaluation_points, InitialEvaluationPoints},
         open::claim,
-        sumcheck::init_sumcheck,
         wire,
     },
     tools::boundary::{BoundaryCapture, ProverBoundary, VerifierBoundary},
@@ -160,6 +159,7 @@ fn run(
     )
 }
 
+/// A run from a Ξ^lin start: run the chain on evaluation claims about a sampled witness.
 pub fn execute(inst: &Instantiation) {
     run(inst, None);
 }
@@ -204,8 +204,8 @@ fn check_prover_claims_match_witness(
     }
 }
 
-/// SNARK mode: prove user-supplied sumcheck claims about a committed witness,
-/// then run the PCS chain on the resulting evaluation claims.
+/// A run from a Ξ^sum start: prove three fixed example sumcheck claims about a committed
+/// witness, then run the chain on the resulting evaluation claims (a Ξ^lin statement).
 pub fn execute_snark(inst: &Instantiation) {
     use crate::{
         common::{hash::HashWrapper, sampling::sample_random_short_vector},
@@ -387,7 +387,9 @@ mod tests {
         SumcheckRoundProof,
     };
     use crate::commitment::crs::{VerifierCRS, CRS};
-    use crate::rok::sumcheck::{init_sumcheck, SumcheckContext};
+    use crate::rok::constraints::sumcheck_round::{
+        builder::init_sumcheck, context::SumcheckContext,
+    };
     use crate::rok::constraints::sumcheck_round::{
         builder_verifier::init_verifier, context_verifier::VerifierSumcheckContext,
     };

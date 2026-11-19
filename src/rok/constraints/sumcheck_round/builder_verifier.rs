@@ -1086,7 +1086,7 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
         next: match &config.next {
             Some(next_config) => match next_config.as_ref() {
                 Config::Sumcheck(next_sumcheck_config) => Some(Box::new(
-                    NextVerifierSumcheckContext::Simple(init_verifier(crs, next_sumcheck_config)),
+                    NextVerifierSumcheckContext::Sumcheck(init_verifier(crs, next_sumcheck_config)),
                 )),
                 Config::Intermediate(next_intermediate_config) => {
                     Some(Box::new(NextVerifierSumcheckContext::Intermediate(

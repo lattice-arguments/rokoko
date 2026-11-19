@@ -20,7 +20,10 @@ use crate::{
             intermediate_round::{
                 context::IntermediateSumcheckContext, runner::run_intermediate_sumcheck,
             },
-            sumcheck_round::context::NextSumcheckContext,
+            sumcheck_round::{
+                context::{NextSumcheckContext, SumcheckContext},
+                runner::sumcheck,
+            },
         },
         fold::fold,
         open::{
@@ -32,7 +35,6 @@ use crate::{
             fine::{batch_projection_n_times, project_coefficients},
             matrix::ProjectionMatrix,
         },
-        sumcheck::{sumcheck, SumcheckContext},
     },
     tools::boundary::{BoundaryCapture, ProverBoundary},
 };
@@ -423,8 +425,8 @@ pub fn prover_round(
                 let most_inner_commitment = rc.most_inner_commitment().clone();
                 let next_commitment_with_aux = CommitmentWithAux::from_rc_commitment_with_aux(rc);
                 let next_context = match sumcheck_context.next.as_deref_mut() {
-                    Some(NextSumcheckContext::Simple(next_ctx)) => next_ctx,
-                    _ => panic!("Expected NextSumcheckContext::Simple in sumcheck_context.next"),
+                    Some(NextSumcheckContext::Sumcheck(next_ctx)) => next_ctx,
+                    _ => panic!("Expected NextSumcheckContext::Sumcheck in sumcheck_context.next"),
                 };
                 let proof = prover_round(
                     &crs,

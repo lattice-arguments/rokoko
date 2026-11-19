@@ -540,7 +540,7 @@ impl crate::rok::config::SizeableProof for InitialSumcheckProof {
     }
 }
 
-/// What the PCS chain consumes as its initial statement: evaluation rows and
+/// What the chain consumes as its initial Ξ^lin statement: evaluation rows and
 /// outer claims (paper: l_j = tensor(c_1), r_j = tensor(c_0), t_j = z_j).
 pub struct ChainInputs {
     pub evaluation_points_inner: Vec<StructuredRow>,

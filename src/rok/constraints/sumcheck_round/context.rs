@@ -47,7 +47,7 @@ pub struct SumcheckContext {
 }
 
 pub enum NextSumcheckContext {
-    Simple(SumcheckContext),
+    Sumcheck(SumcheckContext),
     Intermediate(IntermediateSumcheckContext),
 }
 

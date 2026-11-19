@@ -782,8 +782,8 @@ pub fn init_sumcheck(crs: &crs::CRS, config: &SumcheckConfig) -> SumcheckContext
         outputs: all_outputs,
         next: match &config.next {
             Some(next_config) => match next_config.as_ref() {
-                Config::Sumcheck(next_simple_config) => Some(Box::new(
-                    NextSumcheckContext::Simple(init_sumcheck(crs, next_simple_config)),
+                Config::Sumcheck(next_sumcheck_config) => Some(Box::new(
+                    NextSumcheckContext::Sumcheck(init_sumcheck(crs, next_sumcheck_config)),
                 )),
                 Config::Simple(_) => None,
                 Config::Intermediate(next_intermediate_config) => {

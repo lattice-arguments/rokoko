@@ -19,7 +19,7 @@ chain as a `rokoko::rok::config::params::Instantiation`. A build for `ring-param
 Features are defined in `Cargo.toml`; the defaults already include:
 - `unsafe-sumcheck` — turns on unsafe sumcheck optimizations
 
-Other useful features: `snark` (exact-norm SNARK mode), `calibration` (prints the measured norms
+Other useful features: `snark` (a Ξ^sum start with an exact-norm chain), `calibration` (prints the measured norms
 as a paste-ready `NB_*` table, e.g. `cargo run --release --features calibration -- p-26`), `profile`.
 
 ## The ring

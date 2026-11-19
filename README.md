@@ -123,6 +123,8 @@ Currently, a framework for supporting different kinds of relations is not fully 
 | sumcheck `combination` challenges | batching `γ` (via `eq(bin(i), γ)`) |
 | `combination_to_field` (`RingToFieldCombiner`) | the F_{q^a}-linear map `Φ = δ^T ∘ θ_a` |
 | `Prefix` selectors | packing prefixes `p_i` with `eq(p_i, ·)` |
+| `execute` (default run) | start from `Ξ^lin_COM` (committed-linear relation): a PCS |
+| `execute_snark` (`snark` feature) | start from `Ξ^sum_COM` (functional-sumcheck relation): a SNARK |
 
 ## Configuration and Structure
 
@@ -226,7 +228,7 @@ Due to memory requirements for polynomial degree 2^30 exceeding 64 GB, the respe
 
 ## Parameter sets
 
-The binary takes the parameter set as its argument: `p-22`, `p-24`, `p-26`, `p-28` (default) and `p-30` for polynomial degrees 2^22 to 2^30, e.g. `cargo run --release -- p-26`; `p-29` exists as an exact-norm chain for `snark` mode. The sets are defined in `src/bin/rokoko/instantiation.rs`, measured for rings with 2 projection batches. The build script passes the spec's file name to the crate as the cfg `rokoko_ring`, and `src/bin/rokoko/main.rs` selects `src/bin/rokoko/instantiation_n128_d4.rs` for `rokoko_ring = "n128_d4"`; that module retunes the default chains for `ring-params/n128_d4.toml` and fails to compile against any other ring.
+The binary takes the parameter set as its argument: `p-22`, `p-24`, `p-26`, `p-28` (default) and `p-30` for polynomial degrees 2^22 to 2^30, e.g. `cargo run --release -- p-26`; `p-29` exists as an exact-norm chain for the `snark` feature. The sets are defined in `src/bin/rokoko/instantiation.rs`, measured for rings with 2 projection batches. The build script passes the spec's file name to the crate as the cfg `rokoko_ring`, and `src/bin/rokoko/main.rs` selects `src/bin/rokoko/instantiation_n128_d4.rs` for `rokoko_ring = "n128_d4"`; that module retunes the default chains for `ring-params/n128_d4.toml` and fails to compile against any other ring.
 
 ## Ring
 
@@ -250,7 +252,7 @@ ROKOKO_RING = { value = "ring-params/mine.toml", relative = true }
 
 ## Features
 
-* `snark`: runs the executor in SNARK mode; without it, the executor runs the PCS chain (disclaimer: snark mode is currently highly experimental). The claim-language guide is [docs/claims.md](docs/claims.md), and `cargo run --release --example claims` is a runnable walk-through.
+* `snark`: starts the run from a Ξ^sum statement, i.e. sumcheck claims about the committed witness (the binary proves three fixed example claims). These reduce to evaluation claims, a Ξ^lin statement, on which the chain runs, so the run is a SNARK. Without it, the run starts from a Ξ^lin statement and is a PCS. The Ξ^sum start is currently highly experimental. The claim-language guide is [docs/claims.md](docs/claims.md), and `cargo run --release --example claims` is a runnable walk-through.
 * `events`: prints a per-phase timing summary to the console at the end of the run (see [Tracing and Profiling](#tracing-and-profiling))
 * `profile`: writes a Chrome trace and a per-span snapshot to `profiles/` for offline analysis (see [Tracing and Profiling](#tracing-and-profiling))
 * `unsafe-sumcheck`: enables zero-cost borrow checking by using `UnsafeCell` instead of `RefCell` in sumcheck subprotocols
