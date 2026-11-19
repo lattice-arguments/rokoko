@@ -1,7 +1,6 @@
-use crate::ring::config::MOD_Q;
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 use crate::ring::{config::DEGREE, ring_arithmetic::RingElement};
-use crate::rok::proj::coarse::Signed16RingElement;
+use crate::ring::{config::MOD_Q, ring_arithmetic::Signed16RingElement};
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 use std::arch::x86_64::{
