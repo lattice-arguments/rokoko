@@ -8,7 +8,7 @@ use crate::{
     ring::{
         config::DEGREE,
         helpers::centered_i16_from_u64_mod_q,
-        ring_arithmetic::{Representation, RingElement},
+        ring_arithmetic::{Representation, RingElement, Signed16RingElement},
     },
     rok::proj::matrix::ProjectionMatrix,
 };
@@ -23,10 +23,6 @@ use crate::rok::proj::kernels::project_one_row_i16_to_u64;
 use crate::rok::proj::kernels::project_rows_sparse_tiled;
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
 use crate::rok::proj::kernels::{project_rows_grouped, GROUP, GROUP_SUMS, PASS};
-
-#[derive(Clone, Copy)]
-#[repr(align(64))]
-pub struct Signed16RingElement(pub [i16; DEGREE]);
 
 pub fn prepare_i16_witness(
     witness: &VerticallyAlignedMatrix<RingElement>,

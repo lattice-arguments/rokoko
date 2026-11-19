@@ -205,6 +205,19 @@ pub trait SizeableProof {
     fn size_in_bits(&self) -> usize;
 }
 
+// The ring layer computes its elements' sizes; these impls let proofs sum them.
+impl SizeableProof for RingElement {
+    fn size_in_bits(&self) -> usize {
+        RingElement::size_in_bits(self)
+    }
+}
+
+impl SizeableProof for FieldExtension {
+    fn size_in_bits(&self) -> usize {
+        FieldExtension::size_in_bits(self)
+    }
+}
+
 pub struct SumcheckRoundProof {
     pub polys: Vec<Polynomial<FieldExtension>>,
     pub claim_over_witness: RingElement,

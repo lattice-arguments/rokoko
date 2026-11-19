@@ -9,8 +9,9 @@ use crate::{
         decomposition::decompose_chunks_into,
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
     },
-    ring::ring_arithmetic::{incomplete_ntt_dot_into, Representation, RingElement},
-    rok::proj::coarse::Signed16RingElement,
+    ring::ring_arithmetic::{
+        incomplete_ntt_dot_into, Representation, RingElement, Signed16RingElement,
+    },
 };
 
 pub type BasicCommitment = HorizontallyAlignedMatrix<RingElement>;
