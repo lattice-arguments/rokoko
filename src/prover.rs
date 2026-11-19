@@ -1,0 +1,777 @@
+use crate::{
+    commitment::{
+        commit_basic, crs::CRS, recursive_commit, BasicCommitment, CommitmentWithAux,
+        RecursiveCommitmentWithAux,
+    },
+    common::{
+        decomposition::{decompose, decompose_chunks_into},
+        hash::HashWrapper,
+        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
+        structured_row::{PreprocessedRow, StructuredRow},
+    },
+    ring::ring_arithmetic::{Representation, RingElement},
+    rok::{
+        config::{
+            config_base_from_config, paste_placement, paste_recursive_commitment, Config,
+            IntermediateConfig, IntermediateRoundProof, NextRoundCommitment, Projection,
+            RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig, SumcheckRoundProof,
+        },
+        constraints::{
+            intermediate_round::{
+                context::IntermediateSumcheckContext, runner::run_intermediate_sumcheck,
+            },
+            sumcheck_round::context::NextSumcheckContext,
+        },
+        fold::fold,
+        open::{
+            evaluation_point_to_structured_row, evaluation_point_to_structured_row_conjugate,
+            open_at,
+        },
+        proj::{
+            coarse::{prepare_i16_witness, project},
+            fine::{batch_projection_n_times, project_coefficients},
+            matrix::ProjectionMatrix,
+        },
+        sumcheck::{sumcheck, SumcheckContext},
+    },
+    tools::boundary::{BoundaryCapture, ProverBoundary},
+};
+
+/// Outer evaluation claims t_j = <T[j,:], r_j> (paper: l_j^T W r_j = t_j).
+pub fn outer_eval_claims(
+    rhs: &HorizontallyAlignedMatrix<RingElement>,
+    evaluation_points_outer: &Vec<StructuredRow>,
+) -> Vec<RingElement> {
+    // One claim per real opening: `rhs` is padded up to a power-of-two number of rows and the
+    // padding rows carry no claim.
+    let openings = evaluation_points_outer.len();
+    debug_assert!(openings <= rhs.height);
+    let mut temp = RingElement::zero(Representation::IncompleteNTT);
+    let mut result = vec![RingElement::zero(Representation::IncompleteNTT); openings];
+    for i in 0..openings {
+        let preprocessed_row_outer =
+            PreprocessedRow::from_structured_row(&evaluation_points_outer[i]);
+        for col in 0..rhs.width {
+            temp *= (
+                &rhs[(i, col)],
+                &preprocessed_row_outer.preprocessed_row[col],
+            );
+            result[i] += &temp;
+        }
+    }
+    result
+}
+
+/// Evaluation point and its conjugate, as the next round's evaluation rows
+/// (paper, Pi^lin output: l_0 = tensor(c), l_1 = tensor(conj(c))).
+fn evaluation_point_pair(points: &[RingElement]) -> Vec<StructuredRow> {
+    vec![
+        evaluation_point_to_structured_row(points),
+        evaluation_point_to_structured_row_conjugate(points),
+    ]
+}
+
+enum PendingNextCommitment {
+    Recursive(RecursiveCommitmentWithAux),
+    Basic(BasicCommitment),
+}
+
+#[tracing::instrument(skip_all, name = "prover_round")]
+pub fn prover_round(
+    crs: &CRS,
+    config: &SumcheckConfig,
+    commitment_with_aux: &CommitmentWithAux,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    evaluation_points_inner: &Vec<StructuredRow>,
+    evaluation_points_outer: &Vec<StructuredRow>,
+    sumcheck_context: &mut SumcheckContext,
+    with_claims: bool,
+    hash_wrapper: Option<HashWrapper>,
+    boundary: Option<BoundaryCapture<'_, ProverBoundary>>,
+) -> (SumcheckRoundProof, Option<Vec<RingElement>>) {
+    let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
+    let rc_commitment = &commitment_with_aux.rc_commitment_with_aux;
+
+    hash_wrapper.update_with_ring_element_slice(&rc_commitment.most_inner_commitment());
+
+    let (opening, claims) = {
+        let _s = tracing::info_span!("prover_round::open_at").entered();
+        let opening = open_at(
+            &witness,
+            &evaluation_points_inner,
+            &evaluation_points_outer,
+            false,
+        );
+
+        let claims = if with_claims {
+            Some(outer_eval_claims(&opening.rhs, evaluation_points_outer))
+        } else {
+            None
+        };
+        (opening, claims)
+    };
+
+    let rc_opening = {
+        let _s = tracing::info_span!("prover_round::rc_opening").entered();
+        recursive_commit(crs, &config.opening_recursion, &opening.rhs.data)
+    };
+
+    hash_wrapper.update_with_ring_element_slice(&rc_opening.most_inner_commitment());
+
+    let mut projection_matrix =
+        ProjectionMatrix::new(config.projection_ratio, config.projection_height);
+
+    projection_matrix.sample(&mut hash_wrapper);
+
+    #[cfg(feature = "debug-decomp")]
+    let mut dbg_coarse_image: Option<VerticallyAlignedMatrix<RingElement>> = None;
+    let rc_coarse_projection = match &config.projection_recursion {
+        Projection::Coarse(proj_config) => {
+            let projection_image = {
+                let _s = tracing::info_span!("prover_round::project").entered();
+                let witness_i16 = match &commitment_with_aux.witness_i16 {
+                    Some(witness_i16) => witness_i16,
+                    None => &prepare_i16_witness(witness),
+                };
+                project(witness_i16, &projection_matrix)
+            };
+            #[cfg(feature = "debug-decomp")]
+            {
+                dbg_coarse_image = Some(projection_image.clone());
+            }
+
+            let rc_coarse_projection = {
+                let _s = tracing::info_span!("prover_round::rc_projection").entered();
+                recursive_commit(&crs, &proj_config, &projection_image.data)
+            };
+
+            hash_wrapper
+                .update_with_ring_element_slice(&rc_coarse_projection.most_inner_commitment());
+            Some(rc_coarse_projection)
+        }
+        _ => None,
+    };
+
+    let rc_fine_projection = match &config.projection_recursion {
+        Projection::Fine(proj_config) => {
+            let projection_image_ct = {
+                let _s = tracing::info_span!("prover_round::project_cf").entered();
+                project_coefficients(&witness, &projection_matrix)
+            };
+            let rc_projection_ct = {
+                let _s = tracing::info_span!("prover_round::rc_projection_ct").entered();
+                recursive_commit(
+                    &crs,
+                    &proj_config.recursion_constant_term,
+                    &projection_image_ct.data,
+                )
+            };
+
+            hash_wrapper.update_with_ring_element_slice(&rc_projection_ct.most_inner_commitment());
+
+            let (projection_batched, fine_proj_batching_challenges) = {
+                let _s = tracing::info_span!("prover_round::batch_projection_n_times").entered();
+                batch_projection_n_times(&witness, &projection_matrix, &mut hash_wrapper, false)
+            };
+
+            let rc_projection_batched = {
+                let _s = tracing::info_span!("prover_round::rc_projection_batched").entered();
+                // A batch count that is not a power of two commits one zero padding row.
+                let mut rows = projection_batched.data.clone();
+                rows.resize(
+                    rows.len().next_power_of_two(),
+                    RingElement::zero(Representation::IncompleteNTT),
+                );
+                recursive_commit(&crs, &proj_config.recursion_batched_projection, &rows)
+            };
+            hash_wrapper
+                .update_with_ring_element_slice(&rc_projection_batched.most_inner_commitment());
+
+            Some((
+                rc_projection_ct,
+                rc_projection_batched,
+                fine_proj_batching_challenges,
+            ))
+        }
+        _ => None,
+    };
+
+    if let Projection::Skip = &config.projection_recursion {
+    }
+    let mut fold_challenge = vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
+
+    hash_wrapper.sample_low_op_norm_ring_vec_into(&mut fold_challenge);
+
+    let folded_witness = {
+        let _s = tracing::info_span!("prover_round::fold").entered();
+        fold(&witness, &fold_challenge)
+    };
+
+    #[cfg(feature = "debug-decomp")]
+    if let Some(image) = &dbg_coarse_image {
+        use crate::common::norms;
+
+        let folded_image = fold(image, &vec![fold_challenge.clone(); 1].concat());
+        let check =
+            crate::rok::proj::coarse::project_ring(&folded_witness, &projection_matrix);
+        let mismatch = check
+            .data
+            .iter()
+            .zip(folded_image.data.iter())
+            .filter(|(a, b)| a.v != b.v)
+            .count();
+        let input_norm = norms::inf_norm(&witness.data);
+        tracing::debug!("  [debug] input norm: {}", input_norm);
+        assert_eq!(
+            mismatch,
+            0,
+            "  [debug] coarse projection consistency: {} / {} mismatching rows",
+            mismatch,
+            check.data.len()
+        );
+    }
+
+    let mut next_round_data =
+        vec![RingElement::zero(Representation::IncompleteNTT); config.composed_witness_length];
+
+    // Digit-major: plane j of the folded witness is one contiguous block, so a radix that is
+    // not a power of two still addresses dyadically.
+    let folded_witness_decomposed = {
+        let _s = tracing::info_span!("prover_round::decompose").entered();
+        let mut planes = vec![
+            RingElement::zero(Representation::IncompleteNTT);
+            folded_witness.data.len() * config.witness_decomposition_chunks
+        ];
+        decompose_chunks_into(
+            &mut planes,
+            &folded_witness.data,
+            config.witness_decomposition_base_log as u64,
+            config.witness_decomposition_chunks,
+        );
+        planes
+    };
+
+    paste_placement(
+        &mut next_round_data,
+        &folded_witness_decomposed,
+        &config.folded_witness_placement,
+    );
+
+    match &config.projection_recursion {
+        Projection::Coarse(projection_config) => {
+            paste_recursive_commitment(
+                &mut next_round_data,
+                &rc_coarse_projection.as_ref().unwrap(),
+                &projection_config,
+            );
+        }
+        Projection::Fine(projection_config) => {
+            paste_recursive_commitment(
+                &mut next_round_data,
+                &rc_fine_projection.as_ref().unwrap().0,
+                &projection_config.recursion_constant_term,
+            );
+            paste_recursive_commitment(
+                &mut next_round_data,
+                &rc_fine_projection.as_ref().unwrap().1,
+                &projection_config.recursion_batched_projection,
+            );
+        }
+        Projection::Skip => {
+            // Do nothing
+        }
+    }
+
+    paste_recursive_commitment(&mut next_round_data, &rc_opening, &config.opening_recursion);
+
+    paste_recursive_commitment(
+        &mut next_round_data,
+        &rc_commitment,
+        &config.commitment_recursion,
+    );
+
+
+    let next_witness_span =
+        tracing::info_span!("prover_round::next_witness_and_commit").entered();
+
+    let next_config_base = config.next.as_ref().map(|c| config_base_from_config(c));
+
+    // Paper: U = reshape_{r'}(w-hat); the packed vector is the next round's witness.
+    let next_round_witness = VerticallyAlignedMatrix {
+        height: next_config_base.map_or(config.composed_witness_length, |c| c.witness_height()),
+        width: next_config_base.map_or(1, |c| c.witness_width()),
+        used_cols: next_config_base.map_or(1, |c| {
+            (c.witness_width() as f64 * config.next_level_usage_ratio).ceil() as usize
+        }),
+        data: next_round_data,
+    };
+
+    #[cfg(feature = "debug-hardness")]
+    crate::tools::debug_hardness::check_sumcheck_round(
+        config,
+        &next_round_witness.data,
+        rc_commitment,
+        &rc_opening,
+        rc_coarse_projection.as_ref(),
+        rc_fine_projection.as_ref().map(|(ct, b, _)| (ct, b)),
+        next_config_base.map_or(1, |c| c.witness_width()),
+    );
+
+    // Commit to the next-round witness before the sumcheck, so the commitment
+    // is bound by the transcript before any sumcheck challenge is sampled.
+    let pending_commitment = config.next.as_deref().map(|next_config| {
+        let base = config_base_from_config(next_config);
+        assert_eq!(
+            next_round_witness.data.len(),
+            base.witness_height() * base.witness_width(),
+            "composed length doesn't match the next round's witness dimensions"
+        );
+        let basic_commitment =
+            commit_basic(&crs, &next_round_witness, base.basic_commitment_rank());
+        match next_config {
+            Config::Sumcheck(next_sumcheck_config) => {
+                let rc = recursive_commit(
+                    &crs,
+                    &next_sumcheck_config.commitment_recursion,
+                    &basic_commitment.data,
+                );
+                hash_wrapper.update_with_ring_element_slice(&rc.most_inner_commitment());
+                tracing::debug!(
+                    "Next round commitment created of length {}.",
+                    rc.committed_data.len()
+                );
+                PendingNextCommitment::Recursive(rc)
+            }
+            _ => {
+                hash_wrapper.update_with_ring_element_slice(&basic_commitment.data);
+                PendingNextCommitment::Basic(basic_commitment)
+            }
+        }
+    });
+
+    drop(next_witness_span);
+
+    let sumcheck_output = {
+        let _s = tracing::info_span!("prover_round::sumcheck").entered();
+        sumcheck(
+            &config,
+            &next_round_witness.data,
+            &projection_matrix,
+            &fold_challenge,
+            &rc_fine_projection
+                .as_ref()
+                .map(|(_, _, challenges)| challenges),
+            &opening,
+            sumcheck_context,
+            &mut hash_wrapper,
+        )
+    };
+
+
+    let (
+        claim_over_witness,
+        claim_over_witness_conjugate,
+        norm_claim,
+        most_inner_norm_claim,
+        projection_norm_claim,
+        sumcheck_transcript,
+        evaluation_points,
+        constant_term_claims,
+    ) = sumcheck_output;
+
+    let at_cut = boundary.as_ref().is_some_and(BoundaryCapture::is_at_cut);
+
+    // Recurse: the sumcheck evaluation point splits into (outer, inner) =
+    // (c_0, c_1), which become the next round's evaluation points.
+    let (next_proof, next_round_commitment) = match (config.next.as_deref(), pending_commitment) {
+        (None, _) => {
+            assert!(
+                boundary.is_none(),
+                "round boundary cut requested past the end of the round chain"
+            );
+            (None, None)
+        }
+        (
+            Some(Config::Sumcheck(next_sumcheck_config)),
+            Some(PendingNextCommitment::Recursive(rc)),
+        ) => {
+            if at_cut {
+                // committing the next-round witness here keeps the chain monolithic: the
+                // boundary statement is the same one any next round proves, its commitment
+                // argued per recursion layer plus the norm check, and the sumcheck
+                // challenges must bind the committed witness before they are drawn
+                let most_inner_commitment = rc.most_inner_commitment().clone();
+                let capture = boundary.expect("round boundary cut requires a boundary slot");
+                *capture.slot = Some(ProverBoundary {
+                    config: next_sumcheck_config.clone(),
+                    witness: next_round_witness,
+                    commitment: rc,
+                    claims: [
+                        claim_over_witness.clone(),
+                        claim_over_witness_conjugate.clone(),
+                    ],
+                    evaluation_points,
+                    transcript: hash_wrapper,
+                });
+                (
+                    None,
+                    Some(NextRoundCommitment::Recursive(most_inner_commitment)),
+                )
+            } else {
+                let (points_outer, points_inner) = evaluation_points
+                    .split_at(next_sumcheck_config.witness_width.ilog2() as usize);
+                let most_inner_commitment = rc.most_inner_commitment().clone();
+                let next_commitment_with_aux = CommitmentWithAux::from_rc_commitment_with_aux(rc);
+                let next_context = match sumcheck_context.next.as_deref_mut() {
+                    Some(NextSumcheckContext::Simple(next_ctx)) => next_ctx,
+                    _ => panic!("Expected NextSumcheckContext::Simple in sumcheck_context.next"),
+                };
+                let proof = prover_round(
+                    &crs,
+                    next_sumcheck_config,
+                    &next_commitment_with_aux,
+                    &next_round_witness,
+                    &evaluation_point_pair(points_inner),
+                    &evaluation_point_pair(points_outer),
+                    next_context,
+                    false,
+                    Some(hash_wrapper),
+                    boundary.and_then(BoundaryCapture::advance),
+                )
+                .0;
+                (
+                    Some(RoundProof::Sumcheck(proof)),
+                    Some(NextRoundCommitment::Recursive(most_inner_commitment)),
+                )
+            }
+        }
+        (
+            Some(Config::Simple(next_simple_config)),
+            Some(PendingNextCommitment::Basic(basic_commitment)),
+        ) => {
+            assert!(
+                boundary.is_none(),
+                "round boundary cut requires the next round to be a Sumcheck round"
+            );
+            let (points_outer, points_inner) =
+                evaluation_points.split_at(next_simple_config.witness_width.ilog2() as usize);
+            let proof = prover_round_simple(
+                next_simple_config,
+                &basic_commitment,
+                &next_round_witness,
+                &evaluation_point_pair(points_inner),
+                &evaluation_point_pair(points_outer),
+                Some(hash_wrapper),
+            );
+            (
+                Some(RoundProof::Simple(proof)),
+                Some(NextRoundCommitment::Simple(basic_commitment)),
+            )
+        }
+        (
+            Some(Config::Intermediate(next_intermediate_config)),
+            Some(PendingNextCommitment::Basic(basic_commitment)),
+        ) => {
+            assert!(
+                boundary.is_none(),
+                "round boundary cut requires the next round to be a Sumcheck round"
+            );
+            let (points_outer, points_inner) =
+                evaluation_points.split_at(next_intermediate_config.witness_width.ilog2() as usize);
+            let next_context = match sumcheck_context.next.as_deref_mut() {
+                Some(NextSumcheckContext::Intermediate(next_ctx)) => next_ctx,
+                _ => panic!("Expected NextSumcheckContext::Intermediate in sumcheck_context.next"),
+            };
+            let proof = prover_round_intermediate(
+                crs,
+                next_intermediate_config,
+                &basic_commitment,
+                &next_round_witness,
+                &evaluation_point_pair(points_inner),
+                &evaluation_point_pair(points_outer),
+                next_context,
+                Some(hash_wrapper),
+            );
+            (
+                Some(RoundProof::Intermediate(proof)),
+                Some(NextRoundCommitment::Simple(basic_commitment)),
+            )
+        }
+        _ => unreachable!("next config and pending commitment kinds must match"),
+    };
+
+    let rp = SumcheckRoundProof {
+        polys: sumcheck_transcript,
+        claim_over_witness,
+        claim_over_witness_conjugate,
+        norm_claim,
+        most_inner_norm_claim,
+        projection_norm_claim,
+        next_round_commitment,
+        rc_opening_inner: rc_opening.most_inner_commitment().clone(),
+        rc_coarse_projection_inner: rc_coarse_projection
+            .as_ref()
+            .map(|rc| rc.most_inner_commitment().clone()),
+        rc_fine_projection_inner: rc_fine_projection.as_ref().map(|(rc_ct, rc_batched, _)| {
+            (
+                rc_ct.most_inner_commitment().clone(),
+                rc_batched.most_inner_commitment().clone(),
+            )
+        }),
+        constant_term_claims,
+        next: next_proof.map(Box::new),
+    };
+
+    (rp, claims)
+}
+
+#[tracing::instrument(skip_all, name = "prover_round_intermediate")]
+pub fn prover_round_intermediate(
+    crs: &CRS,
+    config: &IntermediateConfig,
+    commitment: &BasicCommitment,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    evaluation_points_inner: &Vec<StructuredRow>,
+    evaluation_points_outer: &Vec<StructuredRow>,
+    sumcheck_context: &mut IntermediateSumcheckContext,
+    hash_wrapper: Option<HashWrapper>,
+) -> IntermediateRoundProof {
+    let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
+    hash_wrapper.update_with_ring_element_slice(&commitment.data);
+
+    let opening = open_at(
+        &witness,
+        &evaluation_points_inner,
+        &evaluation_points_outer,
+        true,
+    );
+    tracing::debug!(
+        "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
+        evaluation_points_inner.len(),
+        evaluation_points_outer.len()
+    );
+    tracing::debug!(
+        "int opening height: {}, width: {}",
+        opening.rhs.height, opening.rhs.width
+    );
+
+    hash_wrapper.update_with_ring_element_slice(&opening.rhs.data);
+
+    let mut projection_matrix =
+        ProjectionMatrix::new(config.projection_ratio, config.projection_height);
+    projection_matrix.sample(&mut hash_wrapper);
+    let projection_image_ct = project_coefficients(witness, &projection_matrix);
+    hash_wrapper.update_with_ring_element_slice(&projection_image_ct.data);
+    let (batched_projection_image, fine_proj_batching_challenges) =
+        batch_projection_n_times(witness, &projection_matrix, &mut hash_wrapper, false);
+
+    hash_wrapper.update_with_ring_element_slice(&batched_projection_image.data);
+
+    let mut fold_challenge = vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
+    hash_wrapper.sample_low_op_norm_ring_vec_into(&mut fold_challenge);
+
+    let folded_witness = fold(&witness, &fold_challenge);
+
+    let folded_witness_decomposed = decompose(
+        &folded_witness.data,
+        config.witness_decomposition_base_log as u64,
+        config.witness_decomposition_chunks,
+    );
+
+    let next_config_base = config.next.as_ref().map(|c| config_base_from_config(c));
+
+    let next_round_config = next_config_base
+        .as_ref()
+        .expect("Intermediate round must have a next round config");
+    let height = next_round_config.witness_height();
+    let width = next_round_config.witness_width();
+    let used_cols = next_round_config.witness_width();
+    assert!(
+        used_cols <= width,
+        "next_round_witness used_cols ({}) exceeds width ({})",
+        used_cols,
+        width
+    );
+    assert_eq!(
+        folded_witness_decomposed.len(),
+        height * width,
+        "next_round_witness data length ({}) does not match expected {}x{} ({})",
+        folded_witness_decomposed.len(),
+        height,
+        width,
+        height * width
+    );
+    let next_round_witness = VerticallyAlignedMatrix {
+        height,
+        width,
+        used_cols,
+        data: folded_witness_decomposed,
+    };
+
+    let next_round_commitment: HorizontallyAlignedMatrix<RingElement> = commit_basic(
+        &crs,
+        &next_round_witness,
+        next_config_base.map(|c| c.basic_commitment_rank()).unwrap(),
+    );
+    hash_wrapper.update_with_ring_element_slice(&next_round_commitment.data);
+
+    tracing::debug!(
+        "Next round commitment created of length {}.",
+        next_round_commitment.data.len()
+    );
+
+    let (intermediate_sumcheck_proof, evaluation_points) = run_intermediate_sumcheck(
+        config,
+        &next_round_witness.data,
+        evaluation_points_inner,
+        &fine_proj_batching_challenges,
+        sumcheck_context,
+        &mut hash_wrapper,
+    );
+
+    #[cfg(feature = "debug-hardness")]
+    crate::tools::debug_hardness::check_intermediate_round(
+        config,
+        &next_round_witness.data,
+        &folded_witness.data,
+        &projection_image_ct.data,
+    );
+
+    let next_level_proof = match &config.next {
+        None => {
+            unreachable!("Intermediate round proof should always have a next round config, as it is not the last round.")
+        }
+        Some(next_config) => match &next_config.as_ref() {
+            Config::Sumcheck(_) => {
+                unreachable!("Next round after intermediate round should be simple or intermediate, not sumcheck.")
+            }
+            Config::Intermediate(next_intermediate_config) => {
+                let (new_evaluation_points_outer, new_evaluation_points_inner) = evaluation_points
+                    .split_at(next_intermediate_config.witness_width.ilog2() as usize);
+                let proof = prover_round_intermediate(
+                    crs,
+                    next_intermediate_config,
+                    &next_round_commitment,
+                    &next_round_witness,
+                    &vec![
+                        evaluation_point_to_structured_row(new_evaluation_points_inner),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_inner),
+                    ],
+                    &vec![
+                        evaluation_point_to_structured_row(new_evaluation_points_outer),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
+                    ],
+                    sumcheck_context.next.as_deref_mut().unwrap(),
+                    Some(hash_wrapper),
+                );
+                RoundProof::Intermediate(proof)
+            }
+            Config::Simple(next_simple_config) => {
+                let (new_evaluation_points_outer, new_evaluation_points_inner) =
+                    evaluation_points.split_at(next_simple_config.witness_width.ilog2() as usize);
+                let proof = prover_round_simple(
+                    next_simple_config,
+                    &next_round_commitment,
+                    &next_round_witness,
+                    &vec![
+                        evaluation_point_to_structured_row(new_evaluation_points_inner),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_inner),
+                    ],
+                    &vec![
+                        evaluation_point_to_structured_row(new_evaluation_points_outer),
+                        evaluation_point_to_structured_row_conjugate(new_evaluation_points_outer),
+                    ],
+                    Some(hash_wrapper),
+                );
+                RoundProof::Simple(proof)
+            }
+        },
+    };
+
+    IntermediateRoundProof {
+        opening_rhs: opening.rhs,
+        polys: intermediate_sumcheck_proof.polys,
+        claim_over_witness: intermediate_sumcheck_proof.claim_over_witness,
+        claim_over_witness_conjugate: intermediate_sumcheck_proof.claim_over_witness_conjugate,
+        norm_claim: intermediate_sumcheck_proof.norm_claim,
+        next_round_commitment: Some(NextRoundCommitment::Simple(next_round_commitment)),
+        projection_image_ct,
+        batched_projection_image,
+        next: Some(Box::new(next_level_proof)),
+    }
+}
+
+// this is only for the last round
+#[tracing::instrument(skip_all, name = "prover_round_simple")]
+pub fn prover_round_simple(
+    config: &SimpleConfig,
+    commitment: &BasicCommitment,
+    witness: &VerticallyAlignedMatrix<RingElement>,
+    evaluation_points_inner: &Vec<StructuredRow>,
+    evaluation_points_outer: &Vec<StructuredRow>,
+    hash_wrapper: Option<HashWrapper>,
+) -> SimpleRoundProof {
+    let mut hash_wrapper = hash_wrapper.unwrap_or_else(HashWrapper::new);
+
+    hash_wrapper.update_with_ring_element_slice(&commitment.data);
+
+    let opening = open_at(
+        &witness,
+        &evaluation_points_inner,
+        &evaluation_points_outer,
+        true,
+    );
+    tracing::debug!(
+        "evaluation_points_inner length: {}, evaluation_points_outer length: {}",
+        evaluation_points_inner.len(),
+        evaluation_points_outer.len()
+    );
+    tracing::debug!(
+        "opening height: {}, width: {}",
+        opening.rhs.height, opening.rhs.width
+    );
+
+    hash_wrapper.update_with_ring_element_slice(&opening.rhs.data);
+
+    let mut projection_matrix =
+        ProjectionMatrix::new(config.projection_ratio, config.projection_height);
+
+    projection_matrix.sample(&mut hash_wrapper);
+
+    let projection_image_ct = project_coefficients(&witness, &projection_matrix);
+
+    hash_wrapper.update_with_ring_element_slice(&projection_image_ct.data);
+    // let projection_image = project(&witness, &projection_matrix);
+
+    let (batched_projection_image, _) = batch_projection_n_times(
+        // we don't need the challenges here
+        &witness,
+        &projection_matrix,
+        &mut hash_wrapper,
+        true,
+    );
+
+    // let projection_image = project(&witness, &projection_matrix);
+
+    hash_wrapper.update_with_ring_element_slice(&batched_projection_image.data);
+
+    let mut fold_challenge = vec![RingElement::zero(Representation::IncompleteNTT); witness.width];
+
+    hash_wrapper.sample_low_op_norm_ring_vec_into(&mut fold_challenge);
+
+    let folded_witness = fold(&witness, &fold_challenge);
+
+    #[cfg(feature = "debug-hardness")]
+    crate::tools::debug_hardness::check_simple_round(
+        config,
+        &folded_witness.data,
+        &projection_image_ct.data,
+    );
+
+    SimpleRoundProof {
+        folded_witness,
+        projection_image_ct,
+        batched_projection_image,
+        opening_rhs: opening.rhs,
+    }
+}
