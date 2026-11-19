@@ -5,22 +5,22 @@ use std::{
 };
 
 use crate::{
-    common::{
-        arithmetic::field_to_ring_element_into,
-        ring_arithmetic::{FieldExtension, Representation, RingElement},
-        structured_row::StructuredRow,
-        sumcheck_element::SumcheckElement,
-    },
+    common::structured_row::StructuredRow,
     protocol::sumcheck_utils::{
         common::{EvaluationSumcheckData, FlatTerm, HighOrderSumcheckData, SumcheckBaseData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
         polynomial::Polynomial,
     },
+    ring::{
+        finite_ring::FiniteRing,
+        helpers::field_to_ring_element_into,
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
+    },
 };
 
 #[cfg(test)]
-use crate::common::{config::MOD_Q, structured_row::PreprocessedRow};
+use crate::{common::structured_row::PreprocessedRow, ring::config::MOD_Q};
 
 enum Source<E: 'static> {
     Caller(&'static [E]),
@@ -63,7 +63,7 @@ impl LinearSumcheck<RingElement> {
 }
 
 /// Standard linear sumcheck over a vector that represents a multilinear extension.
-pub struct LinearSumcheck<E: SumcheckElement = RingElement> {
+pub struct LinearSumcheck<E: FiniteRing = RingElement> {
     pub data: Vec<E>,
     borrowed: Option<Borrowed<E>>,
     variable_count: usize,
@@ -77,7 +77,7 @@ pub struct LinearSumcheck<E: SumcheckElement = RingElement> {
     viewed: bool,
 }
 
-impl<E: SumcheckElement> LinearSumcheck<E> {
+impl<E: FiniteRing> LinearSumcheck<E> {
     pub fn new(count: usize) -> Self {
         Self::new_with_prefixed_sufixed_data(count, 0, 0)
     }
@@ -351,7 +351,7 @@ impl<E: SumcheckElement> LinearSumcheck<E> {
     }
 }
 
-impl<E: SumcheckElement> Index<HypercubePoint> for LinearSumcheck<E> {
+impl<E: FiniteRing> Index<HypercubePoint> for LinearSumcheck<E> {
     type Output = E;
 
     fn index(&self, index: HypercubePoint) -> &Self::Output {
@@ -388,7 +388,7 @@ impl<E: SumcheckElement> Index<HypercubePoint> for LinearSumcheck<E> {
     }
 }
 
-impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
+impl<E: FiniteRing> HighOrderSumcheckData for LinearSumcheck<E> {
     type Element = E;
 
     fn gadget_span(&self) -> tracing::Span {
@@ -576,7 +576,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for LinearSumcheck<E> {
     }
 }
 
-impl<E: SumcheckElement> SumcheckBaseData for LinearSumcheck<E> {
+impl<E: FiniteRing> SumcheckBaseData for LinearSumcheck<E> {
     fn partial_evaluate(&mut self, value: &E) {
         // LS-first folding: suffix (LS dummies) are consumed first,
         // then actual data variables, then prefix (MS dummies) last.
@@ -671,7 +671,7 @@ impl<E: SumcheckElement> SumcheckBaseData for LinearSumcheck<E> {
     }
 }
 
-pub struct BasicEvaluationLinearSumcheck<E: SumcheckElement = RingElement> {
+pub struct BasicEvaluationLinearSumcheck<E: FiniteRing = RingElement> {
     pub data: Vec<E>,
     variable_count: usize,
     #[allow(dead_code)]
@@ -680,7 +680,7 @@ pub struct BasicEvaluationLinearSumcheck<E: SumcheckElement = RingElement> {
     evaluated: bool,
 }
 
-impl<E: SumcheckElement> BasicEvaluationLinearSumcheck<E> {
+impl<E: FiniteRing> BasicEvaluationLinearSumcheck<E> {
     pub fn new(count: usize) -> Self {
         Self::new_with_prefixed_sufixed_data(count, 0, 0)
     }
@@ -704,7 +704,7 @@ impl<E: SumcheckElement> BasicEvaluationLinearSumcheck<E> {
     }
 }
 
-impl<E: SumcheckElement> EvaluationSumcheckData for BasicEvaluationLinearSumcheck<E> {
+impl<E: FiniteRing> EvaluationSumcheckData for BasicEvaluationLinearSumcheck<E> {
     type Element = E;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {
@@ -781,7 +781,7 @@ impl EvaluationSumcheckData for RingToFieldWrapperEvaluation {
     }
 }
 
-pub struct StructuredRowEvaluationLinearSumcheck<E: SumcheckElement = RingElement> {
+pub struct StructuredRowEvaluationLinearSumcheck<E: FiniteRing = RingElement> {
     pub data: Option<StructuredRow<E>>,
     variable_count: usize,
     suffix: usize,
@@ -795,7 +795,7 @@ pub struct StructuredRowEvaluationLinearSumcheck<E: SumcheckElement = RingElemen
     evaluated: bool,
 }
 
-impl<E: SumcheckElement> StructuredRowEvaluationLinearSumcheck<E> {
+impl<E: FiniteRing> StructuredRowEvaluationLinearSumcheck<E> {
     pub fn new(count: usize) -> Self {
         Self::new_with_prefixed_sufixed_data(count, 0, 0)
     }
@@ -836,7 +836,7 @@ impl<E: SumcheckElement> StructuredRowEvaluationLinearSumcheck<E> {
     }
 }
 
-impl<E: SumcheckElement + 'static> EvaluationSumcheckData
+impl<E: FiniteRing + 'static> EvaluationSumcheckData
     for StructuredRowEvaluationLinearSumcheck<E>
 {
     type Element = E;
@@ -890,11 +890,11 @@ impl<E: SumcheckElement + 'static> EvaluationSumcheckData
     }
 }
 
-pub struct FakeEvaluationLinearSumcheck<E: SumcheckElement = RingElement> {
+pub struct FakeEvaluationLinearSumcheck<E: FiniteRing = RingElement> {
     result: E,
 }
 
-impl<E: SumcheckElement> FakeEvaluationLinearSumcheck<E> {
+impl<E: FiniteRing> FakeEvaluationLinearSumcheck<E> {
     pub fn new() -> Self {
         FakeEvaluationLinearSumcheck { result: E::zero() }
     }
@@ -904,7 +904,7 @@ impl<E: SumcheckElement> FakeEvaluationLinearSumcheck<E> {
     }
 }
 
-impl<E: SumcheckElement> EvaluationSumcheckData for FakeEvaluationLinearSumcheck<E> {
+impl<E: FiniteRing> EvaluationSumcheckData for FakeEvaluationLinearSumcheck<E> {
     type Element = E;
 
     fn evaluate(&mut self, _point: &Vec<Self::Element>) -> &Self::Element {
@@ -1125,7 +1125,7 @@ mod tests {
 
     #[test]
     fn test_linear_sumcheck() {
-        use crate::common::ring_arithmetic::RingElement;
+        use crate::ring::ring_arithmetic::RingElement;
 
         let data = vec![
             RingElement::constant(1, Representation::IncompleteNTT),
@@ -1179,7 +1179,7 @@ mod tests {
 
     #[test]
     fn test_linear_sumcheck_univariate_polynomial() {
-        use crate::common::ring_arithmetic::RingElement;
+        use crate::ring::ring_arithmetic::RingElement;
 
         let data = vec![
             RingElement::constant(1, Representation::IncompleteNTT),
@@ -1220,7 +1220,7 @@ mod tests {
 
     #[test]
     fn test_masked_sumcheck_indexing() {
-        use crate::common::ring_arithmetic::RingElement;
+        use crate::ring::ring_arithmetic::RingElement;
 
         let data = vec![
             RingElement::constant(1, Representation::IncompleteNTT),
@@ -1358,7 +1358,7 @@ mod tests {
 
     #[test]
     fn test_linear_sumcheck_with_suffixed_data() {
-        use crate::common::ring_arithmetic::RingElement;
+        use crate::ring::ring_arithmetic::RingElement;
 
         let data = vec![
             RingElement::constant(1, Representation::IncompleteNTT),

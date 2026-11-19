@@ -1,14 +1,14 @@
 use crate::{
-    common::{
-        config::MOD_Q,
-        ring_arithmetic::{incomplete_ntt_dot_into, Representation, RingElement},
-    },
     protocol::sumcheck_utils::{
         common::{FlatTerm, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
         linear::LinearSumcheck,
         polynomial::{add_poly_in_place, Polynomial},
+    },
+    ring::{
+        config::MOD_Q,
+        ring_arithmetic::{incomplete_ntt_dot_into, Representation, RingElement},
     },
 };
 

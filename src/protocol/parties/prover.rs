@@ -4,7 +4,6 @@ use crate::{
         hash::HashWrapper,
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
@@ -32,6 +31,7 @@ use crate::{
         sumcheck::{sumcheck, SumcheckContext},
         sumchecks::context::NextSumcheckContext,
     },
+    ring::ring_arithmetic::{Representation, RingElement},
 };
 
 /// Outer evaluation claims t_j = <T[j,:], r_j> (paper: l_j^T W r_j = t_j).

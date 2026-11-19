@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use crate::common::sumcheck_element::SumcheckElement;
+use crate::ring::finite_ring::FiniteRing;
 use crate::protocol::sumcheck_utils::{
     hypercube_point::HypercubePoint,
     linear::LinearSumcheck,
@@ -8,7 +8,7 @@ use crate::protocol::sumcheck_utils::{
     selector_eq::SelectorEq,
 };
 
-pub struct FlatTerm<'a, E: SumcheckElement> {
+pub struct FlatTerm<'a, E: FiniteRing> {
     pub negative: bool,
     pub leaf: bool,
     pub pair: bool,
@@ -20,7 +20,7 @@ pub struct FlatTerm<'a, E: SumcheckElement> {
 /// Implementors must also provide the higher-order hooks so they can be
 /// composed with other sumchecks (products, differences, etc.).
 pub trait HighOrderSumcheckData {
-    type Element: SumcheckElement;
+    type Element: FiniteRing;
     /// Degree + 1 of the univariate polynomial produced at each round.
     fn max_num_polynomial_coefficients(&self) -> usize;
     fn variable_count(&self) -> usize;
@@ -168,6 +168,6 @@ pub trait SumcheckBaseData: HighOrderSumcheckData {
 // This is useful for verifier, who only needs to check evaluations and does not need to perform folding.
 pub trait EvaluationSumcheckData {
     // This evaluates the polynomial at the given point and writes the result into `point`.
-    type Element: SumcheckElement;
+    type Element: FiniteRing;
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element;
 }

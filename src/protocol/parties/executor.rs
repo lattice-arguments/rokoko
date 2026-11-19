@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
 
 use crate::{
-    common::{matrix::VerticallyAlignedMatrix, ring_arithmetic::RingElement},
+    common::matrix::VerticallyAlignedMatrix,
     protocol::{
         boundary::{BoundaryCapture, ProverBoundary, VerifierBoundary},
         config::{to_kb, SizeableProof},
@@ -14,6 +14,7 @@ use crate::{
         sumchecks::builder_verifier::init_verifier,
         wire,
     },
+    ring::ring_arithmetic::RingElement,
 };
 
 pub struct BoundaryRun {
@@ -202,10 +203,9 @@ fn check_prover_claims_match_witness(
 /// SNARK mode: prove user-supplied sumcheck claims about a committed witness,
 /// then run the PCS chain on the resulting evaluation claims.
 pub fn execute_snark(inst: &Instantiation) {
-    use crate::common::{
-        hash::HashWrapper,
-        ring_arithmetic::{Representation, RingElement},
-        sampling::sample_random_short_vector,
+    use crate::{
+        common::{hash::HashWrapper, sampling::sample_random_short_vector},
+        ring::ring_arithmetic::{Representation, RingElement},
     };
     use crate::protocol::snark::{eq, prove_claims, verify_claims, witness_in, Claim, Region};
 
@@ -225,7 +225,7 @@ pub fn execute_snark(inst: &Instantiation) {
         data: sample_random_short_vector(
             config.witness_height * config.witness_width,
             2u64.pow(7),
-            crate::common::ring_arithmetic::Representation::IncompleteNTT,
+            crate::ring::ring_arithmetic::Representation::IncompleteNTT,
         ),
     };
 
@@ -376,7 +376,7 @@ pub fn execute_snark(inst: &Instantiation) {
 mod tests {
     use crate::common::init_common;
 
-    use crate::common::ring_arithmetic::RingElement;
+    use crate::ring::ring_arithmetic::RingElement;
     use crate::common::structured_row::StructuredRow;
     use crate::protocol::config::{
         Config, IntermediateRoundProof, RoundProof, SimpleRoundProof, SumcheckConfig,
@@ -523,8 +523,8 @@ mod tests {
     }
 
     fn short_witness(len: usize) -> Vec<RingElement> {
-        use crate::common::{
-            ring_arithmetic::Representation, sampling::sample_random_short_vector,
+        use crate::{
+            common::sampling::sample_random_short_vector, ring::ring_arithmetic::Representation,
         };
 
         sample_random_short_vector(len, 1u64 << 12, Representation::IncompleteNTT)
@@ -627,7 +627,7 @@ mod tests {
     /// round kind, including shapes that would otherwise only skip a check.
     #[test]
     fn proof_shapes_follow_the_config() {
-        use crate::common::ring_arithmetic::Representation;
+        use crate::ring::ring_arithmetic::Representation;
         use crate::protocol::config::NextRoundCommitment;
 
         type Tamper = fn(&mut SumcheckRoundProof);
@@ -832,7 +832,7 @@ mod tests {
             next: Some(Box::new(AuxConfig::Simple(SimpleConfig {
                 witness_height: 256,
                 witness_width: 16,
-                projection_ratio: crate::common::config::DEGREE,
+                projection_ratio: crate::ring::config::DEGREE,
                 projection_height: 256,
                 basic_commitment_rank: 2,
                 witness_norm_bound: f64::INFINITY,
@@ -845,7 +845,7 @@ mod tests {
     /// zero or zero but for one entry, whose proofs carry roles of a single octave.
     #[test]
     fn honest_proofs_of_sparse_witnesses_decode_and_verify() {
-        use crate::common::ring_arithmetic::Representation;
+        use crate::ring::ring_arithmetic::Representation;
 
         fn zero(len: usize) -> Vec<RingElement> {
             vec![RingElement::zero(Representation::IncompleteNTT); len]
@@ -871,7 +871,7 @@ mod tests {
     /// however few bytes its zeros take.
     #[test]
     fn a_proof_decodes_within_what_its_config_allows() {
-        use crate::common::ring_arithmetic::Representation;
+        use crate::ring::ring_arithmetic::Representation;
         use crate::protocol::wire::{from_bytes_within, Allowance, WireError};
 
         for aux in [three_openings_aux(), intermediate_aux()] {
@@ -977,7 +977,7 @@ mod tests {
     /// `three_openings_aux` with an intermediate round before the last one, whose basic
     /// commitment has a rank that is not a power of two and so a zero padding row.
     fn intermediate_aux() -> crate::protocol::config_generator::AuxSumcheckConfig {
-        use crate::common::config::DEGREE;
+        use crate::ring::config::DEGREE;
         use crate::protocol::config::{IntermediateConfig, SimpleConfig};
         use crate::protocol::config_generator::AuxConfig;
 
@@ -1067,7 +1067,7 @@ mod tests {
             next: Some(Box::new(AuxConfig::Simple(SimpleConfig {
                 witness_height: 256,
                 witness_width: 16,
-                projection_ratio: crate::common::config::DEGREE,
+                projection_ratio: crate::ring::config::DEGREE,
                 projection_height: 256,
                 basic_commitment_rank: 2,
                 witness_norm_bound: f64::INFINITY,

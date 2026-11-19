@@ -1,5 +1,5 @@
-use crate::common::config::*;
-use crate::hexl::bindings::*;
+use crate::ring::config::*;
+use crate::ring::kernels::*;
 use crate::protocol::config::SizeableProof;
 use rand::{Rng, SeedableRng};
 use std::cell::RefCell;

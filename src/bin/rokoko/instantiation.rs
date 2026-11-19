@@ -1,6 +1,6 @@
 use std::sync::LazyLock;
 
-use rokoko::common::config::NOF_BATCHES;
+use rokoko::ring::config::NOF_BATCHES;
 use rokoko::protocol::{
     config::{Config, SimpleConfig},
     config_generator::{AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig},
@@ -663,7 +663,7 @@ mod tests {
         assert_eq!(front.witness_height, 1 << 15);
         assert_eq!(front.witness_width, 1 << 8);
         assert_eq!(
-            (front.witness_height * front.witness_width * rokoko::common::config::DEGREE / 2)
+            (front.witness_height * front.witness_width * rokoko::ring::config::DEGREE / 2)
                 .ilog2(),
             29
         );

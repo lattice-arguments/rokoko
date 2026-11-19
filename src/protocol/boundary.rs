@@ -2,7 +2,7 @@ use std::num::NonZeroUsize;
 
 use crate::common::hash::HashWrapper;
 use crate::common::matrix::VerticallyAlignedMatrix;
-use crate::common::ring_arithmetic::RingElement;
+use crate::ring::ring_arithmetic::RingElement;
 use crate::protocol::commitment::RecursiveCommitmentWithAux;
 use crate::protocol::config::SumcheckConfig;
 

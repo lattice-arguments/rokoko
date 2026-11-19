@@ -1,5 +1,4 @@
 use crate::{
-    common::{config::NOF_BATCHES, ring_arithmetic::RingElement},
     protocol::{
         intermediate_sumchecks::context::IntermediateSumcheckContext,
         sumcheck_utils::{
@@ -13,6 +12,7 @@ use crate::{
             selector_eq::SelectorEq,
         },
     },
+    ring::{config::NOF_BATCHES, ring_arithmetic::RingElement},
 };
 
 /// All sumchecks for constraint verification, grouped for consistent folding.

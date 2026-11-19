@@ -2,7 +2,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use rokoko::common::hash::HashWrapper;
 use rokoko::common::matrix::VerticallyAlignedMatrix;
 use rokoko::common::projection_matrix::ProjectionMatrix;
-use rokoko::common::ring_arithmetic::{Representation, RingElement};
+use rokoko::ring::ring_arithmetic::{Representation, RingElement};
 use rokoko::common::short_challenge::sample_short_challenge;
 use rokoko::protocol::project_coarse::{prepare_i16_witness, project};
 use std::hint::black_box;

@@ -1,25 +1,26 @@
 use std::cell::RefCell;
 
 use crate::{
-    common::{ring_arithmetic::RingElement, sumcheck_element::SumcheckElement},
     protocol::sumcheck_utils::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
         polynomial::{add_poly_in_place, Polynomial},
     },
+    ring::{finite_ring::FiniteRing, ring_arithmetic::RingElement},
 };
 
 #[cfg(test)]
 use crate::{
-    common::{config::MOD_Q, ring_arithmetic::Representation, structured_row::PreprocessedRow},
+    common::structured_row::PreprocessedRow,
     protocol::{
         open::evaluation_point_to_structured_row,
         sumcheck_utils::{common::SumcheckBaseData, linear::LinearSumcheck},
     },
+    ring::{config::MOD_Q, ring_arithmetic::Representation},
 };
 
-pub struct Combiner<E: SumcheckElement = RingElement> {
+pub struct Combiner<E: FiniteRing = RingElement> {
     sumchecks: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = E>>>,
     challenges: Vec<E>,
     temp_poly: RefCell<Polynomial<E>>,
@@ -28,7 +29,7 @@ pub struct Combiner<E: SumcheckElement = RingElement> {
     output_poly: RefCell<Polynomial<E>>,
 }
 
-impl<E: SumcheckElement> Combiner<E> {
+impl<E: FiniteRing> Combiner<E> {
     pub fn new(sumchecks: Vec<ElephantCell<dyn HighOrderSumcheckData<Element = E>>>) -> Self {
         let sumchecks_len = sumchecks.len();
         // debug_assert all variables counts are the same
@@ -59,7 +60,7 @@ impl<E: SumcheckElement> Combiner<E> {
     }
 }
 
-impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
+impl<E: FiniteRing> HighOrderSumcheckData for Combiner<E> {
     type Element = E;
 
     fn gadget_span(&self) -> tracing::Span {
@@ -174,14 +175,14 @@ impl<E: SumcheckElement> HighOrderSumcheckData for Combiner<E> {
 }
 
 /// Evaluation-only version of Combiner that evaluates a linear combination of sumchecks at a point.
-pub struct CombinerEvaluation<E: SumcheckElement = RingElement> {
+pub struct CombinerEvaluation<E: FiniteRing = RingElement> {
     evaluations: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = E>>>,
     challenges: Vec<E>,
     result: E,
     scratch: E,
 }
 
-impl<E: SumcheckElement> CombinerEvaluation<E> {
+impl<E: FiniteRing> CombinerEvaluation<E> {
     pub fn new(evaluations: Vec<ElephantCell<dyn EvaluationSumcheckData<Element = E>>>) -> Self {
         let evaluations_len = evaluations.len();
         CombinerEvaluation {
@@ -206,7 +207,7 @@ impl<E: SumcheckElement> CombinerEvaluation<E> {
     }
 }
 
-impl<E: SumcheckElement> EvaluationSumcheckData for CombinerEvaluation<E> {
+impl<E: FiniteRing> EvaluationSumcheckData for CombinerEvaluation<E> {
     type Element = E;
 
     fn evaluate(&mut self, point: &Vec<Self::Element>) -> &Self::Element {

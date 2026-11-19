@@ -1,8 +1,8 @@
 use aes::cipher::{KeyIvInit, StreamCipher};
 
-use super::ring_arithmetic::Representation;
-use crate::common::config::{DEGREE, MOD_Q};
-use crate::common::ring_arithmetic::RingElement;
+use crate::ring::ring_arithmetic::Representation;
+use crate::ring::config::{DEGREE, MOD_Q};
+use crate::ring::ring_arithmetic::RingElement;
 
 pub fn sample_random_vector(size: usize, representation: Representation) -> Vec<RingElement> {
     let mut vec = Vec::with_capacity(size);

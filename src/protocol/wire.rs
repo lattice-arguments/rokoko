@@ -10,9 +10,9 @@
 //! gap is unreachable: that accounting charges `log2|c|`, the ideal code length for a scale-free
 //! source, whereas the entropy floor of the coefficients actually sent is 110.7 KB.
 
-use crate::common::config::{DEGREE, MOD_Q, NOF_BATCHES, SLOT_DEGREE};
+use crate::ring::config::{DEGREE, MOD_Q, NOF_BATCHES, SLOT_DEGREE};
 use crate::common::matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix};
-use crate::common::ring_arithmetic::{FieldExtension, Representation, RingElement};
+use crate::ring::ring_arithmetic::{FieldExtension, Representation, RingElement};
 use crate::protocol::config::{
     config_base_from_config, Config, IntermediateConfig, IntermediateRoundProof,
     NextRoundCommitment, Projection, RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig,

@@ -7,12 +7,12 @@ use crate::{
     common::{
         decomposition::decompose_chunks_into,
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
-        ring_arithmetic::{incomplete_ntt_dot_into, Representation, RingElement},
     },
     protocol::{
         crs::{CK, CRS},
         project_coarse::Signed16RingElement,
     },
+    ring::ring_arithmetic::{incomplete_ntt_dot_into, Representation, RingElement},
 };
 
 pub type BasicCommitment = HorizontallyAlignedMatrix<RingElement>;
@@ -412,7 +412,7 @@ fn recursive_commit_with(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::config::MOD_Q;
+    use crate::ring::config::MOD_Q;
     use crate::common::structured_row::PreprocessedRow;
 
     #[test]

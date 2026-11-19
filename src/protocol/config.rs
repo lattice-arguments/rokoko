@@ -1,16 +1,14 @@
 use std::any::Any;
 
 use crate::{
-    common::{
-        matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
-        ring_arithmetic::{FieldExtension, RingElement},
-    },
+    common::matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
     protocol::{
         commitment::{
             Placement, Prefix, RecursionConfig, RecursiveCommitment, RecursiveCommitmentWithAux,
         },
         sumcheck_utils::polynomial::Polynomial,
     },
+    ring::ring_arithmetic::{FieldExtension, RingElement},
 };
 
 #[derive(Clone, Debug)]

@@ -1,7 +1,9 @@
-use crate::common::{
-    config::{NOF_BATCHES, NUM_SLOTS},
-    ring_arithmetic::{FieldExtension, Representation, RingElement},
-    structured_row::StructuredRow,
+use crate::{
+    common::structured_row::StructuredRow,
+    ring::{
+        config::{NOF_BATCHES, NUM_SLOTS},
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
+    },
 };
 use crate::protocol::project_fine::BatchedProjectionChallengesSuccinct;
 

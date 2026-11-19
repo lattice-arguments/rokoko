@@ -1,6 +1,7 @@
 use crate::{
-    common::{matrix::VerticallyAlignedMatrix, ring_arithmetic::RingElement},
+    common::matrix::VerticallyAlignedMatrix,
     protocol::{commitment::CommitmentWithAux, config::SumcheckConfig, crs::CRS},
+    ring::ring_arithmetic::RingElement,
 };
 
 #[cfg(not(feature = "parallel"))]

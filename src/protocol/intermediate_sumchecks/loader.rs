@@ -1,10 +1,10 @@
 use crate::{
-    common::{
+    common::structured_row::{PreprocessedRow, StructuredRow},
+    protocol::{config::IntermediateConfig, project_fine::BatchedProjectionChallenges},
+    ring::{
         config::{NOF_BATCHES, NUM_SLOTS},
         ring_arithmetic::{FieldExtension, Representation, RingElement},
-        structured_row::{PreprocessedRow, StructuredRow},
     },
-    protocol::{config::IntermediateConfig, project_fine::BatchedProjectionChallenges},
 };
 
 use super::context::IntermediateSumcheckContext;

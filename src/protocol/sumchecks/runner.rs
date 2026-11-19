@@ -1,12 +1,6 @@
 use crate::{
     common::{
-        arithmetic::{field_to_ring_element_into, inner_product},
-        config::NOF_BATCHES,
-        hash::HashWrapper,
-        projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{FieldExtension, Representation, RingElement},
-        structured_row::PreprocessedRow,
-        sumcheck_element::SumcheckElement,
+        hash::HashWrapper, projection_matrix::ProjectionMatrix, structured_row::PreprocessedRow,
     },
     protocol::{
         config::{Projection, SumcheckConfig},
@@ -19,6 +13,12 @@ use crate::{
             polynomial::Polynomial,
             ring_to_field_combiner::ring_polynomial_to_field,
         },
+    },
+    ring::{
+        config::NOF_BATCHES,
+        finite_ring::FiniteRing,
+        helpers::{field_to_ring_element_into, inner_product},
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
     },
 };
 

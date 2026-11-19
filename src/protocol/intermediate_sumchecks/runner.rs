@@ -1,12 +1,5 @@
 use crate::{
-    common::{
-        arithmetic::field_to_ring_element_into,
-        config::{NOF_BATCHES, NUM_SLOTS},
-        hash::HashWrapper,
-        ring_arithmetic::{FieldExtension, Representation, RingElement},
-        structured_row::StructuredRow,
-        sumcheck_element::SumcheckElement,
-    },
+    common::{hash::HashWrapper, structured_row::StructuredRow},
     protocol::{
         config::IntermediateConfig,
         project_fine::BatchedProjectionChallenges,
@@ -14,6 +7,12 @@ use crate::{
             common::{HighOrderSumcheckData, SumcheckBaseData},
             polynomial::Polynomial,
         },
+    },
+    ring::{
+        config::{NOF_BATCHES, NUM_SLOTS},
+        finite_ring::FiniteRing,
+        helpers::field_to_ring_element_into,
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
     },
 };
 

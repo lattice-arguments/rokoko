@@ -1,13 +1,8 @@
 use crate::{
     common::{
-        arithmetic::{pow_mod, HALF_WAY_MOD_Q},
-        config::{MOD_Q, NOF_BATCHES, SLOT_DEGREE},
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
-        sumcheck_element::SumcheckElement,
     },
-    hexl::bindings::{eltwise_reduce_mod, multiply_mod},
     protocol::{
         commitment::{Placement, Prefix, RecursionConfig},
         crs::CRS,
@@ -15,6 +10,13 @@ use crate::{
             common::HighOrderSumcheckData, elephant_cell::ElephantCell, linear::LinearSumcheck,
             product::ProductSumcheck, selector_eq::SelectorEq, sum::SumSumcheck,
         },
+    },
+    ring::{
+        config::{MOD_Q, NOF_BATCHES, SLOT_DEGREE},
+        finite_ring::FiniteRing,
+        helpers::{pow_mod, HALF_WAY_MOD_Q},
+        kernels::{eltwise_reduce_mod, multiply_mod},
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
     },
 };
 

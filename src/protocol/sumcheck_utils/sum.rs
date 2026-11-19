@@ -1,15 +1,15 @@
 #[cfg(feature = "unsafe-sumcheck")]
 use crate::protocol::sumcheck_utils::common::FlatTerm;
 use crate::{
-    common::{
-        ring_arithmetic::{Representation, RingElement},
-        sumcheck_element::SumcheckElement,
-    },
     protocol::sumcheck_utils::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
         polynomial::{add_poly_in_place, Polynomial},
+    },
+    ring::{
+        finite_ring::FiniteRing,
+        ring_arithmetic::{Representation, RingElement},
     },
 };
 use std::{cell::RefCell, cmp::max};
@@ -20,7 +20,7 @@ use crate::protocol::sumcheck_utils::{
 };
 
 /// Sumcheck data that represents the sum of two other sumchecks.
-pub struct SumSumcheck<E: SumcheckElement = RingElement> {
+pub struct SumSumcheck<E: FiniteRing = RingElement> {
     pub lhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
     pub rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
 
@@ -31,7 +31,7 @@ pub struct SumSumcheck<E: SumcheckElement = RingElement> {
     const_cache: RefCell<E>,
 }
 
-impl<E: SumcheckElement> SumSumcheck<E> {
+impl<E: FiniteRing> SumSumcheck<E> {
     pub fn new(
         lhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
         rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
@@ -53,7 +53,7 @@ impl<E: SumcheckElement> SumSumcheck<E> {
     }
 }
 
-impl<E: SumcheckElement> HighOrderSumcheckData for SumSumcheck<E> {
+impl<E: FiniteRing> HighOrderSumcheckData for SumSumcheck<E> {
     type Element = E;
 
     fn gadget_span(&self) -> tracing::Span {
