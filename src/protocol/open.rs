@@ -1,10 +1,10 @@
 use crate::{
     common::{
         matrix::VerticallyAlignedMatrix,
-        ring_arithmetic::{Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::commitment::{commit_basic_internal, BasicCommitment},
+    ring::ring_arithmetic::{Representation, RingElement},
 };
 
 pub struct Opening {
@@ -98,7 +98,7 @@ pub fn claim_over_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::config::MOD_Q;
+    use crate::ring::config::MOD_Q;
 
     #[test]
     fn test_opening() {

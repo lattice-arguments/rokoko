@@ -1,15 +1,14 @@
 use std::ops::{AddAssign, MulAssign, SubAssign};
 
-use crate::common::{
-    arithmetic::{ONE, ONE_FE, TWO, TWO_FE, ZERO, ZERO_FE},
+use crate::ring::{
     config::SLOT_DEGREE,
-    ring_arithmetic::{Representation, RingElement},
-    FieldExtension,
+    helpers::{ONE, ONE_FE, TWO, TWO_FE, ZERO, ZERO_FE},
+    ring_arithmetic::{FieldExtension, Representation, RingElement},
 };
 
 /// Minimal operations Sumcheck and Polynomial need from a field-like element.
 /// Implemented by `RingElement` and `FieldExtension`.
-pub trait SumcheckElement:
+pub trait FiniteRing:
     Clone
     + PartialEq
     + 'static
@@ -37,7 +36,7 @@ pub trait SumcheckElement:
     }
 }
 
-impl SumcheckElement for RingElement {
+impl FiniteRing for RingElement {
     fn zero() -> Self {
         ZERO.clone()
     }
@@ -71,7 +70,7 @@ impl SumcheckElement for RingElement {
     }
 }
 
-impl SumcheckElement for FieldExtension {
+impl FiniteRing for FieldExtension {
     fn zero() -> Self {
         FieldExtension::from_base(0)
     }

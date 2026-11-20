@@ -1,6 +1,6 @@
-use crate::common::{
-    matrix::VerticallyAlignedMatrix,
-    ring_arithmetic::{incomplete_ntt_dot_many_into, Representation, RingElement},
+use crate::{
+    common::matrix::VerticallyAlignedMatrix,
+    ring::ring_arithmetic::{incomplete_ntt_dot_many_into, Representation, RingElement},
 };
 
 pub fn fold(

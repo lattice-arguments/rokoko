@@ -1,8 +1,4 @@
 use crate::{
-    common::{
-        config::{DEGREE, NOF_BATCHES},
-        ring_arithmetic::RingElement,
-    },
     protocol::{
         config::{Config, IntermediateConfig},
         crs::VerifierCRS,
@@ -22,6 +18,10 @@ use crate::{
         sumchecks::builder_verifier::{
             basic_evaluation_linear, load_combiner_evaluation_data, structured_row_ck_evaluation,
         },
+    },
+    ring::{
+        config::{DEGREE, NOF_BATCHES},
+        ring_arithmetic::RingElement,
     },
 };
 

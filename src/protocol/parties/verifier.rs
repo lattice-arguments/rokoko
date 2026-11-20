@@ -1,15 +1,11 @@
 use crate::{
     common::{
-        arithmetic::precompute_structured_values_fast,
-        config::{DEGREE, MOD_Q, NOF_BATCHES},
         hash::HashWrapper,
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         norms::{assert_norm_bounded, l2_norm_coeffs},
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
-    hexl::bindings::{add_mod, eltwise_mult_mod, multiply_mod},
     protocol::{
         boundary::{BoundaryCapture, VerifierBoundary},
         commitment::{commit_basic_internal, BasicCommitment},
@@ -35,6 +31,12 @@ use crate::{
             context_verifier::{NextVerifierSumcheckContext, VerifierSumcheckContext},
             runner_verifier::sumcheck_verifier,
         },
+    },
+    ring::{
+        config::{DEGREE, MOD_Q, NOF_BATCHES},
+        helpers::precompute_structured_values_fast,
+        kernels::{add_mod, eltwise_mult_mod, multiply_mod},
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
     },
 };
 

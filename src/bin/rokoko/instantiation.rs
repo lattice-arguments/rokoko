@@ -1,11 +1,11 @@
 use std::sync::LazyLock;
 
-use rokoko::common::config::NOF_BATCHES;
 use rokoko::protocol::{
     config::{Config, SimpleConfig},
     config_generator::{AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig},
     params::{assign_norm_bounds, InitialWitnessParams, Instantiation},
 };
+use rokoko::ring::config::NOF_BATCHES;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ParamSet {
@@ -137,8 +137,8 @@ pub fn exact_norm_chain(set: ParamSet, nof_openings: usize) -> Option<Config> {
 fn assert_two_batches() {
     assert_eq!(
         NOF_BATCHES, 2,
-        "src/instantiation.rs is measured for 2 projection batches and the ring spec sets \
-         {NOF_BATCHES}; src/main.rs selects the instantiation of a ring"
+        "src/bin/rokoko/instantiation.rs is measured for 2 projection batches and the ring spec sets \
+         {NOF_BATCHES}; src/bin/rokoko/main.rs selects the instantiation of a ring"
     );
 }
 
@@ -663,8 +663,7 @@ mod tests {
         assert_eq!(front.witness_height, 1 << 15);
         assert_eq!(front.witness_width, 1 << 8);
         assert_eq!(
-            (front.witness_height * front.witness_width * rokoko::common::config::DEGREE / 2)
-                .ilog2(),
+            (front.witness_height * front.witness_width * rokoko::ring::config::DEGREE / 2).ilog2(),
             29
         );
     }

@@ -1,6 +1,6 @@
-use crate::common::{
-    arithmetic::pow_mod,
+use crate::ring::{
     config::{DEGREE, MOD_Q},
+    helpers::pow_mod,
     ring_arithmetic::{Representation, RingElement},
 };
 
@@ -56,7 +56,7 @@ pub fn decompose(input: &[RingElement], base_log: u64, radix: usize) -> Vec<Ring
             temp.to_representation(Representation::StridedCoefficients);
             #[cfg(feature = "debug-decomp")]
             {
-                let q = crate::common::config::MOD_Q;
+                let q = crate::ring::config::MOD_Q;
                 let mut local = 0i64;
                 for &c in temp.v.iter() {
                     let s = if c > q / 2 {

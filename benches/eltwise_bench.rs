@@ -92,7 +92,7 @@ fn bench_eltwise_ops(c: &mut Criterion) {
             &n,
             |bencher, _| {
                 bencher.iter(|| unsafe {
-                    rokoko::hexl::bindings::eltwise_mult_mod(
+                    rokoko::ring::kernels::eltwise_mult_mod(
                         black_box(result.as_mut_ptr()),
                         black_box(operand1.as_ptr()),
                         black_box(operand2.as_ptr()),

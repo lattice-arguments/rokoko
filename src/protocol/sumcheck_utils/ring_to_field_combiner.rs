@@ -1,15 +1,15 @@
 use std::cell::RefCell;
 
 use crate::{
-    common::{
-        config::NUM_SLOTS,
-        ring_arithmetic::{FieldExtension, Representation, RingElement},
-        sumcheck_element::SumcheckElement,
-    },
     protocol::sumcheck_utils::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         polynomial::Polynomial,
+    },
+    ring::{
+        config::NUM_SLOTS,
+        finite_ring::FiniteRing,
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
     },
 };
 

@@ -1,20 +1,17 @@
 use std::sync::LazyLock;
 
-pub mod arithmetic;
-pub mod config;
 pub mod decomposition;
 pub mod estimator;
 pub mod hash;
 pub mod matrix;
 pub mod norms;
+pub mod projection_kernels;
 pub mod projection_matrix;
-pub mod ring_arithmetic;
 pub mod sampling;
 pub mod short_challenge;
 pub mod structured_row;
-pub mod sumcheck_element;
-use crate::common::{
-    arithmetic::{HALF_WAY_MOD_Q, HALF_WAY_MOD_Q_RING_CF, ONE, ONE_FE, TWO, TWO_FE, ZERO, ZERO_FE},
+use crate::ring::{
+    helpers::{HALF_WAY_MOD_Q, HALF_WAY_MOD_Q_RING_CF, ONE, ONE_FE, TWO, TWO_FE, ZERO, ZERO_FE},
     ring_arithmetic::*,
 };
 

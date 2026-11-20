@@ -1,19 +1,19 @@
 use std::cmp::max;
 
-use crate::common::{ring_arithmetic::RingElement, sumcheck_element::SumcheckElement};
+use crate::ring::{finite_ring::FiniteRing, ring_arithmetic::RingElement};
 
 /// Dense polynomial representation used throughout the sumcheck routines.
 /// The storage is fixed to four coefficients because, at the moment,
 /// the protocol only needs up to cubic polynomials.
 #[derive(Clone, Debug)]
-pub struct Polynomial<E: SumcheckElement = RingElement> {
+pub struct Polynomial<E: FiniteRing = RingElement> {
     // coefficients[i] corresponds to x^i.
     pub coefficients: [E; 4],
     /// How many coefficients are actually active (degree + 1).
     pub num_coefficients: usize,
 }
 
-impl<E: SumcheckElement> Polynomial<E> {
+impl<E: FiniteRing> Polynomial<E> {
     pub fn new(num_coefficients: usize) -> Self {
         debug_assert!(
             num_coefficients <= 3,
@@ -71,7 +71,7 @@ impl<E: SumcheckElement> Polynomial<E> {
 
 /// Multiply two polynomials and store the result in `result`.
 #[inline]
-pub fn mul_poly_into<E: SumcheckElement>(
+pub fn mul_poly_into<E: FiniteRing>(
     result: &mut Polynomial<E>,
     poly_0: &Polynomial<E>,
     poly_1: &Polynomial<E>,
@@ -86,7 +86,7 @@ pub fn mul_poly_into<E: SumcheckElement>(
 }
 
 #[inline]
-pub fn mul_coefficients_into<E: SumcheckElement>(
+pub fn mul_coefficients_into<E: FiniteRing>(
     result: &mut Polynomial<E>,
     poly_0: &[&E],
     poly_1: &[&E],
@@ -195,7 +195,7 @@ pub fn add_poly_into(result: &mut Polynomial, poly_0: &Polynomial, poly_1: &Poly
 
 #[inline]
 /// Add `poly` into `result` in place.
-pub fn add_poly_in_place<E: SumcheckElement>(result: &mut Polynomial<E>, poly: &Polynomial<E>) {
+pub fn add_poly_in_place<E: FiniteRing>(result: &mut Polynomial<E>, poly: &Polynomial<E>) {
     for i in 0..poly.num_coefficients {
         result.coefficients[i] += &poly.coefficients[i];
     }
@@ -205,7 +205,7 @@ pub fn add_poly_in_place<E: SumcheckElement>(result: &mut Polynomial<E>, poly: &
 
 #[inline]
 /// Subtract `poly` from `result` in place.
-pub fn sub_poly_in_place<E: SumcheckElement>(result: &mut Polynomial<E>, poly: &Polynomial<E>) {
+pub fn sub_poly_in_place<E: FiniteRing>(result: &mut Polynomial<E>, poly: &Polynomial<E>) {
     for i in 0..poly.num_coefficients {
         result.coefficients[i] -= &poly.coefficients[i];
     }

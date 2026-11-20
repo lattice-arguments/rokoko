@@ -1,13 +1,12 @@
-use crate::common::arithmetic::ONE;
-use crate::common::config::DEGREE;
+use crate::ring::helpers::ONE;
+use crate::ring::config::DEGREE;
 use crate::protocol::config::{Projection, SumcheckConfig};
 use crate::protocol::intermediate_sumchecks::builder::init_intermediate_sumcheck;
 use crate::protocol::sumcheck_utils::sum::SumSumcheck;
 use crate::protocol::sumchecks::context::{FineProjSumcheckContextWrapper, NextSumcheckContext};
 use crate::{
-    common::{config::NOF_BATCHES, ring_arithmetic::RingElement},
     protocol::{
-        commitment::{self},
+        commitment,
         config::Config,
         crs::{self, CRS},
         sumcheck_utils::{
@@ -17,6 +16,7 @@ use crate::{
         },
         sumchecks::context::NormCheckSumcheckContext,
     },
+    ring::{config::NOF_BATCHES, ring_arithmetic::RingElement},
 };
 
 use super::{

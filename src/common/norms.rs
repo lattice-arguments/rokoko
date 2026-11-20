@@ -1,4 +1,4 @@
-use crate::common::{config::MOD_Q, ring_arithmetic::RingElement};
+use crate::ring::{config::MOD_Q, ring_arithmetic::RingElement};
 
 /// Whether a norm over its bound rejects the proof. `soft-norms`, which `calibration` turns on,
 /// only reports it. A crate depending on rokoko reads this rather than its own features: Cargo

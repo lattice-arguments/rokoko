@@ -10,9 +10,9 @@ pub use lowering::{embed_fe, eq_layers_fe, fe_one_minus, tensor_at};
 
 use lowering::{ClaimFactor, Coeffs, PublicFactor, SnarkClaim, Weights};
 
-use crate::common::config::MOD_Q;
+use crate::ring::config::MOD_Q;
 use crate::common::matrix::VerticallyAlignedMatrix;
-use crate::common::ring_arithmetic::{FieldExtension, Representation, RingElement};
+use crate::ring::ring_arithmetic::{FieldExtension, Representation, RingElement};
 use crate::protocol::commitment::Prefix;
 use std::sync::Arc;
 
@@ -320,7 +320,7 @@ pub fn combination(parts: Vec<(RingElement, Vec<Weight>)>) -> Weight {
 /// The weight `ratio^i` over `2^num_vars` entries (recomposes base-`ratio`
 /// digits); verifier cost `O(num_vars)`.
 pub fn powers(ratio: u64, num_vars: usize) -> Weight {
-    use crate::common::arithmetic::pow_mod;
+    use crate::ring::helpers::pow_mod;
     let mut layers = Vec::with_capacity(num_vars);
     let mut scale: u128 = 1;
     for t in (0..num_vars).rev() {
