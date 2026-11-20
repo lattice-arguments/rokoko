@@ -4,7 +4,7 @@
 //   trace  debug  info  warn  error  off
 //
 // `warning` and `err` are accepted as aliases. Note that other standard RUST_LOG notation — including the
-// per-target syntax `env-filter` supports (`rokoko=debug`, `rokoko::protocol=trace`), and numeric
+// per-target syntax `env-filter` supports (`rokoko=debug`, `rokoko::rok=trace`), and numeric
 // values — is not recognised, and an unset or unrecognised `RUST_LOG` falls back to `info`.
 
 use std::env;

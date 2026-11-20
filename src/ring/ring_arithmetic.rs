@@ -1,4 +1,3 @@
-use crate::protocol::config::SizeableProof;
 use crate::ring::config::*;
 use crate::ring::kernels::*;
 use rand::{Rng, SeedableRng};
@@ -24,6 +23,12 @@ pub struct RingElement {
     pub v: [u64; DEGREE],
     pub representation: Representation,
 }
+
+/// A ring element's coefficients, centred and narrowed to `i16`, as the coarse projection
+/// reads them.
+#[derive(Clone, Copy)]
+#[repr(align(64))]
+pub struct Signed16RingElement(pub [i16; DEGREE]);
 
 thread_local! {
     static RNG: RefCell<rand::rngs::StdRng> =
@@ -1494,10 +1499,10 @@ impl RingElement {
         }
         resident.min(other.size_in_bits())
     }
-}
 
-impl SizeableProof for RingElement {
-    fn size_in_bits(&self) -> usize {
+    /// Bits needed to send this element in its current representation, each coefficient
+    /// as the shorter of its plain and its centred signed form.
+    pub fn size_in_bits(&self) -> usize {
         let mut size = 0;
         for v in &self.v {
             if *v > MOD_Q {
@@ -1515,8 +1520,9 @@ impl SizeableProof for RingElement {
     }
 }
 
-impl SizeableProof for FieldExtension {
-    fn size_in_bits(&self) -> usize {
+impl FieldExtension {
+    /// Bits needed to send this element, each coefficient in centred signed form.
+    pub fn size_in_bits(&self) -> usize {
         let mut size = 0;
         for v in &self.coeffs {
             let centered = if *v > MOD_Q / 2 { MOD_Q - *v } else { *v };

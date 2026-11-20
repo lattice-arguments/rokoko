@@ -1,11 +1,11 @@
 use std::sync::LazyLock;
 
-use rokoko::protocol::{
-    config::{Config, SimpleConfig},
-    config_generator::{AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig},
-    params::{assign_norm_bounds, InitialWitnessParams, Instantiation},
-};
 use rokoko::ring::config::NOF_BATCHES;
+use rokoko::rok::config::{
+    generator::{AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig},
+    params::{assign_norm_bounds, InitialWitnessParams, Instantiation},
+    Config, SimpleConfig,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ParamSet {
@@ -611,7 +611,7 @@ pub static P_LAST: LazyLock<SimpleConfig> = LazyLock::new(|| SimpleConfig {
 #[cfg(all(test, not(rokoko_ring = "n128_d4")))]
 mod tests {
     use super::{exact_norm_chain, p_root_aux, ParamSet};
-    use rokoko::protocol::config::Config;
+    use rokoko::rok::config::Config;
 
     fn assert_chain_dims(mut config: &Config) {
         while let Config::Sumcheck(sc) = config {

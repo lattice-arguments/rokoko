@@ -1,10 +1,10 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use rokoko::common::hash::HashWrapper;
 use rokoko::common::matrix::VerticallyAlignedMatrix;
-use rokoko::common::projection_matrix::ProjectionMatrix;
 use rokoko::common::short_challenge::sample_short_challenge;
-use rokoko::protocol::project_coarse::{prepare_i16_witness, project};
 use rokoko::ring::ring_arithmetic::{Representation, RingElement};
+use rokoko::rok::proj::coarse::{prepare_i16_witness, project};
+use rokoko::rok::proj::matrix::ProjectionMatrix;
 use std::hint::black_box;
 
 fn bench_project_coarse(c: &mut Criterion) {
@@ -65,10 +65,10 @@ fn bench_decompose(c: &mut Criterion) {
 
 fn bench_commitment(c: &mut Criterion) {
     #[cfg(not(feature = "parallel"))]
-    use rokoko::protocol::commitment::commit_basic;
+    use rokoko::commitment::commit_basic;
     #[cfg(feature = "parallel")]
-    use rokoko::protocol::commitment::commit_basic_parallel as commit_basic;
-    use rokoko::protocol::crs::CRS;
+    use rokoko::commitment::commit_basic_parallel as commit_basic;
+    use rokoko::commitment::crs::CRS;
 
     rokoko::common::init_common();
     let height: usize = std::env::var("ROKOKO_BENCH_HEIGHT")

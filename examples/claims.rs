@@ -2,7 +2,7 @@ use rokoko::common::decomposition::decompose;
 use rokoko::common::init_common;
 use rokoko::ring::ring_arithmetic::{Representation, RingElement};
 use rokoko::common::sampling::sample_random_short_vector;
-use rokoko::protocol::snark::{
+use rokoko::rok::claims::{
     challenge_point, eq, eq_weighted_sum, powers, prove_claims, table, verify_claims, witness_in,
     Claim, Region, Transcript, WitnessBuilder, WitnessShape,
 };
