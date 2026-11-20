@@ -139,7 +139,8 @@ pub static ONE_FE: LazyLock<FieldExtension> = LazyLock::new(|| FieldExtension::f
 pub static TWO_FE: LazyLock<FieldExtension> = LazyLock::new(|| FieldExtension::from_base(2));
 pub static ZERO_FE: LazyLock<FieldExtension> = LazyLock::new(|| FieldExtension::from_base(0));
 
-// this is only for u64
+// Scalar version over `Z_q`, with values stored as `u64`. The tests check
+// `precompute_structured_values_fast` below against it.
 pub fn precompute_structured_values(layers: &[u64]) -> Vec<u64> {
     let size = 1 << layers.len();
     let mut values = vec![1u64; size];

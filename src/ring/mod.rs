@@ -1,6 +1,4 @@
-//! Ring arithmetic: `RingElement`, `FieldExtension` and the ring constants generated
-//! from the ring spec. `kernels` provides raw-pointer wrappers for the `incomplete-rexl`
-//! kernels and re-exports `SlotRing`, which `ring_arithmetic` also calls directly.
+//! Arithmetic over `R_q` and its slot field; `build.rs` generates `config` from `ring-params/`.
 
 pub mod config;
 pub mod finite_ring;
