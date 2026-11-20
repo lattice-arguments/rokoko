@@ -1,12 +1,12 @@
 //! The chains of `crate::instantiation` retuned for `ring-params/n128_d4.toml`.
 
-use rokoko::common::config::{DEGREE, MOD_Q, NOF_BATCHES, SLOT_DEGREE};
 use rokoko::common::short_challenge::{TAU, T_OP_NORM_BOUND};
 use rokoko::protocol::{
     config::Config,
     config_generator::{AuxConfig, AuxProjection, AuxRecursionConfig, AuxSumcheckConfig},
     params::{assign_norm_bounds, Instantiation},
 };
+use rokoko::ring::config::{DEGREE, MOD_Q, NOF_BATCHES, SLOT_DEGREE};
 
 use crate::instantiation::{initial_witness, root_aux, ParamSet};
 

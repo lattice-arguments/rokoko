@@ -126,7 +126,7 @@ Currently, a framework for supporting different kinds of relations is not fully 
 
 ## Configuration and Structure
 
-The ring degree `DEGREE`, the modulus `MOD_Q` and the number of fine-projection batches `NOF_BATCHES` are constants in `src/common/config.rs`, generated from the ring spec (see [Ring](#ring)).
+The ring degree `DEGREE`, the modulus `MOD_Q` and the number of fine-projection batches `NOF_BATCHES` are constants in `src/ring/config.rs`, generated from the ring spec (see [Ring](#ring)).
 
 Protocol configuration is defined in `src/protocol/config.rs`. The library takes the chain of rounds as a runtime value, `protocol::params::Instantiation`, which bundles the chain `Config` with the parameters of the initial witness. The concrete parameter sets are defined in the binary, `src/bin/rokoko/instantiation.rs`, and selected by its command-line argument. In the future, we plan to provide automatic selection.
 

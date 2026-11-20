@@ -1,4 +1,4 @@
-use crate::common::config::NOF_BATCHES;
+use crate::ring::config::NOF_BATCHES;
 use crate::protocol::commitment::{block_sizes, Placement, Prefix, RecursionConfig};
 use crate::protocol::config::{
     Config, FineProjectionConfig, IntermediateConfig, Projection, SimpleConfig, SumcheckConfig,

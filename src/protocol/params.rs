@@ -1,11 +1,10 @@
 use crate::{
     common::{
-        decomposition::decompose,
-        matrix::VerticallyAlignedMatrix,
-        ring_arithmetic::{Representation, RingElement},
+        decomposition::decompose, matrix::VerticallyAlignedMatrix,
         sampling::sample_random_short_vector,
     },
     protocol::config::{Config, SumcheckConfig},
+    ring::ring_arithmetic::{Representation, RingElement},
 };
 
 pub const NORM_MARGIN: f64 = 1.85; // verifier accepts norms up to this factor times the expected bound
@@ -106,7 +105,7 @@ pub fn witness_cols_for_target(
     witness_width: usize,
     target_log2_zq_coeffs: usize,
 ) -> usize {
-    use crate::common::config::DEGREE;
+    use crate::ring::config::DEGREE;
     let full_log2 = (witness_height * witness_width * DEGREE).ilog2() as usize;
     assert!(
         target_log2_zq_coeffs <= full_log2,
@@ -128,7 +127,7 @@ mod tests {
     #[test]
     fn test_witness_cols_for_target() {
         // p-28-shaped set: 2^13 x 2^8 ring elements = 2^28 Zq coefficients at degree 128
-        let full = 13 + 8 + crate::common::config::DEGREE.ilog2() as usize;
+        let full = 13 + 8 + crate::ring::config::DEGREE.ilog2() as usize;
         let cols = |target| super::witness_cols_for_target(1 << 13, 1 << 8, target);
         assert_eq!(cols(full), 1 << 8);
         // p27 rule: one column-bit fewer

@@ -1,11 +1,11 @@
 use crate::{
-    common::{
-        config::MOD_Q,
-        ring_arithmetic::{Representation, RingElement},
-        structured_row::StructuredRow,
-    },
-    hexl::bindings::inv_mod,
+    common::structured_row::StructuredRow,
     protocol::open::evaluation_point_to_structured_row,
+    ring::{
+        config::MOD_Q,
+        kernels::inv_mod,
+        ring_arithmetic::{Representation, RingElement},
+    },
 };
 
 pub struct InitialEvaluationPoints {

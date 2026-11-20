@@ -2,9 +2,7 @@ use crate::{
     common::{
         hash::HashWrapper,
         matrix::VerticallyAlignedMatrix,
-        ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
-        sumcheck_element::SumcheckElement,
     },
     protocol::{
         commitment::Prefix,
@@ -14,16 +12,20 @@ use crate::{
             common::{EvaluationSumcheckData, HighOrderSumcheckData, SumcheckBaseData},
             diff::{DiffSumcheck, DiffSumcheckEvaluation},
             elephant_cell::ElephantCell,
+            flat::FlatRounds,
             linear::{BasicEvaluationLinearSumcheck, FakeEvaluationLinearSumcheck, LinearSumcheck},
             polynomial::Polynomial,
             product::{ProductSumcheck, ProductSumcheckEvaluation},
-            flat::FlatRounds,
             ring_to_field_combiner::{
                 ring_polynomial_to_field, RingToFieldCombiner, RingToFieldCombinerEvaluation,
             },
             selector_eq::{SelectorEq, SelectorEqEvaluation},
             sum::{SumSumcheck, SumSumcheckEvaluation},
         },
+    },
+    ring::{
+        finite_ring::FiniteRing,
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
     },
 };
 
@@ -71,7 +73,7 @@ pub fn fe_one_minus(a: &FieldExtension) -> FieldExtension {
 }
 
 pub fn expand_field_tensor(layers: &[FieldExtension]) -> Vec<RingElement> {
-    use crate::common::arithmetic::field_to_ring_element_into;
+    use crate::ring::helpers::field_to_ring_element_into;
     let mut vals = vec![FieldExtension::one()];
     for a in layers.iter().rev() {
         let one_minus = fe_one_minus(a);
@@ -168,7 +170,7 @@ fn expand_field_tensor_fe(layers: &[FieldExtension]) -> Vec<FieldExtension> {
 }
 
 fn scalar_tensor_expansion(layers: &[FieldExtension]) -> Option<Vec<u64>> {
-    use crate::common::config::MOD_Q;
+    use crate::ring::config::MOD_Q;
     if !layers.iter().all(FieldExtension::is_base) {
         return None;
     }
@@ -219,8 +221,8 @@ fn expand_combination(
     total_vars: usize,
     len: usize,
 ) -> Vec<RingElement> {
-    use crate::common::config::{DEGREE, MOD_Q};
-    use crate::hexl::bindings::{eltwise_fma_mod, multiply_mod};
+    use crate::ring::config::{DEGREE, MOD_Q};
+    use crate::ring::kernels::{eltwise_fma_mod, multiply_mod};
     let mut merged = vec![RingElement::zero(Representation::IncompleteNTT); len];
 
     struct Component<'a> {
@@ -349,7 +351,7 @@ pub fn sample_fe_layers(hw: &mut HashWrapper, n: usize) -> Vec<FieldExtension> {
 /// The field scalar as a ring element, for use in term coefficients and
 /// public weights.
 pub fn embed_fe(v: &FieldExtension) -> RingElement {
-    use crate::common::arithmetic::field_to_ring_element_into;
+    use crate::ring::helpers::field_to_ring_element_into;
     let mut r = RingElement::zero(Representation::IncompleteNTT);
     field_to_ring_element_into(&mut r, v);
     r.from_homogenized_field_extensions_to_incomplete_ntt();
@@ -389,8 +391,8 @@ pub fn eq_layers_fe(a: &[FieldExtension], z: &[FieldExtension]) -> FieldExtensio
 /// The weight pair `(1, w)` as an eq layer: `(1 + w) * (1 - a, a)`. Returns
 /// the layer value and the scale to fold into the term coefficient.
 pub fn weighted_layer(w: u64) -> (FieldExtension, u64) {
-    use crate::common::arithmetic::inv_mod;
-    use crate::common::config::MOD_Q;
+    use crate::ring::helpers::inv_mod;
+    use crate::ring::config::MOD_Q;
     let scale = (1 + w as u128 % MOD_Q as u128) as u64 % MOD_Q;
     assert_ne!(scale, 0, "weighted_layer is undefined for w = -1 mod q");
     let mut a = FieldExtension::zero();
@@ -473,7 +475,7 @@ impl ClaimExpr {
     }
     pub fn neg(self) -> ClaimExpr {
         self.scale(&RingElement::constant(
-            crate::common::config::MOD_Q - 1,
+            crate::ring::config::MOD_Q - 1,
             Representation::IncompleteNTT,
         ))
     }
@@ -1306,7 +1308,7 @@ fn prove_claims_with(
     let mut polys: Vec<Polynomial<FieldExtension>> = vec![];
     let mut evaluation_points: Vec<RingElement> = vec![];
 
-    use crate::common::arithmetic::field_to_ring_element_into;
+    use crate::ring::helpers::field_to_ring_element_into;
     while num_vars > 0 {
         num_vars -= 1;
 
@@ -1505,7 +1507,7 @@ pub fn verify_claims(
         t.from_incomplete_ntt_to_homogenized_field_extensions();
         let mut split = t.split_into_field_extensions();
         let mut result = FieldExtension::zero();
-        for i in 0..crate::common::config::NUM_SLOTS {
+        for i in 0..crate::ring::config::NUM_SLOTS {
             split[i] *= &fe[i];
             result += &split[i];
         }
@@ -1542,7 +1544,7 @@ pub fn verify_claims(
         hash_wrapper.sample_field_element_into(&mut f);
         batched_claim_over_field = poly_over_field.at(&f);
 
-        use crate::common::arithmetic::field_to_ring_element_into;
+        use crate::ring::helpers::field_to_ring_element_into;
         let mut r = RingElement::zero(Representation::IncompleteNTT);
         field_to_ring_element_into(&mut r, &f);
         r.from_homogenized_field_extensions_to_incomplete_ntt();

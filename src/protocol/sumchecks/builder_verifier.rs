@@ -1,10 +1,5 @@
 use crate::{
-    common::{
-        arithmetic::{ONE, ONE_FE},
-        config::{DEGREE, NOF_BATCHES},
-        ring_arithmetic::{FieldExtension, Representation, RingElement},
-        structured_row::StructuredRow,
-    },
+    common::structured_row::StructuredRow,
     protocol::{
         commitment::{self, Placement, Prefix},
         config::{Config, Projection, SumcheckConfig},
@@ -23,16 +18,24 @@ use crate::{
             ring_to_field_combiner::RingToFieldCombinerEvaluation,
             sum::SumSumcheckEvaluation,
         },
-        sumchecks::context_verifier::{
-            CoarseProjVerifierContext, ComVerifyLayerVerifierContext,
-            ComVerifyOutputLayerVerifierContext, ComVerifyVerifierContext,
-            CommitmentFoldVerifierContext, FineProjVerifierContext, FineProjVerifierContextWrapper,
-            InnerEvalFoldVerifierContext, NextVerifierSumcheckContext, NormCheckVerifierContext,
-            OuterEvalClaimVerifierContext, VerifierSumcheckContext,
+        sumchecks::{
+            context_verifier::{
+                CoarseProjVerifierContext, ComVerifyLayerVerifierContext,
+                ComVerifyOutputLayerVerifierContext, ComVerifyVerifierContext,
+                CommitmentFoldVerifierContext, FineProjVerifierContext,
+                FineProjVerifierContextWrapper, InnerEvalFoldVerifierContext,
+                NextVerifierSumcheckContext, NormCheckVerifierContext,
+                OuterEvalClaimVerifierContext, VerifierSumcheckContext,
+            },
+            helpers::{
+                batch_piece, block_recomposition_weights, row_committed_pieces, BlockWeights,
+            },
         },
-        sumchecks::helpers::{
-            batch_piece, block_recomposition_weights, row_committed_pieces, BlockWeights,
-        },
+    },
+    ring::{
+        config::{DEGREE, NOF_BATCHES},
+        helpers::{ONE, ONE_FE},
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
     },
 };
 
@@ -1101,8 +1104,8 @@ pub fn init_verifier(crs: &VerifierCRS, config: &SumcheckConfig) -> VerifierSumc
 mod tests {
     use super::*;
     use crate::{
-        common::arithmetic::field_to_ring_element,
         protocol::sumcheck_utils::selector_eq::SelectorEqEvaluation,
+        ring::helpers::field_to_ring_element,
     };
 
     fn broadcast_point(len: usize) -> Vec<RingElement> {

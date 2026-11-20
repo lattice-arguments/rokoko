@@ -1,17 +1,15 @@
 use crate::{
-    common::{
-        arithmetic::field_to_ring_element,
-        config::{NOF_BATCHES, NUM_SLOTS},
-        hash::HashWrapper,
-        norms::assert_norm_bounded,
-        ring_arithmetic::{FieldExtension, Representation, RingElement},
-        structured_row::StructuredRow,
-        sumcheck_element::SumcheckElement,
-    },
+    common::{hash::HashWrapper, norms::assert_norm_bounded, structured_row::StructuredRow},
     protocol::{
         config::{IntermediateConfig, IntermediateRoundProof},
         project_fine::BatchedProjectionChallengesSuccinct,
         sumcheck_utils::common::EvaluationSumcheckData,
+    },
+    ring::{
+        config::{NOF_BATCHES, NUM_SLOTS},
+        finite_ring::FiniteRing,
+        helpers::field_to_ring_element,
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
     },
 };
 

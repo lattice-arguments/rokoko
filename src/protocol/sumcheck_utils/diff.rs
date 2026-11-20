@@ -3,21 +3,21 @@ use crate::protocol::sumcheck_utils::common::FlatTerm;
 use std::{cell::RefCell, cmp::max};
 
 use crate::{
-    common::{
-        ring_arithmetic::{Representation, RingElement},
-        sumcheck_element::SumcheckElement,
-    },
     protocol::sumcheck_utils::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
         polynomial::{sub_poly_in_place, Polynomial},
     },
+    ring::{
+        finite_ring::FiniteRing,
+        ring_arithmetic::{Representation, RingElement},
+    },
 };
 
 /// Sumcheck data that represents the difference between two other sumchecks.
 /// Useful for enforcing equality constraints between two multilinear extensions.
-pub struct DiffSumcheck<E: SumcheckElement = RingElement> {
+pub struct DiffSumcheck<E: FiniteRing = RingElement> {
     pub lhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
     pub rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
 
@@ -28,7 +28,7 @@ pub struct DiffSumcheck<E: SumcheckElement = RingElement> {
     const_cache: RefCell<E>,
 }
 
-impl<E: SumcheckElement> DiffSumcheck<E> {
+impl<E: FiniteRing> DiffSumcheck<E> {
     pub fn new(
         lhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
         rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
@@ -49,7 +49,7 @@ impl<E: SumcheckElement> DiffSumcheck<E> {
     }
 }
 
-impl<E: SumcheckElement> HighOrderSumcheckData for DiffSumcheck<E> {
+impl<E: FiniteRing> HighOrderSumcheckData for DiffSumcheck<E> {
     type Element = E;
 
     fn gadget_span(&self) -> tracing::Span {

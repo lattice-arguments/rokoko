@@ -1,10 +1,10 @@
 use crate::{
-    common::{config::NOF_BATCHES, ring_arithmetic::RingElement},
     protocol::sumcheck_utils::{
         combiner::Combiner, common::SumcheckBaseData, elephant_cell::ElephantCell,
         linear::LinearSumcheck, product::ProductSumcheck,
         ring_to_field_combiner::RingToFieldCombiner,
     },
+    ring::{config::NOF_BATCHES, ring_arithmetic::RingElement},
 };
 
 pub struct CommitmentFoldIntermediateSumcheckContext {

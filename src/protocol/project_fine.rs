@@ -2,20 +2,23 @@ use std::any::Any;
 
 use crate::{
     common::{
-        arithmetic::{precompute_structured_values_fast, HALF_WAY_MOD_Q_RING_CF},
-        config::{DEGREE, MOD_Q, NOF_BATCHES},
         hash::HashWrapper,
         matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix},
         projection_matrix::ProjectionMatrix,
+    },
+    protocol::config::{ConfigBase, SimpleConfig},
+    ring::{
+        config::{DEGREE, MOD_Q, NOF_BATCHES},
+        helpers::{precompute_structured_values_fast, HALF_WAY_MOD_Q_RING_CF},
+        kernels::{add_mod, eltwise_reduce_mod, multiply_mod},
         ring_arithmetic::{Representation, RingElement},
     },
-    hexl::bindings::{add_mod, eltwise_reduce_mod, multiply_mod},
-    protocol::config::{ConfigBase, SimpleConfig},
 };
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
 use crate::{
-    common::arithmetic::project_lanes_grouped, protocol::project_coarse::ternary_group_offsets,
+    common::projection_kernels::project_lanes_grouped,
+    protocol::project_coarse::ternary_group_offsets,
 };
 
 /// Computes J_batched = c'_1^T * J_embedded
@@ -341,7 +344,7 @@ fn reduce_conjugate_to_incomplete_ntt(el: &mut RingElement) {
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     if el.representation == Representation::Coefficients {
         unsafe {
-            use crate::common::{arithmetic::HALF_WAY_MOD_Q, config::SLOT_DEGREE};
+            use crate::ring::{config::SLOT_DEGREE, helpers::HALF_WAY_MOD_Q};
             use std::arch::x86_64::*;
             const Z: usize = DEGREE / 8;
             let v = el.v.as_mut_ptr() as *mut __m512i;
@@ -1235,7 +1238,7 @@ mod tests {
 
     #[test]
     fn reduce_conjugate_matches_ntt_then_conjugate() {
-        use crate::common::arithmetic::HALF_WAY_MOD_Q;
+        use crate::ring::helpers::HALF_WAY_MOD_Q;
         crate::common::init_common();
         let mut hash_wrapper = HashWrapper::new();
         let spread = 1u64 << 58;

@@ -3,24 +3,25 @@
 //! witness to i16 once, drop J's zeros into per-row +/- index lists, accumulate
 //! in i16 over L1-resident tiles, lift back to [0, Q) and forward-NTT the image.
 
-use crate::common::{
-    arithmetic::centered_i16_from_u64_mod_q,
-    config::DEGREE,
-    matrix::VerticallyAlignedMatrix,
-    projection_matrix::ProjectionMatrix,
-    ring_arithmetic::{Representation, RingElement},
+use crate::{
+    common::{matrix::VerticallyAlignedMatrix, projection_matrix::ProjectionMatrix},
+    ring::{
+        config::DEGREE,
+        helpers::centered_i16_from_u64_mod_q,
+        ring_arithmetic::{Representation, RingElement},
+    },
 };
 
 #[cfg(not(all(target_arch = "x86_64", target_feature = "avx512f")))]
-use crate::common::arithmetic::project_one_row_i16_to_u64;
+use crate::common::projection_kernels::project_one_row_i16_to_u64;
 #[cfg(all(
     target_arch = "x86_64",
     target_feature = "avx512f",
     not(target_feature = "avx512bw")
 ))]
-use crate::common::arithmetic::project_rows_sparse_tiled;
+use crate::common::projection_kernels::project_rows_sparse_tiled;
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
-use crate::common::arithmetic::{project_rows_grouped, GROUP, GROUP_SUMS, PASS};
+use crate::common::projection_kernels::{project_rows_grouped, GROUP, GROUP_SUMS, PASS};
 
 #[derive(Clone, Copy)]
 #[repr(align(64))]
@@ -323,7 +324,7 @@ pub(crate) fn ternary_group_offsets(projection_matrix: &ProjectionMatrix) -> Vec
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common::{config::MOD_Q, hash::HashWrapper};
+    use crate::{common::hash::HashWrapper, ring::config::MOD_Q};
 
     #[test]
     fn test_projection_matches_ring_reference() {
@@ -626,7 +627,7 @@ mod tests {
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
     #[test]
     fn grouped_rows_match_the_tiled_kernel_and_the_definition_on_extreme_digits() {
-        use crate::common::arithmetic::{project_rows_grouped, project_rows_sparse_tiled};
+        use crate::common::projection_kernels::{project_rows_grouped, project_rows_sparse_tiled};
         crate::common::init_common();
         let width = 256 * 32;
         let rows = extreme_rows(width);
@@ -676,7 +677,7 @@ mod tests {
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512bw"))]
     #[test]
     fn grouped_lanes_match_the_definition_on_extreme_digits_or_decline() {
-        use crate::common::arithmetic::project_lanes_grouped;
+        use crate::common::projection_kernels::project_lanes_grouped;
         use std::arch::x86_64::__m512i;
         crate::common::init_common();
         let width = 256 * 32;
