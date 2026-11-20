@@ -1,6 +1,6 @@
+use crate::protocol::config::SizeableProof;
 use crate::ring::config::*;
 use crate::ring::kernels::*;
-use crate::protocol::config::SizeableProof;
 use rand::{Rng, SeedableRng};
 use std::cell::RefCell;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Sub, SubAssign};

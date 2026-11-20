@@ -10,9 +10,7 @@
 //! gap is unreachable: that accounting charges `log2|c|`, the ideal code length for a scale-free
 //! source, whereas the entropy floor of the coefficients actually sent is 110.7 KB.
 
-use crate::ring::config::{DEGREE, MOD_Q, NOF_BATCHES, SLOT_DEGREE};
 use crate::common::matrix::{HorizontallyAlignedMatrix, VerticallyAlignedMatrix};
-use crate::ring::ring_arithmetic::{FieldExtension, Representation, RingElement};
 use crate::protocol::config::{
     config_base_from_config, Config, IntermediateConfig, IntermediateRoundProof,
     NextRoundCommitment, Projection, RoundProof, SimpleConfig, SimpleRoundProof, SumcheckConfig,
@@ -20,6 +18,8 @@ use crate::protocol::config::{
 };
 use crate::protocol::snark::{ClaimsProof, WitnessShape};
 use crate::protocol::sumcheck_utils::polynomial::Polynomial;
+use crate::ring::config::{DEGREE, MOD_Q, NOF_BATCHES, SLOT_DEGREE};
+use crate::ring::ring_arithmetic::{FieldExtension, Representation, RingElement};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WireError {

@@ -203,11 +203,11 @@ fn check_prover_claims_match_witness(
 /// SNARK mode: prove user-supplied sumcheck claims about a committed witness,
 /// then run the PCS chain on the resulting evaluation claims.
 pub fn execute_snark(inst: &Instantiation) {
+    use crate::protocol::snark::{eq, prove_claims, verify_claims, witness_in, Claim, Region};
     use crate::{
         common::{hash::HashWrapper, sampling::sample_random_short_vector},
         ring::ring_arithmetic::{Representation, RingElement},
     };
-    use crate::protocol::snark::{eq, prove_claims, verify_claims, witness_in, Claim, Region};
 
     let config = inst.root();
 
@@ -376,7 +376,6 @@ pub fn execute_snark(inst: &Instantiation) {
 mod tests {
     use crate::common::init_common;
 
-    use crate::ring::ring_arithmetic::RingElement;
     use crate::common::structured_row::StructuredRow;
     use crate::protocol::config::{
         Config, IntermediateRoundProof, RoundProof, SimpleRoundProof, SumcheckConfig,
@@ -388,6 +387,7 @@ mod tests {
         builder_verifier::init_verifier, context_verifier::VerifierSumcheckContext,
     };
     use crate::protocol::wire;
+    use crate::ring::ring_arithmetic::RingElement;
 
     /// An honest proof of one round of `config`, with the statement a verifier checks it against.
     /// The input witness is decomposed into two element-major chunks, which is the top-level
@@ -627,8 +627,8 @@ mod tests {
     /// round kind, including shapes that would otherwise only skip a check.
     #[test]
     fn proof_shapes_follow_the_config() {
-        use crate::ring::ring_arithmetic::Representation;
         use crate::protocol::config::NextRoundCommitment;
+        use crate::ring::ring_arithmetic::Representation;
 
         type Tamper = fn(&mut SumcheckRoundProof);
         fn one() -> RingElement {
@@ -871,8 +871,8 @@ mod tests {
     /// however few bytes its zeros take.
     #[test]
     fn a_proof_decodes_within_what_its_config_allows() {
-        use crate::ring::ring_arithmetic::Representation;
         use crate::protocol::wire::{from_bytes_within, Allowance, WireError};
+        use crate::ring::ring_arithmetic::Representation;
 
         for aux in [three_openings_aux(), intermediate_aux()] {
             init_common();
@@ -977,9 +977,9 @@ mod tests {
     /// `three_openings_aux` with an intermediate round before the last one, whose basic
     /// commitment has a rank that is not a power of two and so a zero padding row.
     fn intermediate_aux() -> crate::protocol::config_generator::AuxSumcheckConfig {
-        use crate::ring::config::DEGREE;
         use crate::protocol::config::{IntermediateConfig, SimpleConfig};
         use crate::protocol::config_generator::AuxConfig;
+        use crate::ring::config::DEGREE;
 
         let mut aux = three_openings_aux();
         aux.next = Some(Box::new(AuxConfig::Intermediate(IntermediateConfig {

@@ -1,9 +1,9 @@
-use crate::ring::helpers::field_to_ring_element_into;
-use crate::ring::config::{DEGREE, MOD_Q};
-use crate::ring::ring_arithmetic::*;
 use crate::common::short_challenge::sample_short_challenge_into;
+use crate::ring::config::{DEGREE, MOD_Q};
 use crate::ring::finite_ring::FiniteRing;
+use crate::ring::helpers::field_to_ring_element_into;
 use crate::ring::kernels::eltwise_reduce_mod;
+use crate::ring::ring_arithmetic::*;
 use blake3::Hasher;
 
 /// Incremental transcript hash suitable for Fiat–Shamir style challenges.

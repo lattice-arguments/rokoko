@@ -1,3 +1,4 @@
+use crate::protocol::project_fine::BatchedProjectionChallengesSuccinct;
 use crate::{
     common::structured_row::StructuredRow,
     ring::{
@@ -5,7 +6,6 @@ use crate::{
         ring_arithmetic::{FieldExtension, Representation, RingElement},
     },
 };
-use crate::protocol::project_fine::BatchedProjectionChallengesSuccinct;
 
 use super::context_verifier::IntermediateVerifierSumcheckContext;
 

@@ -10,8 +10,8 @@
 //! with `T[m] = exp(i*pi*m/N)`. The hot path uses this directly via a length-2N
 //! phase LUT instead of a full FFT.
 
-use crate::ring::config::{DEGREE, MOD_Q};
 use crate::common::hash::HashWrapper;
+use crate::ring::config::{DEGREE, MOD_Q};
 use crate::ring::ring_arithmetic::{Representation, RingElement};
 use num::Complex;
 use std::sync::LazyLock;

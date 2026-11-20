@@ -1,7 +1,7 @@
 use aes::cipher::{KeyIvInit, StreamCipher};
 
-use crate::ring::ring_arithmetic::Representation;
 use crate::ring::config::{DEGREE, MOD_Q};
+use crate::ring::ring_arithmetic::Representation;
 use crate::ring::ring_arithmetic::RingElement;
 
 pub fn sample_random_vector(size: usize, representation: Representation) -> Vec<RingElement> {
