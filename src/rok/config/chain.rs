@@ -205,7 +205,7 @@ pub trait SizeableProof {
     fn size_in_bits(&self) -> usize;
 }
 
-// The ring layer computes its elements' sizes; these impls let proofs sum them.
+// Lets proof types sum the sizes of the ring elements they hold.
 impl SizeableProof for RingElement {
     fn size_in_bits(&self) -> usize {
         RingElement::size_in_bits(self)

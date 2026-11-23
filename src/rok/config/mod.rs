@@ -1,7 +1,4 @@
-//! The chain configuration. `chain` defines the round chain (`Config`: Sumcheck, Intermediate or
-//! Simple rounds), the per-round configs and the proof types, re-exported here; `generator`
-//! derives a chain with its witness placements, and `params` holds the `Instantiation` a run
-//! takes.
+//! The round chain a run executes: its rounds, their parameters and the keys they use.
 
 mod chain;
 pub mod crs;

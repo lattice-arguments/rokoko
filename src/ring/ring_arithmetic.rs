@@ -24,8 +24,7 @@ pub struct RingElement {
     pub representation: Representation,
 }
 
-/// A ring element's coefficients, centred and narrowed to `i16`, as the coarse projection
-/// reads them.
+/// A ring element's coefficients, centred and narrowed to `i16`.
 #[derive(Clone, Copy)]
 #[repr(align(64))]
 pub struct Signed16RingElement(pub [i16; DEGREE]);
@@ -1500,8 +1499,7 @@ impl RingElement {
         resident.min(other.size_in_bits())
     }
 
-    /// Bits needed to send this element in its current representation, each coefficient
-    /// as the shorter of its plain and its centred signed form.
+    /// Bits this element adds to the proof-size estimate, in its current representation.
     pub fn size_in_bits(&self) -> usize {
         let mut size = 0;
         for v in &self.v {
@@ -1521,7 +1519,7 @@ impl RingElement {
 }
 
 impl FieldExtension {
-    /// Bits needed to send this element, each coefficient in centred signed form.
+    /// Bits this element adds to the proof-size estimate.
     pub fn size_in_bits(&self) -> usize {
         let mut size = 0;
         for v in &self.coeffs {

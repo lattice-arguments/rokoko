@@ -1,4 +1,5 @@
-//! SNARK claim language; guide in `docs/claims.md`, demo in `examples/claims.rs`.
+//! The SNARK mode: claims about a committed witness, proved down to the evaluation claims the
+//! commitment chain starts from.
 
 mod language;
 mod lowering;
