@@ -1,6 +1,4 @@
-//! The claim language: `WitnessBuilder` lays out the witness, `Region` and `Vars` address it,
-//! the weights (`eq`, `table`, `powers`, `combination`) and `witness_in` build `ClaimExpr`s, and
-//! `challenge_point` draws evaluation points from the transcript.
+//! The SNARK claim language: statements `sum_i weight(i) * witness(i) * ... = value`.
 
 use super::lowering::{ClaimFactor, Coeffs, PublicFactor, SnarkClaim, Weights};
 use super::*;

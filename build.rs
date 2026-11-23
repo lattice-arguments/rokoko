@@ -169,7 +169,7 @@ fn validate_ring(spec: &RingSpec) -> Result<(), String> {
     Ok(())
 }
 
-/// Degree of the irreducible factors of `X^N + 1` over `Z_q`, as the kernels compute it.
+/// Degree of the irreducible factors of `X^N + 1` over `Z_q`.
 fn slot_degree(n: u64, q: u64) -> u64 {
     incomplete_rexl::slot_degree(n as usize, q) as u64
 }

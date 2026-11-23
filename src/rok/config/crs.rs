@@ -1,5 +1,5 @@
-//! The CRS a round chain needs: `CRS::gen_prover_crs` expands the key rows the chain reads,
-//! and `CRS::gen_verifier_crs` keeps them structured except for the simple round's key.
+//! The commitment keys a round chain uses. The verifier keeps them structured except the
+//! simple round's key, which it needs expanded to commit the folded witness that round sends.
 
 use crate::{
     commitment::{

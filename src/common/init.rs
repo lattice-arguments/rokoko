@@ -1,5 +1,5 @@
-//! `init_common` seeds the thread-local RNG with a fixed string and forces the ring's lazy
-//! tables and constants and the kernel caches.
+//! Setup before a run: a fixed RNG seed, so runs are reproducible, and the ring's lazy tables
+//! and kernel caches built up front.
 
 use std::sync::LazyLock;
 

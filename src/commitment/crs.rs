@@ -1,7 +1,6 @@
-//! The common reference string of the commitment scheme: commitment keys as structured (tensor)
-//! rows drawn from a public seed, one key per power-of-two input length (`CRS`), and the
-//! verifier's structured-only `VerifierCRS`. The CRS a round chain needs is built in
-//! `rok::config::crs`.
+//! Commitment keys, derived from a public seed, so they need no trusted setup. Each key row is
+//! a tensor product, so its multilinear extension at a point is a product of one factor per
+//! layer and a verifier evaluates it without expanding the row.
 
 use crate::{
     common::{
