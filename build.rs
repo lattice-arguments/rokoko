@@ -117,7 +117,7 @@ fn parse_ring(text: &str) -> Result<RingSpec, String> {
     }
 }
 
-const MIN_DEGREE: u64 = 128;
+const MIN_DEGREE: u64 = 64;
 const MAX_DEGREE: u64 = 256;
 const Q_MIN_BITS: u32 = 15;
 const Q_MAX_BITS: u32 = 50;
