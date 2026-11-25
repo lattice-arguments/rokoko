@@ -38,6 +38,40 @@ pub struct EstimatorResult {
     pub secpar: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RedCostModel {
+    Matzov,
+    Adps16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RedShapeModel {
+    Gsa,
+    Lgsa,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Zeta {
+    Fixed(u64),
+    Optimised,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SISLatticeOptions {
+    pub red_cost_model: RedCostModel,
+    pub red_shape_model: RedShapeModel,
+    pub zeta: Zeta,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SISLatticeEstimate {
+    pub log2_rop: f64,
+    pub beta: u64,
+    pub d: u64,
+    pub zeta: u64,
+    pub log2_repetitions: f64,
+}
+
 pub fn estimate_rsis_security(params: &RSISParameters) -> Result<EstimatorResult, io::Error> {
     let m_sis = params.m * DEGREE as u64;
     let n_sis = params.n * DEGREE as u64;
@@ -74,6 +108,36 @@ pub fn estimate_sis_security(params: &SISParameters) -> Result<EstimatorResult, 
     }
     Ok(EstimatorResult {
         secpar: rop,
+    })
+}
+
+pub fn estimate_sis_lattice_infinity(
+    params: &SISParameters,
+    options: &SISLatticeOptions,
+) -> Result<SISLatticeEstimate, io::Error> {
+    if params.norm != Norm::Infinity {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Only the infinity norm is supported.",
+        ));
+    }
+    if params.n == 0 || params.length_bound == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "The rank and the norm bound must be positive.",
+        ));
+    }
+    if params.length_bound >= params.q / 2 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "SIS trivially easy. Please set norm bound < (q-1)/2.",
+        ));
+    }
+    sis_lattice::cost_infinity_lattice(params, options).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Block size search is empty: the Euclidean baseline is within BKZ-40.",
+        )
     })
 }
 
@@ -121,7 +185,10 @@ mod sis_lattice {
     //! - `red_cost_model = RC.MATZOV` (list_decoding-classical)
     //! - `red_shape_model = "gsa"` (Geometric Series Assumption)
 
-    use super::{Norm, SISParameters};
+    use super::{
+        Norm, RedCostModel, RedShapeModel, SISLatticeEstimate, SISLatticeOptions, SISParameters,
+        Zeta,
+    };
     use std::collections::HashSet;
 
     // ---- MATZOV nearest-neighbor constants (list_decoding-classical) ----
@@ -591,6 +658,260 @@ mod sis_lattice {
         d
     }
 
+    fn adps16_short_vectors(beta: u64) -> (f64, f64, f64, u64) {
+        let beta_f = beta as f64;
+        let delta_val = delta(beta);
+        let rho =
+            (4.0f64 / 3.0).sqrt() * (delta_val.powf(beta_f - 1.0) * delta_val.powf(1.0 - beta_f));
+        (rho, 0.292 * beta_f, log2_floor_pow2(0.2075 * beta_f), beta)
+    }
+
+    // prob.amplify rounds 1 - p to max(53, 2 * ceil(-log2 p)) bits, capped at 2048
+    pub(super) fn amplify_trials_log2(target: f64, log2_success: f64) -> f64 {
+        let success = log2_success.exp2();
+        if target < success {
+            return 0.0;
+        }
+        let numerator = (1.0 - target).ln();
+        let precision = (2.0 * (-log2_success).ceil()).clamp(53.0, 2048.0);
+        if precision == 53.0 {
+            return (numerator / (1.0 - success).ln()).ceil().log2();
+        }
+        let scaled = log2_success + precision;
+        if scaled >= 53.0 {
+            if log2_success < -1000.0 {
+                return (-numerator).log2() - log2_success;
+            }
+            return (numerator / (-success).ln_1p()).ceil().log2();
+        }
+        let units = scaled.exp2().round_ties_even();
+        if units == 0.0 {
+            return f64::INFINITY;
+        }
+        let log2_rounded = units.log2() - precision;
+        if log2_rounded < -1000.0 {
+            return (-numerator).log2() - log2_rounded;
+        }
+        let rounded = libm::scalbn(units, -(precision as i32));
+        (numerator / (-rounded).ln_1p()).ceil().log2()
+    }
+
+    enum Shape<'a> {
+        Gsa { d: u64, log_delta: f64, level: f64 },
+        Lgsa { d: u64, ramp: &'a [f64], shift: f64 },
+    }
+
+    impl Shape<'_> {
+        fn lgsa(d: u64, log_vol: f64, log_delta: f64, ramp: &mut Vec<f64>) -> Shape<'_> {
+            let slope = -2.0 * log_delta;
+            let mut log_vec_len = 0.0;
+            let mut profile_log_vol = 0.0;
+            ramp.clear();
+            for _ in 0..d {
+                log_vec_len -= slope;
+                profile_log_vol += log_vec_len;
+                ramp.push(log_vec_len);
+                if profile_log_vol > log_vol {
+                    break;
+                }
+            }
+            let profile_log_vol = ramp.iter().rev().fold(0.0, |sum, &x| sum + x);
+            let shift = (profile_log_vol - log_vol) / ramp.len() as f64;
+            Shape::Lgsa { d, ramp, shift }
+        }
+
+        fn d(&self) -> u64 {
+            match *self {
+                Shape::Gsa { d, .. } | Shape::Lgsa { d, .. } => d,
+            }
+        }
+
+        fn sloped(&self) -> u64 {
+            match *self {
+                Shape::Gsa { d, .. } => d,
+                Shape::Lgsa { ramp, .. } => ramp.len() as u64,
+            }
+        }
+
+        fn r(&self, i: u64) -> f64 {
+            let r_log = match *self {
+                Shape::Gsa {
+                    d,
+                    log_delta,
+                    level,
+                } => (d as f64 - 1.0 - 2.0 * i as f64) * log_delta + level,
+                Shape::Lgsa { ramp, shift, .. } => match ramp.len().checked_sub(i as usize + 1) {
+                    Some(j) => ramp[j] - shift,
+                    None => 0.0,
+                },
+            };
+            (2.0 * r_log).exp2()
+        }
+
+        fn first_below(&self, bound: f64) -> u64 {
+            (1..=self.sloped().min(self.d() - 1))
+                .find(|&i| self.r(i) < bound)
+                .unwrap_or(0)
+        }
+
+        fn first_unit(&self) -> u64 {
+            let mut i = self.sloped();
+            while i > 0 && self.r(i - 1).sqrt() <= 1.0 + 1e-8 {
+                i -= 1;
+            }
+            i
+        }
+    }
+
+    struct InfinitySearch<'a> {
+        params: &'a SISParameters,
+        options: &'a SISLatticeOptions,
+        log_vol: f64,
+        dilithium: bool,
+        baseline_beta: u64,
+        ramp: Vec<f64>,
+    }
+
+    fn keep_smaller(best: &mut Option<SISLatticeEstimate>, cost: SISLatticeEstimate) {
+        if best.is_none_or(|b| cost.log2_rop <= b.log2_rop) {
+            *best = Some(cost);
+        }
+    }
+
+    impl InfinitySearch<'_> {
+        fn cost(&mut self, beta: u64, zeta: u64) -> SISLatticeEstimate {
+            let d = self.params.m.saturating_sub(zeta);
+            let mut cost = SISLatticeEstimate {
+                log2_rop: f64::INFINITY,
+                beta,
+                d,
+                zeta,
+                log2_repetitions: f64::INFINITY,
+            };
+            if d < beta {
+                return cost;
+            }
+
+            let (rho, cost_red_log2, log2_big_n, sieve_dim) = match self.options.red_cost_model {
+                RedCostModel::Matzov => matzov_short_vectors(beta, d),
+                RedCostModel::Adps16 => adps16_short_vectors(beta),
+            };
+            let log_delta = delta(beta).log2();
+            let shape = match self.options.red_shape_model {
+                RedShapeModel::Gsa => Shape::Gsa {
+                    d,
+                    log_delta,
+                    level: self.log_vol / d as f64,
+                },
+                RedShapeModel::Lgsa => Shape::lgsa(d, self.log_vol, log_delta, &mut self.ramp),
+            };
+
+            let lb = self.params.length_bound as f64;
+            let log_trial_prob = if self.dilithium {
+                let r0 = shape.r(0);
+                let idx_start = if (r0.sqrt() - self.params.q as f64).abs() < 1e-8 {
+                    shape.first_below(r0)
+                } else {
+                    0
+                };
+                let idx_end = if (shape.r(d - 1) - 1.0).abs() < 1e-8 {
+                    shape.first_unit() as i64 - 1
+                } else {
+                    d as i64 - 1
+                };
+                let gaussian_coords = (idx_end - idx_start as i64 + 1).max(sieve_dim as i64) as f64;
+                let sigma = shape.r(idx_start).sqrt() / gaussian_coords.sqrt();
+                coordinate_success_log2(lb, sigma) * gaussian_coords
+                    + ((2.0 * lb + 1.0) / self.params.q as f64).log2() * idx_start as f64
+            } else {
+                let sigma = rho * shape.r(0).sqrt() / (d as f64).sqrt();
+                d as f64 * coordinate_success_log2(lb, sigma)
+            };
+
+            let log2_solutions = log_trial_prob + log2_big_n;
+            let log2_probability = if log2_solutions < 0.0 {
+                log2_solutions
+            } else {
+                0.0
+            };
+            if log2_probability == f64::NEG_INFINITY {
+                return cost;
+            }
+            cost.log2_repetitions = amplify_trials_log2(0.99, log2_probability);
+            cost.log2_rop = cost_red_log2 + cost.log2_repetitions;
+            cost
+        }
+
+        fn cost_zeta(&mut self, zeta: u64) -> Option<SISLatticeEstimate> {
+            let mut best = None;
+            let mut lm = LocalMinimum::new(40, self.baseline_beta + 1, 2);
+            while let Some(beta) = lm.next_x() {
+                let cost = self.cost(beta, zeta);
+                lm.update(cost.log2_rop);
+                keep_smaller(&mut best, cost);
+            }
+            for beta in lm.neighborhood() {
+                keep_smaller(&mut best, self.cost(beta, zeta));
+            }
+            best
+        }
+    }
+
+    fn euclidean_beta(params: &SISParameters) -> u64 {
+        let d = (opt_sis_d(params).floor() as u64).min(params.m);
+        let delta_val = solve_for_delta_euclidean(params, d);
+        let reachable = delta_f(65536.0).max(delta_f(d as f64 + 1.0)).max(1.0);
+        if delta_val >= reachable {
+            let beta = beta_from_delta(delta_val);
+            if beta <= d {
+                return beta;
+            }
+        }
+        d
+    }
+
+    pub(super) fn cost_infinity_lattice(
+        params: &SISParameters,
+        options: &SISLatticeOptions,
+    ) -> Option<SISLatticeEstimate> {
+        let baseline = SISParameters {
+            norm: Norm::L2,
+            length_bound: if params.length_bound == 1 {
+                2
+            } else {
+                params.length_bound
+            },
+            ..params.clone()
+        };
+        let mut search = InfinitySearch {
+            params,
+            options,
+            log_vol: params.n as f64 * (params.q as f64).log2(),
+            dilithium: (params.m as f64).sqrt() * params.length_bound as f64 > params.q as f64,
+            baseline_beta: euclidean_beta(&baseline),
+            ramp: Vec::new(),
+        };
+
+        let mut cost = match options.zeta {
+            Zeta::Fixed(zeta) => search.cost_zeta(zeta)?,
+            Zeta::Optimised => {
+                let zero = search.cost_zeta(0)?;
+                let mut best = None;
+                let mut lm = LocalMinimum::new(0, params.m, 1);
+                while let Some(zeta) = lm.next_x() {
+                    let cost = search.cost_zeta(zeta)?;
+                    lm.update(cost.log2_rop);
+                    keep_smaller(&mut best, cost);
+                }
+                best.filter(|b| zero.log2_rop >= b.log2_rop).unwrap_or(zero)
+            }
+        };
+        if cost.log2_rop > 10000.0 {
+            cost.log2_rop = f64::INFINITY;
+        }
+        Some(cost)
+    }
+
     // ---------- Binary search (local_minimum) ----------
 
     /// Port of `estimator.util.local_minimum` with `precision` support and the
@@ -732,6 +1053,7 @@ mod tests {
     use super::*;
 
     const TOL: f64 = 1e-6;
+    const REFERENCE_TOL: f64 = 1e-9;
 
     fn legacy_raw_log2(params: &SISParameters) -> Option<f64> {
         let script_path = std::env::current_dir().ok()?
@@ -975,6 +1297,181 @@ mod tests {
             },
             1000.7594302165222,
         );
+    }
+
+    fn reference_mismatches(csv: &str) -> (usize, f64, Vec<String>) {
+        let mut rows = 0;
+        let mut worst = 0.0f64;
+        let mut mismatches = Vec::new();
+        for line in csv.lines().skip(1) {
+            let f: Vec<&str> = line.split(',').collect();
+            let params = SISParameters {
+                n: f[3].parse().unwrap(),
+                m: f[4].parse().unwrap(),
+                q: f[5].parse().unwrap(),
+                length_bound: f[6].parse().unwrap(),
+                norm: Norm::Infinity,
+            };
+            let options = SISLatticeOptions {
+                red_cost_model: match f[0] {
+                    "adps16" => RedCostModel::Adps16,
+                    "matzov" => RedCostModel::Matzov,
+                    other => panic!("cost model {other}"),
+                },
+                red_shape_model: match f[1] {
+                    "lgsa" => RedShapeModel::Lgsa,
+                    "gsa" => RedShapeModel::Gsa,
+                    other => panic!("shape model {other}"),
+                },
+                zeta: match f[2] {
+                    "opt" => Zeta::Optimised,
+                    fixed => Zeta::Fixed(fixed.parse().unwrap()),
+                },
+            };
+            let actual = estimate_sis_lattice_infinity(&params, &options);
+            let matches = match (f[7], &actual) {
+                ("ok" | "overflow", Ok(actual)) => {
+                    let rop: f64 = f[8].parse().unwrap();
+                    let integers = f[9] == "-"
+                        || [actual.beta, actual.d, actual.zeta]
+                            .iter()
+                            .zip(&f[9..12])
+                            .all(|(x, y)| *x == y.parse::<u64>().unwrap());
+                    let deviation = if rop.is_infinite() && actual.log2_rop.is_infinite() {
+                        0.0
+                    } else {
+                        let repetitions: f64 = f[12].parse().unwrap();
+                        ((actual.log2_rop - rop) / rop)
+                            .abs()
+                            .max(((actual.log2_repetitions - repetitions) / rop).abs())
+                    };
+                    worst = worst.max(deviation);
+                    integers && deviation < REFERENCE_TOL
+                }
+                ("OverflowError", Ok(_)) => true,
+                ("ok" | "overflow" | "OverflowError", Err(_)) => false,
+                (_, actual) => actual.is_err(),
+            };
+            if !matches {
+                mismatches.push(format!("{line} -> {actual:?}"));
+            }
+            rows += 1;
+        }
+        (rows, worst, mismatches)
+    }
+
+    #[test]
+    fn linf_lattice_matches_pinned_reference() {
+        let (rows, _, mismatches) =
+            reference_mismatches(include_str!("../../scripts/sis_lattice_pinned.csv"));
+        assert!(rows > 100);
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    }
+
+    #[test]
+    #[ignore]
+    fn linf_lattice_matches_reference_file() {
+        let path = std::env::var("SIS_LATTICE_REFERENCE").unwrap();
+        let start = std::time::Instant::now();
+        let (rows, worst, mismatches) =
+            reference_mismatches(&std::fs::read_to_string(path).unwrap());
+        println!(
+            "{rows} rows, {} mismatches, max relative deviation {worst:e}, {:?} per row",
+            mismatches.len(),
+            start.elapsed() / rows as u32
+        );
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    }
+
+    #[test]
+    fn amplify_matches_prob_amplify() {
+        for (log2_success, expected) in [
+            (-0.02, 1.0),
+            (-0.5, 2.0),
+            (-1.0, 2.807354922057604),
+            (-3.3, 5.459431618637297),
+            (-10.0, 12.202736043250168),
+            (-26.4, 28.60325446438008),
+            (-27.0, 29.2032544693931),
+            (-52.0, 54.20325447269972),
+            (-53.5, 55.70325447269972),
+            (-100.0, 102.20325447269973),
+            (-1000.0, 1002.2032544726998),
+            (-1024.5, 1026.7032544726997),
+            (-2040.3, 2042.5028147545586),
+            (-2044.7, 2046.8813263778125),
+            (-2046.5, 2048.6182919719786),
+            (-2047.5, 2050.2032544727),
+            (-2048.99, 2050.2032544727),
+            (-2049.0, f64::INFINITY),
+            (-2049.01, f64::INFINITY),
+        ] {
+            let actual = super::sis_lattice::amplify_trials_log2(0.99, log2_success);
+            assert!(
+                actual == expected || (actual - expected).abs() < 1e-12 * expected,
+                "log2 p = {log2_success}: got {actual}, want {expected}",
+            );
+        }
+    }
+
+    #[test]
+    fn linf_lattice_default_models_match_existing_path() {
+        let options = SISLatticeOptions {
+            red_cost_model: RedCostModel::Matzov,
+            red_shape_model: RedShapeModel::Gsa,
+            zeta: Zeta::Optimised,
+        };
+        for (n, m, q, length_bound) in [
+            (113, 1000, 2048, 16),
+            (113, 1000, 2048, 1),
+            (256, 2048, 8380417, 32),
+            (60, 500, 1024, 32),
+            (200, 1500, 2048, 80),
+            (50, 300, 512, 10),
+            (150, 1500, 8192, 100),
+            (512, 4096, 1073741824, 10),
+        ] {
+            let params = SISParameters {
+                n,
+                m,
+                q,
+                length_bound,
+                norm: Norm::Infinity,
+            };
+            let general = estimate_sis_lattice_infinity(&params, &options).unwrap();
+            let existing = super::sis_lattice::cost_infinity_top_log2(&params);
+            assert!(
+                (general.log2_rop - existing).abs() < TOL,
+                "{params:?}: got {}, existing path {existing}",
+                general.log2_rop,
+            );
+        }
+    }
+
+    #[test]
+    fn linf_lattice_rejects_unsupported_instances() {
+        let options = SISLatticeOptions {
+            red_cost_model: RedCostModel::Adps16,
+            red_shape_model: RedShapeModel::Lgsa,
+            zeta: Zeta::Fixed(0),
+        };
+        for (n, length_bound, norm) in [
+            (64, 1, Norm::L2),
+            (0, 1, Norm::Infinity),
+            (64, 0, Norm::Infinity),
+            (64, 128, Norm::Infinity),
+            (2, 64, Norm::Infinity),
+        ] {
+            let params = SISParameters {
+                n,
+                m: 256,
+                q: 257,
+                length_bound,
+                norm,
+            };
+            let err = estimate_sis_lattice_infinity(&params, &options).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        }
     }
 
     // Public entry point sanity check.
