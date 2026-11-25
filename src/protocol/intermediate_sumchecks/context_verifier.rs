@@ -1,8 +1,4 @@
 use crate::{
-    common::{
-        config::NOF_BATCHES,
-        ring_arithmetic::{FieldExtension, RingElement},
-    },
     protocol::sumcheck_utils::{
         combiner::CombinerEvaluation,
         elephant_cell::ElephantCell,
@@ -12,6 +8,10 @@ use crate::{
         },
         product::ProductSumcheckEvaluation,
         ring_to_field_combiner::RingToFieldCombinerEvaluation,
+    },
+    ring::{
+        config::NOF_BATCHES,
+        ring_arithmetic::{FieldExtension, RingElement},
     },
 };
 

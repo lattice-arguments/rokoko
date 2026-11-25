@@ -1,24 +1,24 @@
 use std::cell::RefCell;
 
 use crate::{
-    common::{
-        ring_arithmetic::{Representation, RingElement},
-        sumcheck_element::SumcheckElement,
-    },
     protocol::sumcheck_utils::{
         common::{EvaluationSumcheckData, FlatTerm, HighOrderSumcheckData, SumcheckBaseData},
         hypercube_point::HypercubePoint,
         polynomial::Polynomial,
     },
+    ring::{
+        finite_ring::FiniteRing,
+        ring_arithmetic::{Representation, RingElement},
+    },
 };
 
 #[cfg(test)]
-use crate::common::config::MOD_Q;
+use crate::ring::config::MOD_Q;
 
 /// Sumcheck for the multilinear equality check `eq(x, selector)`.
 /// It evaluates to 1 exactly when the first `selector_variable_count` bits of
 /// the query match `selector`, while ignoring additional trailing variables.
-pub struct SelectorEq<E: SumcheckElement = RingElement> {
+pub struct SelectorEq<E: FiniteRing = RingElement> {
     selector: usize,
     selector_variable_count: usize,
     total_variable_count: usize,
@@ -41,7 +41,7 @@ pub struct SelectorEq<E: SumcheckElement = RingElement> {
 // However, this implementation is more efficient in space and time.
 // as univariate_polynomial_at_point_into returns `false` unless the point matches the selector in the higher order bits.
 // This is useful for implementing sumcheck over sparse vectors.
-impl<E: SumcheckElement> SelectorEq<E> {
+impl<E: FiniteRing> SelectorEq<E> {
     pub fn new(
         selector: usize,
         selector_variable_count: usize,
@@ -59,7 +59,7 @@ impl<E: SumcheckElement> SelectorEq<E> {
     }
 }
 
-impl<E: SumcheckElement> SelectorEq<E> {
+impl<E: FiniteRing> SelectorEq<E> {
     pub(crate) fn round_bit(&self) -> Option<bool> {
         (self.selector_variable_count > 0 && self.total_variable_count <= self.selector_variable_count)
             .then_some(self.selector & 1 == 1)
@@ -70,7 +70,7 @@ impl<E: SumcheckElement> SelectorEq<E> {
     }
 }
 
-impl<E: SumcheckElement> HighOrderSumcheckData for SelectorEq<E> {
+impl<E: FiniteRing> HighOrderSumcheckData for SelectorEq<E> {
     type Element = E;
 
     fn gadget_span(&self) -> tracing::Span {
@@ -231,7 +231,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for SelectorEq<E> {
     }
 }
 
-impl<E: SumcheckElement> SumcheckBaseData for SelectorEq<E> {
+impl<E: FiniteRing> SumcheckBaseData for SelectorEq<E> {
     fn partial_evaluate(&mut self, value: &E) {
         if self.selector_variable_count > 0
             && self.total_variable_count <= self.selector_variable_count
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn test_selector_eq_evaluation() {
-        use crate::common::ring_arithmetic::RingElement;
+        use crate::ring::ring_arithmetic::RingElement;
 
         let selector = 0b10;
         let selector_variable_count = 2;

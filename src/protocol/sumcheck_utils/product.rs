@@ -3,28 +3,28 @@ use crate::protocol::sumcheck_utils::common::FlatTerm;
 use std::cell::{Cell, RefCell};
 
 use crate::{
-    common::{
-        ring_arithmetic::{Representation, RingElement},
-        sumcheck_element::SumcheckElement,
-    },
     protocol::sumcheck_utils::{
         common::{EvaluationSumcheckData, HighOrderSumcheckData},
         elephant_cell::ElephantCell,
         hypercube_point::HypercubePoint,
         polynomial::{add_poly_in_place, mul_coefficients_into, Polynomial},
     },
+    ring::{
+        finite_ring::FiniteRing,
+        ring_arithmetic::{Representation, RingElement},
+    },
 };
 
 #[cfg(test)]
 use crate::{
-    common::config::MOD_Q,
     protocol::sumcheck_utils::{common::SumcheckBaseData, linear::LinearSumcheck},
+    ring::config::MOD_Q,
 };
 
 /// Sumcheck data that represents a pointwise product of two other sumcheck polynomials.
 /// Each inner sumcheck is evaluated at the same hypercube point and the resulting
 /// univariate polynomials are multiplied together.
-pub struct ProductSumcheck<E: SumcheckElement = RingElement> {
+pub struct ProductSumcheck<E: FiniteRing = RingElement> {
     pub lhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
     pub rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
 
@@ -54,7 +54,7 @@ pub struct ProductSumcheck<E: SumcheckElement = RingElement> {
     sweeping: Cell<bool>,
 }
 
-impl<E: SumcheckElement> ProductSumcheck<E> {
+impl<E: FiniteRing> ProductSumcheck<E> {
     pub fn new(
         lhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
         rhs_sumcheck: ElephantCell<dyn HighOrderSumcheckData<Element = E>>,
@@ -108,7 +108,7 @@ impl<E: SumcheckElement> ProductSumcheck<E> {
     }
 }
 
-impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
+impl<E: FiniteRing> HighOrderSumcheckData for ProductSumcheck<E> {
     type Element = E;
 
     fn gadget_span(&self) -> tracing::Span {
@@ -547,7 +547,7 @@ impl<E: SumcheckElement> HighOrderSumcheckData for ProductSumcheck<E> {
     }
 }
 
-fn scaled_into<'a, E: SumcheckElement>(
+fn scaled_into<'a, E: FiniteRing>(
     factor: &'a (dyn HighOrderSumcheckData<Element = E> + 'a),
     scale: &E,
     point: HypercubePoint,
@@ -570,7 +570,7 @@ fn scaled_into<'a, E: SumcheckElement>(
     }
 }
 
-fn factor_into<'a, E: SumcheckElement>(
+fn factor_into<'a, E: FiniteRing>(
     factor: &'a (dyn HighOrderSumcheckData<Element = E> + 'a),
     point: HypercubePoint,
     polynomial: &mut Polynomial<E>,
@@ -919,7 +919,7 @@ mod tests {
         // we make use that the univariate polynomial of a linear sumcheck is just a degree 1 polynomial
         // since it should be a produce of two constant polys and one degree 1 poly.
 
-        use crate::common::ring_arithmetic::RingElement;
+        use crate::ring::ring_arithmetic::RingElement;
         use crate::protocol::sumcheck_utils::product::ProductSumcheck;
 
         let data1 = vec![

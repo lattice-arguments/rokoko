@@ -15,7 +15,7 @@ pub mod sum;
 mod tests {
     use super::elephant_cell::ElephantCell;
 
-    use crate::common::ring_arithmetic::{Representation, RingElement};
+    use crate::ring::ring_arithmetic::{Representation, RingElement};
 
     use super::{
         diff::DiffSumcheck, linear::LinearSumcheck, polynomial::Polynomial,

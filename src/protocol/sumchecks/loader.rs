@@ -1,9 +1,6 @@
 use crate::{
     common::{
-        arithmetic::{field_to_ring_element_into, precompute_structured_values_fast},
-        config::{DEGREE, NOF_BATCHES},
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
@@ -13,6 +10,11 @@ use crate::{
         sumchecks::helpers::{
             projection_flatter_1_times_matrix, split_projection_flatter, tensor_product_u64,
         },
+    },
+    ring::{
+        config::{DEGREE, NOF_BATCHES},
+        helpers::{field_to_ring_element_into, precompute_structured_values_fast},
+        ring_arithmetic::{Representation, RingElement},
     },
 };
 

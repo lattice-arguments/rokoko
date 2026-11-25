@@ -1,7 +1,7 @@
 use std::io;
 use std::process::Command;
 
-use crate::common::config::{DEGREE, MOD_Q};
+use crate::ring::config::{DEGREE, MOD_Q};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Norm {

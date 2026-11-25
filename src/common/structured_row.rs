@@ -1,10 +1,10 @@
-use crate::common::{ring_arithmetic::RingElement, sumcheck_element::SumcheckElement};
+use crate::ring::{finite_ring::FiniteRing, ring_arithmetic::RingElement};
 
 #[cfg(test)]
-use crate::common::{config::MOD_Q, ring_arithmetic::Representation};
+use crate::ring::{config::MOD_Q, ring_arithmetic::Representation};
 
 #[derive(Debug, Clone)]
-pub struct StructuredRow<E: SumcheckElement = RingElement> {
+pub struct StructuredRow<E: FiniteRing = RingElement> {
     // Each layer corresponds to one dimension in the tensor product structure.
     // Each layer has two correlated elements, corresponding to the two choices (0 or 1) at that dimension.
     // Each layer is of the form [1 - a, a] for some a which is similar to the evaluation point.
@@ -21,7 +21,7 @@ pub struct StructuredRow<E: SumcheckElement = RingElement> {
     pub tensor_layers: Vec<E>,
 }
 
-impl<E: SumcheckElement> StructuredRow<E> {
+impl<E: FiniteRing> StructuredRow<E> {
     pub fn at(&self, pos: usize) -> E {
         let mut result = E::one();
         let mut index = pos;
@@ -40,7 +40,7 @@ impl<E: SumcheckElement> StructuredRow<E> {
     }
 }
 
-// impl<E: SumcheckElement> Index<usize> for StructuredRow<E> {
+// impl<E: FiniteRing> Index<usize> for StructuredRow<E> {
 //     type Output = E;
 //
 //     fn index(&self, index: usize) -> &Self::Output {
@@ -49,12 +49,12 @@ impl<E: SumcheckElement> StructuredRow<E> {
 // }
 
 #[derive(Debug, Clone)]
-pub struct PreprocessedRow<E: SumcheckElement = RingElement> {
+pub struct PreprocessedRow<E: FiniteRing = RingElement> {
     // pub structured_row: StructuredRow<E>,
     pub preprocessed_row: Vec<E>,
 }
 
-impl<E: SumcheckElement> PreprocessedRow<E> {
+impl<E: FiniteRing> PreprocessedRow<E> {
     pub fn from_structured_row(structured_row: &StructuredRow<E>) -> Self {
         Self::from_layers(&structured_row.tensor_layers)
     }
@@ -85,7 +85,7 @@ impl<E: SumcheckElement> PreprocessedRow<E> {
 
 #[test]
 fn test_structured_row() {
-    use crate::common::ring_arithmetic::RingElement;
+    use crate::ring::ring_arithmetic::RingElement;
 
     let tensor_layers = vec![
         RingElement::constant(5, Representation::IncompleteNTT),
@@ -154,7 +154,7 @@ fn test_structured_row() {
 
 #[test]
 fn test_preprocessed_row() {
-    use crate::common::ring_arithmetic::RingElement;
+    use crate::ring::ring_arithmetic::RingElement;
 
     let tensor_layers = vec![
         RingElement::constant(5, Representation::IncompleteNTT),
@@ -174,7 +174,7 @@ fn test_preprocessed_row() {
 
 #[test]
 fn test_at_matches_preprocessed_row_random() {
-    use crate::common::ring_arithmetic::RingElement;
+    use crate::ring::ring_arithmetic::RingElement;
 
     // Validate that StructuredRow::at stays consistent with the preprocessing logic
     // for a handful of random evaluation points.

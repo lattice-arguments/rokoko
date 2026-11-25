@@ -92,7 +92,7 @@ fn main() {
 
     println!(
         "Using {}-bits commitment...",
-        rokoko::common::config::MOD_Q.ilog2() + 1
+        rokoko::ring::config::MOD_Q.ilog2() + 1
     );
 
     #[cfg(feature = "parallel")]

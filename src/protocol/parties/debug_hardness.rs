@@ -6,10 +6,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{
     common::{
-        config::MOD_Q,
         estimator::{estimate_rsis_security, RSISParameters},
         norms,
-        ring_arithmetic::{Representation, RingElement},
         short_challenge::T_OP_NORM_BOUND,
     },
     protocol::{
@@ -17,6 +15,10 @@ use crate::{
         config::{IntermediateConfig, Projection, SimpleConfig, SumcheckConfig},
         params::NORM_MARGIN,
         sumchecks::helpers::plane_weight,
+    },
+    ring::{
+        config::MOD_Q,
+        ring_arithmetic::{Representation, RingElement},
     },
 };
 

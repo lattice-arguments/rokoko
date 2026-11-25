@@ -1,8 +1,10 @@
-use crate::common::{
-    matrix::HorizontallyAlignedMatrix,
-    ring_arithmetic::{Representation, RingElement},
-    sampling::{sample_public_vector_from_seed, PUBLIC_CRS_SEED},
-    structured_row::{PreprocessedRow, StructuredRow},
+use crate::{
+    common::{
+        matrix::HorizontallyAlignedMatrix,
+        sampling::{sample_public_vector_from_seed, PUBLIC_CRS_SEED},
+        structured_row::{PreprocessedRow, StructuredRow},
+    },
+    ring::ring_arithmetic::{Representation, RingElement},
 };
 use crate::protocol::commitment::RecursionConfig;
 use crate::protocol::config::{Config, Projection, SimpleConfig, SumcheckConfig};

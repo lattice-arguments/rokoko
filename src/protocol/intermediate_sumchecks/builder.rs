@@ -1,8 +1,4 @@
 use crate::{
-    common::{
-        config::{DEGREE, NOF_BATCHES},
-        ring_arithmetic::RingElement,
-    },
     protocol::{
         config::{Config, IntermediateConfig},
         crs::CRS,
@@ -15,6 +11,10 @@ use crate::{
             ring_to_field_combiner::RingToFieldCombiner,
         },
         sumchecks::helpers::{ck_sumcheck, composition_sumcheck},
+    },
+    ring::{
+        config::{DEGREE, NOF_BATCHES},
+        ring_arithmetic::RingElement,
     },
 };
 

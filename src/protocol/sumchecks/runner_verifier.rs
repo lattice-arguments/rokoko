@@ -1,13 +1,7 @@
 use crate::{
     common::{
-        arithmetic::field_to_ring_element,
-        config::{NOF_BATCHES, NUM_SLOTS},
-        hash::HashWrapper,
-        norms::assert_norm_bounded,
-        projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{FieldExtension, Representation, RingElement},
+        hash::HashWrapper, norms::assert_norm_bounded, projection_matrix::ProjectionMatrix,
         structured_row::StructuredRow,
-        sumcheck_element::SumcheckElement,
     },
     protocol::{
         config::{NextRoundCommitment, Projection, SumcheckConfig, SumcheckRoundProof},
@@ -19,6 +13,12 @@ use crate::{
         sumchecks::{
             context_verifier::VerifierSumcheckContext, loader_verifier::load_verifier_sumcheck_data,
         },
+    },
+    ring::{
+        config::{NOF_BATCHES, NUM_SLOTS},
+        finite_ring::FiniteRing,
+        helpers::field_to_ring_element,
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
     },
 };
 

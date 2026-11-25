@@ -12,9 +12,9 @@ Where `{SET}` is one of `p-22`, `p-24`, `p-26`, `p-28`, `p-29`, `p-30` (or which
 without an argument the binary runs `p-28`. `p-29` has only the exact-norm chain, so it runs with
 `--features snark`. The parameter set is a runtime argument, so one build serves every set.
 
-The sets themselves live in `src/instantiation.rs` (binary crate); the library only receives the
-chain as a `rokoko::protocol::params::Instantiation`. A build for `rings/n128_d4.toml` uses
-`src/instantiation_n128_d4.rs` instead, chosen in `src/main.rs` by the spec's file name.
+The sets themselves live in `src/bin/rokoko/instantiation.rs` (binary crate); the library only receives the
+chain as a `rokoko::protocol::params::Instantiation`. A build for `ring-params/n128_d4.toml` uses
+`src/bin/rokoko/instantiation_n128_d4.rs` instead, chosen in `src/bin/rokoko/main.rs` by the spec's file name.
 
 Features are defined in `Cargo.toml`; the defaults already include:
 - `unsafe-sumcheck` — turns on unsafe sumcheck optimizations
@@ -25,8 +25,8 @@ as a paste-ready `NB_*` table, e.g. `cargo run --release --features calibration 
 ## The ring
 
 The ring degree, modulus and challenge-set constants are fixed at build time from a small spec
-file; `rings/default.toml` is used unless `ROKOKO_RING` names another one, e.g.
-`ROKOKO_RING=rings/n256.toml cargo build --release`. Changing it rebuilds the crate.
+file; `ring-params/default.toml` is used unless `ROKOKO_RING` names another one, e.g.
+`ROKOKO_RING=ring-params/n256.toml cargo build --release`. Changing it rebuilds the crate.
 
 ## Protocol
 

@@ -30,7 +30,7 @@ fn emit_ring() {
     let manifest_dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     let path = match std::env::var_os("ROKOKO_RING") {
         Some(path) => manifest_dir.join(path),
-        None => manifest_dir.join("rings/default.toml"),
+        None => manifest_dir.join("ring-params/default.toml"),
     };
     println!("cargo:rerun-if-changed={}", path.display());
     println!("cargo::rustc-check-cfg=cfg(rokoko_ring, values(any()))");

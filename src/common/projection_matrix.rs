@@ -693,7 +693,7 @@ impl Index<(usize, usize)> for ProjectionMatrix {
 
 #[cfg(test)]
 mod tests {
-    use crate::common::ring_arithmetic::{Representation, RingElement};
+    use crate::ring::ring_arithmetic::{Representation, RingElement};
 
     use super::*;
     const PROJECTION_BASE_HEIGHT: usize = 128;

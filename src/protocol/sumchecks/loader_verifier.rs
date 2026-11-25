@@ -1,14 +1,16 @@
 use crate::{
     common::{
-        arithmetic::precompute_structured_values_fast,
-        config::{DEGREE, NOF_BATCHES, NUM_SLOTS},
         projection_matrix::ProjectionMatrix,
-        ring_arithmetic::{FieldExtension, Representation, RingElement},
         structured_row::{PreprocessedRow, StructuredRow},
     },
     protocol::{
         project_fine::BatchedProjectionChallengesSuccinct,
         sumchecks::helpers::{projection_flatter_1_times_matrix, split_projection_flatter},
+    },
+    ring::{
+        config::{DEGREE, NOF_BATCHES, NUM_SLOTS},
+        helpers::precompute_structured_values_fast,
+        ring_arithmetic::{FieldExtension, Representation, RingElement},
     },
 };
 
