@@ -45,7 +45,10 @@ def estimate_sis(n, m, q, length_bound, norm):
     )
     
     # Run the lattice attack estimator
-    result = SIS.lattice(params)
+    if norm_value == oo:
+        result = SIS.lattice(params, zeta=0, red_cost_model=RC.ADPS16, red_shape_model="lgsa")
+    else:
+        result = SIS.lattice(params)
     
     # Extract ROP (ring operations) and compute log2
     rop = result["rop"]

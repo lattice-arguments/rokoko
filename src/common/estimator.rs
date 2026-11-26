@@ -63,6 +63,17 @@ pub struct SISLatticeOptions {
     pub zeta: Zeta,
 }
 
+impl Default for SISLatticeOptions {
+    /// `SIS.lattice(params, zeta=0, red_cost_model=RC.ADPS16, red_shape_model="lgsa")`
+    fn default() -> Self {
+        SISLatticeOptions {
+            red_cost_model: RedCostModel::Adps16,
+            red_shape_model: RedShapeModel::Lgsa,
+            zeta: Zeta::Fixed(0),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SISLatticeEstimate {
     pub log2_rop: f64,
@@ -85,17 +96,24 @@ pub fn estimate_rsis_security(params: &RSISParameters) -> Result<EstimatorResult
     estimate_sis_security(&sis_params)
 }
 
+/// Bit security of SIS against lattice reduction, rounded up, following `SIS.lattice` of the
+/// lattice estimator. The Euclidean norm is costed with MATZOV. The infinity norm uses the
+/// conservative convention of [`SISLatticeOptions::default`]: ADPS16, the LGSA shape and no
+/// ignored coordinates; [`estimate_sis_lattice_infinity`] takes other options.
 pub fn estimate_sis_security(params: &SISParameters) -> Result<EstimatorResult, io::Error> {
-    if params.length_bound >= (params.q - 1) / 2 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "SIS trivially easy. Please set norm bound < (q-1)/2.",
-        ));
-    }
-
     let log2_rop = match params.norm {
-        Norm::L2 => sis_lattice::cost_euclidean_log2(params),
-        Norm::Infinity => sis_lattice::cost_infinity_top_log2(params),
+        Norm::L2 => {
+            if params.length_bound >= (params.q - 1) / 2 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "SIS trivially easy. Please set norm bound < (q-1)/2.",
+                ));
+            }
+            sis_lattice::cost_euclidean_log2(params)
+        }
+        Norm::Infinity => {
+            estimate_sis_lattice_infinity(params, &SISLatticeOptions::default())?.log2_rop
+        }
     };
 
     let rop = log2_rop.ceil();
@@ -106,11 +124,11 @@ pub fn estimate_sis_security(params: &SISParameters) -> Result<EstimatorResult, 
             rop
         );
     }
-    Ok(EstimatorResult {
-        secpar: rop,
-    })
+    Ok(EstimatorResult { secpar: rop })
 }
 
+/// `SIS.lattice` for the infinity norm under `options`, unrounded. `Err` where the lattice
+/// estimator raises: a trivial norm bound, or a Euclidean baseline within BKZ-40.
 pub fn estimate_sis_lattice_infinity(
     params: &SISParameters,
     options: &SISLatticeOptions,
@@ -181,9 +199,9 @@ pub fn estimate_sis_security_lattice_estimator(
 
 mod sis_lattice {
     //! Pure-Rust port of `estimator.sis_lattice.SISLattice` from the
-    //! `lattice-estimator` project, specialized for the default cost models:
-    //! - `red_cost_model = RC.MATZOV` (list_decoding-classical)
-    //! - `red_shape_model = "gsa"` (Geometric Series Assumption)
+    //! `lattice-estimator` project:
+    //! - the Euclidean cost with `red_cost_model = RC.MATZOV` (list_decoding-classical)
+    //! - the infinity-norm cost with `RC.MATZOV` or `RC.ADPS16` and the `"gsa"` or `"lgsa"` shape
 
     use super::{
         Norm, RedCostModel, RedShapeModel, SISLatticeEstimate, SISLatticeOptions, SISParameters,
@@ -391,25 +409,6 @@ mod sis_lattice {
         matzov_call_log2(beta as f64, d as f64)
     }
 
-    // ---------- GSA simulator ----------
-
-    /// `simulator.GSA(d, n, q, β, xi=1, tau=False)` with `tau=False`.
-    /// Returns squared Gram-Schmidt norms `r_i`, i = 0..d-1.
-    fn gsa_tau_false(d: u64, n: u64, q: f64, beta: u64) -> Vec<f64> {
-        assert!(beta >= 2 && beta <= d);
-        let d_f = d as f64;
-        // log_vol in base 2, xi=1 so log2(xi)=0
-        let log_vol = q.log2() * (d_f - n as f64);
-        let delta_val = delta(beta);
-        let log_delta = delta_val.log2();
-        let mut r = Vec::with_capacity(d as usize);
-        for i in 0..d {
-            let r_log = (d_f - 1.0 - 2.0 * (i as f64)) * log_delta + log_vol / d_f;
-            r.push(2f64.powf(2.0 * r_log));
-        }
-        r
-    }
-
     // ---------- Probability helpers ----------
 
     fn gaussian_cdf(mu: f64, sigma: f64, t: f64) -> f64 {
@@ -430,42 +429,6 @@ mod sis_lattice {
             f64::NEG_INFINITY
         } else {
             success.log2()
-        }
-    }
-
-    /// `prob.amplify(target, success, majority=False)` in log-domain.
-    fn amplify_log2(target: f64, log2_success: f64) -> f64 {
-        if !log2_success.is_finite() {
-            return f64::INFINITY;
-        }
-
-        let log2_target = target.log2();
-        if log2_success >= log2_target {
-            return 0.0;
-        }
-
-        // `prob.amplify` caps the working precision at 2048 bits. Once `p`
-        // falls below that resolution, `1 - p` rounds to 1 and the estimator
-        // returns infinity.
-        if log2_success < -2048.0 {
-            return f64::INFINITY;
-        }
-
-        let success = 2f64.powf(log2_success);
-        if success == 0.0 {
-            return (-(1.0 - target).ln()).log2() - log2_success;
-        }
-
-        let denom = (-success).ln_1p();
-        if !denom.is_finite() || denom == 0.0 {
-            return f64::INFINITY;
-        }
-
-        let trials = ((1.0 - target).ln() / denom).ceil();
-        if trials <= 1.0 {
-            0.0
-        } else {
-            trials.log2()
         }
     }
 
@@ -521,142 +484,6 @@ mod sis_lattice {
     }
 
     // ---------- Infinity norm cost ----------
-
-    /// `cost_infinity(β, params, zeta, d=m)` from Python. Returns log2(rop)
-    /// (possibly `+∞`).
-    fn cost_infinity_log2(beta: u64, params: &SISParameters, zeta: u64) -> f64 {
-        let d = params.m;
-        if zeta >= d {
-            return f64::INFINITY;
-        }
-        let d_ = d - zeta;
-        if d_ < beta {
-            return f64::INFINITY;
-        }
-
-        // r = GSA(d_, d_ - n, q, β, xi=1, tau=False)
-        // Safety: d_ - n must be sensible; Python GSA asserts n ≥ 0 implicitly.
-        if d_ < params.n {
-            return f64::INFINITY;
-        }
-        let r = gsa_tau_false(d_, d_ - params.n, params.q as f64, beta);
-        let (rho, cost_red_log2, log2_big_n, sieve_dim) = matzov_short_vectors(beta, d_);
-        let bkz = bkz_rop_log2(beta, d_);
-
-        let d_f = d as f64;
-        let d_under_f = d_ as f64;
-        let lb = params.length_bound as f64;
-        let q_f = params.q as f64;
-
-        let log_trial_prob = if d_f.sqrt() * lb <= q_f {
-            // Non-Dilithium style
-            let vector_length = rho * r[0].sqrt();
-            let sigma = vector_length / d_under_f.sqrt();
-            d_under_f * coordinate_success_log2(lb, sigma)
-        } else {
-            // Dilithium style
-            let r0 = r[0];
-            let idx_start = if (r0.sqrt() - q_f).abs() < 1e-8 {
-                // first index where r[i] < r[0]
-                r.iter().position(|&x| x < r0).unwrap_or(0) as u64
-            } else {
-                0
-            };
-            let idx_end = if (r[(d_ - 1) as usize] - 1.0).abs() < 1e-8 {
-                // first i where sqrt(r[i]) <= 1+1e-8, then i-1
-                match r.iter().position(|&x| x.sqrt() <= 1.0 + 1e-8) {
-                    Some(i) => (i as i64 - 1) as u64,
-                    None => d_ - 1,
-                }
-            } else {
-                d_ - 1
-            };
-            let vector_length = r[idx_start as usize].sqrt();
-            let gaussian_coords =
-                ((idx_end as i64) - (idx_start as i64) + 1).max(sieve_dim as i64) as f64;
-            let sigma = vector_length / gaussian_coords.sqrt();
-            let coords_log2 = coordinate_success_log2(lb, sigma);
-            if !coords_log2.is_finite() {
-                return f64::INFINITY;
-            }
-            let mut ltp = coords_log2 * gaussian_coords;
-            ltp += ((2.0 * lb + 1.0) / q_f).log2() * (idx_start as f64);
-            ltp
-        };
-
-        let log2_probability = (log_trial_prob + log2_big_n).min(0.0);
-        if log2_probability.is_nan() {
-            return f64::INFINITY;
-        }
-        let log2_amp = amplify_log2(0.99, log2_probability);
-        if !log2_amp.is_finite() {
-            return f64::INFINITY;
-        }
-        // rop = cost_red * amp; stay in the log-domain to avoid underflow or
-        // overflow in the repeat count.
-        let _ = bkz; // red entry not used outside reporting
-        cost_red_log2 + log2_amp
-    }
-
-    /// `cost_zeta(ζ, params)` — optimizes β using `local_minimum(40, baseline_beta+1, precision=2)`.
-    fn cost_zeta_log2(zeta: u64, params: &SISParameters, baseline_beta: u64) -> f64 {
-        let f = |beta: u64| -> f64 { cost_infinity_log2(beta, params, zeta) };
-
-        let mut lm = LocalMinimum::new(40, baseline_beta + 1, 2);
-        while let Some(beta) = lm.next_x() {
-            let v = f(beta);
-            lm.update(v);
-        }
-        for beta in lm.neighborhood() {
-            let v = f(beta);
-            lm.update_point(beta, v);
-        }
-        lm.best_y().unwrap_or(f64::INFINITY)
-    }
-
-    pub(super) fn cost_infinity_top_log2(params: &SISParameters) -> f64 {
-        // 1. Baseline: params with norm=2, length_bound adjusted.
-        let baseline_lb = if params.length_bound == 1 {
-            2
-        } else {
-            params.length_bound
-        };
-        let baseline = SISParameters {
-            norm: Norm::L2,
-            length_bound: baseline_lb,
-            ..params.clone()
-        };
-        // We need baseline_beta: recompute as in cost_euclidean but keep β.
-        let baseline_beta = baseline_cost_beta(&baseline);
-
-        let f_zeta = |zeta: u64| -> f64 { cost_zeta_log2(zeta, params, baseline_beta) };
-
-        // Outer binary search over zeta in [0, m).
-        let mut lm: LocalMinimum = LocalMinimum::new(0, params.m, 1);
-        while let Some(zeta) = lm.next_x() {
-            let v = f_zeta(zeta);
-            lm.update(v);
-        }
-        let binary_best = lm.best_y().unwrap_or(f64::INFINITY);
-        // Explicitly include ζ = 0 (Python: `cost = min(it.y, f(0))`).
-        let zero = f_zeta(0);
-        binary_best.min(zero)
-    }
-
-    /// Compute the β used by `cost_euclidean` without the predicate short-circuit
-    /// (we only need it for `cost_zeta`'s baseline).
-    fn baseline_cost_beta(params: &SISParameters) -> u64 {
-        let d_opt = opt_sis_d(params).floor() as u64;
-        let d = d_opt.min(params.m);
-        let delta_val = solve_for_delta_euclidean(params, d);
-        if delta_val >= 1.0 {
-            let b = beta_from_delta(delta_val);
-            if b <= d {
-                return b;
-            }
-        }
-        d
-    }
 
     fn adps16_short_vectors(beta: u64) -> (f64, f64, f64, u64) {
         let beta_f = beta as f64;
@@ -1015,25 +842,8 @@ mod sis_lattice {
             }
         }
 
-        /// Evaluate a specific point from the neighborhood scan — bypasses the
-        /// iterator state machine but still updates `best`.
-        fn update_point(&mut self, x_scaled: u64, res: f64) {
-            let x = (x_scaled as i64) / self.precision;
-            self.last_x = Some(x);
-            if self.best.is_none() {
-                self.best = Some((x, res));
-            } else if !res.is_nan() && res <= self.best.as_ref().unwrap().1 {
-                self.best = Some((x, res));
-            }
-            self.all_x.insert(x);
-        }
-
         fn best_x(&self) -> Option<u64> {
             self.best.as_ref().map(|(x, _)| (x * self.precision) as u64)
-        }
-
-        fn best_y(&self) -> Option<f64> {
-            self.best.as_ref().map(|(_, y)| *y)
         }
 
         fn neighborhood(&self) -> Vec<u64> {
@@ -1054,6 +864,22 @@ mod tests {
 
     const TOL: f64 = 1e-6;
     const REFERENCE_TOL: f64 = 1e-9;
+    const LATTICE_ESTIMATOR_DEFAULT: SISLatticeOptions = SISLatticeOptions {
+        red_cost_model: RedCostModel::Matzov,
+        red_shape_model: RedShapeModel::Gsa,
+        zeta: Zeta::Optimised,
+    };
+
+    fn raw_log2(params: &SISParameters, options: &SISLatticeOptions) -> f64 {
+        match params.norm {
+            Norm::L2 => super::sis_lattice::cost_euclidean_log2(params),
+            Norm::Infinity => {
+                estimate_sis_lattice_infinity(params, options)
+                    .unwrap()
+                    .log2_rop
+            }
+        }
+    }
 
     fn legacy_raw_log2(params: &SISParameters) -> Option<f64> {
         let script_path = std::env::current_dir().ok()?
@@ -1079,10 +905,7 @@ mod tests {
         let Some(expected) = legacy_raw_log2(&params) else {
             return;
         };
-        let actual = match params.norm {
-            Norm::L2 => super::sis_lattice::cost_euclidean_log2(&params),
-            Norm::Infinity => super::sis_lattice::cost_infinity_top_log2(&params),
-        };
+        let actual = raw_log2(&params, &SISLatticeOptions::default());
         let diff = (actual - expected).abs();
         assert!(
             diff < TOL || (actual.is_infinite() && expected.is_infinite()),
@@ -1096,10 +919,7 @@ mod tests {
 
     fn check(params: SISParameters, expected: f64) {
         // Call the internal function before .ceil() so we can compare precisely.
-        let actual = match params.norm {
-            Norm::L2 => super::sis_lattice::cost_euclidean_log2(&params),
-            Norm::Infinity => super::sis_lattice::cost_infinity_top_log2(&params),
-        };
+        let actual = raw_log2(&params, &LATTICE_ESTIMATOR_DEFAULT);
         let diff = (actual - expected).abs();
         assert!(
             diff < TOL || (actual.is_infinite() && expected.is_infinite()),
@@ -1415,40 +1235,6 @@ mod tests {
     }
 
     #[test]
-    fn linf_lattice_default_models_match_existing_path() {
-        let options = SISLatticeOptions {
-            red_cost_model: RedCostModel::Matzov,
-            red_shape_model: RedShapeModel::Gsa,
-            zeta: Zeta::Optimised,
-        };
-        for (n, m, q, length_bound) in [
-            (113, 1000, 2048, 16),
-            (113, 1000, 2048, 1),
-            (256, 2048, 8380417, 32),
-            (60, 500, 1024, 32),
-            (200, 1500, 2048, 80),
-            (50, 300, 512, 10),
-            (150, 1500, 8192, 100),
-            (512, 4096, 1073741824, 10),
-        ] {
-            let params = SISParameters {
-                n,
-                m,
-                q,
-                length_bound,
-                norm: Norm::Infinity,
-            };
-            let general = estimate_sis_lattice_infinity(&params, &options).unwrap();
-            let existing = super::sis_lattice::cost_infinity_top_log2(&params);
-            assert!(
-                (general.log2_rop - existing).abs() < TOL,
-                "{params:?}: got {}, existing path {existing}",
-                general.log2_rop,
-            );
-        }
-    }
-
-    #[test]
     fn linf_lattice_rejects_unsupported_instances() {
         let options = SISLatticeOptions {
             red_cost_model: RedCostModel::Adps16,
@@ -1490,15 +1276,32 @@ mod tests {
 
     #[test]
     fn entry_point_ceils_linf() {
+        for (n, m, q, secpar) in [
+            (113, 1000, 2048, 242.0),
+            (16, 2048, 2147483489, 69.0),
+            (48, 4096, 2147483489, 222.0),
+        ] {
+            let p = SISParameters {
+                n,
+                m,
+                q,
+                length_bound: 1,
+                norm: Norm::Infinity,
+            };
+            assert_eq!(estimate_sis_security(&p).unwrap().secpar, secpar);
+        }
+    }
+
+    #[test]
+    fn entry_point_rejects_easy_linf_instance() {
         let p = SISParameters {
-            n: 113,
-            m: 1000,
-            q: 2048,
-            length_bound: 1,
+            n: 2,
+            m: 512,
+            q: 1048573,
+            length_bound: 1000,
             norm: Norm::Infinity,
         };
-        let r = estimate_sis_security(&p).unwrap();
-        assert_eq!(r.secpar, 377.0);
+        assert!(estimate_sis_security(&p).is_err());
     }
 
     #[test]
